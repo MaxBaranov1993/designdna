@@ -7,7 +7,7 @@
   "use strict";
 
   let overlay = null;
-  let state = null; // { ir, node, onSave, geo, history[], sel, zoom, panX, panY, tool }
+  let state = null; // { ir, node, onSave, geo, history (IRHistory), sel, zoom, panX, panY, tool }
 
   function getByPath(obj, path) {
     return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
@@ -225,7 +225,7 @@
       node,
       onSave,
       geo: null,
-      history: [],
+      history: IRHistory.createHistory({ limit: 50 }),
       sel: [], // массив выделенных {ref, label, node}
       zoom: 1,
       panX: 40,
@@ -252,14 +252,17 @@
   }
 
   function pushHistory() {
-    state.history.push(JSON.parse(JSON.stringify(state.ir)));
-    if (state.history.length > 50) state.history.shift();
+    // ключ коалесценции — текущее выделение: серии быстрых правок
+    // одного выделения (nudge стрелками) сливаются в одну запись
+    const key = state.sel.map(s => s.ref.secIdx + ":" + (s.ref.path || "")).join(",");
+    state.history.push(() => state.ir, key);
     updateUndoBtn();
   }
 
   function undo() {
-    if (!state.history.length) return;
-    state.ir = state.history.pop();
+    const snap = state.history.undo(() => state.ir);
+    if (!snap) return;
+    state.ir = snap;
     state.node.data.ir = state.ir;
     if (state.geo) { state.geo.destroy(); state.geo = null; }
     renderCanvas();
@@ -272,7 +275,7 @@
 
   function updateUndoBtn() {
     const btn = overlay.querySelector('[data-act="undo"]');
-    if (btn) btn.disabled = !state.history.length;
+    if (btn) btn.disabled = !state.history.canUndo();
   }
 
   function updateAlignVisibility() {
@@ -619,14 +622,17 @@
         rerenderEditorCanvas();
       });
     });
-    // token colors
+    // token colors: снапшот ДО мутации (по первому input серии) —
+    // pushHistory на change снимал бы уже изменённый цвет, и undo его не возвращал
     panel.querySelectorAll("[data-color]").forEach(inp => {
+      let armed = false;
+      inp.addEventListener("focus", () => { armed = true; });
       inp.addEventListener("input", () => {
+        if (armed) { pushHistory(); armed = false; }
         state.ir.tokens.color[inp.dataset.color] = inp.value;
         inp.nextElementSibling.textContent = inp.value;
         rerenderEditorCanvas();
       });
-      inp.addEventListener("change", () => pushHistory());
     });
     // font family
     panel.querySelectorAll("[data-font]").forEach(sel => {
@@ -680,5 +686,5 @@
     return "#888888";
   }
 
-  global.Editor = { open, close };
+  global.Editor = { open, close, isOpen: () => !!state };
 })(window);

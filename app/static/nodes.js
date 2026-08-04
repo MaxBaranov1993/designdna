@@ -637,6 +637,25 @@
 
   /* ---------- редактор (Figma-инструменты через GeoEdit) ---------- */
 
+  /* ---------- undo/redo Edit-ноды ---------- */
+
+  function applyEditSnapshot(n, snap) {
+    n.data.ir = snap;
+    if (n.refreshEdit) n.refreshEdit();
+    propagate(n.id);
+    save();
+  }
+  function undoEditNode(n) {
+    if (!n.history || !n.data.ir) return;
+    const snap = n.history.undo(() => n.data.ir);
+    if (snap) applyEditSnapshot(n, snap);
+  }
+  function redoEditNode(n) {
+    if (!n.history || !n.data.ir) return;
+    const snap = n.history.redo(() => n.data.ir);
+    if (snap) applyEditSnapshot(n, snap);
+  }
+
   /* Edit-нода: превью слева + инспектор (модель pen.dev) справа.
    * refreshEdit — единственная точка lifecycle: рендер → attach GeoEdit → инспектор.
    * Оверлей GeoEdit живёт внутри .edit-inner (трансформированный контейнер),
@@ -647,6 +666,11 @@
     const selLabel = n.el.querySelector(".sel-label");
     const inspEl = n.el.querySelector(".edit-inspector");
     const zoomLabel = n.el.querySelector(".geo-tools .zoom-label");
+
+    // общая snapshot-история IR на ноду (undo/redo, коалесценция быстрых серий)
+    if (!n.history) n.history = IRHistory.createHistory({ limit: 50 });
+    // ключ коалесценции: выделение, актуальное к моменту onCommit
+    let selKey = "";
 
     if (!n._editWired) {
       n._editWired = true;
@@ -715,13 +739,17 @@
           const w = irEl.getBoundingClientRect().width;
           return w > 0 ? w / dw : 1;
         },
-        onCommit: () => {},
+        onCommit: () => {
+          // снапшот ДО мутации; быстрые серии с одним выделением IRHistory сольёт сам
+          if (n.data.ir) n.history.push(() => n.data.ir, selKey);
+        },
         onMutated: () => {
           n.refreshEdit();
           propagate(n.id);
           save();
         },
         onSelect: (sels) => {
+          selKey = (sels || []).map(s => s.ref.secIdx + ":" + (s.ref.path || "")).join(",");
           selLabel.textContent = sels && sels.length ? sels[0].label : (n.data.ir ? "—" : "нет IR на входе");
           renderInsp();
         },
@@ -1093,6 +1121,19 @@
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") hideCtxMenu();
+    // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z — undo/redo IR в выделенной Edit-ноде
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && selectedId != null
+        && "zyяnн".includes(e.key.toLowerCase())) {
+      const ae = document.activeElement;
+      if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return;
+      if (Editor.isOpen()) return; // у полноэкранного редактора своя история
+      const n = nodeById(selectedId);
+      if (!n || n.type !== "edit" || !n.history) return;
+      e.preventDefault();
+      const isRedo = e.shiftKey || "yн".includes(e.key.toLowerCase());
+      if (isRedo) redoEditNode(n); else undoEditNode(n);
+      return;
+    }
     if ((e.key === "Delete" || e.key === "Backspace") && selectedId != null) {
       const ae = document.activeElement;
       if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return;
