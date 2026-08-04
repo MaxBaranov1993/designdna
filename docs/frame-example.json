@@ -1,0 +1,66 @@
+{
+  "version": "1.0",
+  "meta": {
+    "name": "Карточка объявления — Rsale",
+    "description": "Отдельный компонент: карточка объявления маркетплейса с фиксированной геометрией (frame). Пример для генератора и тест рендерера.",
+    "styleTags": ["minimal", "marketplace"]
+  },
+  "frame": { "width": 960, "height": "hug" },
+  "tokens": {
+    "mode": "light",
+    "color": {
+      "primary": "#0E7A5F",
+      "secondary": "#134E48",
+      "accent": "#E85D26",
+      "background": "#FFFFFF",
+      "surface": "#F6F7F8",
+      "text": "#17201D",
+      "textMuted": "#5D6B66",
+      "border": "#E2E7E5"
+    },
+    "font": {
+      "display": { "family": "Manrope", "weight": 800 },
+      "body": { "family": "Inter", "weight": 400 },
+      "scale": "default"
+    },
+    "radius": { "card": "lg", "button": "full", "input": "md" },
+    "spacing": { "section": "md", "container": "default" },
+    "shadow": "sm"
+  },
+  "tree": [
+    {
+      "id": "listing-card",
+      "type": "feature-grid",
+      "variant": "grid-3",
+      "frame": { "width": "fill", "padding": 40 },
+      "props": { "heading": "Свежие объявления", "subheading": "Компонент с явной геометрией frame" },
+      "children": [
+        {
+          "type": "card",
+          "frame": {
+            "width": 360,
+            "height": "hug",
+            "layout": "auto",
+            "direction": "column",
+            "gap": 12,
+            "padding": [16, 16, 20, 16]
+          },
+          "children": [
+            { "type": "image", "alt": "Фото велосипеда", "aspect": "4:3", "imagePrompt": "Городской велосипед на нейтральном фоне, дневной свет", "frame": { "width": "fill", "height": 180 } },
+            { "type": "badge", "text": "Велотранспорт", "tone": "primary", "frame": { "width": "hug" } },
+            { "type": "heading", "text": "Городской велосипед Stels, 28\"", "level": 3 },
+            { "type": "text", "text": "Белград · 2 часа назад", "size": "sm" },
+            {
+              "type": "card",
+              "frame": { "layout": "auto", "direction": "row", "justify": "space-between", "align": "center", "padding": 0 },
+              "children": [
+                { "type": "text", "text": "12 500 RSD", "size": "lg" },
+                { "type": "button", "text": "Написать", "variant": "primary" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

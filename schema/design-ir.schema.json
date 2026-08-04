@@ -1,0 +1,457 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://designai.dev/design-ir/1.0",
+  "title": "DesignIR",
+  "description": "Промежуточное представление веб-дизайна: дизайн-токены + дерево секций из закрытой библиотеки блоков. Версия 1.0 (spike). Опциональный frame на узлах — геометрия по модели Figma (размеры, позиция, auto-layout); без него поведение прежнее (flow-раскладка).",
+  "type": "object",
+  "required": ["version", "tokens", "tree"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "1.0" },
+    "frame": {
+      "$ref": "#/$defs/frame",
+      "description": "Артборд: width — ширина холста (по умолчанию 960), height — обычно hug; layout:free разрешает секциям абсолютное позиционирование по x/y"
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "styleTags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Теги стиля: minimal, brutalist, glassmorphism, swiss, corporate, playful..."
+        },
+        "mixOf": {
+          "type": "array",
+          "description": "Происхождение микса (заполняет dev-инструмент, не генератор): индексы исходных вариантов и их веса",
+          "items": {
+            "type": "object",
+            "required": ["index", "weight"],
+            "additionalProperties": false,
+            "properties": {
+              "index": { "type": "integer", "minimum": 0 },
+              "weight": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "tokens": { "$ref": "#/$defs/tokens" },
+    "tree": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/section" }
+    }
+  },
+  "$defs": {
+    "hexColor": {
+      "type": "string",
+      "pattern": "^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$"
+    },
+    "tokens": {
+      "type": "object",
+      "required": ["mode", "color", "font", "radius", "spacing", "shadow"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["light", "dark"] },
+        "color": {
+          "type": "object",
+          "required": ["primary", "background", "surface", "text", "textMuted", "border"],
+          "additionalProperties": false,
+          "properties": {
+            "primary": { "$ref": "#/$defs/hexColor" },
+            "secondary": { "$ref": "#/$defs/hexColor" },
+            "accent": { "$ref": "#/$defs/hexColor" },
+            "background": { "$ref": "#/$defs/hexColor" },
+            "surface": { "$ref": "#/$defs/hexColor" },
+            "text": { "$ref": "#/$defs/hexColor" },
+            "textMuted": { "$ref": "#/$defs/hexColor" },
+            "border": { "$ref": "#/$defs/hexColor" }
+          }
+        },
+        "font": {
+          "type": "object",
+          "required": ["display", "body", "scale"],
+          "additionalProperties": false,
+          "properties": {
+            "display": { "$ref": "#/$defs/fontFace" },
+            "body": { "$ref": "#/$defs/fontFace" },
+            "scale": {
+              "enum": ["compact", "default", "spacious"],
+              "description": "Плотность типографики и отступов"
+            }
+          }
+        },
+        "radius": {
+          "type": "object",
+          "required": ["card", "button", "input"],
+          "additionalProperties": false,
+          "properties": {
+            "card": { "$ref": "#/$defs/radiusSize" },
+            "button": { "$ref": "#/$defs/radiusSize" },
+            "input": { "$ref": "#/$defs/radiusSize" }
+          }
+        },
+        "spacing": {
+          "type": "object",
+          "required": ["section", "container"],
+          "additionalProperties": false,
+          "properties": {
+            "section": { "enum": ["sm", "md", "lg", "xl"] },
+            "container": { "enum": ["narrow", "default", "wide", "full"] }
+          }
+        },
+        "shadow": { "enum": ["none", "sm", "md", "lg"] }
+      }
+    },
+    "fontFace": {
+      "type": "object",
+      "required": ["family", "weight"],
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "type": "string",
+          "description": "Google Fonts family: Inter, Sora, Manrope, Playfair Display, Space Grotesk, DM Sans, IBM Plex Mono..."
+        },
+        "weight": { "type": "integer", "enum": [300, 400, 500, 600, 700, 800, 900] }
+      }
+    },
+    "radiusSize": { "enum": ["none", "sm", "md", "lg", "xl", "full"] },
+
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Геометрия узла по модели Figma. Всё опционально: нет frame — узел в потоке (flow) с раскладкой по умолчанию. Размеры width/height: число (px), fill (растянуть до родителя), hug (по содержимому). x/y работают только внутри родителя с layout:free. layout/direction/gap/padding/justify/align/wrap описывают раскладку собственных children узла.",
+      "properties": {
+        "width": { "$ref": "#/$defs/frameSize" },
+        "height": { "$ref": "#/$defs/frameSize" },
+        "minWidth": { "type": "number", "minimum": 0 },
+        "maxWidth": { "type": "number", "minimum": 0 },
+        "minHeight": { "type": "number", "minimum": 0 },
+        "maxHeight": { "type": "number", "minimum": 0 },
+        "x": { "type": "number", "description": "Отступ от левого края родителя (только если у родителя frame.layout:free)" },
+        "y": { "type": "number", "description": "Отступ от верхнего края родителя (только если у родителя frame.layout:free)" },
+        "layout": { "enum": ["auto", "free"], "description": "auto — children в потоке (flex: direction/gap/justify/align), free — children абсолютно позиционированы по своим x/y" },
+        "direction": { "enum": ["row", "column"], "description": "Ось auto-layout (по умолчанию column)" },
+        "gap": { "type": "number", "minimum": 0, "description": "Расстояние между children, px" },
+        "padding": { "$ref": "#/$defs/framePadding" },
+        "justify": { "enum": ["start", "center", "end", "space-between", "space-around"], "description": "Выравнивание по главной оси (direction)" },
+        "align": { "enum": ["start", "center", "end", "stretch", "baseline"], "description": "Выравнивание по поперечной оси" },
+        "wrap": { "type": "boolean", "description": "Перенос children на новую строку (direction:row)" },
+        "rotation": { "type": "number", "description": "Угол поворота в градусах (аналог rotation в pen.dev)" },
+        "absolute": { "type": "boolean", "description": "true — элемент выведен из раскладки родителя и позиционируется по x/y (аналог layoutPosition:absolute в pen.dev)" },
+        "clip": { "type": "boolean", "description": "Обрезать содержимое за границами узла, overflow:hidden (clip в pen.dev)" }
+      }
+    },
+    "frameSize": {
+      "description": "Число px, fill — растянуть до родителя, hug — по содержимому",
+      "oneOf": [
+        { "type": "number", "minimum": 0 },
+        { "enum": ["fill", "hug"] }
+      ]
+    },
+    "framePadding": {
+      "description": "Одно значение px, [vertical, horizontal] (как в pen.dev) или [top, right, bottom, left]",
+      "oneOf": [
+        { "type": "number", "minimum": 0 },
+        { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number", "minimum": 0 } },
+        { "type": "array", "minItems": 4, "maxItems": 4, "items": { "type": "number", "minimum": 0 } }
+      ]
+    },
+
+    "section": {
+      "type": "object",
+      "required": ["id", "type", "variant", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "frame": { "$ref": "#/$defs/frame" },
+        "_frames": {
+          "type": "object",
+          "description": "Frame-оверрайды для внутренних props-элементов секции. Ключи — пути (props.links.0, props.cta, props.heading), значения — frame-объекты.",
+          "additionalProperties": { "$ref": "#/$defs/frame" }
+        },
+        "type": {
+          "enum": [
+            "navbar", "hero", "logo-cloud", "feature-grid", "feature-alternating",
+            "stats", "steps", "gallery", "testimonials", "pricing", "comparison",
+            "team", "blog-grid", "faq", "cta", "contact-form", "newsletter",
+            "banner", "footer"
+          ]
+        },
+        "variant": { "type": "string", "description": "Вариант из каталога BLOCKS.md для данного type" },
+        "props": { "type": "object" },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/element" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "navbar" } } },
+          "then": { "properties": { "props": { "$ref": "#/$defs/navbarProps" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "hero" } } },
+          "then": { "properties": { "props": { "$ref": "#/$defs/heroProps" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "pricing" } } },
+          "then": { "properties": { "props": { "$ref": "#/$defs/pricingProps" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "stats" } } },
+          "then": { "properties": { "props": { "$ref": "#/$defs/statsProps" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "faq" } } },
+          "then": { "properties": { "props": { "$ref": "#/$defs/faqProps" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "contact-form" } } },
+          "then": { "properties": { "props": { "$ref": "#/$defs/contactFormProps" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "newsletter" } } },
+          "then": { "properties": { "props": { "$ref": "#/$defs/newsletterProps" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "footer" } } },
+          "then": { "properties": { "props": { "$ref": "#/$defs/footerProps" } } }
+        }
+      ]
+    },
+
+    "navbarProps": {
+      "type": "object",
+      "required": ["logoText", "links", "cta"],
+      "additionalProperties": false,
+      "properties": {
+        "logoText": { "type": "string" },
+        "links": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "$ref": "#/$defs/navLink" } },
+        "cta": { "$ref": "#/$defs/buttonElement" },
+        "sticky": { "type": "boolean" },
+        "transparent": { "type": "boolean" }
+      }
+    },
+    "navLink": {
+      "type": "object",
+      "required": ["label", "href"],
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string" },
+        "href": { "type": "string" }
+      }
+    },
+    "heroProps": {
+      "type": "object",
+      "required": ["heading", "ctaPrimary"],
+      "additionalProperties": false,
+      "properties": {
+        "badge": { "type": "string" },
+        "heading": { "type": "string", "maxLength": 120 },
+        "subheading": { "type": "string", "maxLength": 300 },
+        "ctaPrimary": { "$ref": "#/$defs/buttonElement" },
+        "ctaSecondary": { "$ref": "#/$defs/buttonElement" },
+        "media": { "$ref": "#/$defs/imageElement" },
+        "align": { "enum": ["left", "center"] }
+      }
+    },
+    "pricingProps": {
+      "type": "object",
+      "required": ["heading", "tiers"],
+      "additionalProperties": false,
+      "properties": {
+        "heading": { "type": "string" },
+        "subheading": { "type": "string" },
+        "tiers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/priceTier" }
+        }
+      }
+    },
+    "priceTier": {
+      "type": "object",
+      "required": ["name", "price", "features", "cta"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "price": { "type": "string", "description": "Например: \"$29/mo\" или \"Custom\"" },
+        "period": { "type": "string" },
+        "features": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "cta": { "type": "string" },
+        "highlighted": { "type": "boolean" }
+      }
+    },
+    "statsProps": {
+      "type": "object",
+      "required": ["items"],
+      "additionalProperties": false,
+      "properties": {
+        "heading": { "type": "string" },
+        "items": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/statItem" }
+        }
+      }
+    },
+    "statItem": {
+      "type": "object",
+      "required": ["value", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "string", "description": "Например: \"12k+\", \"99.9%\"" },
+        "label": { "type": "string" }
+      }
+    },
+    "faqProps": {
+      "type": "object",
+      "required": ["heading", "items"],
+      "additionalProperties": false,
+      "properties": {
+        "heading": { "type": "string" },
+        "items": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "required": ["question", "answer"],
+            "additionalProperties": false,
+            "properties": {
+              "question": { "type": "string" },
+              "answer": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "contactFormProps": {
+      "type": "object",
+      "required": ["heading", "fields", "submitText"],
+      "additionalProperties": false,
+      "properties": {
+        "heading": { "type": "string" },
+        "subheading": { "type": "string" },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/inputElement" }
+        },
+        "submitText": { "type": "string" }
+      }
+    },
+    "newsletterProps": {
+      "type": "object",
+      "required": ["heading", "placeholder", "submitText"],
+      "additionalProperties": false,
+      "properties": {
+        "heading": { "type": "string" },
+        "subheading": { "type": "string" },
+        "placeholder": { "type": "string" },
+        "submitText": { "type": "string" }
+      }
+    },
+    "footerProps": {
+      "type": "object",
+      "required": ["logoText", "columns"],
+      "additionalProperties": false,
+      "properties": {
+        "logoText": { "type": "string" },
+        "tagline": { "type": "string" },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "required": ["title", "links"],
+            "additionalProperties": false,
+            "properties": {
+              "title": { "type": "string" },
+              "links": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/navLink" } }
+            }
+          }
+        },
+        "copyright": { "type": "string" }
+      }
+    },
+
+    "element": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": ["heading", "text", "button", "image", "badge", "card", "icon", "divider", "avatar", "rating", "input", "stat", "list", "rect"]
+        },
+        "frame": { "$ref": "#/$defs/frame" },
+        "text": { "type": "string" },
+        "title": { "type": "string" },
+        "level": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "size": { "enum": ["xs", "sm", "md", "lg", "xl", "display"] },
+        "align": { "enum": ["left", "center", "right"] },
+        "variant": { "type": "string" },
+        "href": { "type": "string" },
+        "icon": { "type": "string", "description": "Имя иконки из lucide: check, star, zap, shield..." },
+        "src": { "type": "string" },
+        "imagePrompt": { "type": "string", "description": "Описание изображения для подбора/генерации ассета" },
+        "alt": { "type": "string" },
+        "aspect": { "enum": ["1:1", "4:3", "16:9", "3:4", "9:16", "auto"] },
+        "tone": { "enum": ["default", "primary", "accent", "muted", "success", "warning", "error"] },
+        "fill": { "type": "string", "pattern": "^#[0-9a-fA-F]{3,8}$", "description": "Цвет заливки rect (hex)" },
+        "radius": { "type": "number", "minimum": 0, "description": "Скругление углов rect, px" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "value": { "type": ["string", "number"] },
+        "label": { "type": "string" },
+        "placeholder": { "type": "string" },
+        "items": { "type": "array", "items": { "type": "string" } },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/element" }
+        }
+      }
+    },
+    "buttonElement": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "maxLength": 40 },
+        "href": { "type": "string" },
+        "variant": { "enum": ["primary", "secondary", "outline", "ghost"] },
+        "icon": { "type": "string" }
+      }
+    },
+    "imageElement": {
+      "type": "object",
+      "required": ["alt"],
+      "additionalProperties": false,
+      "properties": {
+        "src": { "type": "string" },
+        "imagePrompt": { "type": "string" },
+        "alt": { "type": "string" },
+        "aspect": { "enum": ["1:1", "4:3", "16:9", "3:4", "9:16", "auto"] }
+      }
+    },
+    "inputElement": {
+      "type": "object",
+      "required": ["label", "inputType"],
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string" },
+        "placeholder": { "type": "string" },
+        "inputType": { "enum": ["text", "email", "tel", "textarea", "select", "checkbox"] },
+        "required": { "type": "boolean" }
+      }
+    }
+  }
+}

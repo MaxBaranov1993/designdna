@@ -1,0 +1,310 @@
+/* DesignAI Web — Inspector: панель свойств выделенного узла, модель pen.dev.
+ * Секции как в Pencil: Alignment (6 кнопок + distribute), Position (X/Y/R + Absolute Position),
+ * Flex Layout (direction none/vertical/horizontal, 3×3 alignment grid, gap, space-between/around,
+ * padding [v,h]), Dimensions (W/H + Fill/Hug + Clip Content).
+ *
+ * Inspector.render(container, ctx):
+ *   ctx.ir         — текущий IR
+ *   ctx.selections — [{ref,label,node}]
+ *   ctx.geo        — handle GeoEdit: setFrame, setFrameProps, frameOf, posOf, sizeOf, align, resetFrame
+ */
+(function (global) {
+  "use strict";
+
+  let cssDone = false;
+  const CSS = `
+  .pi { font-size:12px; color:var(--text,#cdd6f4); }
+  .pi .pi-empty { color:var(--muted,#6c7086); font-size:11.5px; text-align:center; padding:28px 8px; }
+  .pi .pi-type { font-size:11px; font-weight:700; color:var(--accent,#cba6f7); margin-bottom:8px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pi .pi-group { border-top:1px solid var(--border-soft,#313244); padding:9px 0; }
+  .pi .pi-group:first-of-type { border-top:none; padding-top:2px; }
+  .pi .pi-glabel { display:block; font-size:10px; font-weight:700; text-transform:uppercase;
+    letter-spacing:.07em; color:var(--muted,#6c7086); margin-bottom:7px; }
+  .pi .pi-row { display:flex; gap:6px; margin-bottom:6px; align-items:center; }
+  .pi .pi-row:last-child { margin-bottom:0; }
+  .pi .pi-field { display:flex; align-items:center; gap:5px; flex:1; min-width:0; }
+  .pi .pi-field > label { font-size:10px; color:var(--muted,#6c7086); font-weight:700; flex:none; }
+  .pi input[type=number], .pi input[type=text] { width:100%; min-width:0; background:var(--panel,#313244);
+    border:1px solid var(--border,#45475a); color:var(--text,#cdd6f4); border-radius:6px; padding:4px 6px;
+    font-size:11.5px; outline:none; font-variant-numeric:tabular-nums; }
+  .pi input:focus { border-color:var(--accent,#cba6f7); }
+  .pi input:disabled { opacity:.4; }
+  .pi .pi-btnrow { display:flex; gap:4px; }
+  .pi .pi-ibtn { flex:1; height:24px; display:inline-flex; align-items:center; justify-content:center;
+    background:var(--panel,#313244); border:1px solid var(--border,#45475a); border-radius:6px;
+    color:var(--text,#cdd6f4); cursor:pointer; font-size:11px; transition:.12s; padding:0; }
+  .pi .pi-ibtn:hover { border-color:var(--accent,#cba6f7); }
+  .pi .pi-ibtn.active { background:var(--accent,#cba6f7); border-color:var(--accent,#cba6f7);
+    color:#fff; }
+  .pi .pi-grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; }
+  .pi .pi-grid3 .pi-ibtn { height:22px; }
+  .pi .pi-grid3 .pi-ibtn .dot { width:5px; height:5px; border-radius:50%; background:currentColor; }
+  .pi .pi-check { display:flex; align-items:center; gap:7px; font-size:11px; color:var(--text,#cdd6f4);
+    cursor:pointer; user-select:none; }
+  .pi .pi-check input { accent-color:var(--accent,#cba6f7); width:13px; height:13px; cursor:pointer; }
+  .pi .pi-checks { display:grid; grid-template-columns:1fr 1fr; gap:6px 8px; }
+  .pi .pi-radio { display:flex; align-items:center; gap:7px; font-size:11px; cursor:pointer; user-select:none; }
+  .pi .pi-radio input { accent-color:var(--accent,#cba6f7); width:13px; height:13px; cursor:pointer; }
+  .pi .pi-wide { width:100%; }
+  .pi .pi-sel-list { font-size:11px; color:var(--muted,#a6adc8); }
+  .pi .pi-sel-list div { padding:1px 0; }
+  `;
+
+  function injectCSS() {
+    if (cssDone) return;
+    cssDone = true;
+    const s = document.createElement("style");
+    s.textContent = CSS;
+    document.head.appendChild(s);
+  }
+
+  function getByPath(obj, path) {
+    return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
+  }
+
+  function nodeOf(ir, ref) {
+    if (ref.secIdx == null) return ir;
+    if (ref.path == null) return ir.tree ? ir.tree[ref.secIdx] : null;
+    return getByPath(ir.tree[ref.secIdx], ref.path);
+  }
+
+  function isContainer(ir, ref) {
+    if (ref.secIdx == null || ref.path == null) return true;
+    const n = nodeOf(ir, ref);
+    return !!(n && (n.type === "card" || (n.children && n.children.length)));
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  /* ---------- рендер ---------- */
+
+  function render(container, ctx) {
+    injectCSS();
+    const sels = ctx.selections || [];
+    if (!sels.length) {
+      container.innerHTML = `<div class="pi"><div class="pi-empty">Выделите элемент<br>на превью</div></div>`;
+      return;
+    }
+    if (sels.length > 1) return renderMulti(container, ctx, sels);
+    return renderSingle(container, ctx, sels[0]);
+  }
+
+  function alignButtonsHtml() {
+    return `
+      <div class="pi-btnrow">
+        <button class="pi-ibtn" data-act="align-left" title="По левому краю">⫷</button>
+        <button class="pi-ibtn" data-act="align-center-h" title="Центр по горизонтали">⫿</button>
+        <button class="pi-ibtn" data-act="align-right" title="По правому краю">⫸</button>
+      </div>
+      <div class="pi-btnrow" style="margin-top:4px">
+        <button class="pi-ibtn" data-act="align-top" title="По верхнему краю">⊤</button>
+        <button class="pi-ibtn" data-act="align-center-v" title="Центр по вертикали">⊶</button>
+        <button class="pi-ibtn" data-act="align-bottom" title="По нижнему краю">⊥</button>
+      </div>
+      <div class="pi-btnrow" style="margin-top:4px">
+        <button class="pi-ibtn" data-act="distribute-h" title="Распределить по горизонтали">↔</button>
+        <button class="pi-ibtn" data-act="distribute-v" title="Распределить по вертикали">↕</button>
+      </div>`;
+  }
+
+  function renderMulti(container, ctx, sels) {
+    let html = `<div class="pi"><div class="pi-type">Выделено: ${sels.length}</div>
+      <div class="pi-group"><span class="pi-glabel">Alignment</span>${alignButtonsHtml()}</div>
+      <div class="pi-group"><span class="pi-glabel">Элементы</span><div class="pi-sel-list">` +
+      sels.map(s => `<div>${esc(s.label)}</div>`).join("") + `</div></div></div>`;
+    container.innerHTML = html;
+    wireActs(container, ctx);
+  }
+
+  function renderSingle(container, ctx, sel) {
+    const ir = ctx.ir, geo = ctx.geo, ref = sel.ref;
+    const f = (geo && geo.frameOf(ref)) || {};
+    const node = nodeOf(ir, ref) || {};
+    const isRoot = ref.secIdx == null;
+    const cont = isContainer(ir, ref);
+    const pos = (!isRoot && geo && geo.posOf) ? geo.posOf(ref) : null;
+    const size = (geo && geo.sizeOf) ? geo.sizeOf(ref) : null;
+
+    const x = typeof f.x === "number" ? f.x : (pos ? pos.x : "");
+    const y = typeof f.y === "number" ? f.y : (pos ? pos.y : "");
+    const rot = typeof f.rotation === "number" ? f.rotation : 0;
+    const w = typeof f.width === "number" ? f.width : (size ? size.w : "");
+    const h = typeof f.height === "number" ? f.height : (size ? size.h : "");
+
+    let padV = "", padH = "";
+    if (typeof f.padding === "number") { padV = f.padding; padH = f.padding; }
+    else if (Array.isArray(f.padding) && f.padding.length >= 2) { padV = f.padding[0]; padH = f.padding[1]; }
+
+    const dir = f.layout === "free" ? "free" : (f.direction === "row" ? "row" : "column");
+    const justify = f.justify || "start";
+    const align = f.align || "start";
+
+    let html = `<div class="pi"><div class="pi-type">${esc(sel.label)}</div>`;
+
+    /* Alignment */
+    html += `<div class="pi-group"><span class="pi-glabel">Alignment</span>${alignButtonsHtml()}</div>`;
+
+    /* Position */
+    html += `<div class="pi-group"><span class="pi-glabel">Position</span>
+      <div class="pi-row">
+        <div class="pi-field"><label>X</label><input type="number" data-pi="x" value="${x}" ${isRoot ? "disabled" : ""}></div>
+        <div class="pi-field"><label>Y</label><input type="number" data-pi="y" value="${y}" ${isRoot ? "disabled" : ""}></div>
+      </div>
+      <div class="pi-row">
+        <div class="pi-field"><label>R</label><input type="number" data-pi="rotation" value="${rot}" ${isRoot ? "disabled" : ""}></div>
+        <div class="pi-field"></div>
+      </div>
+      ${isRoot ? "" : `<div class="pi-row"><label class="pi-check"><input type="checkbox" data-pi="absolute" ${f.absolute ? "checked" : ""}> Absolute Position</label></div>`}
+      </div>`;
+
+    /* Flex Layout */
+    if (cont) {
+      html += `<div class="pi-group"><span class="pi-glabel">Flex Layout</span>
+        <div class="pi-btnrow">
+          <button class="pi-ibtn ${dir === "free" ? "active" : ""}" data-pi-dir="free" title="Без раскладки: дети по x/y (layout:none в pen.dev)">⊞</button>
+          <button class="pi-ibtn ${dir === "column" ? "active" : ""}" data-pi-dir="column" title="Колонка (vertical)">↓</button>
+          <button class="pi-ibtn ${dir === "row" ? "active" : ""}" data-pi-dir="row" title="Ряд (horizontal)">→</button>
+        </div>
+        <div class="pi-row" style="margin-top:6px"><label style="font-size:10px;color:var(--muted,#6c7086);font-weight:700">Alignment</label></div>
+        <div class="pi-grid3">` +
+        ["start", "center", "end"].map(a =>
+          ["start", "center", "end"].map(j =>
+            `<button class="pi-ibtn ${justify === j && align === a ? "active" : ""}" data-pi-ja="${j}|${a}" title="justify:${j} align:${a}"><span class="dot"></span></button>`
+          ).join("")).join("") +
+        `</div>
+        <div class="pi-row" style="margin-top:6px">
+          <div class="pi-field"><label>Gap</label><input type="number" data-pi="gap" value="${typeof f.gap === "number" ? f.gap : ""}" min="0"></div>
+        </div>
+        <div class="pi-row"><label class="pi-radio"><input type="radio" name="pi-justify-${containerId(container)}" data-pi-justify="space-between" ${justify === "space-between" ? "checked" : ""}> Space Between</label></div>
+        <div class="pi-row"><label class="pi-radio"><input type="radio" name="pi-justify-${containerId(container)}" data-pi-justify="space-around" ${justify === "space-around" ? "checked" : ""}> Space Around</label></div>
+        <div class="pi-row" style="margin-top:6px">
+          <div class="pi-field"><label>Pad↕</label><input type="number" data-pi="padv" value="${padV}" min="0"></div>
+          <div class="pi-field"><label>Pad↔</label><input type="number" data-pi="padh" value="${padH}" min="0"></div>
+        </div>
+      </div>`;
+    }
+
+    /* Dimensions */
+    html += `<div class="pi-group"><span class="pi-glabel">Dimensions</span>
+      <div class="pi-row">
+        <div class="pi-field"><label>W</label><input type="number" data-pi="width" value="${w}" min="1"></div>
+        <div class="pi-field"><label>H</label><input type="number" data-pi="height" value="${h}" min="1"></div>
+      </div>
+      <div class="pi-checks" style="margin-top:6px">
+        <label class="pi-check"><input type="checkbox" data-pi="fillw" ${f.width === "fill" ? "checked" : ""}> Fill Width</label>
+        <label class="pi-check"><input type="checkbox" data-pi="fillh" ${f.height === "fill" ? "checked" : ""}> Fill Height</label>
+        <label class="pi-check"><input type="checkbox" data-pi="hugw" ${f.width === "hug" ? "checked" : ""}> Hug Width</label>
+        <label class="pi-check"><input type="checkbox" data-pi="hugh" ${f.height === "hug" ? "checked" : ""}> Hug Height</label>
+        <label class="pi-check"><input type="checkbox" data-pi="clip" ${f.clip ? "checked" : ""}> Clip Content</label>
+      </div>
+      </div>`;
+
+    if (!isRoot) {
+      html += `<div class="pi-group"><button class="pi-ibtn pi-wide" data-act="reset-frame">Сбросить frame</button></div>`;
+    }
+
+    html += `</div>`;
+    container.innerHTML = html;
+    wireActs(container, ctx);
+    wireSingle(container, ctx, sel);
+  }
+
+  let cid = 0;
+  function containerId(el) {
+    if (!el.__piId) el.__piId = ++cid;
+    return el.__piId;
+  }
+
+  /* ---------- события ---------- */
+
+  function wireActs(container, ctx) {
+    const geo = ctx.geo;
+    container.querySelectorAll("[data-act]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        if (!geo) return;
+        const map = {
+          "align-left": "alignLeft", "align-center-h": "alignCenterH", "align-right": "alignRight",
+          "align-top": "alignTop", "align-center-v": "alignCenterV", "align-bottom": "alignBottom",
+          "distribute-h": "distributeH", "distribute-v": "distributeV", "reset-frame": "resetFrame",
+        };
+        const fn = map[btn.dataset.act];
+        if (fn && geo[fn]) geo[fn]();
+      });
+    });
+  }
+
+  function wireSingle(container, ctx, sel) {
+    const geo = ctx.geo;
+    if (!geo) return;
+    const ref = sel.ref;
+    const f = () => geo.frameOf(ref) || {};
+
+    container.querySelectorAll("[data-pi]").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const key = inp.dataset.pi;
+        const cur = f();
+        if (key === "x" || key === "y" || key === "width" || key === "height") {
+          const partial = {};
+          partial[key] = inp.value === "" ? null : Number(inp.value);
+          geo.setFrame(partial);
+        } else if (key === "rotation") {
+          const v = inp.value === "" ? null : Number(inp.value);
+          geo.setFrameProps({ rotation: (v == null || v === 0) ? null : v });
+        } else if (key === "gap") {
+          geo.setFrameProps({ gap: inp.value === "" ? null : Math.max(0, Number(inp.value)) });
+        } else if (key === "padv" || key === "padh") {
+          const v = Math.max(0, Number(container.querySelector('[data-pi="padv"]').value || 0));
+          const h = Math.max(0, Number(container.querySelector('[data-pi="padh"]').value || 0));
+          geo.setFrameProps({ padding: v === h ? v : [v, h, v, h] });
+        } else if (key === "absolute") {
+          if (inp.checked) {
+            const extra = {};
+            if (typeof cur.x !== "number" || typeof cur.y !== "number") {
+              const p = geo.posOf(ref);
+              if (p) { extra.x = p.x; extra.y = p.y; }
+            }
+            geo.setFrameProps(Object.assign({ absolute: true }, extra));
+          } else {
+            geo.setFrameProps({ absolute: null });
+          }
+        } else if (key === "clip") {
+          geo.setFrameProps({ clip: inp.checked ? true : null });
+        } else if (key === "fillw") {
+          geo.setFrameProps({ width: inp.checked ? "fill" : null });
+        } else if (key === "hugw") {
+          geo.setFrameProps({ width: inp.checked ? "hug" : null });
+        } else if (key === "fillh") {
+          geo.setFrameProps({ height: inp.checked ? "fill" : null });
+        } else if (key === "hugh") {
+          geo.setFrameProps({ height: inp.checked ? "hug" : null });
+        }
+      });
+    });
+
+    container.querySelectorAll("[data-pi-dir]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const d = btn.dataset.piDir;
+        if (d === "free") geo.setFrameProps({ layout: "free" });
+        else geo.setFrameProps({ layout: "auto", direction: d });
+      });
+    });
+
+    container.querySelectorAll("[data-pi-ja]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const [j, a] = btn.dataset.piJa.split("|");
+        geo.setFrameProps({ justify: j, align: a });
+      });
+    });
+
+    container.querySelectorAll("[data-pi-justify]").forEach(radio => {
+      radio.addEventListener("change", () => {
+        if (radio.checked) geo.setFrameProps({ justify: radio.dataset.piJustify });
+      });
+    });
+  }
+
+  global.Inspector = { render };
+})(window);
