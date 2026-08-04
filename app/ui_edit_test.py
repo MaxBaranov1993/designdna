@@ -157,68 +157,6 @@ def main():
         ab = pg.evaluate("(() => { const f = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir.tree[0].children[0].frame; const el = document.querySelector('.n-edit [data-ir-path=\"children.0\"]'); return { a: f.absolute, x: typeof f.x, pos: el.style.position }; })()")
         check("инспектор: Absolute Position → absolute+x/y", ab["a"] is True and ab["x"] == "number" and ab["pos"] == "absolute", str(ab))
 
-        # 15) панель инструментов: rect drag-создание
-        NODESEL = NODE
-        pg.click(f'{NODESEL} .rail-btn[data-tool="rect"]')
-        pg.wait_for_timeout(200)
-        check("rail: rect активен", pg.evaluate(
-            "document.querySelector('.n-edit .rail-btn[data-tool=\"rect\"]').classList.contains('active')"))
-        sec0 = pg.query_selector(f'{NODESEL} [data-ir-sec="0"]')
-        sb = sec0.bounding_box()
-        pg.mouse.move(sb["x"] + 60, sb["y"] + min(40, sb["height"] - 8))
-        pg.mouse.down()
-        pg.mouse.move(sb["x"] + 200, sb["y"] + min(120, sb["height"] - 4), steps=5)
-        pg.mouse.up()
-        pg.wait_for_timeout(400)
-        ALL_NODES = ("(() => { const out = []; const walk = (n) => (n.children || []).forEach(c => { out.push(c); walk(c); }); "
-                     "(window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir.tree || []).forEach(s => walk(s)); return out; })()")
-        rects = pg.evaluate(f"{ALL_NODES}.filter(c => c.type === 'rect').map(c => (c.frame || {{}}).width)")
-        check("инструмент rect: создан rect с размером", len(rects) > 0 and rects[0] >= 100, str(rects))
-        check("инструмент rect: новый элемент выделен", pg.evaluate(
-            "document.querySelectorAll('.n-edit .geo-box.selected').length === 1"))
-
-        # 16) text: клик создаёт текст (в контейнер под курсором — здесь card)
-        pg.click(f'{NODESEL} .rail-btn[data-tool="text"]')
-        pg.wait_for_timeout(150)
-        pg.mouse.click(sb["x"] + 90, sb["y"] + min(60, sb["height"] - 8))
-        pg.wait_for_timeout(400)
-        nodes = pg.evaluate(ALL_NODES)
-        check("инструмент text: создан text", any(
-            c.get("type") == "text" and c.get("text") == "Новый текст" for c in nodes))
-
-        # 17) frame: клик создаёт card-контейнер
-        cards_before = len([c for c in nodes if c.get("type") == "card"])
-        pg.click(f'{NODESEL} .rail-btn[data-tool="frame"]')
-        pg.wait_for_timeout(150)
-        pg.mouse.click(sb["x"] + 260, sb["y"] + min(80, sb["height"] - 8))
-        pg.wait_for_timeout(400)
-        nodes2 = pg.evaluate(ALL_NODES)
-        cards_after = len([c for c in nodes2 if c.get("type") == "card"])
-        check("инструмент frame: создан card", cards_after == cards_before + 1, f"{cards_before}->{cards_after}")
-
-        # 18) hand: скролл превью (предварительно зумим, чтобы контент был выше окна)
-        pg.click(f'{NODESEL} .f-zoom-in')
-        pg.click(f'{NODESEL} .f-zoom-in')
-        pg.wait_for_timeout(300)
-        pg.click(f'{NODESEL} .rail-btn[data-tool="hand"]')
-        pg.wait_for_timeout(150)
-        st0 = pg.evaluate("document.querySelector('.n-edit .edit-preview').scrollTop")
-        sb3 = pg.query_selector(f'{NODESEL} [data-ir-sec="0"]').bounding_box()
-        pg.mouse.move(sb3["x"] + 100, sb3["y"] + 100)
-        pg.mouse.down()
-        pg.mouse.move(sb3["x"] + 100, sb3["y"] + 40, steps=4)
-        pg.mouse.up()
-        pg.wait_for_timeout(200)
-        st1 = pg.evaluate("document.querySelector('.n-edit .edit-preview').scrollTop")
-        check("инструмент hand: превью скроллится", st1 != st0, f"{st0}->{st1}")
-
-        # 19) хоткей V возвращает select
-        pg.evaluate("document.activeElement && document.activeElement.blur()")
-        pg.keyboard.press("v")
-        pg.wait_for_timeout(200)
-        check("хоткей V: select активен", pg.evaluate(
-            "document.querySelector('.n-edit .rail-btn[data-tool=\"select\"]').classList.contains('active')"))
-
         SHOT_DIR.mkdir(exist_ok=True)
         pg.screenshot(path=str(SHOT_DIR / "ui_edit_node.png"), full_page=False)
         browser.close()

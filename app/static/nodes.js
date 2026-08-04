@@ -192,13 +192,6 @@
 
     if (n.type === "edit") {
       inner = `<div class="edit-wrap">
-        <div class="edit-rail">
-          <button class="rail-btn active" data-tool="select" title="Выделение (V)"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M3 1l11 6.5-5 1.2L7.5 14z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></button>
-          <button class="rail-btn" data-tool="rect" title="Прямоугольник (R)"><svg width="14" height="14" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
-          <button class="rail-btn" data-tool="text" title="Текст (T)"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M3 3h10M8 3v10" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></button>
-          <button class="rail-btn" data-tool="frame" title="Фрейм (F)"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M5 1v14M11 1v14M1 5h14M1 11h14" stroke="currentColor" stroke-width="1.2" fill="none"/></svg></button>
-          <button class="rail-btn" data-tool="hand" title="Рука — скролл (H)"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2v12M2 8h12M8 2L6 4M8 2l2 2M8 14l-2-2M8 14l2-2M2 8l2-2M2 8l2 2M14 8l-2-2M14 8l-2 2" stroke="currentColor" stroke-width="1.1" fill="none"/></svg></button>
-        </div>
         <div class="edit-left">
           <div class="edit-preview"><div class="edit-inner"><div class="placeholder">Подключите IR к входу (или через GraphDev.setIR)</div></div></div>
           <div class="geo-tools"><span class="sel-label">—</span>
@@ -659,9 +652,6 @@
       n._editWired = true;
       // скролл превью не должен зумить граф
       prev.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
-      n.el.querySelectorAll(".rail-btn").forEach(b => {
-        b.addEventListener("click", () => { if (n.geo) n.geo.setTool(b.dataset.tool); });
-      });
       n.el.querySelector(".f-zoom-in").addEventListener("click", () => zoomBy(1.25));
       n.el.querySelector(".f-zoom-out").addEventListener("click", () => zoomBy(1 / 1.25));
       n.el.querySelector(".f-frame-reset").addEventListener("click", () => {
@@ -717,11 +707,6 @@
       renderEditPreview(n);
       n.geo = GeoEdit.attach({
         previewEl: inner,
-        scrollEl: prev,
-        onToolChange: (t) => {
-          n.lastTool = t;
-          n.el.querySelectorAll(".rail-btn").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
-        },
         getIR: () => n.data.ir,
         getScale: () => {
           const irEl = inner.querySelector('[class^="ir-"]');
@@ -741,8 +726,6 @@
           renderInsp();
         },
       });
-      // инструмент переживает ре-аттач после мутаций
-      if (n.lastTool && n.lastTool !== "select") n.geo.setTool(n.lastTool);
       // после rAF fitPreview применяем свой зум и синхронизируем оверлей
       requestAnimationFrame(applyZoom);
       if (prevRefs.length) n.geo.selectMulti(prevRefs);

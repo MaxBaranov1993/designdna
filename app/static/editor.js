@@ -78,6 +78,15 @@
     border-right:1px solid #313244; border-bottom:1px solid #313244; z-index:11; }
   .fe-ruler-h canvas, .fe-ruler-v canvas { display:block; }
 
+  /* левая панель инструментов как в pen.dev */
+  .fe-rail { position:absolute; left:34px; top:50%; transform:translateY(-50%); z-index:20;
+    display:flex; flex-direction:column; gap:4px; background:#181825; border:1px solid #313244;
+    border-radius:10px; padding:6px; box-shadow:0 4px 16px rgba(0,0,0,.4); }
+  .fe-rail-btn { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center;
+    background:transparent; border:none; border-radius:8px; color:#cdd6f4; cursor:pointer; }
+  .fe-rail-btn:hover { background:#313244; }
+  .fe-rail-btn.active { background:#cba6f7; color:#1e1e2e; }
+
   /* инспектор */
   .fe-inspector { width:260px; flex:none; background:#181825; border-left:1px solid #313244;
     overflow-y:auto; padding:12px; }
@@ -120,9 +129,6 @@
     overlay.innerHTML = `
       <div class="fe-toolbar">
         <span class="fe-logo">✦ DNA Editor</span>
-        <button class="fe-tbtn active" data-tool="select" title="Выделение (V)">↖</button>
-        <button class="fe-tbtn" data-tool="hand" title="Панорама (H)">✋</button>
-        <span class="fe-sep"></span>
         <button class="fe-tbtn" data-act="zoom-out" title="Уменьшить">−</button>
         <span class="fe-zoom">100%</span>
         <button class="fe-tbtn" data-act="zoom-in" title="Увеличить">+</button>
@@ -152,12 +158,23 @@
           <div class="fe-ruler-corner"></div>
           <div class="fe-ruler-h"><canvas></canvas></div>
           <div class="fe-ruler-v"><canvas></canvas></div>
+          <div class="fe-rail">
+            <button class="fe-rail-btn active" data-tool="select" title="Выделение (V)"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M3 1l11 6.5-5 1.2L7.5 14z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></button>
+            <button class="fe-rail-btn" data-tool="rect" title="Прямоугольник (R)"><svg width="14" height="14" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
+            <button class="fe-rail-btn" data-tool="text" title="Текст (T)"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M3 3h10M8 3v10" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></button>
+            <button class="fe-rail-btn" data-tool="frame" title="Фрейм (F)"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M5 1v14M11 1v14M1 5h14M1 11h14" stroke="currentColor" stroke-width="1.2" fill="none"/></svg></button>
+            <button class="fe-rail-btn" data-tool="hand" title="Рука — панорама (H)"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2v12M2 8h12M8 2L6 4M8 2l2 2M8 14l-2-2M8 14l2-2M2 8l2-2M2 8l2 2M14 8l-2-2M14 8l-2 2" stroke="currentColor" stroke-width="1.1" fill="none"/></svg></button>
+          </div>
           <div class="fe-canvas-inner"></div>
         </div>
         <div class="fe-inspector"><div class="fe-insp-empty">Выделите элемент на канвасе или в слоях</div></div>
       </div>`;
     document.body.appendChild(overlay);
     wireToolbar();
+    overlay.querySelector(".fe-rail").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-tool]");
+      if (b) setTool(b.dataset.tool);
+    });
   }
 
   /* ---------- тулбар ---------- */
@@ -176,6 +193,8 @@
     overlay.querySelectorAll("[data-tool]").forEach(b => b.classList.toggle("active", b.dataset.tool === tool));
     const canvas = overlay.querySelector(".fe-canvas");
     canvas.style.cursor = tool === "hand" ? "grab" : "default";
+    // синхронизируем geoedit: создание rect/text/frame и hand-панорама
+    if (state.geo && state.geo.getTool() !== tool) state.geo.setTool(tool);
   }
 
   function handleAct(act) {
@@ -370,7 +389,7 @@
     // панорама
     canvas.addEventListener("pointerdown", (e) => {
       if (state.tool !== "hand" && e.button !== 1) return;
-      if (e.target.closest('[class^="ir-"]')) return;
+      if (e.target.closest('[class^="ir-"]') || e.target.closest('.fe-rail')) return;
       e.preventDefault();
       canvas.style.cursor = "grabbing";
       const sx = e.clientX, sy = e.clientY, px = state.panX, py = state.panY;
@@ -393,12 +412,23 @@
     }, { passive: false });
   }
 
+  /** Адаптер: «скролл» руки = панорама канваса (panX/panY). */
+  const panAdapter = {
+    get scrollLeft() { return state ? -state.panX : 0; },
+    set scrollLeft(v) { if (state) { state.panX = -v; applyTransform(); } },
+    get scrollTop() { return state ? -state.panY : 0; },
+    set scrollTop(v) { if (state) { state.panY = -v; applyTransform(); } },
+  };
+
   function attachGeoEdit() {
     if (state.geo) state.geo.destroy();
     const inner = overlay.querySelector(".fe-canvas-inner");
     const previewEl = inner;
     state.geo = GeoEdit.attach({
       previewEl,
+      tools: true,
+      scrollEl: panAdapter,
+      onToolChange: (t) => { if (state && state.tool !== t) setTool(t); },
       getIR: () => state.ir,
       getScale: () => {
         const irEl = inner.querySelector('[class^="ir-"]');
@@ -426,6 +456,8 @@
         updateAlignVisibility();
       },
     });
+    // инструмент переживает ре-аттач после мутаций
+    if (state.tool !== "select") state.geo.setTool(state.tool);
   }
 
   /* ---------- слои ---------- */

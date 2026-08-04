@@ -82,6 +82,42 @@ def main():
         gp2 = pg.evaluate("window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir.tree[0].children[0].frame.gap")
         check("undo откатывает gap", gp2 != 24, str(gp2))
 
+        # левая панель инструментов как в pen.dev
+        check("rail: 5 инструментов", pg.evaluate(
+            "document.querySelectorAll('.dna-editor .fe-rail [data-tool]').length === 5"))
+        pg.click('.dna-editor .fe-rail [data-tool="rect"]')
+        pg.wait_for_timeout(200)
+        check("rail: rect активен", pg.evaluate(
+            "document.querySelector('.dna-editor .fe-rail [data-tool=\"rect\"]').classList.contains('active')"))
+        sec = pg.query_selector('.fe-canvas [data-ir-sec="0"]')
+        sb = sec.bounding_box()
+        pg.mouse.move(sb["x"] + sb["width"] - 140, sb["y"] + 30)
+        pg.mouse.down()
+        pg.mouse.move(sb["x"] + sb["width"] - 50, sb["y"] + 110, steps=5)
+        pg.mouse.up()
+        pg.wait_for_timeout(400)
+        rects = pg.evaluate("(() => { const out = []; const walk = (n) => (n.children || []).forEach(c => { out.push(c); walk(c); }); (window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir.tree || []).forEach(s => walk(s)); return out.filter(c => c.type === 'rect').length; })()")
+        check("rail: rect создан на канвасе", rects == 1, str(rects))
+
+        # hand панорамирует канвас
+        tr0 = pg.evaluate("document.querySelector('.fe-canvas-inner').style.transform")
+        pg.click('.dna-editor .fe-rail [data-tool="hand"]')
+        pg.wait_for_timeout(150)
+        pg.mouse.move(sb["x"] + 200, sb["y"] + 150)
+        pg.mouse.down()
+        pg.mouse.move(sb["x"] + 240, sb["y"] + 190, steps=4)
+        pg.mouse.up()
+        pg.wait_for_timeout(200)
+        tr1 = pg.evaluate("document.querySelector('.fe-canvas-inner').style.transform")
+        check("rail: hand панорамирует", tr0 != tr1, f"{tr0} -> {tr1}")
+
+        # хоткей V возвращает select (синхрон с панелью)
+        pg.evaluate("document.activeElement && document.activeElement.blur()")
+        pg.keyboard.press("v")
+        pg.wait_for_timeout(200)
+        check("rail: хоткей V — select активен", pg.evaluate(
+            "document.querySelector('.dna-editor .fe-rail [data-tool=\"select\"]').classList.contains('active')"))
+
         pg.click('.fe-toolbar [data-act="close"]')
         pg.wait_for_timeout(300)
         check("редактор закрыт", pg.evaluate("document.querySelector('.dna-editor').style.display === 'none'"))

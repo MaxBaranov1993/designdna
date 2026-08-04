@@ -97,6 +97,7 @@
     const { previewEl, getIR, getScale, onCommit, onSelect } = opts;
     const scrollEl = opts.scrollEl || null;          // скролл-контейнер для инструмента «рука»
     const onToolChange = opts.onToolChange || null; // уведомление владельца о смене инструмента
+    const toolsEnabled = !!opts.tools;              // хоткеи V/R/T/F/H только там, где есть панель
     let _onMutated = opts.onMutated || function(){};
     function blockContentEarly() {
       const irEl = previewEl.querySelector('[class^="ir-"]');
@@ -860,58 +861,92 @@
                y: Math.round((r.top - base.top) / s - pt) };
     }
 
+    /** Конвертация родителя в free-layout: измеряем позиции всех детей ДО
+     *  перерендера, записываем их во frame и возвращаем массив измеренных
+     *  позиций (по индексу сиблинга). Общая для ensureParentFree/commitMoveFor. */
+    function makeParentFree(parent) {
+      const s = scale();
+      const cs = getComputedStyle(parent.dom);
+      const bl = parseFloat(cs.borderLeftWidth) || 0, bt = parseFloat(cs.borderTopWidth) || 0;
+      const padL = parseFloat(cs.paddingLeft) || 0, padT = parseFloat(cs.paddingTop) || 0;
+      // сначала измеряем всё разом: DOM ещё в состоянии до конвертации.
+      // Координаты — от верхнего левого угла родителя (padding box): именно так
+      // рендерер ставит absolute-детей во free-раскладке (relPos вычитает padding
+      // и дал бы смещение на величину padding)
+      const base = parent.dom.getBoundingClientRect();
+      const measured = parent.siblings.map((sib, j) => {
+        const sibEl = siblingDom(parent, j);
+        if (!sibEl) return null;
+        const r = sibEl.getBoundingClientRect();
+        return { x: Math.round((r.left - base.left) / s - bl),
+                 y: Math.round((r.top - base.top) / s - bt),
+                 h: r.height / s };
+      });
+      // дети с layout auto/free во free-родителе рендерятся как position:relative
+      // (конфликт рендерера: relative перекрывает absolute), поэтому x/y им
+      // пишем как смещение от их потоковой позиции (вертикальный стек таких же
+      // детей от верха контент-бокса); остальным — координаты от padding box
+      let flowY = padT;
+      parent.siblings.forEach((sib, j) => {
+        const m = measured[j];
+        if (!m) return;
+        // root-родитель: сиблинг — секция с ref {secIdx: j}; иначе — путь внутри секции
+        const sibRef = parent.isRoot ? { secIdx: j, path: null }
+                                     : { secIdx: parent.secIdx, path: siblingPath(parent, j) };
+        const sf = Object.assign({}, getFrame(sibRef));
+        m.inFlow = (sf.layout === "auto" || sf.layout === "free") && sf.absolute !== true;
+        if (m.inFlow) { m.fx = padL; m.fy = flowY; flowY += m.h; }
+        if (typeof sf.x !== "number") sf.x = Math.round(m.x - (m.inFlow ? m.fx : 0));
+        if (typeof sf.y !== "number") sf.y = Math.round(m.y - (m.inFlow ? m.fy : 0));
+        setFrameData(sibRef, sf);
+      });
+      // при конверсии в free рендерер меняет разметку родителя (у секций исчезают
+      // дефолтные padding) — фиксируем текущий padding, иначе позиции детей «уплывут»
+      let keepPadding = {};
+      if (!parent.node.frame || parent.node.frame.padding === undefined) {
+        const pad = [parseFloat(cs.paddingTop) || 0, parseFloat(cs.paddingRight) || 0,
+                     parseFloat(cs.paddingBottom) || 0, parseFloat(cs.paddingLeft) || 0];
+        if (pad.some(v => v > 0)) keepPadding = { padding: pad };
+      }
+      parent.node.frame = Object.assign({}, parent.node.frame, keepPadding, {
+        layout: "free",
+        // frame у родителя может отсутствовать (свежий IR от LLM) — берём измеренную высоту
+        height: (parent.node.frame && parent.node.frame.height) || Math.round(parent.dom.getBoundingClientRect().height / s),
+      });
+      return measured;
+    }
+
     function ensureParentFree(ref) {
       const parent = parentOf(ref);
-      if (!parent || !parent.dom) return;
+      if (!parent || !parent.dom || !parent.node) return;
       if (parent.node.frame && parent.node.frame.layout === "free") return;
-      const s = scale();
-      parent.siblings.forEach((sib, j) => {
-        const sibEl = siblingDom(parent, j);
-        if (!sibEl) return;
-        const pos = relPos(sibEl, parent.dom);
-        sib.frame = sib.frame || {};
-        if (typeof sib.frame.x !== "number") sib.frame.x = Math.round(pos.x);
-        if (typeof sib.frame.y !== "number") sib.frame.y = Math.round(pos.y);
-      });
-      parent.node.frame = Object.assign({}, parent.node.frame, {
-        layout: "free",
-        height: parent.node.frame.height || Math.round(parent.dom.getBoundingClientRect().height / s),
-      });
+      makeParentFree(parent);
     }
 
     function commitMoveFor(d, dx, dy) {
       const parent = parentOf(d.ref);
-      if (!parent || !parent.dom) return;
-      const curFrame = getFrame(d.ref);
+      if (!parent || !parent.dom || !parent.node) return;
       if (parent.node.frame && parent.node.frame.layout === "free") {
         // НЕ используем relPos — на элементе висит CSS transform от drag,
         // что даст двойное смещение. Берём текущее значение frame + delta.
-        const f = Object.assign({}, curFrame);
+        const f = Object.assign({}, getFrame(d.ref));
         f.x = Math.round((typeof f.x === "number" ? f.x : 0) + dx);
         f.y = Math.round((typeof f.y === "number" ? f.y : 0) + dy);
         setFrameData(d.ref, f);
-      } else {
-        // родитель не free — конвертируем всех сиблингов в free
-        const s = scale();
-        parent.siblings.forEach((sib, j) => {
-          const sibEl = siblingDom(parent, j);
-          if (!sibEl) return;
-          const sibRef = { secIdx: d.ref.secIdx, path: parent.isRoot ? null : siblingPath(parent, j) };
-          const pos = relPos(sibEl, parent.dom);
-          const sf = Object.assign({}, getFrame(sibRef));
-          if (typeof sf.x !== "number") sf.x = Math.round(pos.x);
-          if (typeof sf.y !== "number") sf.y = Math.round(pos.y);
-          setFrameData(sibRef, sf);
-        });
-        parent.node.frame = Object.assign({}, parent.node.frame, {
-          layout: "free",
-          height: parent.node.frame.height || Math.round(parent.dom.getBoundingClientRect().height / s),
-        });
-        const f = Object.assign({}, curFrame);
-        f.x = Math.round((typeof f.x === "number" ? f.x : 0) + dx);
-        f.y = Math.round((typeof f.y === "number" ? f.y : 0) + dy);
-        setFrameData(d.ref, f);
+        return;
       }
+      // родитель не free — конвертируем сиблингов в free (позиции измерены ДО перерендера)
+      const measured = makeParentFree(parent);
+      const m = measured[parent.siblings.indexOf(irNodeAt(d.ref))] || null;
+      const f = Object.assign({}, getFrame(d.ref));
+      // dragged-элементу — измеренная позиция + дельта, а не старый frame:
+      // в auto-раскладке x/y может не быть, и элемент телепортировался бы в начало координат.
+      // Для потоковых детей (см. makeParentFree) база — их потоковая позиция
+      const bx = m ? m.x - (m.inFlow ? m.fx : 0) : (typeof f.x === "number" ? f.x : 0);
+      const by = m ? m.y - (m.inFlow ? m.fy : 0) : (typeof f.y === "number" ? f.y : 0);
+      f.x = Math.round(bx + dx);
+      f.y = Math.round(by + dy);
+      setFrameData(d.ref, f);
     }
 
     function commitMoveAll(dx, dy) {
@@ -1303,10 +1338,12 @@
       const ae = document.activeElement;
       if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return;
 
-      // хоткеи инструментов как в pen.dev: V/R/T/F/H
-      const toolKeys = { v: "select", r: "rect", t: "text", f: "frame", h: "hand" };
-      const tk = toolKeys[e.key.toLowerCase()];
-      if (tk && !e.ctrlKey && !e.metaKey && !e.altKey) { setTool(tk); return; }
+      // хоткеи инструментов как в pen.dev: V/R/T/F/H (только если владелец включил панель)
+      if (toolsEnabled) {
+        const toolKeys = { v: "select", r: "rect", t: "text", f: "frame", h: "hand" };
+        const tk = toolKeys[e.key.toLowerCase()];
+        if (tk && !e.ctrlKey && !e.metaKey && !e.altKey) { setTool(tk); return; }
+      }
 
       // Esc: выйти из контейнера или снять выделение
       if (e.key === "Escape") {
