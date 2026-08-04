@@ -122,10 +122,21 @@
     let create = null;
     let destroyed = false;
     let rafId = null;
+    let boxSyncRaf = null;
     let pendingPointer = null;
     let containerCtx = null;  // ref контейнера, в который вошли (dbl-click enter)
 
     function scale() { const s = getScale(); return s > 0 ? s : 1; }
+
+    /** Перерисовка рамок через кадр: владелец (Edit-нода) применяет зум через rAF
+     *  уже после ре-рендера — без этого рамки встали бы по до-зумовой геометрии. */
+    function scheduleBoxSync() {
+      if (boxSyncRaf || destroyed) return;
+      boxSyncRaf = requestAnimationFrame(() => {
+        boxSyncRaf = null;
+        if (!destroyed && selections.length) renderSelectionBoxes();
+      });
+    }
 
     /* --- адресация: IR-узел <-> DOM --- */
 
@@ -617,6 +628,7 @@
       if (!node) return clear();
       selections = [{ ref, label: labelOf(ref), node }];
       renderSelectionBoxes();
+      scheduleBoxSync();
       hideHover();
       if (onSelect) onSelect(selections);
     }
@@ -633,6 +645,7 @@
         selections.push({ ref, label: labelOf(ref), node });
       });
       renderSelectionBoxes();
+      scheduleBoxSync();
       hideHover();
       if (onSelect) onSelect(selections);
     }
@@ -647,6 +660,7 @@
         if (node) selections.push({ ref, label: labelOf(ref), node });
       }
       renderSelectionBoxes();
+      scheduleBoxSync();
       hideHover();
       if (onSelect) onSelect(selections);
     }
@@ -1378,50 +1392,69 @@
         return;
       }
 
-      // Delete / Backspace: удалить выделенные элементы
+      // Delete / Backspace: удалить выделенные элементы (любую вложенность) и секции
       if ((e.key === "Delete" || e.key === "Backspace") && selections.length) {
         e.preventDefault();
+        e.stopPropagation(); // не дать графу удалить саму ноду-редактор
         onCommit();
-        const ir = getIR();
-        // удаляем в обратном порядке чтобы индексы не съехали
-        const toDelete = selections
-          .filter(s => s.ref.secIdx != null && s.ref.path && s.ref.path.startsWith("children."))
-          .sort((a, b) => {
-            const ai = parseInt(a.ref.path.split(".")[1]);
-            const bi = parseInt(b.ref.path.split(".")[1]);
-            return bi - ai;
-          });
-        toDelete.forEach(sel => {
-          const sec = ir.tree[sel.ref.secIdx];
-          if (!sec || !sec.children) return;
-          const idx = parseInt(sel.ref.path.split(".")[1]);
-          if (idx >= 0 && idx < sec.children.length) {
-            sec.children.splice(idx, 1);
-          }
+        const targets = [];
+        selections.forEach(sel => {
+          if (sel.ref.secIdx == null) return;
+          // props.* не удаляем — только children и секции (path === null)
+          if (sel.ref.path != null && !sel.ref.path.startsWith("children.")) return;
+          const parent = parentOf(sel.ref);
+          if (!parent) return;
+          // parentOf даёт сам массив сиблингов: для секции это ir.tree,
+          // для children.a.children.b — children узла по пути родителя
+          const idx = sel.ref.path == null ? sel.ref.secIdx
+                                           : parseInt(sel.ref.path.split(".").pop());
+          if (!Number.isInteger(idx) || idx < 0 || idx >= parent.siblings.length) return;
+          targets.push({ arr: parent.siblings, idx });
         });
+        // в пределах одного массива удаляем с хвоста, чтобы индексы не съехали
+        targets.sort((a, b) => (a.arr === b.arr ? b.idx - a.idx : 0));
+        targets.forEach(t => t.arr.splice(t.idx, 1));
         clear();
         onMutated();
         return;
       }
 
-      // Cmd/Ctrl+D: duplicate
+      // Cmd/Ctrl+D: дублировать рядом с оригиналом (любая вложенность и секции)
       if ((e.key === "d" || e.key === "D") && (e.ctrlKey || e.metaKey) && selections.length) {
         e.preventDefault();
+        e.stopPropagation(); // событие потреблено здесь
         onCommit();
-        const ir = getIR();
-        const newRefs = [];
+        const targets = [];
         selections.forEach(sel => {
-          if (sel.ref.secIdx == null || !sel.ref.path) return;
-          const sec = ir.tree[sel.ref.secIdx];
-          if (!sec) return;
-          const node = getByPath(sec, sel.ref.path);
+          if (sel.ref.secIdx == null) return;
+          if (sel.ref.path != null && !sel.ref.path.startsWith("children.")) return;
+          const parent = parentOf(sel.ref);
+          if (!parent) return;
+          const idx = sel.ref.path == null ? sel.ref.secIdx
+                                           : parseInt(sel.ref.path.split(".").pop());
+          if (!Number.isInteger(idx) || idx < 0 || idx >= parent.siblings.length) return;
+          targets.push({ ref: sel.ref, arr: parent.siblings, idx });
+        });
+        // в пределах одного массива идём от головы: каждая вставка сдвигает
+        // индексы следующих элементов этого массива на 1
+        targets.sort((a, b) => (a.arr === b.arr ? a.idx - b.idx : 0));
+        const shifts = new Map();
+        const newRefs = [];
+        targets.forEach(t => {
+          const at = t.idx + (shifts.get(t.arr) || 0);
+          const node = t.arr[at];
           if (!node) return;
           const dup = JSON.parse(JSON.stringify(node));
           // сдвиг на 10px
           if (dup.frame) { dup.frame.x = (dup.frame.x || 0) + 10; dup.frame.y = (dup.frame.y || 0) + 10; }
-          if (sel.ref.path.startsWith("children.") && sec.children) {
-            sec.children.push(dup);
-            newRefs.push({ secIdx: sel.ref.secIdx, path: `children.${sec.children.length - 1}` });
+          t.arr.splice(at + 1, 0, dup);
+          shifts.set(t.arr, (shifts.get(t.arr) || 0) + 1);
+          if (t.ref.path == null) {
+            newRefs.push({ secIdx: at + 1, path: null });
+          } else {
+            const segs = t.ref.path.split(".");
+            segs[segs.length - 1] = String(at + 1);
+            newRefs.push({ secIdx: t.ref.secIdx, path: segs.join(".") });
           }
         });
         if (newRefs.length) selectMulti(newRefs);
@@ -1525,7 +1558,9 @@
     overlay().addEventListener("pointermove", onHover);
     overlay().addEventListener("pointerleave", hideHover);
     overlay().addEventListener("dblclick", onDblClick);
-    document.addEventListener("keydown", onKeydown);
+    // capture-фаза: граф (nodes.js) тоже слушает Delete на document и удаляет
+    // ноду — перехватываем клавиши раньше него
+    document.addEventListener("keydown", onKeydown, true);
     window.addEventListener("resize", onResizeWin);
 
     function destroy() {
@@ -1537,7 +1572,7 @@
       ov.removeEventListener("pointermove", onHover);
       ov.removeEventListener("pointerleave", hideHover);
       ov.removeEventListener("dblclick", onDblClick);
-      document.removeEventListener("keydown", onKeydown);
+      document.removeEventListener("keydown", onKeydown, true);
       window.removeEventListener("resize", onResizeWin);
       // разблокируем контент
       const irEl = previewEl.querySelector('[class^="ir-"]');

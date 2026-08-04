@@ -86,25 +86,25 @@
 | Line height | — | ❌ |
 | Letter spacing | — | ❌ |
 | Text align | element.align | ✅ |
-| Smart guides | — | ❌ P0 |
-| Distance labels | — | ❌ P0 |
+| Smart guides | geoedit.js computeGuides/renderGuides | ✅ |
+| Distance labels | geoedit.js | ✅ |
 | Selection overlay | geoedit.js | ✅ |
 | Resize handles | geoedit.js (8 handles) | ✅ |
-| Rotation handle | — | ❌ |
+| Rotation handle | — | ❌ (rotation — через инспектор) |
 | Layers panel | editor.js layers | ✅ |
-| Inspector | editor.js inspector | ✅ |
-| Nudge (arrows) | — | ❌ P0 |
-| Deep select (Cmd+click) | — | ❌ P0 |
-| Enter container (dbl-click) | — | ❌ P0 |
+| Inspector | editor.js inspector + inspector.js (pen.dev-панель) | ✅ |
+| Nudge (arrows) | geoedit.js (1px, Shift+10px) | ✅ |
+| Deep select (Cmd+click) | geoedit.js hitTest(deep) | ✅ (только сквозь секции, не сквозь вложенные card) |
+| Enter container (dbl-click) | geoedit.js containerCtx, Esc — выход | ✅ |
 
 ---
 
 ## Часть 3: Что уже есть
 
-### geoedit.js (~870→1020 строк)
+### geoedit.js (~1520 строк; актуально на 2026-08-04)
 1. ✅ Click select / Shift+click toggle
-2. ✅ Marquee selection
-3. ✅ Drag move с snap 8px
+2. ✅ Marquee selection (только секции и children глубины 1)
+3. ✅ Drag move с snap 8px; единая makeParentFree (измерение до конвертации, padding-box, keepPadding)
 4. ✅ 8 resize handles
 5. ✅ Live preview при drag/resize
 6. ✅ Selection boxes + chips (type · W×H)
@@ -114,14 +114,18 @@
 10. ✅ setFrame / resetFrame
 11. ✅ Inline text edit (dblclick)
 12. ✅ Геометрический hit-testing (tldraw-модель)
+13. ✅ Smart guides + distance labels
+14. ✅ Keyboard nudging (1px / Shift+10px), Delete/Backspace, Ctrl+D
+15. ✅ Deep select (Ctrl+click), enter/exit container (dblclick/Esc)
+16. ✅ Инструменты select/rect/text/frame/hand — подключаются владельцем через opts.tools (сейчас — только в editor.js)
 
-### editor.js (~760 строк)
+### editor.js (~680 строк)
 1. ✅ Полноэкранный режим
 2. ✅ Layers panel
-3. ✅ Inspector (X/Y/W/H + токены)
-4. ✅ Undo/redo (command pattern)
-5. ✅ Toolbar
-6. ✅ Zoom controls
+3. ✅ Inspector (X/Y/W/H + токены), общий inspector.js
+4. ✅ Undo (50 шагов, снапшоты; redo нет)
+5. ✅ Рейл инструментов как в pen.dev (V/R/T/F/H)
+6. ✅ Zoom controls + линейки
 
 ### IR Schema
 - 19 типов секций
@@ -133,13 +137,20 @@
 
 ## Часть 4: Приоритизированный план
 
-### P0 — «фигмовское ощущение» (1.5 недели)
-- [ ] Smart guides: красные линии alignment при drag
-- [ ] Distance labels: зелёные метки расстояния до соседей
+> Обновлено 2026-08-04 по факту кода. Спринт 1 (оркестрация AGENTS.md): drag-триада ✅, Delete/Ctrl+D вложенных — в работе, undo в ноде Edit — следующая.
+
+### P0 — «фигмовское ощущение» (остаток)
+- [x] Smart guides: красные линии alignment при drag
+- [x] Distance labels: зелёные метки расстояния до соседей
 - [ ] Equal spacing: фиолетовые метки равных gap
-- [ ] Keyboard nudging: Arrow = 1px, Shift+Arrow = 10px
-- [ ] Deep select: Cmd/Ctrl+click пропускает контейнер
-- [ ] Enter container: dbl-click входит в группу, Esc выходит
+- [x] Keyboard nudging: Arrow = 1px, Shift+Arrow = 10px
+- [x] Deep select: Cmd/Ctrl+click пропускает контейнер
+- [x] Enter container: dbl-click входит в группу, Esc выходит
+- [ ] Undo в ноде Edit (история есть в editor.js, в ноду не подключена)
+- [ ] Esc-конфликт: editor.js закрывает редактор по Esc, перехватывая выход из контейнера geoedit
+- [ ] Snap-порог в экранных px (сейчас в canvas-координатах — на мелком зуме snap фактически отключён)
+- [ ] Marquee для вложенных и props-элементов
+- [ ] renderer.js: конфликт position absolute/relative для layout:auto/free во free-родителе; потеря дефолтных padding секции при появлении frame (в geoedit обойдено, чинить источник)
 
 ### P1 — продуктивность (2 недели)
 - [ ] Lock/Hide в layers panel
