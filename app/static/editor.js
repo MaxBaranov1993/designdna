@@ -430,6 +430,7 @@
     state.geo = GeoEdit.attach({
       previewEl,
       tools: true,
+      escapeViaHandle: true, // Esc обрабатываем сами через geo.consumeEscape()
       scrollEl: panAdapter,
       onToolChange: (t) => { if (state && state.tool !== t) setTool(t); },
       getIR: () => state.ir,
@@ -674,7 +675,12 @@
     if (e.key === "v" || e.key === "V" || e.key === "м" || e.key === "М") setTool("select");
     if (e.key === "h" || e.key === "H" || e.key === "р" || e.key === "Р") setTool("hand");
     if ((e.key === "z" || e.key === "Z" || e.key === "я" || e.key === "Я") && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undo(); }
-    if (e.key === "Escape") close();
+    // Esc: сначала отдаём GeoEdit (выход из контейнера / снятие выделения);
+    // закрываем редактор, только если geoedit событие не поглотил
+    if (e.key === "Escape") {
+      if (state.geo && state.geo.consumeEscape()) return;
+      close();
+    }
   });
 
   /* ---------- утилиты ---------- */

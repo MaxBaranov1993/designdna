@@ -98,6 +98,9 @@
     const scrollEl = opts.scrollEl || null;          // скролл-контейнер для инструмента «рука»
     const onToolChange = opts.onToolChange || null; // уведомление владельца о смене инструмента
     const toolsEnabled = !!opts.tools;              // хоткеи V/R/T/F/H только там, где есть панель
+    // если владелец сам опрашивает consumeEscape() с handle (DNA-редактор),
+    // собственный document-обработчик Esc не срабатывает — порядок не должен быть контрактом
+    const escapeViaHandle = !!opts.escapeViaHandle;
     let _onMutated = opts.onMutated || function(){};
     function blockContentEarly() {
       const irEl = previewEl.querySelector('[class^="ir-"]');
@@ -343,11 +346,14 @@
 
     /* --- smart guides + distance labels --- */
 
-    const SNAP_THRESHOLD = 4; // px в canvas-координатах
+    const SNAP_THRESHOLD = 4; // px в экранных координатах
 
     /** Вычисляет alignment guides для перемещаемого элемента.
      *  Возвращает { guides: [{axis:'h'|'v', pos:number}], snaps: {dx,dy}, distances: [{...}] } */
     function computeGuides(movingRef, movingRect) {
+      // порог в canvas-координатах: 4 экранных px при любом зуме
+      // (при зуме 0.15 прежние 4 canvas-px превращались в 0.6 экранных — snap не работал)
+      const snapThr = SNAP_THRESHOLD / scale();
       const targets = collectHitTargets().filter(t => refKey(t.ref) !== refKey(movingRef));
       const guides = [];
       const distances = [];
@@ -376,7 +382,7 @@
         for (const mx of mEdgesX) {
           for (const tx of tEdgesX) {
             const diff = tx - mx;
-            if (Math.abs(diff) < SNAP_THRESHOLD && Math.abs(diff) < Math.abs(bestDx)) {
+            if (Math.abs(diff) < snapThr && Math.abs(diff) < Math.abs(bestDx)) {
               bestDx = diff;
               snapDx = diff;
               guides.push({ axis: "v", pos: tx });
@@ -388,7 +394,7 @@
         for (const my of mEdgesY) {
           for (const ty of tEdgesY) {
             const diff = ty - my;
-            if (Math.abs(diff) < SNAP_THRESHOLD && Math.abs(diff) < Math.abs(bestDy)) {
+            if (Math.abs(diff) < snapThr && Math.abs(diff) < Math.abs(bestDy)) {
               bestDy = diff;
               snapDy = diff;
               guides.push({ axis: "h", pos: ty });
@@ -1085,6 +1091,12 @@
         drag.moved = true;
         if (drag.type === "move") {
           drag.els = selections.filter(s => s.ref.secIdx != null).map(s => ({ ref: s.ref, el: domAt(s.ref) })).filter(d => d.el);
+          // canvas-позиция элемента ДО drag (без transform) в системе координат
+          // collectHitTargets; boxRect в Edit-ноде даёт экранные px и смешал бы единицы
+          if (drag.els.length === 1) {
+            const t = collectHitTargets().find(tt => refKey(tt.ref) === refKey(drag.els[0].ref));
+            if (t) drag.originRect = { x: t.x, y: t.y, w: t.w, h: t.h };
+          }
         }
       }
       const s = scale();
@@ -1094,9 +1106,16 @@
         // smart guides: вычислить alignment и snap
         if (drag.els.length === 1) {
           const d0 = drag.els[0];
-          const elRect = boxRect(d0.el); // canvas-координаты
-          // исходная позиция без drag + текущее смещение
-          const guidesData = computeGuides(d0.ref, { x: elRect.left + tx, y: elRect.top + ty, w: elRect.width, h: elRect.height });
+          // исходная позиция без drag + текущее смещение (canvas-координаты)
+          let moving;
+          if (drag.originRect) {
+            const o = drag.originRect;
+            moving = { x: o.x + tx, y: o.y + ty, w: o.w, h: o.h };
+          } else {
+            const r = boxRect(d0.el);
+            moving = { x: r.left + tx, y: r.top + ty, w: r.width, h: r.height };
+          }
+          const guidesData = computeGuides(d0.ref, moving);
           tx += guidesData.snaps.dx;
           ty += guidesData.snaps.dy;
           renderGuides(guidesData);
@@ -1348,6 +1367,19 @@
 
     /* --- клавиатура: nudge, escape, delete --- */
 
+    /** Esc: выйти из контейнера или снять выделение.
+     *  Возвращает true, если geoedit поглотил событие (есть что сбрасывать). */
+    function consumeEscape() {
+      if (containerCtx) {
+        containerCtx = null;
+        clear();
+        renderContainerBadge();
+        return true;
+      }
+      if (selections.length) { clear(); return true; }
+      return false;
+    }
+
     function onKeydown(e) {
       const ae = document.activeElement;
       if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return;
@@ -1359,15 +1391,11 @@
         if (tk && !e.ctrlKey && !e.metaKey && !e.altKey) { setTool(tk); return; }
       }
 
-      // Esc: выйти из контейнера или снять выделение
+      // Esc: выйти из контейнера или снять выделение.
+      // При escapeViaHandle владелец сам явно зовёт consumeEscape() (editor.js)
       if (e.key === "Escape") {
-        if (containerCtx) {
-          containerCtx = null;
-          clear();
-          renderContainerBadge();
-          return;
-        }
-        if (selections.length) { clear(); return; }
+        if (!escapeViaHandle) consumeEscape();
+        return;
       }
 
       // Arrow keys: nudge выделенных элементов
@@ -1585,6 +1613,7 @@
       select,
       selectMulti,
       clear,
+      consumeEscape,
       setFrame,
       setFrameProps,
       frameOf,
