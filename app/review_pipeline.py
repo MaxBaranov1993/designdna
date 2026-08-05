@@ -41,16 +41,20 @@ PROMPT = (
 
 
 def parse_items(raw: str) -> list:
-    """Устойчивый разбор: целый массив → первый валидный [..] → пообъектно."""
+    """Устойчивый разбор: целый JSON → raw_decode от первой '[' (баланс скобок
+    учитывает парсер, а не regex) → пообъектно как последний шанс."""
     try:
         items = json.loads(raw)
         return items if isinstance(items, list) else [items]
     except Exception:
         pass
-    m = re.search(r"\[[\s\S]*\]", raw)
-    if m:
+    start = raw.find("[")
+    if start >= 0:
+        dec = json.JSONDecoder()
         try:
-            return json.loads(m.group(0))
+            items, _ = dec.raw_decode(raw, start)
+            if isinstance(items, list):
+                return items
         except Exception:
             pass
     items = []
@@ -68,12 +72,23 @@ def main() -> int:
     flags = [a for a in sys.argv[1:] if a.startswith("--")]
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     rng = args[0] if args else "737478f..HEAD"
+    if not re.fullmatch(r"[\w.~/^-]+(\.\.[\w.~/^-]+)?", rng):
+        print("некорректный git-range:", rng)
+        return 2
     reviewers = REVIEWERS_OR if "--allow-openrouter" in flags else REVIEWERS
     diff = subprocess.run(
         ["git", "-C", str(ROOT), "diff", rng, "--", "app/"],
         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
     if len(diff) > 60000:
-        diff = diff[:60000] + "\n…[diff обрезан]"
+        # режем по границе файла, чтобы не рвать ханки; указываем, что пропало
+        cut = diff.rfind("\ndiff --git", 0, 60000)
+        omitted = []
+        if cut > 0:
+            omitted = sorted(set(re.findall(r"^diff --git a/(\S+)", diff[cut + 1:], re.M)))
+            diff = diff[:cut + 1]
+        else:
+            diff = diff[:60000]
+        diff += "\n…[diff обрезан по границе файла; пропущены: " + ", ".join(omitted) + "]"
     print(f"diff {rng}: {len(diff)} символов")
 
     report = {"range": rng, "reviewers": {}}
@@ -102,7 +117,6 @@ def main() -> int:
             print(f"[{name}] ОШИБКА: {e}")
             report["reviewers"][name] = [{"file": "-", "severity": "critical",
                                           "issue": f"review failed: {e}", "fix": "-"}]
-    os.environ.pop("OPENROUTER_MODELS_JUDGE", None)
 
     out = ROOT / "results" / "review_sprint4.json"
     out.parent.mkdir(exist_ok=True)

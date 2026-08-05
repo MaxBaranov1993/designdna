@@ -24,8 +24,11 @@ def _conn() -> sqlite3.Connection:
         " kind TEXT, key TEXT, payload TEXT, created_at TEXT, hits INTEGER DEFAULT 0,"
         " PRIMARY KEY (kind, key))")
     cols = [r[1] for r in con.execute("PRAGMA table_info(llm_cache)")]
-    if "hits" not in cols:  # миграция старых баз
-        con.execute("ALTER TABLE llm_cache ADD COLUMN hits INTEGER DEFAULT 0")
+    if "hits" not in cols:  # миграция старых баз; не должна ронять горячий путь
+        try:
+            con.execute("ALTER TABLE llm_cache ADD COLUMN hits INTEGER DEFAULT 0")
+        except sqlite3.Error:
+            pass
     return con
 
 
@@ -43,8 +46,11 @@ def get(kind: str, key: str) -> dict | None:
             row = con.execute(
                 "SELECT payload FROM llm_cache WHERE kind=? AND key=?", (kind, key)).fetchone()
             if row:
-                con.execute("UPDATE llm_cache SET hits = hits + 1 WHERE kind=? AND key=?",
-                            (kind, key))
+                try:
+                    con.execute("UPDATE llm_cache SET hits = hits + 1 WHERE kind=? AND key=?",
+                                (kind, key))
+                except sqlite3.Error:
+                    pass  # счётчик — метрика; отдача кэша важнее
     return json.loads(row[0]) if row else None
 
 

@@ -1357,7 +1357,7 @@
       if (ref.secIdx == null) return;
       const parent = parentOf(ref);
       if (!parent) return;
-      const idx = ref.path == null ? ref.secIdx : parseInt(ref.path.split(".").pop());
+      const idx = ref.path == null ? ref.secIdx : parseInt(ref.path.split(".").pop(), 10);
       const to = idx + dir;
       if (!Number.isInteger(idx) || to < 0 || to >= parent.siblings.length) return;
       onCommit();
@@ -1374,18 +1374,29 @@
     function bringForward() { zOrder(1); }
     function sendBackward() { zOrder(-1); }
 
-    /** Reorder: переставить ref на newIndex среди сиблингов (drag&drop в layers). */
+    /** Reorder: переставить ref на newIndex среди сиблингов (drag&drop в layers).
+     *  Конвенция: перетаскиваемый занимает слот цели (цель сдвигается к источнику). */
     function moveSibling(ref, newIndex) {
       if (ref.secIdx == null) return;
       const parent = parentOf(ref);
       if (!parent) return;
-      const idx = ref.path == null ? ref.secIdx : parseInt(ref.path.split(".").pop());
+      const idx = ref.path == null ? ref.secIdx : parseInt(ref.path.split(".").pop(), 10);
       if (!Number.isInteger(idx) || newIndex < 0 || newIndex >= parent.siblings.length
           || idx === newIndex) return;
       onCommit();
       const [node] = parent.siblings.splice(idx, 1);
       parent.siblings.splice(newIndex, 0, node);
+      // выделение следует за перемещённым элементом (финальный индекс = newIndex)
+      const wasSel = selections.some(s => refKey(s.ref) === refKey(ref));
+      const at = newIndex;
       onMutated();
+      if (wasSel) {
+        select(ref.path == null
+          ? { secIdx: at, path: null }
+          : Object.assign({}, ref, {
+              path: ref.path.split(".").slice(0, -1).concat(String(at)).join("."),
+            }));
+      }
     }
 
     /** Group: выделенные сиблинги одного родителя → card-контейнер (free) с их
@@ -1398,37 +1409,48 @@
       const secIdx = refs[0].secIdx;
       if (!refs.every(r => r.secIdx === secIdx && parentPathOf(r) === parentPathOf(refs[0]))) return;
       const parent = parentOf(refs[0]);
-      if (!parent) return;
-      // границы группы в canvas-координатах
-      const targets = collectHitTargets();
-      const rects = refs.map(r => targets.find(t => refKey(t.ref) === refKey(r))).filter(Boolean);
-      if (rects.length !== refs.length) return;
-      const gx = Math.min(...rects.map(r => r.x)), gy = Math.min(...rects.map(r => r.y));
-      const gw = Math.max(...rects.map(r => r.x + r.w)) - gx;
-      const gh = Math.max(...rects.map(r => r.y + r.h)) - gy;
+      if (!parent || !parent.dom) return;
+      // локальные координаты от padding-box родителя — меряем из DOM, как makeParentFree
+      const s = scale();
+      const cs = getComputedStyle(parent.dom);
+      const bl = parseFloat(cs.borderLeftWidth) || 0, bt = parseFloat(cs.borderTopWidth) || 0;
+      const base = parent.dom.getBoundingClientRect();
+      const idxs = refs.map(r => parseInt(r.path.split(".").pop(), 10))
+        .filter(Number.isInteger).sort((a, b) => a - b);
+      if (idxs.length !== refs.length) return;
+      const meas = [];
+      for (const i of idxs) {
+        const el = siblingDom(parent, i);
+        if (!el) return; // stale DOM — прерываемся до onCommit
+        const r = el.getBoundingClientRect();
+        meas.push({ x: (r.left - base.left) / s - bl, y: (r.top - base.top) / s - bt,
+                    w: r.width / s, h: r.height / s });
+      }
+      const gx = Math.min(...meas.map(m => m.x)), gy = Math.min(...meas.map(m => m.y));
+      const gw = Math.max(...meas.map(m => m.x + m.w)) - gx;
+      const gh = Math.max(...meas.map(m => m.y + m.h)) - gy;
       onCommit();
-      const idxs = refs.map(r => parseInt(r.path.split(".").pop()))
-        .sort((a, b) => a - b);
       const taken = idxs.map(i => parent.siblings[i]);
       const group = {
         type: "card",
-        frame: Object.assign({ layout: "free", x: Math.round(gx), y: Math.round(gy),
-                               width: Math.round(gw), height: Math.round(gh) }),
-        children: taken.map(n => {
+        frame: { layout: "free", x: Math.round(gx), y: Math.round(gy),
+                 width: Math.round(gw), height: Math.round(gh) },
+        children: taken.map((n, k) => {
           const c = JSON.parse(JSON.stringify(n));
-          if (c.frame && (typeof c.frame.x === "number" || typeof c.frame.y === "number")) {
-            c.frame = Object.assign({}, c.frame, {
-              x: Math.round((c.frame.x || 0) - gx), y: Math.round((c.frame.y || 0) - gy),
-            });
-          }
+          c.frame = Object.assign({}, c.frame, {
+            x: Math.round(meas[k].x - gx), y: Math.round(meas[k].y - gy),
+          });
+          // fill/hug в free-группе теряют смысл — фиксируем измеренные размеры
+          if (c.frame.width === "fill" || c.frame.width === "hug") c.frame.width = Math.round(meas[k].w);
+          if (c.frame.height === "fill" || c.frame.height === "hug") c.frame.height = Math.round(meas[k].h);
           return c;
         }),
       };
       // вынимаем с хвоста, вставляем группу на место первого
       for (let k = idxs.length - 1; k >= 0; k--) parent.siblings.splice(idxs[k], 1);
       parent.siblings.splice(idxs[0], 0, group);
-      select({ secIdx, path: parentPathOf(refs[0])
-        ? parentPathOf(refs[0]) + ".children." + idxs[0] : "children." + idxs[0] });
+      select({ secIdx, path: (parentPathOf(refs[0])
+        ? parentPathOf(refs[0]) + ".children." : "children.") + idxs[0] });
       onMutated();
     }
 
@@ -1437,10 +1459,13 @@
       const ref = selections[0].ref;
       if (ref.secIdx == null || ref.path == null) return;
       const node = irNodeAt(ref);
-      if (!node || !node.children || !node.children.length) return;
+      // разгруппировываем только free-контейнеры (то, что groupSelection создаёт)
+      if (!node || !node.children || !node.children.length
+          || !node.frame || node.frame.layout !== "free") return;
       const parent = parentOf(ref);
       if (!parent) return;
-      const idx = parseInt(ref.path.split(".").pop());
+      const idx = parseInt(ref.path.split(".").pop(), 10);
+      if (!Number.isInteger(idx)) return;
       onCommit();
       const gx = (node.frame && node.frame.x) || 0, gy = (node.frame && node.frame.y) || 0;
       const parentFree = !!(parent.node.frame && parent.node.frame.layout === "free");
@@ -1456,7 +1481,12 @@
         return k;
       });
       parent.siblings.splice(idx, 1, ...kids);
-      clear();
+      // выделение переходит на раскрытых детей
+      const base = ref.path.split(".").slice(0, -1);
+      selectMulti(kids.map((_, k) => ({
+        secIdx: ref.secIdx,
+        path: (base.length ? base.join(".") + ".children." : "children.") + (idx + k),
+      })));
       onMutated();
     }
 

@@ -602,6 +602,10 @@
         state.dragLayerKey = key;
         e.dataTransfer.effectAllowed = "move";
       });
+      div.addEventListener("dragend", () => {
+        state.dragLayerKey = null;
+        div.classList.remove("drop-target");
+      });
       div.addEventListener("dragover", (e) => { e.preventDefault(); div.classList.add("drop-target"); });
       div.addEventListener("dragleave", () => div.classList.remove("drop-target"));
       div.addEventListener("drop", (e) => {

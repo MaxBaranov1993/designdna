@@ -212,6 +212,8 @@ def chat(provider: str, messages: list, temperature: float, timeout: int | None 
          role: str = "mechanics", model: str | None = None) -> str:
     """role — ключ ROUTING для OpenRouter: mechanics (черновики) / taste («вкус»).
     model — явный slug модели (поверх cfg/ROUTING), для пайплайнов разработки."""
+    if model is not None and not re.fullmatch(r"[A-Za-z0-9._/-]+", model):
+        raise ValueError(f"недопустимый model slug: {model!r}")
     cfg = PROVIDERS[provider]
     key = get_key(cfg)
     t = timeout or TIMEOUT
