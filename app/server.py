@@ -20,10 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "spike"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import run_test as llm  # spike/run_test.py: chat, chat_vision, build_system_prompt, extract_json
+import llm_client as llm  # chat, chat_vision, build_system_prompt, extract_json
 from colorutils import mix_hex_colors
 from scraper import prepare_image_b64, analyze_url, extract_structure, parse_design_tokens
 from reproduce import run_pipeline as reproduce_pipeline
