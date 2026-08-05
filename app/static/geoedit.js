@@ -1154,8 +1154,9 @@
         select(ref);
       }
 
-      // 5) Готовим drag (move)
-      drag = { startX: e.clientX, startY: e.clientY, moved: false, type: "move", els: [] };
+      // 5) Готовим drag (move); Alt+drag на drop создаст копию (как в Figma)
+      drag = { startX: e.clientX, startY: e.clientY, moved: false, type: "move", els: [],
+               altKey: e.altKey };
       // pointer capture для непрерывности drag
       overlay().setPointerCapture(e.pointerId);
       overlay().addEventListener("pointermove", onDragMove);
@@ -1206,6 +1207,13 @@
       if (drag.type === "move") {
         let tx = dx / s, ty = dy / s;
 
+        // Shift — движение только по доминантной оси (как в Figma)
+        let constrain = null;
+        if (e.shiftKey) {
+          constrain = Math.abs(dx) >= Math.abs(dy) ? "y" : "x";
+          if (constrain === "y") ty = 0; else tx = 0;
+        }
+
         // smart guides: вычислить alignment и snap
         if (drag.els.length === 1) {
           const d0 = drag.els[0];
@@ -1221,6 +1229,8 @@
           const guidesData = computeGuides(d0.ref, moving);
           tx += guidesData.snaps.dx;
           ty += guidesData.snaps.dy;
+          // snap не должен возрождать заблокированную Shift-ом ось
+          if (constrain === "y") ty = 0; else if (constrain === "x") tx = 0;
           renderGuides(guidesData);
         } else {
           clearGuides();
@@ -1246,15 +1256,73 @@
       pendingPointer = null;
       if (!d) return;
       const s = scale();
-      const dx = (e.clientX - d.startX) / s, dy = (e.clientY - d.startY) / s;
+      let dx = (e.clientX - d.startX) / s, dy = (e.clientY - d.startY) / s;
+      // Shift-constrain применяется и к коммиту, не только к визуальному transform
+      if (e.shiftKey && d.type === "move") {
+        if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0;
+      }
       if (!d.moved) { clearGuides(); return; }
       // очищаем CSS transform ДО commit чтобы relPos не включал drag offset
       if (d.type === "move") {
         d.els && d.els.forEach(de => { if (de.el) de.el.style.transform = ""; });
         clearGuides();
-        commitMoveAll(dx, dy);
+        if (d.altKey) commitDuplicateMove(dx, dy);
+        else commitMoveAll(dx, dy);
       }
       else { d.el.style.transform = ""; commitResize(d); }
+    }
+
+    /** Копии выделенных children/секций вставляются рядом с оригиналами.
+     *  НЕ зовёт onCommit/onMutated — владелец решает сам. Возвращает ref'ы копий. */
+    function duplicateSelections() {
+      const targets = [];
+      selections.forEach(sel => {
+        if (sel.ref.secIdx == null) return;
+        if (sel.ref.path != null && !sel.ref.path.startsWith("children.")) return;
+        const parent = parentOf(sel.ref);
+        if (!parent) return;
+        const idx = sel.ref.path == null ? sel.ref.secIdx
+                                         : parseInt(sel.ref.path.split(".").pop());
+        if (!Number.isInteger(idx) || idx < 0 || idx >= parent.siblings.length) return;
+        targets.push({ ref: sel.ref, arr: parent.siblings, idx });
+      });
+      // в пределах одного массива идём от головы: каждая вставка сдвигает индексы
+      targets.sort((a, b) => (a.arr === b.arr ? a.idx - b.idx : 0));
+      const shifts = new Map();
+      const newRefs = [];
+      targets.forEach(t => {
+        const at = t.idx + (shifts.get(t.arr) || 0);
+        const node = t.arr[at];
+        if (!node) return;
+        t.arr.splice(at + 1, 0, JSON.parse(JSON.stringify(node)));
+        shifts.set(t.arr, (shifts.get(t.arr) || 0) + 1);
+        if (t.ref.path == null) newRefs.push({ secIdx: at + 1, path: null });
+        else {
+          const segs = t.ref.path.split(".");
+          segs[segs.length - 1] = String(at + 1);
+          newRefs.push({ secIdx: t.ref.secIdx, path: segs.join(".") });
+        }
+      });
+      return newRefs;
+    }
+
+    /** Alt+drag: оригиналы остаются, копии уходят на дельту (один undo-шаг).
+     *  В auto-родителе копия без x/y встаёт в поток — как в Figma auto-layout. */
+    function commitDuplicateMove(dx, dy) {
+      onCommit();
+      const newRefs = duplicateSelections();
+      newRefs.forEach(r => {
+        const node = irNodeAt(r);
+        if (node && node.frame &&
+            (typeof node.frame.x === "number" || typeof node.frame.y === "number")) {
+          node.frame = Object.assign({}, node.frame, {
+            x: Math.round((node.frame.x || 0) + dx),
+            y: Math.round((node.frame.y || 0) + dy),
+          });
+        }
+      });
+      if (newRefs.length) selectMulti(newRefs);
+      onMutated();
     }
 
     /* --- выравнивание (Figma-like) --- */
@@ -1558,37 +1626,13 @@
         e.preventDefault();
         e.stopPropagation(); // событие потреблено здесь
         onCommit();
-        const targets = [];
-        selections.forEach(sel => {
-          if (sel.ref.secIdx == null) return;
-          if (sel.ref.path != null && !sel.ref.path.startsWith("children.")) return;
-          const parent = parentOf(sel.ref);
-          if (!parent) return;
-          const idx = sel.ref.path == null ? sel.ref.secIdx
-                                           : parseInt(sel.ref.path.split(".").pop());
-          if (!Number.isInteger(idx) || idx < 0 || idx >= parent.siblings.length) return;
-          targets.push({ ref: sel.ref, arr: parent.siblings, idx });
-        });
-        // в пределах одного массива идём от головы: каждая вставка сдвигает
-        // индексы следующих элементов этого массива на 1
-        targets.sort((a, b) => (a.arr === b.arr ? a.idx - b.idx : 0));
-        const shifts = new Map();
-        const newRefs = [];
-        targets.forEach(t => {
-          const at = t.idx + (shifts.get(t.arr) || 0);
-          const node = t.arr[at];
-          if (!node) return;
-          const dup = JSON.parse(JSON.stringify(node));
-          // сдвиг на 10px
-          if (dup.frame) { dup.frame.x = (dup.frame.x || 0) + 10; dup.frame.y = (dup.frame.y || 0) + 10; }
-          t.arr.splice(at + 1, 0, dup);
-          shifts.set(t.arr, (shifts.get(t.arr) || 0) + 1);
-          if (t.ref.path == null) {
-            newRefs.push({ secIdx: at + 1, path: null });
-          } else {
-            const segs = t.ref.path.split(".");
-            segs[segs.length - 1] = String(at + 1);
-            newRefs.push({ secIdx: t.ref.secIdx, path: segs.join(".") });
+        const newRefs = duplicateSelections();
+        newRefs.forEach(r => {
+          const node = irNodeAt(r);
+          // сдвиг копии на 10px, чтобы не сливалась с оригиналом
+          if (node && node.frame) {
+            node.frame.x = (node.frame.x || 0) + 10;
+            node.frame.y = (node.frame.y || 0) + 10;
           }
         });
         if (newRefs.length) selectMulti(newRefs);
