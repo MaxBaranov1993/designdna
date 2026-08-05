@@ -20,13 +20,14 @@ import llm_client
 # Политика владельца: разработка/ревью — прямые API; OpenRouter — только ноды.
 # glm-5.2 доступен лишь через OpenRouter, поэтому по умолчанию второе мнение —
 # gemini (прямой ключ); glm включается явно флагом --allow-openrouter.
+# (имя, provider, model, fallback) — fallback срабатывает при ошибке (напр. 401 у gemini)
 REVIEWERS = [
-    ("qwen3.8-max", "qwen", "qwen3.8-max"),
-    ("gemini", "gemini", None),
+    ("qwen3.8-max", "qwen", "qwen3.8-max", None),
+    ("gemini", "gemini", None, ("xai", "grok-3-beta")),
 ]
 REVIEWERS_OR = [
-    ("qwen3.8-max", "openrouter", "qwen/qwen3.8-max"),
-    ("glm-5.2", "openrouter", "z-ai/glm-5.2"),
+    ("qwen3.8-max", "openrouter", "qwen/qwen3.8-max", None),
+    ("glm-5.2", "openrouter", "z-ai/glm-5.2", None),
 ]
 
 PROMPT = (
@@ -71,17 +72,27 @@ def main() -> int:
     diff = subprocess.run(
         ["git", "-C", str(ROOT), "diff", rng, "--", "app/"],
         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
-    if len(diff) > 150000:
-        diff = diff[:150000] + "\n…[diff обрезан]"
+    if len(diff) > 60000:
+        diff = diff[:60000] + "\n…[diff обрезан]"
     print(f"diff {rng}: {len(diff)} символов")
 
     report = {"range": rng, "reviewers": {}}
-    for name, provider, model in reviewers:
+    for name, provider, model, fallback in reviewers:
         try:
-            raw = llm_client.chat(provider, [
-                {"role": "system", "content": PROMPT},
-                {"role": "user", "content": diff},
-            ], 0.2, role="judge", timeout=300, model=model)
+            try:
+                raw = llm_client.chat(provider, [
+                    {"role": "system", "content": PROMPT},
+                    {"role": "user", "content": diff},
+                ], 0.2, role="judge", timeout=600, model=model)
+            except Exception as e:
+                if not fallback:
+                    raise
+                print(f"[{name}] {e} → fallback {fallback[0]}")
+                raw = llm_client.chat(fallback[0], [
+                    {"role": "system", "content": PROMPT},
+                    {"role": "user", "content": diff},
+                ], 0.2, role="judge", timeout=600, model=fallback[1])
+                name = f"{name}→{fallback[0]}"
             items = parse_items(raw)
             report["reviewers"][name] = items
             crit = sum(1 for i in items if i.get("severity") == "critical")
