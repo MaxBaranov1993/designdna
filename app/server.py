@@ -36,6 +36,8 @@ from scraper import prepare_image_b64, analyze_url, extract_structure, parse_des
 from reproduce import run_pipeline as reproduce_pipeline
 from urlguard import validate_public_url
 import cache_store
+import blockparse
+import mergeback
 
 import jsonschema
 
@@ -128,6 +130,18 @@ class CloneReq(BaseModel):
     url: str = ""
     component: str = ""
     provider: str = "qwen"
+
+
+class BlockParseReq(BaseModel):
+    url: str = ""
+    blocks: list | None = None  # опционально: [{name, selector}] — клонировать только их
+
+
+class ReskinReq(BaseModel):
+    ir: dict
+    prompt: str = ""
+    tokens: dict | None = None  # источник нового стиля (design-токены)
+    mask: dict = {}             # чекбоксы: colors/fonts/radii/shadows/texts/images
 
 
 class VisionDecomposeReq(BaseModel):
@@ -401,6 +415,110 @@ def clone(req: CloneReq):
             pass
     cache_store.put("clone_url", cache_store.key_url(url), {"ir": ir})
     return {"ir": ir, "cached": False}
+
+
+# ---------- BlockParse / Reskin (решение владельца 11, docs/NODES-HOUDINI.md §7) ----------
+
+# человекочитаемые категории маски для промпта Reskin
+_MASK_LABELS = {
+    "colors": "цвета (tokens.color, tokens.mode) и fill элементов",
+    "fonts": "шрифты (tokens.font: family/weight/scale)",
+    "radii": "радиусы (tokens.radius)",
+    "shadows": "тени (tokens.shadow)",
+    "texts": "тексты в props (заголовки, подписи, кнопки)",
+    "images": "изображения (src/imagePrompt/alt/aspect)",
+}
+
+
+@app.post("/api/block-parse")
+def block_parse(req: BlockParseReq):
+    """BlockParse: детекция блоков страницы + параллельный clone каждого в IR."""
+    url = req.url.strip()
+    if not url:
+        return err(422, "Укажите URL сайта.")
+    try:
+        validate_public_url(url)  # SSRF-гард (422, а не 502)
+    except ValueError as e:
+        return err(422, str(e))
+    try:
+        return blockparse.parse_blocks(url, blocks=req.blocks)
+    except ValueError as e:  # кривой список блоков
+        return err(422, str(e))
+    except Exception as e:
+        traceback.print_exc()
+        return err(502, f"Ошибка block-parse: {e}")
+
+
+@app.post("/api/reskin")
+def reskin(req: ReskinReq):
+    """Reskin: AI-рестайл блока с локом структуры.
+
+    LLM (только qwen, решение владельца 7) → детерминированный merge-back
+    (залоченные поля принудительно из входного IR) → валидация по схеме →
+    один repair-вызов по существующему паттерну. Дрейф структуры невозможен.
+    """
+    errors = validate_ir(req.ir)
+    if errors:
+        return err(422, "Входной IR невалиден: " + "; ".join(errors[:5]))
+
+    mask = mergeback.normalize_mask(req.mask)
+    if not any(mask.values()):
+        return {"ir": req.ir,
+                "log": ["пустая маска: возвращён входной IR без LLM-вызова"]}
+
+    allowed = "\n".join(f"- {label}" for key, label in _MASK_LABELS.items() if mask[key])
+    user = (
+        "Ты — дизайн-инженер. Ниже — Design IR блока и источник нового стиля.\n"
+        "Верни ПОЛНЫЙ Design IR того же блока в новом стиле: один JSON по схеме, без markdown.\n\n"
+        "ЖЁСТКИЕ ОГРАНИЧЕНИЯ (проверяются программой, нарушения будут отброшены):\n"
+        "- структура дерева НЕ меняется: те же секции и элементы, id, типы, порядок, вложенность;\n"
+        "- frame (геометрия и раскладка) НЕ меняется;\n"
+        "- props-разметка (состав ключей, варианты, ссылки, иконки) НЕ меняется;\n"
+        f"- менять разрешено ТОЛЬКО:\n{allowed}\n\n"
+        f"## Входной Design IR\n{json.dumps(req.ir, ensure_ascii=False)}"
+    )
+    if req.tokens:
+        user += f"\n\n## Design-токены нового стиля (источник)\n{json.dumps(req.tokens, ensure_ascii=False)}"
+    if req.prompt.strip():
+        user += f"\n\n## Пожелания по новому стилю\n{req.prompt.strip()}"
+
+    provider = "qwen"  # решение владельца 7: только qwencloud
+    try:
+        raw = llm.chat(provider, [
+            {"role": "system", "content": llm.build_system_prompt("edit")},
+            {"role": "user", "content": user},
+        ], 0.7, role="edit")
+    except Exception as e:
+        return err(502, str(e))
+    model_ir, parse_error = parse_ir_response(raw)
+    if model_ir is None:
+        return err(502, parse_error)
+
+    # детерминированный merge-back: залоченные поля — из входа, попытки в журнал
+    merged, journal = mergeback.merge_back(req.ir, model_ir, mask)
+    errors = validate_ir(merged)
+    if errors:
+        # один repair-вызов (паттерн /api/refine); после repair — повторный merge-back
+        repair = (
+            "Следующий JSON не прошёл валидацию по схеме. Ошибки:\n- " + "\n- ".join(errors[:10]) +
+            "\n\nИсправь минимально и верни только исправленный JSON:\n\n" +
+            json.dumps(merged, ensure_ascii=False)
+        )
+        try:
+            raw2 = llm.chat(provider, [
+                {"role": "system", "content": llm.build_system_prompt("edit")},
+                {"role": "user", "content": repair},
+            ], 0.2, role="repair")
+            ir2, _ = parse_ir_response(raw2)
+            if ir2 is not None:
+                merged2, journal2 = mergeback.merge_back(req.ir, ir2, mask)
+                if not validate_ir(merged2):
+                    merged, journal, errors = merged2, journal + journal2, []
+        except Exception:
+            pass
+    if errors:
+        return err(502, "reskin не прошёл валидацию после repair: " + "; ".join(errors[:5]))
+    return {"ir": merged, "log": journal}
 
 
 VISION_SYSTEM_PROMPT = """Ты — pixel-perfect дизайн-инженер. Тебе дают скриншот веб-страницы.
