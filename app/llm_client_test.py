@@ -100,6 +100,19 @@ def main():
     check("vision openai: image_url + text",
           uc[0]["type"] == "image_url" and uc[1]["type"] == "text", str(uc)[:200])
 
+    # ---------- load_dotenv ----------
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False, encoding="utf-8") as f:
+        f.write("# comment\nFOO_TEST_KEY=abc\nQUOTED=\"def\"\n")
+        tmp = pathlib.Path(f.name)
+    os.environ.pop("FOO_TEST_KEY", None)
+    os.environ["QUOTED"] = "keep"
+    n = llm_client.load_dotenv(tmp)
+    check("load_dotenv: устанавливает отсутствующие", os.environ.get("FOO_TEST_KEY") == "abc")
+    check("load_dotenv: не перетирает существующие", os.environ.get("QUOTED") == "keep")
+    check("load_dotenv: возвращает число новых", n == 1, str(n))
+    tmp.unlink(missing_ok=True)
+
     # ---------- прочее ----------
     check("таймаут по умолчанию 120с", llm_client.TIMEOUT == 120, str(llm_client.TIMEOUT))
     check("extract_json: markdown-обёртка",

@@ -16,6 +16,28 @@ ROOT = Path(__file__).resolve().parent.parent
 # таймаут одного LLM-вызова; генерация IR обычно 10-60с
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT_S", "120"))
 
+
+def load_dotenv(path: Path | None = None) -> int:
+    """KEY=VALUE из .env в os.environ (только если ключ ещё не задан).
+    Возвращает число установленных ключей. Без зависимостей."""
+    p = path or (ROOT / ".env")
+    if not p.exists():
+        return 0
+    n = 0
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k, v = k.strip(), v.strip().strip('"').strip("'")
+        if k and k not in os.environ:
+            os.environ[k] = v
+            n += 1
+    return n
+
+
+load_dotenv()
+
 PROVIDERS = {
     # Kimi: локальная OAuth-авторизация kimi CLI (coding plan), ключ из
     # ~/.kimi-code/credentials/kimi-code.json

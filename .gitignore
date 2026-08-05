@@ -6,4 +6,5 @@ test-targets/
 *.log
 .DS_Store
 start.bat
+.env
 .worker-brief-*.txt
