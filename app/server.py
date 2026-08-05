@@ -38,6 +38,7 @@ from urlguard import validate_public_url
 import cache_store
 import blockparse
 import mergeback
+import qualitygate
 
 import jsonschema
 
@@ -148,6 +149,16 @@ class VisionDecomposeReq(BaseModel):
     image: str = ""  # base64 data URL
     brief: str = ""
     provider: str = "qwen"
+
+
+class QualityGateReq(BaseModel):
+    ir: dict
+    fix: bool = True  # авто-доводка solver'ом (без LLM) того, что чинится
+
+
+class ConstraintsCheckReq(BaseModel):
+    ir: dict
+    constraints: list  # [{path, lock?, min?, max?, enum?, max_len?}]
 
 
 class ScrapeReq(BaseModel):
@@ -519,6 +530,34 @@ def reskin(req: ReskinReq):
     if errors:
         return err(502, "reskin не прошёл валидацию после repair: " + "; ".join(errors[:5]))
     return {"ir": merged, "log": journal}
+
+
+# ---------- Quality Gate / Constraints (решение владельца 12.2, бэклог §8) ----------
+
+@app.post("/api/quality-gate")
+def quality_gate(req: QualityGateReq):
+    """Детерминированный Quality Gate: правила v1 + авто-доводка без LLM.
+
+    passed/violations — по входному IR; fixed_ir/journal — результат solver'а
+    (починено только то, что чинится детерминированно: сетка 8px, overflow).
+    """
+    violations = qualitygate.check(req.ir)
+    if req.fix:
+        fixed_ir, journal = qualitygate.autofix(req.ir)
+    else:
+        fixed_ir, journal = copy.deepcopy(req.ir), []
+    return {"passed": not violations, "violations": violations,
+            "fixed_ir": fixed_ir, "journal": journal}
+
+
+@app.post("/api/constraints/check")
+def constraints_check(req: ConstraintsCheckReq):
+    """Проверка декларативных ограничений (локи полей по путям + диапазоны)."""
+    try:
+        violations = qualitygate.check_constraints(req.ir, req.constraints)
+    except ValueError as e:
+        return err(422, str(e))
+    return {"ok": not violations, "violations": violations}
 
 
 VISION_SYSTEM_PROMPT = """Ты — pixel-perfect дизайн-инженер. Тебе дают скриншот веб-страницы.
