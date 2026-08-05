@@ -150,11 +150,11 @@
     /* Position */
     html += `<div class="pi-group"><span class="pi-glabel">Position</span>
       <div class="pi-row">
-        <div class="pi-field"><label>X</label><input type="number" data-pi="x" value="${x}" ${isRoot ? "disabled" : ""}></div>
-        <div class="pi-field"><label>Y</label><input type="number" data-pi="y" value="${y}" ${isRoot ? "disabled" : ""}></div>
+        <div class="pi-field"><label title="Тяни горизонтально — scrub; можно выражения: 100*2">X</label><input type="text" inputmode="decimal" data-pi="x" value="${x}" ${isRoot ? "disabled" : ""}></div>
+        <div class="pi-field"><label title="Тяни горизонтально — scrub; можно выражения: 100*2">Y</label><input type="text" inputmode="decimal" data-pi="y" value="${y}" ${isRoot ? "disabled" : ""}></div>
       </div>
       <div class="pi-row">
-        <div class="pi-field"><label>R</label><input type="number" data-pi="rotation" value="${rot}" ${isRoot ? "disabled" : ""}></div>
+        <div class="pi-field"><label>R</label><input type="text" inputmode="decimal" data-pi="rotation" value="${rot}" ${isRoot ? "disabled" : ""}></div>
         <div class="pi-field"></div>
       </div>
       ${isRoot ? "" : `<div class="pi-row"><label class="pi-check"><input type="checkbox" data-pi="absolute" ${f.absolute ? "checked" : ""}> Absolute Position</label></div>`}
@@ -176,13 +176,13 @@
           ).join("")).join("") +
         `</div>
         <div class="pi-row" style="margin-top:6px">
-          <div class="pi-field"><label>Gap</label><input type="number" data-pi="gap" value="${typeof f.gap === "number" ? f.gap : ""}" min="0"></div>
+          <div class="pi-field"><label>Gap</label><input type="text" inputmode="decimal" data-pi="gap" value="${typeof f.gap === "number" ? f.gap : ""}"></div>
         </div>
         <div class="pi-row"><label class="pi-radio"><input type="radio" name="pi-justify-${containerId(container)}" data-pi-justify="space-between" ${justify === "space-between" ? "checked" : ""}> Space Between</label></div>
         <div class="pi-row"><label class="pi-radio"><input type="radio" name="pi-justify-${containerId(container)}" data-pi-justify="space-around" ${justify === "space-around" ? "checked" : ""}> Space Around</label></div>
         <div class="pi-row" style="margin-top:6px">
-          <div class="pi-field"><label>Pad↕</label><input type="number" data-pi="padv" value="${padV}" min="0"></div>
-          <div class="pi-field"><label>Pad↔</label><input type="number" data-pi="padh" value="${padH}" min="0"></div>
+          <div class="pi-field"><label>Pad↕</label><input type="text" inputmode="decimal" data-pi="padv" value="${padV}"></div>
+          <div class="pi-field"><label>Pad↔</label><input type="text" inputmode="decimal" data-pi="padh" value="${padH}"></div>
         </div>
       </div>`;
     }
@@ -190,8 +190,8 @@
     /* Dimensions */
     html += `<div class="pi-group"><span class="pi-glabel">Dimensions</span>
       <div class="pi-row">
-        <div class="pi-field"><label>W</label><input type="number" data-pi="width" value="${w}" min="1"></div>
-        <div class="pi-field"><label>H</label><input type="number" data-pi="height" value="${h}" min="1"></div>
+        <div class="pi-field"><label title="Можно выражения: 960/3">W</label><input type="text" inputmode="decimal" data-pi="width" value="${w}"></div>
+        <div class="pi-field"><label title="Можно выражения: 960/3">H</label><input type="text" inputmode="decimal" data-pi="height" value="${h}"></div>
       </div>
       <div class="pi-checks" style="margin-top:6px">
         <label class="pi-check"><input type="checkbox" data-pi="fillw" ${f.width === "fill" ? "checked" : ""}> Fill Width</label>
@@ -216,6 +216,65 @@
   function containerId(el) {
     if (!el.__piId) el.__piId = ++cid;
     return el.__piId;
+  }
+
+  /** Безопасный калькулятор для числовых полей (W: 100*2): цифры и + - * / ( ) .
+   *  Без eval — ручной рекурсивный парсер; возвращает null если не выражение. */
+  function evalMath(expr) {
+    const s = String(expr).replace(/\s+/g, "");
+    if (!s || !/^[0-9+\-*/().]+$/.test(s)) return null;
+    if (!/[+\-*/]/.test(s)) return null; // обычное число парсит Number
+    let i = 0;
+    function factor() {
+      if (s[i] === "(") { i++; const v = expr2(); if (s[i] !== ")") return null; i++; return v; }
+      if (s[i] === "-" || s[i] === "+") { const op = s[i++]; const v = factor(); return v == null ? null : (op === "-" ? -v : v); }
+      const m = /^[0-9.]+/.exec(s.slice(i));
+      if (!m) return null;
+      i += m[0].length;
+      const n = Number(m[0]);
+      return Number.isFinite(n) ? n : null;
+    }
+    function term() {
+      let v = factor();
+      while (v != null && (s[i] === "*" || s[i] === "/")) {
+        const op = s[i++]; const r = factor();
+        if (r == null) return null;
+        if (op === "*") v *= r;
+        else { if (r === 0) return null; v /= r; }
+      }
+      return v;
+    }
+    function expr2() {
+      let v = term();
+      while (v != null && (s[i] === "+" || s[i] === "-")) {
+        const op = s[i++]; const r = term();
+        if (r == null) return null;
+        v = op === "+" ? v + r : v - r;
+      }
+      return v;
+    }
+    const v = expr2();
+    return (v != null && i === s.length) ? v : null;
+  }
+
+  /** Значение числового инпута: выражение → число; пусто → null; мусор → undefined. */
+  function readNumInput(inp) {
+    const raw = String(inp.value).trim();
+    if (raw === "") return null;
+    const m = evalMath(raw);
+    if (m != null) return Math.round(m);
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.round(n) : undefined;
+  }
+
+  function applyNum(geo, key, v) {
+    if (key === "x" || key === "y" || key === "width" || key === "height") {
+      geo.setFrame({ [key]: v });
+    } else if (key === "rotation") {
+      geo.setFrameProps({ rotation: (v == null || v === 0) ? null : v });
+    } else if (key === "gap") {
+      geo.setFrameProps({ gap: v == null ? null : Math.max(0, v) });
+    }
   }
 
   /* ---------- события ---------- */
@@ -246,18 +305,16 @@
       inp.addEventListener("change", () => {
         const key = inp.dataset.pi;
         const cur = f();
-        if (key === "x" || key === "y" || key === "width" || key === "height") {
-          const partial = {};
-          partial[key] = inp.value === "" ? null : Number(inp.value);
-          geo.setFrame(partial);
-        } else if (key === "rotation") {
-          const v = inp.value === "" ? null : Number(inp.value);
-          geo.setFrameProps({ rotation: (v == null || v === 0) ? null : v });
-        } else if (key === "gap") {
-          geo.setFrameProps({ gap: inp.value === "" ? null : Math.max(0, Number(inp.value)) });
+        if (key === "x" || key === "y" || key === "width" || key === "height" ||
+            key === "rotation" || key === "gap") {
+          // numeric math: «100*2», «960/3» и т.п. схлопываются в число
+          const v = readNumInput(inp);
+          if (v === undefined) return; // не распознано — не применяем
+          if (v !== null) inp.value = String(v);
+          applyNum(geo, key, v);
         } else if (key === "padv" || key === "padh") {
-          const v = Math.max(0, Number(container.querySelector('[data-pi="padv"]').value || 0));
-          const h = Math.max(0, Number(container.querySelector('[data-pi="padh"]').value || 0));
+          const v = Math.max(0, readNumInput(container.querySelector('[data-pi="padv"]')) || 0);
+          const h = Math.max(0, readNumInput(container.querySelector('[data-pi="padh"]')) || 0);
           geo.setFrameProps({ padding: v === h ? v : [v, h, v, h] });
         } else if (key === "absolute") {
           if (inp.checked) {
@@ -281,6 +338,38 @@
         } else if (key === "hugh") {
           geo.setFrameProps({ height: inp.checked ? "hug" : null });
         }
+      });
+    });
+
+    // drag-scrub: тянуть лейбл горизонтально = менять значение (Shift — шаг 10)
+    container.querySelectorAll(".pi-field").forEach(field => {
+      const inp = field.querySelector("input[data-pi]");
+      const lab = field.querySelector("label");
+      if (!inp || !lab || inp.disabled) return;
+      const key = inp.dataset.pi;
+      if (!["x", "y", "width", "height", "rotation", "gap"].includes(key)) return;
+      lab.style.cursor = "ew-resize";
+      lab.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        const base = readNumInput(inp);
+        const start = typeof base === "number" ? base : 0;
+        const sx = e.clientX;
+        lab.setPointerCapture(e.pointerId);
+        // пока scrub жив, владелец не перестраивает инспектор (иначе умрёт capture)
+        global.Inspector.scrubbing = true;
+        const move = (ev) => {
+          const step = ev.shiftKey ? 10 : 1;
+          const v = start + Math.round(ev.clientX - sx) * step;
+          inp.value = String(v);
+          // ctx.geo — живой getter: после ре-аттача geoedit ручка обновится сама
+          applyNum(ctx.geo, key, v);
+        };
+        const up = () => {
+          lab.removeEventListener("pointermove", move);
+          global.Inspector.scrubbing = false;
+        };
+        lab.addEventListener("pointermove", move);
+        lab.addEventListener("pointerup", up, { once: true });
       });
     });
 

@@ -519,11 +519,13 @@
         if (savedRefs.length && state.geo) {
           state.geo.selectMulti(savedRefs);
         }
-        renderInspector();
+        // во время drag-scrub инспектор не перестраиваем — иначе умрёт pointer capture
+        if (!window.Inspector.scrubbing) renderInspector();
       },
       onSelect: (sels) => {
         state.sel = sels || [];
-        renderInspector();
+        // во время drag-scrub не перестраиваем инспектор — умрёт pointer capture
+        if (!window.Inspector.scrubbing) renderInspector();
         renderLayers();
         updateAlignVisibility();
       },
@@ -614,7 +616,7 @@
 
     if (state.sel.length > 1) {
       panel.innerHTML = html;
-      Inspector.render(panel.querySelector(".fe-shared-insp"), { ir: state.ir, selections: state.sel, geo: state.geo });
+      Inspector.render(panel.querySelector(".fe-shared-insp"), { ir: state.ir, selections: state.sel, get geo() { return state.geo; } });
       return;
     }
 
@@ -674,7 +676,7 @@
     }
 
     panel.innerHTML = html;
-    Inspector.render(panel.querySelector(".fe-shared-insp"), { ir: state.ir, selections: state.sel, geo: state.geo });
+    Inspector.render(panel.querySelector(".fe-shared-insp"), { ir: state.ir, selections: state.sel, get geo() { return state.geo; } });
     wireInspectorEvents(panel);
   }
 
