@@ -72,8 +72,135 @@ def extract_text_content(html: str) -> str:
     return soup.get_text(separator="\n", strip=True)[:8000]
 
 
+# ---------- детекция границ блоков (BlockParse, §7.1 NODES-HOUDINI.md) ----------
+
+# Контентные семантические теги — кандидаты в блоки; шапка/подвал — отдельно
+_BLOCK_TAGS = ("main", "section", "article", "aside")
+# clone каждого блока = LLM-вызов; ограничиваем расход (§7.4)
+_MAX_BLOCKS = 12
+_SAFE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+
+
+def _slug(text: str) -> str:
+    """Короткий идентификатор блока из текста: слова в нижнем регистре через дефис."""
+    return "-".join(re.findall(r"[^\W_]+", text.lower()))[:24].strip("-")
+
+
+def _css_selector(el: Tag) -> str:
+    """Детерминированный CSS-селектор элемента (повторный выбор через soup.select)."""
+    # уникальный безопасный id — самый короткий путь; [id="..."] не требует CSS-экранирования
+    el_id = el.get("id")
+    if el_id and _SAFE_ID.match(el_id):
+        root = el.find_parent("[document]")
+        if root is not None and len(root.find_all(attrs={"id": el_id})) == 1:
+            return f'[id="{el_id}"]'
+    parts = []
+    cur = el
+    while cur is not None and cur.name not in (None, "[document]", "html"):
+        seg = cur.name
+        if cur.name == "body":
+            parts.append(seg)
+            break
+        parent = cur.parent
+        if parent is not None and parent.name not in (None, "[document]", "html"):
+            same = parent.find_all(cur.name, recursive=False)
+            if len(same) > 1:
+                seg += f":nth-of-type({same.index(cur) + 1})"
+        parts.append(seg)
+        cur = cur.parent
+    return " > ".join(reversed(parts))
+
+
+def _block_heading(el: Tag) -> str:
+    h = el.find(["h1", "h2", "h3"])
+    return h.get_text(" ", strip=True)[:80] if h else ""
+
+
+def detect_blocks(html: str) -> list:
+    """Детерминированная детекция границ блоков страницы.
+
+    Возвращает список {name, selector, tag, heading} с уникальными name.
+    Правила: шапка (header, либо nav при отсутствии header) и footer — по одному
+    блоку; контентные теги (main/section/article/aside) — блоки, содержащие
+    меньше двух вложенных семантических блоков (main с секциями отбрасывается),
+    вложенные друг в друга не дублируются.
+    Страницы без семантики: контейнер каждого h1/h2 вне уже найденных блоков.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    blocks = []
+    names = set()
+    covered = []  # элементы, ставшие блоком (для исключения вложенных дублей)
+
+    def unique(base: str) -> str:
+        base = base or f"block-{len(blocks) + 1}"
+        name, n = base, 1
+        while name in names:
+            n += 1
+            name = f"{base}-{n}"
+        names.add(name)
+        return name
+
+    def register(el: Tag, base: str) -> None:
+        if len(blocks) >= _MAX_BLOCKS:
+            return
+        blocks.append({"name": unique(base), "selector": _css_selector(el),
+                       "tag": el.name, "heading": _block_heading(el)})
+        covered.append(el)
+
+    def inside_covered(el: Tag) -> bool:
+        return any(el is c or c in el.parents for c in covered)
+
+    # 1) шапка: header (или nav, если header нет) — один блок
+    header = soup.find("header") or soup.find("nav")
+    if header is not None:
+        register(header, "header")
+
+    # 2) подвал
+    footer = soup.find("footer")
+    if footer is not None and not inside_covered(footer):
+        register(footer, "footer")
+
+    # 3) контентные семантические блоки
+    candidates = [el for el in soup.find_all(_BLOCK_TAGS) if not inside_covered(el)]
+    h1 = soup.find("h1")
+    # контейнеры из ≥2 вложенных блоков (main с секциями) не клонируем целиком
+    kept = [el for el in candidates
+            if sum(1 for other in candidates if other is not el and other in el.descendants) < 2]
+    for el in kept:
+        if len(blocks) >= _MAX_BLOCKS:
+            break
+        if any(other is not el and el in other.descendants for other in kept):
+            continue  # вложенный в уже взятый блок — не дублируем
+        base = "hero" if h1 is not None and h1 in el.descendants else \
+            (_slug(_block_heading(el)) or el.name)
+        register(el, base)
+
+    # 4) секционирование по заголовкам — страницы без семантической разметки
+    body = soup.body or soup
+    for h in body.find_all(["h1", "h2"])[:20]:
+        if len(blocks) >= _MAX_BLOCKS:
+            break
+        if inside_covered(h):
+            continue
+        # контейнер блока — ближайший предок заголовка, прямой потомок body
+        node = h
+        while node.parent is not None and node.parent is not body:
+            node = node.parent
+        if node is body or node is h or node.name in ("script", "style", "head"):
+            continue
+        if inside_covered(node) or len(node.get_text(" ", strip=True)) < 40:
+            continue
+        register(node, _slug(h.get_text(" ", strip=True)) or f"section-{len(blocks) + 1}")
+
+    return blocks
+
+
 def extract_structure(html: str) -> list:
-    """Извлечение структуры страницы: список секций с типами и текстами."""
+    """Извлечение структуры страницы: список секций с типами и текстами.
+
+    Секции, для которых найден DOM-элемент, несут name/selector (блоки для
+    BlockParse); дополнительно добавляются сами блоки из detect_blocks.
+    """
     soup = BeautifulSoup(html, "lxml")
     sections = []
 
@@ -83,12 +210,16 @@ def extract_structure(html: str) -> list:
         links = [a.get_text(strip=True) for a in nav.find_all("a") if a.get_text(strip=True)]
         logo_el = nav.find(["a", "img", "span"], class_=re.compile(r"logo|brand", re.I))
         logo = logo_el.get_text(strip=True) if logo_el else ""
-        sections.append({"type": "navbar", "logo": logo, "links": links[:10]})
+        sections.append({"type": "navbar", "name": "header", "selector": _css_selector(nav),
+                         "logo": logo, "links": links[:10]})
 
     # hero / main heading
     h1 = soup.find("h1")
     if h1:
-        sections.append({"type": "hero", "heading": h1.get_text(strip=True)})
+        entry = {"type": "hero", "name": "hero", "heading": h1.get_text(strip=True)}
+        if h1.parent is not None and h1.parent.name not in (None, "[document]"):
+            entry["selector"] = _css_selector(h1.parent)
+        sections.append(entry)
 
     # sections by headings
     for h in soup.find_all(["h2", "h3"]):
@@ -113,7 +244,14 @@ def extract_structure(html: str) -> list:
     # footer
     footer = soup.find("footer")
     if footer:
-        sections.append({"type": "footer", "text": footer.get_text(strip=True)[:300]})
+        sections.append({"type": "footer", "name": "footer", "selector": _css_selector(footer),
+                         "text": footer.get_text(strip=True)[:300]})
+
+    # блоки BlockParse (name+selector): имя уже учтённой секции не дублируем
+    have = {s.get("name") for s in sections}
+    for b in detect_blocks(html):
+        if b["name"] not in have:
+            sections.append({"type": "block", **b})
 
     return sections
 
