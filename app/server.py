@@ -39,8 +39,12 @@ EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 app = FastAPI(title="DesignAI Web", docs_url=None, redoc_url=None)
 
 COLOR_TOKEN_KEYS = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"]
-PROVIDERS = ["qwen", "kimi", "groq", "gemini", "xai", "glm"]
-VISION_PROVIDERS = ["xai", "gemini", "groq", "qwen", "glm"]  # приоритет для vision
+PROVIDERS = ["qwen", "kimi", "groq", "gemini", "xai", "glm", "openrouter"]
+VISION_PROVIDERS = ["xai", "gemini", "groq", "qwen", "glm", "openrouter"]  # приоритет для vision
+
+# роли вызовов для роутинга OpenRouter (см. llm_client.ROUTING)
+ROLE_TASTE = "taste"      # генерация/правки «вкуса»
+ROLE_MECHANICS = "mechanics"  # repair/анализ структуры/клон
 
 
 # ---------- helpers ----------
@@ -68,7 +72,7 @@ def call_llm_ir(provider: str, user_content: str, temperature: float = 0.8, mode
         raw = llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt(mode)},
             {"role": "user", "content": user_content},
-        ], temperature)
+        ], temperature, role=ROLE_TASTE)
     except Exception as e:
         return None, str(e)
     return parse_ir_response(raw)
@@ -210,7 +214,7 @@ def analyze_header(req: AnalyzeReq):
         raw = llm.chat(provider, [
             {"role": "system", "content": "Ты — senior веб-дизайнер и аналитик дизайн-систем. Отвечаешь строго одним JSON-объектом."},
             {"role": "user", "content": user},
-        ], 0.4)
+        ], 0.4, role=ROLE_MECHANICS)
     except Exception as e:
         return err(502, str(e))
     data, error = parse_ir_response(raw)
@@ -265,7 +269,7 @@ def refine(req: RefineReq):
         return llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt()},
             {"role": "user", "content": content},
-        ], 0.3)
+        ], 0.3, role=ROLE_TASTE)
 
     user = (
         "Вот текущий Design IR (JSON):\n" + ir_json +
@@ -358,7 +362,7 @@ def clone(req: CloneReq):
         raw = llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt("edit")},
             {"role": "user", "content": user},
-        ], 0.2)
+        ], 0.2, role=ROLE_MECHANICS)
     except Exception as e:
         return err(502, str(e))
     ir, error = parse_ir_response(raw)
@@ -375,7 +379,7 @@ def clone(req: CloneReq):
             raw2 = llm.chat(provider, [
                 {"role": "system", "content": llm.build_system_prompt("edit")},
                 {"role": "user", "content": repair},
-            ], 0.2)
+            ], 0.2, role=ROLE_MECHANICS)
             ir2, _ = parse_ir_response(raw2)
             if ir2 and not validate_ir(ir2):
                 ir = ir2

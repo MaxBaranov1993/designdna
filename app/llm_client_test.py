@@ -30,10 +30,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         RECORDED.append((self.path, body))
+        if body.get("model") == "mock/first":  # первая модель цепочки недоступна
+            self.send_response(404)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+            return
         if self.path.endswith(":generateContent"):
             out = {"candidates": [{"content": {"parts": [{"text": '{"ok": "gemini"}'}]}}]}
         else:
-            out = {"choices": [{"message": {"content": '{"ok": "openai"}'}}]}
+            out = {"choices": [{"message": {"content": json.dumps({"ok": body.get("model")})}}]}
         data = json.dumps(out).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -67,7 +73,7 @@ def main():
 
     # ---------- chat: openai-формат ----------
     r = llm_client.chat("mock-openai", msgs[:2], 0.2)
-    check("chat openai: контент", r == '{"ok": "openai"}', r)
+    check("chat openai: контент", r == '{"ok": "mock"}', r)
     path, body = RECORDED[-1]
     check("chat openai: response_format json_object",
           body.get("response_format") == {"type": "json_object"}, str(body)[:200])
@@ -94,11 +100,30 @@ def main():
 
     # ---------- chat_vision: openai ----------
     r = llm_client.chat_vision("mock-openai", img, "опиши", "", 0.1)
-    check("vision openai: контент", r == '{"ok": "openai"}', r)
+    check("vision openai: контент", r == '{"ok": "mock"}', r)
     path, body = RECORDED[-1]
     uc = body["messages"][-1]["content"]
     check("vision openai: image_url + text",
           uc[0]["type"] == "image_url" and uc[1]["type"] == "text", str(uc)[:200])
+
+    # ---------- openrouter: роутинг и fallback-цепочка ----------
+    os.environ["OPENROUTER_MODELS_MECHANICS"] = "mock/first,mock/second"
+    llm_client.PROVIDERS["mock-or"] = {
+        "url": f"http://127.0.0.1:{port}/or/chat/completions",
+        "env": "MOCK_KEY", "model": None,
+    }
+    check("routing_models: env-оверрайд",
+          llm_client.routing_models("mechanics") == ["mock/first", "mock/second"])
+    check("routing_models: дефолт taste из таблицы",
+          llm_client.routing_models("taste")[0].startswith("moonshotai/"))
+    n_before = len(RECORDED)
+    r = llm_client.chat("mock-or", msgs[:2], 0.2, role="mechanics")
+    check("openrouter: fallback на вторую модель", json.loads(r) == {"ok": "mock/second"}, r)
+    calls = RECORDED[n_before:]
+    check("openrouter: две попытки (404 → 200)", len(calls) == 2
+          and calls[0][1]["model"] == "mock/first" and calls[1][1]["model"] == "mock/second",
+          str([c[1].get("model") for c in calls]))
+    os.environ.pop("OPENROUTER_MODELS_MECHANICS", None)
 
     # ---------- load_dotenv ----------
     import tempfile

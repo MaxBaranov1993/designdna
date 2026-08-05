@@ -83,7 +83,30 @@ PROVIDERS = {
         "model": "glm-4-plus",
         "vision_models": ["glm-4v", "glm-4v-plus"],
     },
+    # OpenRouter — единый gateway (решение владельца от 2026-08-04).
+    # Модель выбирается из ROUTING по роли вызова; прямые API — fallback.
+    "openrouter": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "env": "OPENROUTER_API_KEY",
+        "model": None,
+    },
 }
+
+# Роутинг моделей через OpenRouter (таблица владельца от 2026-08-04):
+# mechanics — черновики/механика (дёшево и быстро), taste — «вкус»/критика.
+# Списки можно переопределить env: OPENROUTER_MODELS_MECHANICS / _TASTE (через запятую).
+ROUTING = {
+    "mechanics": ["deepseek/deepseek-v4-flash", "qwen/qwen3-coder-plus", "google/gemini-3.6-flash"],
+    "taste": ["moonshotai/kimi-k3", "openai/gpt-5.6", "x-ai/grok-4.5"],
+    "vision": ["google/gemini-2.0-flash-001", "qwen/qwen2.5-vl-72b-instruct"],
+}
+
+
+def routing_models(role: str) -> list:
+    env_key = "OPENROUTER_MODELS_" + role.upper()
+    if os.environ.get(env_key):
+        return [m.strip() for m in os.environ[env_key].split(",") if m.strip()]
+    return list(ROUTING.get(role, ROUTING["mechanics"]))
 
 
 def get_key(cfg: dict) -> str:
@@ -145,7 +168,33 @@ def _gemini_text(data: dict, provider: str) -> str:
     return "".join(p.get("text", "") for p in parts)
 
 
-def chat(provider: str, messages: list, temperature: float, timeout: int | None = None) -> str:
+def _chat_openai_once(cfg, key, model, messages, temp, t) -> str:
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temp,
+        "response_format": {"type": "json_object"},
+    }
+    data = None
+    for attempt in (True, False):  # если response_format не поддержан — повтор без него
+        try:
+            data = _post_json(cfg["url"], payload, key, t)
+            break
+        except urllib.error.HTTPError as e:
+            if attempt and e.code == 400:
+                payload.pop("response_format", None)
+                continue
+            raise
+    msg = data["choices"][0]["message"]
+    content = msg.get("content") or ""
+    if not content.strip():
+        raise RuntimeError(f"пустой content (reasoning: {str(msg.get('reasoning_content'))[:100]!r})")
+    return content
+
+
+def chat(provider: str, messages: list, temperature: float, timeout: int | None = None,
+         role: str = "mechanics") -> str:
+    """role — ключ ROUTING для OpenRouter: mechanics (черновики) / taste («вкус»)."""
     cfg = PROVIDERS[provider]
     key = get_key(cfg)
     t = timeout or TIMEOUT
@@ -159,26 +208,18 @@ def chat(provider: str, messages: list, temperature: float, timeout: int | None 
             raise RuntimeError(f"{provider}: пустой ответ Gemini")
         return content
 
-    payload = {
-        "model": cfg["model"],
-        "messages": messages,
-        "temperature": temp,
-        "response_format": {"type": "json_object"},
-    }
-    for attempt in (True, False):  # если response_format не поддержан — повтор без него
+    # OpenRouter (model=None) берёт цепочку моделей из ROUTING по роли
+    models = routing_models(role) if cfg["model"] is None else [cfg["model"]]
+    last_error = None
+    for model in models:
         try:
-            data = _post_json(cfg["url"], payload, key, t)
-            break
+            return _chat_openai_once(cfg, key, model, messages, temp, t)
         except urllib.error.HTTPError as e:
-            if attempt and e.code == 400:
-                payload.pop("response_format", None)
-                continue
-            raise RuntimeError(f"{provider} HTTP {e.code}: {e.read()[:300]!r}")
-    msg = data["choices"][0]["message"]
-    content = msg.get("content") or ""
-    if not content.strip():
-        raise RuntimeError(f"{provider}: пустой content (reasoning: {str(msg.get('reasoning_content'))[:100]!r})")
-    return content
+            last_error = f"{model} HTTP {e.code}: {e.read()[:300]!r}"
+            if e.code in (404, 429, 500, 502, 503) and model != models[-1]:
+                continue  # fallback на следующую модель цепочки
+            raise RuntimeError(f"{provider} {last_error}")
+    raise RuntimeError(f"{provider}: все модели цепочки недоступны. Последняя ошибка: {last_error}")
 
 
 def chat_vision(provider: str, image_data_url: str, text_prompt: str,
@@ -191,7 +232,10 @@ def chat_vision(provider: str, image_data_url: str, text_prompt: str,
     key = get_key(cfg)
     t = timeout or TIMEOUT
 
-    vision_models = cfg.get("vision_models", [cfg.get("vision_model", cfg["model"])])
+    vision_models = cfg.get("vision_models")
+    if not vision_models:
+        # OpenRouter (model=None) — цепочка vision-моделей из ROUTING
+        vision_models = routing_models("vision") if cfg["model"] is None else [cfg["model"]]
     if isinstance(vision_models, str):
         vision_models = [vision_models]
 

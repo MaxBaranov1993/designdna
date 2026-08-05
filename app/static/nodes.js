@@ -179,7 +179,7 @@
     if (n.type === "generator") {
       inner = `<textarea class="f-own" placeholder="Свой промпт (если нет провода)">${esc(n.data.ownPrompt || "")}</textarea>
         <div class="ctl-row">
-          <select class="f-provider"><option value="qwen">qwen3.7-max</option><option value="kimi">kimi k3</option></select>
+          <select class="f-provider"><option value="qwen">qwen3.7-max</option><option value="kimi">kimi k3</option><option value="openrouter">openrouter (auto)</option></select>
           <select class="f-count"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
           <button class="btn primary small f-run">▶</button>
         </div>
@@ -213,7 +213,7 @@
       inner = `<input type="text" class="f-url" placeholder="https://example.com/page" value="${esc(n.data.url || "")}">
         <textarea class="f-component" placeholder="Какой компонент клонировать? Например: шапка с навигацией, карточка товара, боковая панель…">${esc(n.data.component || "")}</textarea>
         <div class="ctl-row">
-          <select class="f-provider"><option value="qwen">qwen3.7-max</option><option value="kimi">kimi k3</option></select>
+          <select class="f-provider"><option value="qwen">qwen3.7-max</option><option value="kimi">kimi k3</option><option value="openrouter">openrouter (auto)</option></select>
           <button class="btn primary small f-run" style="margin-left:auto">⧉ Клонировать</button>
         </div>`;
     }
@@ -228,6 +228,7 @@
             <option value="groq">groq</option>
             <option value="xai">xai grok</option>
             <option value="glm">glm-4v</option>
+            <option value="openrouter">openrouter (auto)</option>
           </select>
           <button class="btn primary small f-run" style="margin-left:auto">◎ Reproduce</button>
         </div>
