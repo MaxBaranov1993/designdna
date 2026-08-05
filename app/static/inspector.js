@@ -158,6 +158,14 @@
         <div class="pi-field"></div>
       </div>
       ${isRoot ? "" : `<div class="pi-row"><label class="pi-check"><input type="checkbox" data-pi="absolute" ${f.absolute ? "checked" : ""}> Absolute Position</label></div>`}
+      ${isRoot ? "" : `<div class="pi-row" title="Constraints: реакция на resize родителя">
+        <div class="pi-field"><label>CH</label><select data-pi="constr-h">
+          ${["left", "center", "right", "scale"].map(o => `<option value="${o}" ${f.constraints && f.constraints.h === o ? "selected" : ""}>${o}</option>`).join("")}
+        </select></div>
+        <div class="pi-field"><label>CV</label><select data-pi="constr-v">
+          ${["top", "center", "bottom", "scale"].map(o => `<option value="${o}" ${f.constraints && f.constraints.v === o ? "selected" : ""}>${o}</option>`).join("")}
+        </select></div>
+      </div>`}
       </div>`;
 
     /* Flex Layout */
@@ -312,6 +320,10 @@
           if (v === undefined) return; // не распознано — не применяем
           if (v !== null) inp.value = String(v);
           applyNum(geo, key, v);
+        } else if (key === "constr-h" || key === "constr-v") {
+          const cur = f().constraints || {};
+          const axis = key === "constr-h" ? "h" : "v";
+          geo.setFrameProps({ constraints: Object.assign({}, cur, { [axis]: inp.value }) });
         } else if (key === "padv" || key === "padh") {
           const v = Math.max(0, readNumInput(container.querySelector('[data-pi="padv"]')) || 0);
           const h = Math.max(0, readNumInput(container.querySelector('[data-pi="padh"]')) || 0);

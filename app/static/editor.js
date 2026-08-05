@@ -64,6 +64,8 @@
   .fe-layer:hover .fe-lbtn, .fe-layer.flag-hidden .fe-lbtn, .fe-layer.flag-locked .fe-lbtn { visibility:visible; }
   .fe-layer.flag-hidden .fe-ln { opacity:.45; text-decoration:line-through; }
   .fe-layer.flag-locked .fe-li { color:#e0af58; }
+  .fe-layer.drop-target { outline:1px dashed #cba6f7; outline-offset:-1px; }
+  .fe-layer[draggable="true"] { cursor:grab; }
   .fe-search { margin:4px 8px 6px; width:calc(100% - 16px); background:#1e2030; border:1px solid #313244;
     color:#cdd6f4; border-radius:6px; padding:4px 8px; font-size:11px; }
   .fe-layer.depth-1 { padding-left:24px; }
@@ -154,6 +156,10 @@
           <button class="fe-tbtn" data-act="distribute-v" title="Распределить по вертикали">↕</button>
           <span class="fe-sep"></span>
         </span>
+        <button class="fe-tbtn" data-act="forward" title="Выше (])">⇈</button>
+        <button class="fe-tbtn" data-act="backward" title="Ниже ([)">⇊</button>
+        <button class="fe-tbtn" data-act="group" title="Группа (Ctrl+G)">⧉</button>
+        <button class="fe-tbtn" data-act="ungroup" title="Разгруппировать (Ctrl+Shift+G)">⧠</button>
         <button class="fe-tbtn" data-act="undo" title="Отменить (Ctrl+Z)">↩</button>
         <span class="fe-spacer"></span>
         <button class="fe-btn danger" data-act="close">Закрыть</button>
@@ -226,6 +232,10 @@
       const fn = map[act];
       if (fn && state.geo[fn]) state.geo[fn]();
     }
+    else if (act === "forward") state.geo && state.geo.bringForward();
+    else if (act === "backward") state.geo && state.geo.sendBackward();
+    else if (act === "group") state.geo && state.geo.groupSelection();
+    else if (act === "ungroup") state.geo && state.geo.ungroupSelection();
   }
 
   /* ---------- открытие / закрытие ---------- */
@@ -585,6 +595,29 @@
     const div = document.createElement("div");
     div.className = "fe-layer depth-" + Math.min(depth, 3);
     div.dataset.key = key;
+    // reorder drag&drop — только не-артборд
+    if (!(ref.secIdx == null && ref.path == null)) {
+      div.draggable = true;
+      div.addEventListener("dragstart", (e) => {
+        state.dragLayerKey = key;
+        e.dataTransfer.effectAllowed = "move";
+      });
+      div.addEventListener("dragover", (e) => { e.preventDefault(); div.classList.add("drop-target"); });
+      div.addEventListener("dragleave", () => div.classList.remove("drop-target"));
+      div.addEventListener("drop", (e) => {
+        e.preventDefault();
+        div.classList.remove("drop-target");
+        const fromKey = state.dragLayerKey;
+        state.dragLayerKey = null;
+        if (!fromKey || fromKey === key || !state.geo) return;
+        const parse = (k) => { const i = k.indexOf(":"); return { si: k.slice(0, i), p: k.slice(i + 1) || null }; };
+        const a = parse(fromKey), b = parse(key);
+        const parentOf = (x) => (x.p ? x.p.split(".").slice(0, -2).join(".") : null);
+        if (a.si !== b.si || parentOf(a) !== parentOf(b)) return; // только внутри одного родителя
+        const to = parseInt((b.p || "0").split(".").pop());
+        state.geo.moveSibling({ secIdx: a.si === "null" ? null : Number(a.si), path: a.p }, to);
+      });
+    }
     if (fl.hidden) div.classList.add("flag-hidden");
     if (fl.locked) div.classList.add("flag-locked");
     if (state.sel.some(s => s.ref.secIdx === ref.secIdx && s.ref.path === ref.path)) div.classList.add("selected");

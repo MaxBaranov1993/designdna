@@ -1114,6 +1114,8 @@
       if (!node || d.wLive == null) { onMutated(); return; }
       onCommit();
       const f = Object.assign({}, getFrame(d.ref));
+      const oldW = (typeof f.width === "number") ? f.width : d.w0;
+      const oldH = (typeof f.height === "number") ? f.height : d.h0;
       f.width = Math.round(d.wLive);
       f.height = Math.round(d.hLive);
       const parent = parentOf(d.ref);
@@ -1122,7 +1124,37 @@
         f.y = Math.round((typeof f.y === "number" ? f.y : 0) + d.tyLive);
       }
       setFrameData(d.ref, f);
+      applyConstraints(d.ref, oldW, oldH, f.width, f.height);
       onMutated();
+    }
+
+    /** Constraints (модель Figma): как дети реагируют на resize родителя.
+     *  child.frame.constraints = {h: left|center|right|scale, v: top|center|bottom|scale};
+     *  по умолчанию left/top (ничего не делаем). Работает во free-родителях,
+     *  где у детей есть x/y. */
+    function applyConstraints(ref, oldW, oldH, newW, newH) {
+      const node = irNodeAt(ref);
+      if (!node || !node.children) return;
+      const dw = newW - oldW, dh = newH - oldH;
+      if (!dw && !dh) return;
+      node.children.forEach(c => {
+        const cf = c.frame;
+        if (!cf || !cf.constraints) return;
+        const cs = cf.constraints;
+        const hasX = typeof cf.x === "number", hasY = typeof cf.y === "number";
+        if (cs.h === "right" && hasX) cf.x = Math.round(cf.x + dw);
+        else if (cs.h === "center" && hasX) cf.x = Math.round(cf.x + dw / 2);
+        else if (cs.h === "scale" && oldW > 0) {
+          if (hasX) cf.x = Math.round(cf.x * newW / oldW);
+          if (typeof cf.width === "number") cf.width = Math.max(8, Math.round(cf.width * newW / oldW));
+        }
+        if (cs.v === "bottom" && hasY) cf.y = Math.round(cf.y + dh);
+        else if (cs.v === "center" && hasY) cf.y = Math.round(cf.y + dh / 2);
+        else if (cs.v === "scale" && oldH > 0) {
+          if (hasY) cf.y = Math.round(cf.y * newH / oldH);
+          if (typeof cf.height === "number") cf.height = Math.max(8, Math.round(cf.height * newH / oldH));
+        }
+      });
     }
 
     /* --- drag (плавный, через rAF) --- */
@@ -1316,6 +1348,114 @@
         }
       });
       return newRefs;
+    }
+
+    /** Z-order: сдвиг выделенного элемента среди сиблингов (+1 вверх / -1 вниз). */
+    function zOrder(dir) {
+      if (selections.length !== 1) return;
+      const ref = selections[0].ref;
+      if (ref.secIdx == null) return;
+      const parent = parentOf(ref);
+      if (!parent) return;
+      const idx = ref.path == null ? ref.secIdx : parseInt(ref.path.split(".").pop());
+      const to = idx + dir;
+      if (!Number.isInteger(idx) || to < 0 || to >= parent.siblings.length) return;
+      onCommit();
+      const [node] = parent.siblings.splice(idx, 1);
+      parent.siblings.splice(to, 0, node);
+      const newRef = ref.path == null
+        ? { secIdx: to, path: null }
+        : Object.assign({}, ref, {
+            path: ref.path.split(".").slice(0, -1).concat(String(to)).join("."),
+          });
+      select(newRef);
+      onMutated();
+    }
+    function bringForward() { zOrder(1); }
+    function sendBackward() { zOrder(-1); }
+
+    /** Reorder: переставить ref на newIndex среди сиблингов (drag&drop в layers). */
+    function moveSibling(ref, newIndex) {
+      if (ref.secIdx == null) return;
+      const parent = parentOf(ref);
+      if (!parent) return;
+      const idx = ref.path == null ? ref.secIdx : parseInt(ref.path.split(".").pop());
+      if (!Number.isInteger(idx) || newIndex < 0 || newIndex >= parent.siblings.length
+          || idx === newIndex) return;
+      onCommit();
+      const [node] = parent.siblings.splice(idx, 1);
+      parent.siblings.splice(newIndex, 0, node);
+      onMutated();
+    }
+
+    /** Group: выделенные сиблинги одного родителя → card-контейнер (free) с их
+     *  относительными позициями. Ungroup — обратно, с офсетом контейнера. */
+    function groupSelection() {
+      const refs = selections.map(s => s.ref).filter(r => r.secIdx != null && r.path != null
+        && r.path.startsWith("children."));
+      if (refs.length < 2) return;
+      const parentPathOf = r => r.path.split(".").slice(0, -2).join(".");
+      const secIdx = refs[0].secIdx;
+      if (!refs.every(r => r.secIdx === secIdx && parentPathOf(r) === parentPathOf(refs[0]))) return;
+      const parent = parentOf(refs[0]);
+      if (!parent) return;
+      // границы группы в canvas-координатах
+      const targets = collectHitTargets();
+      const rects = refs.map(r => targets.find(t => refKey(t.ref) === refKey(r))).filter(Boolean);
+      if (rects.length !== refs.length) return;
+      const gx = Math.min(...rects.map(r => r.x)), gy = Math.min(...rects.map(r => r.y));
+      const gw = Math.max(...rects.map(r => r.x + r.w)) - gx;
+      const gh = Math.max(...rects.map(r => r.y + r.h)) - gy;
+      onCommit();
+      const idxs = refs.map(r => parseInt(r.path.split(".").pop()))
+        .sort((a, b) => a - b);
+      const taken = idxs.map(i => parent.siblings[i]);
+      const group = {
+        type: "card",
+        frame: Object.assign({ layout: "free", x: Math.round(gx), y: Math.round(gy),
+                               width: Math.round(gw), height: Math.round(gh) }),
+        children: taken.map(n => {
+          const c = JSON.parse(JSON.stringify(n));
+          if (c.frame && (typeof c.frame.x === "number" || typeof c.frame.y === "number")) {
+            c.frame = Object.assign({}, c.frame, {
+              x: Math.round((c.frame.x || 0) - gx), y: Math.round((c.frame.y || 0) - gy),
+            });
+          }
+          return c;
+        }),
+      };
+      // вынимаем с хвоста, вставляем группу на место первого
+      for (let k = idxs.length - 1; k >= 0; k--) parent.siblings.splice(idxs[k], 1);
+      parent.siblings.splice(idxs[0], 0, group);
+      select({ secIdx, path: parentPathOf(refs[0])
+        ? parentPathOf(refs[0]) + ".children." + idxs[0] : "children." + idxs[0] });
+      onMutated();
+    }
+
+    function ungroupSelection() {
+      if (selections.length !== 1) return;
+      const ref = selections[0].ref;
+      if (ref.secIdx == null || ref.path == null) return;
+      const node = irNodeAt(ref);
+      if (!node || !node.children || !node.children.length) return;
+      const parent = parentOf(ref);
+      if (!parent) return;
+      const idx = parseInt(ref.path.split(".").pop());
+      onCommit();
+      const gx = (node.frame && node.frame.x) || 0, gy = (node.frame && node.frame.y) || 0;
+      const kids = node.children.map(c => {
+        const k = JSON.parse(JSON.stringify(c));
+        if (parent.node.frame && parent.node.frame.layout === "free" || ref.path) {
+          k.frame = Object.assign({}, k.frame, {
+            x: Math.round((k.frame && k.frame.x || 0) + gx),
+            y: Math.round((k.frame && k.frame.y || 0) + gy),
+          });
+        }
+        return k;
+      });
+      parent.siblings.splice(idx, 1, ...kids);
+      clear();
+      onMutated();
     }
 
     /** Alt+drag: оригиналы остаются, копии уходят на дельту (один undo-шаг).
@@ -1633,6 +1773,17 @@
         return;
       }
 
+      // Z-order: ] вверх, [ вниз (Shift — сразу наверх/вниз не делаем, как в Figma)
+      if (e.key === "]" && selections.length === 1) { bringForward(); return; }
+      if (e.key === "[" && selections.length === 1) { sendBackward(); return; }
+
+      // Group / Ungroup
+      if ((e.key === "g" || e.key === "G" || e.key === "п" || e.key === "П") && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if (e.shiftKey) ungroupSelection(); else groupSelection();
+        return;
+      }
+
       // Cmd/Ctrl+D: дублировать рядом с оригиналом (любая вложенность и секции)
       if ((e.key === "d" || e.key === "D") && (e.ctrlKey || e.metaKey) && selections.length) {
         e.preventDefault();
@@ -1793,6 +1944,11 @@
       alignBottom,
       distributeH,
       distributeV,
+      bringForward,
+      sendBackward,
+      moveSibling,
+      groupSelection,
+      ungroupSelection,
       destroy,
       get selection() { return selections[0] || null; },
       get selections() { return selections; },
