@@ -1,15 +1,20 @@
 import type { ChangeEvent } from "react";
 import type { NodeProps } from "@xyflow/react";
+import { IrPreview } from "../components/IrPreview";
+import type { ReproduceResp } from "../flow/api";
 import { useFlowStore } from "../flow/store";
 import type { ReproduceFlowNode } from "../flow/types";
 import { NodeShell, NodeStatus } from "./NodeShell";
 import { OutPorts } from "./PortHandles";
 
-/* «Reproduce (pixel)» — run-based. B1: контролы и три out-handles (ir/html/diff)
- * по таблице PORTS; вызов /api/reproduce и блок результатов — в Фазе B2. */
+/* «Reproduce (pixel)» — run-based: скриншот или URL -> POST /api/reproduce
+ * (payload — зеркало runReproduce, nodes.js:861-886), результат целиком в
+ * data.result; ir результата — в превью и на выход ir. */
 export function ReproduceNode({ id, data, selected }: NodeProps<ReproduceFlowNode>) {
   const setNodeData = useFlowStore((s) => s.setNodeData);
   const runNode = useFlowStore((s) => s.runNode);
+  const busy = useFlowStore((s) => !!s.busy[Number(id)]);
+  const result = data.result as ReproduceResp | null;
 
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files && e.target.files[0];
@@ -52,11 +57,21 @@ export function ReproduceNode({ id, data, selected }: NodeProps<ReproduceFlowNod
         <button
           className="btn-node primary small f-run nodrag"
           style={{ marginLeft: "auto" }}
+          disabled={busy}
           onClick={() => runNode(Number(id))}
         >
-          ◎ Reproduce
+          {busy ? <span className="spinner" /> : null} ◎ Reproduce
         </button>
       </div>
+      <IrPreview
+        className="f-preview"
+        ir={result?.ir || null}
+        height={180}
+        empty="Загрузите скриншот или укажите URL и нажмите ◎"
+      />
+      {result?.diff && result.diff.overall_pct != null ? (
+        <div className="repro-diff">Diff: {result.diff.overall_pct}% (цель &lt; 5%)</div>
+      ) : null}
       <NodeStatus id={id} />
       <OutPorts type="reproduce" />
     </NodeShell>

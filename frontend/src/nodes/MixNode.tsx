@@ -1,5 +1,6 @@
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
+import { IrPreview } from "../components/IrPreview";
 import { useFlowStore } from "../flow/store";
 import type { MixFlowNode } from "../flow/types";
 import { cn } from "../lib/utils";
@@ -8,12 +9,14 @@ import { OutPorts } from "./PortHandles";
 
 /* «Микс» — run-based. Входы динамические из data.inputs (зеркало renderMixInputs,
  * nodes.js:781-813): handle kind "ir" на каждый вход, слайдер веса 0..100,
- * «+ вход» (макс. 4) и «✕» со снятием проводов удалённого входа. */
+ * «+ вход» (макс. 4) и «✕» со снятием проводов удалённого входа.
+ * POST /api/mix с нормированными весами (payload — зеркало runMix, nodes.js:815-836). */
 export function MixNode({ id, data, selected }: NodeProps<MixFlowNode>) {
   const setNodeData = useFlowStore((s) => s.setNodeData);
   const addMixInput = useFlowStore((s) => s.addMixInput);
   const removeMixInput = useFlowStore((s) => s.removeMixInput);
   const runNode = useFlowStore((s) => s.runNode);
+  const busy = useFlowStore((s) => !!s.busy[Number(id)]);
   return (
     <NodeShell id={id} type="mix" selected={selected}>
       {data.inputs.map((name) => {
@@ -53,11 +56,18 @@ export function MixNode({ id, data, selected }: NodeProps<MixFlowNode>) {
         <button
           className="btn-node primary small f-run nodrag"
           style={{ marginLeft: "auto" }}
+          disabled={busy}
           onClick={() => runNode(Number(id))}
         >
-          Смешать по весам
+          {busy ? <span className="spinner" /> : null} Смешать по весам
         </button>
       </div>
+      <IrPreview
+        className="f-preview"
+        ir={data.ir}
+        height={160}
+        empty="Подключите ≥2 IR-входа и нажмите «Смешать»"
+      />
       <NodeStatus id={id} />
       <OutPorts type="mix" data={data} />
     </NodeShell>

@@ -318,18 +318,101 @@
   color: var(--flow-err);
 }
 
-/* редактор: заглушка превью (в B2 здесь renderer.js) */
-.edit-placeholder {
+/* превью IR (renderer.js): фиксированная высота, дизайн масштабируется
+ * fitPreview под ширину контейнера, лишнее скрывается */
+.ir-preview {
+  position: relative;
   background: #f4f4f7;
-  color: #999;
   border-radius: 8px;
-  min-height: 120px;
+  overflow: hidden;
+}
+.ir-preview-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+.ir-preview-empty {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: #999;
   font-size: 12px;
   text-align: center;
-  padding: 24px 16px;
+  padding: 16px;
+}
+
+/* генератор: миниатюры вариантов — зеркало .thumbs/.thumb (nodes.html) */
+.thumbs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+.thumb {
+  position: relative;
+  border: 1.5px solid var(--flow-border);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #fff;
+  height: 96px;
+  transition: 0.12s;
+}
+.thumb:hover {
+  border-color: var(--flow-muted);
+}
+.thumb.active {
+  border-color: var(--flow-accent);
+  box-shadow: 0 0 0 1px var(--flow-accent);
+}
+.thumb .ir-preview {
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  border-radius: 0;
+}
+.tbadge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 2;
+  background: rgba(14, 14, 19, 0.8);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+
+/* спиннер на run-кнопке ноды во время запроса */
+.spinner {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.btn-node:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* reproduce: строка diff под превью */
+.repro-diff {
+  font-size: 11px;
+  color: var(--flow-muted);
 }
 
 /* контекстное меню — зеркало #ctx-menu (nodes.html) */

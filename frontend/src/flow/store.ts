@@ -2,8 +2,10 @@ import { create } from "zustand";
 import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import type { EdgeChange, NodeChange } from "@xyflow/react";
 
-import { defaultData, portsOfNode } from "./ports";
-import { deepClone, pullInput, reachable } from "./dataflow";
+import { api } from "./api";
+import type { CloneResp, GenerateResp, MixResp, ReproduceResp } from "./api";
+import { NODE_DEFS, defaultData, portsOfNode } from "./ports";
+import { deepClone, outValue, pullInput, reachable } from "./dataflow";
 import {
   DEFAULT_VIEW,
   buildSavePayload,
@@ -15,13 +17,17 @@ import {
 import { toast } from "./toast";
 import type {
   AnyNodeData,
+  CloneNodeData,
   FlowEdge,
   FlowNode,
+  GeneratorNodeData,
+  IRObject,
   LegacyEdgeEndpoint,
   LegacyGraphPayload,
   LegacyView,
   MixNodeData,
   NodeType,
+  ReproduceNodeData,
 } from "./types";
 
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
@@ -34,6 +40,8 @@ export interface FlowStoreState {
   view: LegacyView;
   nextId: number;
   statuses: Record<number, NodeStatus>;
+  /* run-based ноды в полёте запроса (спиннер на ноде); runtime-поле, в сейв не попадает */
+  busy: Record<number, boolean>;
 
   addNode: (
     type: NodeType,
@@ -46,8 +54,14 @@ export interface FlowStoreState {
   deleteEdge: (edgeId: string) => void;
   setNodeData: (id: number, patch: Record<string, unknown>) => void;
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void;
+  setBusy: (id: number, v: boolean) => void;
   propagate: (startId: number, visited?: Set<number>) => void;
   runNode: (id: number) => void;
+  runGenerator: (id: number) => Promise<void>;
+  runMix: (id: number) => Promise<void>;
+  runClone: (id: number) => Promise<void>;
+  runReproduce: (id: number) => Promise<void>;
+  sendToNode: (id: number, targetType: "edit" | "reference") => void;
   addMixInput: (id: number) => void;
   removeMixInput: (id: number, name: string) => void;
   onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
@@ -66,6 +80,7 @@ const initial = saved
 export const useFlowStore = create<FlowStoreState>()((set, get) => ({
   ...initial,
   statuses: {},
+  busy: {},
 
   /* Зеркало addNode (nodes.js:256-264): id из nextId, координаты Math.round */
   addNode: (type, x, y) => {
@@ -133,10 +148,13 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     set((state) => {
       const statuses = { ...state.statuses };
       delete statuses[id];
+      const busy = { ...state.busy };
+      delete busy[id];
       return {
         nodes: state.nodes.filter((n) => n.id !== sid),
         edges: state.edges.filter((e) => e.source !== sid && e.target !== sid),
         statuses,
+        busy,
       };
     });
   },
@@ -157,6 +175,10 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
 
   setStatus: (id, text, kind) => {
     set((state) => ({ statuses: { ...state.statuses, [id]: { text, kind } } }));
+  },
+
+  setBusy: (id, v) => {
+    set((state) => ({ busy: { ...state.busy, [id]: v } }));
   },
 
   /* Зеркало propagate (nodes.js:943-968): edit/reference получают КЛОН IR,
@@ -189,13 +211,197 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     }
   },
 
-  /* B1: run-based ноды — заглушки; LLM-вызовы подключаются в Фазе B2 */
+  /* Диспетчер run-based нод (кнопки ▶ и GraphDev.run) */
   runNode: (id) => {
     const n = get().nodes.find((x) => Number(x.id) === id);
     if (!n) return;
-    if (n.type !== "generator" && n.type !== "mix" && n.type !== "clone" && n.type !== "reproduce")
+    if (n.type === "generator") void get().runGenerator(id);
+    else if (n.type === "mix") void get().runMix(id);
+    else if (n.type === "clone") void get().runClone(id);
+    else if (n.type === "reproduce") void get().runReproduce(id);
+  },
+
+  /* Зеркало runGenerator (nodes.js:498-518): бриф тянем из входа prompt (pull-based)
+   * с fallback на ownPrompt, styleHint — из входа style; payload {brief, count,
+   * provider, styleHint} (FLOW-MIGRATION.md §4, №1). Результат — variants + active=0,
+   * propagate проталкивает clones[active] в edit/reference ниже по графу. */
+  runGenerator: async (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "generator" || st.busy[id]) return;
+    const data = n.data as GeneratorNodeData;
+    const brief = String(
+      pullInput(st.nodes, st.edges, n, "prompt") || data.ownPrompt || "",
+    ).trim();
+    if (!brief) {
+      get().setStatus(id, "Нет промта: подключите провод или заполните поле", "err");
       return;
-    get().setStatus(id, "Фаза B1: run-операции будут подключены в Фазе B2");
+    }
+    const styleRaw = pullInput(st.nodes, st.edges, n, "style");
+    const styleHint = styleRaw ? String(styleRaw) : undefined;
+    get().setStatus(id, `Генерация (${data.provider}, ${data.count})… 20–120 сек`);
+    get().setBusy(id, true);
+    try {
+      const res = await api<GenerateResp>("/api/generate", {
+        brief,
+        count: data.count,
+        provider: data.provider,
+        styleHint,
+      });
+      const variants = Array.isArray(res.variants) ? res.variants : [];
+      get().setNodeData(id, { variants, active: 0 });
+      const errNote = res.errors && res.errors.length ? `, ошибок: ${res.errors.length}` : "";
+      get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}`, "ok");
+      get().propagate(id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      get().setStatus(id, "Ошибка: " + msg, "err");
+      toast("Генератор: " + msg, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  /* Зеркало runMix (nodes.js:815-836): IR тянем из подключённых входов (pull),
+   * веса нормируются 0..1; payload {irs, weights} (FLOW-MIGRATION.md §4, №4). */
+  runMix: async (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "mix" || st.busy[id]) return;
+    const data = n.data as MixNodeData;
+    const irs: unknown[] = [];
+    const weights: number[] = [];
+    const labels: string[] = [];
+    for (const name of data.inputs) {
+      const ir = pullInput(st.nodes, st.edges, n, name);
+      if (ir) {
+        irs.push(ir);
+        weights.push((data.weights[name] ?? 50) / 100);
+        labels.push(`${name}:${data.weights[name] ?? 50}%`);
+      }
+    }
+    if (irs.length < 2) {
+      get().setStatus(id, "Нужно минимум 2 подключённых IR-входа", "err");
+      return;
+    }
+    get().setStatus(id, "Смешиваю…");
+    get().setBusy(id, true);
+    try {
+      const res = await api<MixResp>("/api/mix", { irs, weights });
+      get().setNodeData(id, { ir: res.ir || null });
+      get().setStatus(id, "Готово: " + labels.join(" + "), "ok");
+      get().propagate(id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      get().setStatus(id, "Ошибка: " + msg, "err");
+      toast("Микс: " + msg, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  /* Зеркало runClone (nodes.js:838-857): payload {url, component, provider}
+   * (FLOW-MIGRATION.md §4, №5); res.cached — в статус. */
+  runClone: async (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "clone" || st.busy[id]) return;
+    const data = n.data as CloneNodeData;
+    const url = (data.url || "").trim();
+    const component = (data.component || "").trim();
+    if (!url) {
+      get().setStatus(id, "Введите URL сайта", "err");
+      return;
+    }
+    if (!component) {
+      get().setStatus(id, "Опишите, какой компонент клонировать", "err");
+      return;
+    }
+    get().setStatus(id, `Загрузка ${url.slice(0, 30)}…`);
+    get().setBusy(id, true);
+    try {
+      const res = await api<CloneResp>("/api/clone", {
+        url,
+        component,
+        provider: data.provider || "qwen",
+      });
+      get().setNodeData(id, { ir: res.ir || null });
+      get().setStatus(
+        id,
+        res.cached ? "Клон готов (из кэша — токены не тратились)" : "Клон готов",
+        "ok",
+      );
+      get().propagate(id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      get().setStatus(id, "Ошибка: " + msg, "err");
+      toast("Клон: " + msg, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  /* Зеркало runReproduce (nodes.js:861-886): payload {image|«», url, provider}
+   * (FLOW-MIGRATION.md §4, №6); результат целиком в data.result, на выходе ir. */
+  runReproduce: async (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "reproduce" || st.busy[id]) return;
+    const data = n.data as ReproduceNodeData;
+    const url = (data.url || "").trim();
+    if (!data.image && !url) {
+      get().setStatus(id, "Загрузите скриншот или укажите URL сайта", "err");
+      return;
+    }
+    get().setStatus(
+      id,
+      url
+        ? `Reproduce ${url.slice(0, 30)}… (кэш проверяется первым)`
+        : `Reproduce (${data.provider}): VLM → пиксели → HTML → diff… 30–120 сек`,
+    );
+    get().setBusy(id, true);
+    try {
+      const res = await api<ReproduceResp>("/api/reproduce", {
+        image: data.image || "",
+        url,
+        provider: data.provider || "qwen",
+      });
+      get().setNodeData(id, { result: res });
+      const diffPct = res.diff && res.diff.overall_pct != null ? res.diff.overall_pct : "?";
+      const colorsCount = res.colors && res.colors.colors ? Object.keys(res.colors.colors).length : 0;
+      const cached = res.cached ? " · из кэша, токены не тратились" : "";
+      get().setStatus(
+        id,
+        `Готово: diff ${diffPct}%, цветов ${colorsCount}, иконок ${res.icons_count ?? 0}${cached}`,
+        "ok",
+      );
+      get().propagate(id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      get().setStatus(id, "Ошибка: " + msg, "err");
+      toast("Reproduce: " + msg, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  /* Зеркало sendToNode (nodes.js:522-545): создать ноду target справа от источника,
+   * положить клон IR и соединить проводом ir->ir. */
+  sendToNode: (id, targetType) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n) return;
+    const ir = outValue(n) as IRObject | null;
+    if (!ir) {
+      toast("Сначала запустите ноду (▶ / ◎ Reproduce)", "error");
+      return;
+    }
+    const def = NODE_DEFS[n.type as NodeType];
+    const target = get().addNode(targetType, n.position.x + (def ? def.w : 270) + 60, n.position.y);
+    get().setNodeData(target.id, { ir: deepClone(ir) });
+    if (targetType === "reference") get().setStatus(target.id, "IR получен от генератора", "ok");
+    get().connect({ node: id, port: "ir" }, { node: target.id, port: "ir" });
+    toast(`→ ${NODE_DEFS[targetType].title}`, "ok");
   },
 
   /* «+ вход» у mix: максимум 4, имя — первое свободное из a..d, вес 50 (nodes.js:403-412) */
