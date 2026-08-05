@@ -15,5 +15,12 @@ if not exist ".env" (
 if not exist "data" (
   if exist "%MAIN%\data" ( mklink /J "data" "%MAIN%\data" >nul && echo [setup] data -^> junction (общий кэш) )
 )
+rem app/static/flow (Vite-сборка /flow) в .gitignore: копия из главного worktree,
+rem чтобы /flow не давал 500 в новых worktree (наблюдение воркера W5, 2026-08-05)
+if not exist "app\static\flow\index.html" (
+  if exist "%MAIN%\app\static\flow\index.html" (
+    xcopy /E /I /Q "%MAIN%\app\static\flow" "app\static\flow" >nul && echo [setup] /flow -^> копия Vite-сборки
+  )
+)
 echo [setup] готово: %cd%
 endlocal
