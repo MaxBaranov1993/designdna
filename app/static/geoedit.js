@@ -1443,9 +1443,11 @@
       const idx = parseInt(ref.path.split(".").pop());
       onCommit();
       const gx = (node.frame && node.frame.x) || 0, gy = (node.frame && node.frame.y) || 0;
+      const parentFree = !!(parent.node.frame && parent.node.frame.layout === "free");
       const kids = node.children.map(c => {
         const k = JSON.parse(JSON.stringify(c));
-        if (parent.node.frame && parent.node.frame.layout === "free" || ref.path) {
+        // офсет группы имеет смысл только во free-родителе; в auto он лишь засоряет IR
+        if (parentFree) {
           k.frame = Object.assign({}, k.frame, {
             x: Math.round((k.frame && k.frame.x || 0) + gx),
             y: Math.round((k.frame && k.frame.y || 0) + gy),

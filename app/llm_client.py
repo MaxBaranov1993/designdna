@@ -209,23 +209,28 @@ def _chat_openai_once(cfg, key, model, messages, temp, t) -> str:
 
 
 def chat(provider: str, messages: list, temperature: float, timeout: int | None = None,
-         role: str = "mechanics") -> str:
-    """role — ключ ROUTING для OpenRouter: mechanics (черновики) / taste («вкус»)."""
+         role: str = "mechanics", model: str | None = None) -> str:
+    """role — ключ ROUTING для OpenRouter: mechanics (черновики) / taste («вкус»).
+    model — явный slug модели (поверх cfg/ROUTING), для пайплайнов разработки."""
     cfg = PROVIDERS[provider]
     key = get_key(cfg)
     t = timeout or TIMEOUT
     temp = cfg.get("fixed_temperature", temperature)
 
     if cfg.get("api_format") == "gemini":
-        data = _post_json(f"{cfg['url']}/models/{cfg['model']}:generateContent",
+        m = model or cfg["model"]
+        data = _post_json(f"{cfg['url']}/models/{m}:generateContent",
                           _gemini_messages(messages, temp), key, t)
         content = _gemini_text(data, provider)
         if not content.strip():
             raise RuntimeError(f"{provider}: пустой ответ Gemini")
         return content
 
-    # OpenRouter (model=None) берёт цепочку моделей из ROUTING по роли
-    models = routing_models(role) if cfg["model"] is None else [cfg["model"]]
+    # явный model > цепочка ROUTING (OpenRouter) > модель провайдера
+    if model:
+        models = [model]
+    else:
+        models = routing_models(role) if cfg["model"] is None else [cfg["model"]]
     last_error = None
     for model in models:
         try:
