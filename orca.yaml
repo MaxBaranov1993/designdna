@@ -1,0 +1,4 @@
+# Orca repo hooks: выполняются при создании новых worktree (--setup run / run-by-default).
+hooks:
+  setup: setup-worktree.cmd
+  archive: ""
