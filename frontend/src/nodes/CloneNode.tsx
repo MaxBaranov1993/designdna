@@ -1,14 +1,17 @@
 import type { NodeProps } from "@xyflow/react";
+import { IrPreview } from "../components/IrPreview";
 import { useFlowStore } from "../flow/store";
 import type { CloneFlowNode } from "../flow/types";
 import { NodeShell, NodeStatus } from "./NodeShell";
 import { OutPorts } from "./PortHandles";
 
-/* «Клон (сайт)» — run-based. B1: контролы и handle out ir по таблице PORTS,
- * вызов /api/clone подключается в Фазе B2. */
+/* «Клон (сайт)» — run-based: url + компонент -> POST /api/clone
+ * (payload — зеркало runClone, nodes.js:838-857), результат ir в превью
+ * и на выход для нод ниже по графу. */
 export function CloneNode({ id, data, selected }: NodeProps<CloneFlowNode>) {
   const setNodeData = useFlowStore((s) => s.setNodeData);
   const runNode = useFlowStore((s) => s.runNode);
+  const busy = useFlowStore((s) => !!s.busy[Number(id)]);
   return (
     <NodeShell id={id} type="clone" selected={selected}>
       <input
@@ -37,11 +40,18 @@ export function CloneNode({ id, data, selected }: NodeProps<CloneFlowNode>) {
         <button
           className="btn-node primary small f-run nodrag"
           style={{ marginLeft: "auto" }}
+          disabled={busy}
           onClick={() => runNode(Number(id))}
         >
-          ⧉ Клонировать
+          {busy ? <span className="spinner" /> : null} ⧉ Клонировать
         </button>
       </div>
+      <IrPreview
+        className="f-preview"
+        ir={data.ir}
+        height={160}
+        empty="Укажите URL и компонент — клон появится здесь"
+      />
       <NodeStatus id={id} />
       <OutPorts type="clone" />
     </NodeShell>
