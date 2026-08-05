@@ -1144,18 +1144,50 @@
   /* ---------- сохранение ---------- */
 
   let saveTimer = null;
+  let lastSaveOk = true;
+
+  /** Fallback при квоте: выкидываем base64/data-URL строки (скриншоты нод
+   *  Reproduce/Scrape), остальной IR и граф сохраняются. */
+  function stripHeavy(v) {
+    if (Array.isArray(v)) return v.map(stripHeavy);
+    if (v && typeof v === "object") {
+      const out = {};
+      for (const [k, val] of Object.entries(v)) {
+        if (typeof val === "string" && (val.startsWith("data:") || val.length > 200000)) continue;
+        out[k] = stripHeavy(val);
+      }
+      return out;
+    }
+    return v;
+  }
+
   function save() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
+      const data = {
+        nodes: nodes.map(n => ({ id: n.id, type: n.type, x: n.x, y: n.y, data: n.data })),
+        edges, view, nextId,
+      };
       try {
-        const data = {
-          nodes: nodes.map(n => ({ id: n.id, type: n.type, x: n.x, y: n.y, data: n.data })),
-          edges, view, nextId,
-        };
         localStorage.setItem(LS_KEY, JSON.stringify(data));
-      } catch (e) { /* переполнение localStorage — молча пропускаем */ }
+        lastSaveOk = true;
+      } catch (e) {
+        try {
+          localStorage.setItem(LS_KEY, JSON.stringify(stripHeavy(data)));
+          lastSaveOk = true;
+          toast("localStorage переполнен — сохранил без скриншотов", "error");
+        } catch (e2) {
+          lastSaveOk = false;
+          toast("Не удалось сохранить граф (localStorage переполнен). Экспортируйте в файл.", "error");
+        }
+      }
     }, 300);
   }
+
+  // флаш при закрытии вкладки, если последняя запись не удалась
+  window.addEventListener("beforeunload", (e) => {
+    if (!lastSaveOk) { e.preventDefault(); e.returnValue = ""; }
+  });
 
   function load(data) {
     for (const n of nodes) if (n.geo) n.geo.destroy();
