@@ -81,10 +81,20 @@ def main() -> int:
     flags = [a for a in sys.argv[1:] if a.startswith("--")]
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     rng = args[0] if args else "737478f..HEAD"
-    if not re.fullmatch(r"[\w.~/^-]+(\.\.[\w.~/^-]+)?", rng):
+    # ведущий '-' запрещён: аргумент не должен разбираться git'ом как флаг
+    if not re.fullmatch(r"[\w.~/][\w.~/^-]*(\.\.[\w.~/][\w.~/^-]*)?", rng):
         print("некорректный git-range:", rng)
         return 2
+    # концы диапазона обязаны существовать в репозитории
+    for rev in (rng.split("..", 1) if ".." in rng else [rng]):
+        chk = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", rev + "^{commit}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if chk.returncode != 0:
+            print("некорректная ревизия в диапазоне:", rev)
+            return 2
     reviewers = REVIEWERS_OR if "--allow-openrouter" in flags else REVIEWERS
+    # '--' отделяет ревизии от pathspec: аргументы после него git не примет за флаги
     diff = subprocess.run(
         ["git", "-C", str(ROOT), "diff", rng, "--", "app/"],
         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout

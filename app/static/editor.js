@@ -604,13 +604,16 @@
       });
       div.addEventListener("dragend", () => {
         state.dragLayerKey = null;
-        div.classList.remove("drop-target");
+        // подсветка могла остаться на любой строке панели (dragover без drop/dragleave)
+        overlay.querySelectorAll(".fe-layer.drop-target")
+          .forEach(el => el.classList.remove("drop-target"));
       });
       div.addEventListener("dragover", (e) => { e.preventDefault(); div.classList.add("drop-target"); });
       div.addEventListener("dragleave", () => div.classList.remove("drop-target"));
       div.addEventListener("drop", (e) => {
         e.preventDefault();
-        div.classList.remove("drop-target");
+        overlay.querySelectorAll(".fe-layer.drop-target")
+          .forEach(el => el.classList.remove("drop-target"));
         const fromKey = state.dragLayerKey;
         state.dragLayerKey = null;
         if (!fromKey || fromKey === key || !state.geo) return;

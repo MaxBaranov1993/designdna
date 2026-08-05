@@ -69,6 +69,11 @@
   .geo-eq-label { position:absolute; pointer-events:none; z-index:58; font-family:'Inter',system-ui,sans-serif;
     font-weight:500; font-size:calc(9px * var(--geo-inv,1));
     color:#9747ff; background:rgba(151,71,255,.12); padding:0 calc(3px * var(--geo-inv,1)); border-radius:2px; white-space:nowrap; }
+  .geo-hint { position:absolute; left:50%; top:calc(8px * var(--geo-inv,1)); transform:translateX(-50%);
+    background:rgba(24,24,37,.92); color:#cdd6f4; border:1px solid #45475a; border-radius:6px;
+    font-family:'Inter',system-ui,sans-serif; font-weight:500; font-size:calc(11px * var(--geo-inv,1));
+    padding:calc(5px * var(--geo-inv,1)) calc(10px * var(--geo-inv,1)); white-space:nowrap;
+    pointer-events:none; z-index:70; }
   .geo-content-block { pointer-events:none !important; }
   .geo-content-block * { pointer-events:none !important; }
   .geo-content-block [data-ir-path].editing,
@@ -95,6 +100,12 @@
     const last = keys.pop();
     const target = keys.reduce((o, k) => (o == null ? o : o[k]), obj);
     if (target != null) target[last] = value;
+  }
+
+  /** Guard для координат из внешнего IR: строки/NaN не должны попадать в арифметику. */
+  function finiteNum(v) {
+    const n = typeof v === "number" ? v : parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
   }
 
   /* ---------- attach ---------- */
@@ -663,6 +674,15 @@
       ov.dataset.tool = tool;
       syncZoom(ov);
       return ov;
+    }
+
+    /** Короткая подсказка об отказе операции (group и т.п.); исчезает сама. */
+    function hint(text) {
+      const el = document.createElement("div");
+      el.className = "geo-hint";
+      el.textContent = text;
+      overlay().appendChild(el);
+      setTimeout(() => el.remove(), 2500);
     }
 
     /** Компенсация зума: экранные размеры ручек/чипов постоянны при любом scale.
@@ -1380,28 +1400,55 @@
       if (ref.secIdx == null) return;
       const parent = parentOf(ref);
       if (!parent) return;
+      // guard: корневые секции идут по secIdx, без обращения к path.split
       const idx = ref.path == null ? ref.secIdx : parseInt(ref.path.split(".").pop(), 10);
       if (!Number.isInteger(idx) || newIndex < 0 || newIndex >= parent.siblings.length
           || idx === newIndex) return;
       onCommit();
       const [node] = parent.siblings.splice(idx, 1);
+      // после remove+insert финальный индекс перемещённой ноды — ровно newIndex
       parent.siblings.splice(newIndex, 0, node);
-      // выделение следует за перемещённым элементом (финальный индекс = newIndex)
-      const wasSel = selections.some(s => refKey(s.ref) === refKey(ref));
-      const at = newIndex;
+      // ремоппим все выделения, затронутые сдвигом (перемещённую ноду и соседей):
+      // иначе мультивыделение останется на старых, уже чужих позициях
+      const shift = j => (j === idx ? newIndex
+        : idx < newIndex ? (j > idx && j <= newIndex ? j - 1 : j)
+        : (j >= newIndex && j < idx ? j + 1 : j));
+      const prefixSegs = ref.path == null ? null : ref.path.split(".").slice(0, -1);
+      selections = selections.map(s => {
+        const r = s.ref;
+        if (prefixSegs == null) {
+          // двигали корневую секцию: сдвигаются secIdx всех секций диапазона
+          if (r.secIdx == null) return s;
+          const j = shift(r.secIdx);
+          return j === r.secIdx ? s
+            : Object.assign({}, s, { ref: Object.assign({}, r, { secIdx: j }) });
+        }
+        if (r.secIdx !== ref.secIdx || r.path == null) return s;
+        const segs = r.path.split(".");
+        if (segs.length <= prefixSegs.length) return s;
+        for (let i = 0; i < prefixSegs.length; i++) if (segs[i] !== prefixSegs[i]) return s;
+        const j0 = parseInt(segs[prefixSegs.length], 10);
+        if (!Number.isInteger(j0)) return s;
+        const j = shift(j0);
+        if (j === j0) return s;
+        segs[prefixSegs.length] = String(j);
+        return Object.assign({}, s, { ref: Object.assign({}, r, { path: segs.join(".") }) });
+      });
       onMutated();
-      if (wasSel) {
-        select(ref.path == null
-          ? { secIdx: at, path: null }
-          : Object.assign({}, ref, {
-              path: ref.path.split(".").slice(0, -1).concat(String(at)).join("."),
-            }));
-      }
+      renderSelectionBoxes();
+      scheduleBoxSync();
+      if (onSelect) onSelect(selections);
     }
 
     /** Group: выделенные сиблинги одного родителя → card-контейнер (free) с их
      *  относительными позициями. Ungroup — обратно, с офсетом контейнера. */
     function groupSelection() {
+      // секции верхнего уровня (path == null) не группируются: понятный отказ
+      // вместо тихого пропуска (и без TypeError на r.path.split)
+      if (selections.some(s => s.ref.secIdx != null && s.ref.path == null)) {
+        hint("Группировка недоступна для секций верхнего уровня");
+        return;
+      }
       const refs = selections.map(s => s.ref).filter(r => r.secIdx != null && r.path != null
         && r.path.startsWith("children."));
       if (refs.length < 2) return;
@@ -1467,16 +1514,23 @@
       const idx = parseInt(ref.path.split(".").pop(), 10);
       if (!Number.isInteger(idx)) return;
       onCommit();
-      const gx = (node.frame && node.frame.x) || 0, gy = (node.frame && node.frame.y) || 0;
+      // координаты из внешнего IR бывают строками/NaN: в арифметике только конечные числа
+      const gx = finiteNum(node.frame.x), gy = finiteNum(node.frame.y);
       const parentFree = !!(parent.node.frame && parent.node.frame.layout === "free");
       const kids = node.children.map(c => {
         const k = JSON.parse(JSON.stringify(c));
+        k.frame = Object.assign({}, k.frame);
+        // width/height: строку-число нормализуем, ключевые слова (fill/hug) не трогаем
+        ["width", "height"].forEach(d => {
+          if (typeof k.frame[d] === "string") {
+            const n = parseFloat(k.frame[d]);
+            if (Number.isFinite(n)) k.frame[d] = n;
+          }
+        });
         // офсет группы имеет смысл только во free-родителе; в auto он лишь засоряет IR
         if (parentFree) {
-          k.frame = Object.assign({}, k.frame, {
-            x: Math.round((k.frame && k.frame.x || 0) + gx),
-            y: Math.round((k.frame && k.frame.y || 0) + gy),
-          });
+          k.frame.x = Math.round(finiteNum(k.frame.x) + gx);
+          k.frame.y = Math.round(finiteNum(k.frame.y) + gy);
         }
         return k;
       });

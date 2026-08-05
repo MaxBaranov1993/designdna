@@ -125,6 +125,23 @@ def routing_models(role: str) -> list:
     return list(ROUTING.get(role, ROUTING["mechanics"]))
 
 
+def _valid_model_slug(slug) -> bool:
+    """Slug модели попадает в URL и аргументы API: только безопасные имена.
+    Запрещены ведущие/концевые слеши, пустые сегменты и '..' (path traversal)."""
+    if not isinstance(slug, str) or not slug:
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", slug):
+        return False
+    if slug.startswith("/") or slug.endswith("/"):
+        return False
+    return all(seg and seg != ".." for seg in slug.split("/"))
+
+
+def _check_model_slug(slug) -> None:
+    if not _valid_model_slug(slug):
+        raise ValueError(f"недопустимый model slug: {slug!r}")
+
+
 def get_key(cfg: dict) -> str:
     if "oauth_credentials" in cfg:
         cred_path = Path(os.path.expanduser(cfg["oauth_credentials"]))
@@ -212,8 +229,8 @@ def chat(provider: str, messages: list, temperature: float, timeout: int | None 
          role: str = "mechanics", model: str | None = None) -> str:
     """role — ключ ROUTING для OpenRouter: mechanics (черновики) / taste («вкус»).
     model — явный slug модели (поверх cfg/ROUTING), для пайплайнов разработки."""
-    if model is not None and not re.fullmatch(r"[A-Za-z0-9._/-]+", model):
-        raise ValueError(f"недопустимый model slug: {model!r}")
+    if model is not None:
+        _check_model_slug(model)
     cfg = PROVIDERS[provider]
     key = get_key(cfg)
     t = timeout or TIMEOUT
@@ -221,6 +238,7 @@ def chat(provider: str, messages: list, temperature: float, timeout: int | None 
 
     if cfg.get("api_format") == "gemini":
         m = model or cfg["model"]
+        _check_model_slug(m)
         data = _post_json(f"{cfg['url']}/models/{m}:generateContent",
                           _gemini_messages(messages, temp), key, t)
         content = _gemini_text(data, provider)
@@ -233,6 +251,8 @@ def chat(provider: str, messages: list, temperature: float, timeout: int | None 
         models = [model]
     else:
         models = routing_models(role) if cfg["model"] is None else [cfg["model"]]
+    for m in models:  # валидны все пути разрешения: явный, cfg, ROUTING/env
+        _check_model_slug(m)
     last_error = None
     for model in models:
         try:
@@ -261,6 +281,8 @@ def chat_vision(provider: str, image_data_url: str, text_prompt: str,
         vision_models = routing_models(role) if cfg["model"] is None else [cfg["model"]]
     if isinstance(vision_models, str):
         vision_models = [vision_models]
+    for m in vision_models:
+        _check_model_slug(m)
 
     api_format = cfg.get("api_format", "openai")
 

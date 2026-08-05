@@ -6,6 +6,7 @@
 import hashlib
 import json
 import sqlite3
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,10 @@ ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "data" / "cache.db"
 
 _lock = threading.Lock()
+
+
+def _log(msg: str) -> None:
+    print(f"[cache_store] {msg}", file=sys.stderr)
 
 
 def _conn() -> sqlite3.Connection:
@@ -27,8 +32,8 @@ def _conn() -> sqlite3.Connection:
     if "hits" not in cols:  # миграция старых баз; не должна ронять горячий путь
         try:
             con.execute("ALTER TABLE llm_cache ADD COLUMN hits INTEGER DEFAULT 0")
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as e:
+            _log(f"миграция колонки hits не удалась: {e}")
     return con
 
 
@@ -49,9 +54,16 @@ def get(kind: str, key: str) -> dict | None:
                 try:
                     con.execute("UPDATE llm_cache SET hits = hits + 1 WHERE kind=? AND key=?",
                                 (kind, key))
-                except sqlite3.Error:
-                    pass  # счётчик — метрика; отдача кэша важнее
-    return json.loads(row[0]) if row else None
+                    con.commit()  # счётчик фиксируем сразу, не по выходу из контекста
+                except sqlite3.Error as e:
+                    _log(f"UPDATE hits не удался ({kind}): {e}")  # метрика; отдача кэша важнее
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except (ValueError, TypeError) as e:
+        _log(f"битый payload в кэше ({kind}) — cache miss: {e}")
+        return None
 
 
 def put(kind: str, key: str, payload: dict) -> None:
