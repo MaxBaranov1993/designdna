@@ -142,14 +142,26 @@
 
   /** frame -> CSS. container=true добавляет раскладку детей (auto-layout/free);
    *  parentFree=true — родитель имеет layout:"free", значит x/y работают (absolute). */
-  function frameCss(f, parentFree, container) {
+  function frameCss(f, parentFree, container, parentFrame) {
     if (!f || typeof f !== "object") return "";
     const s = [];
+    // fill/hug зависят от раскладки родителя: flex-grow растягивает по ГЛАВНОЙ оси,
+    // поэтому в column-родителе fill-width не должен иметь flex-grow (и наоборот) —
+    // иначе «fill» ломает геометрию и после drag-конверсии элементы разъезжаются
+    const pDir = parentFrame && parentFrame.direction === "row" ? "row" : "column";
     if (typeof f.width === "number") s.push(`width:${f.width}px`);
-    else if (f.width === "fill") s.push("width:100%", "flex:1 1 auto", "min-width:0");
+    else if (f.width === "fill") {
+      if (parentFree) s.push("width:100%");
+      else if (pDir === "row") s.push("width:100%", "flex:1 1 auto", "min-width:0");
+      else s.push("width:100%", "min-width:0");
+    }
     else if (f.width === "hug") s.push("width:fit-content");
     if (typeof f.height === "number") s.push(`height:${f.height}px`);
-    else if (f.height === "fill") s.push("align-self:stretch", "flex-grow:1");
+    else if (f.height === "fill") {
+      if (parentFree) s.push("height:100%");
+      else if (pDir === "column") s.push("align-self:stretch", "flex-grow:1", "min-height:0");
+      else s.push("align-self:stretch", "min-height:0");
+    }
     else if (f.height === "hug") s.push("height:fit-content");
     if (typeof f.minWidth === "number") s.push(`min-width:${f.minWidth}px`);
     if (typeof f.maxWidth === "number") s.push(`max-width:${f.maxWidth}px`);
@@ -184,8 +196,8 @@
   /** Оборачивает html в div-бокс по frame (для секций и листовых элементов).
  *  data-ir-path переносится на обёртку чтобы GeoEdit работал с frame-контейнером.
  *  cls — опциональный класс обёртки (например sec-free для дефолтного padding). */
-  function withFrame(html, frame, parentFree, container, irPath, cls) {
-    const css = frameCss(frame, parentFree, container);
+  function withFrame(html, frame, parentFree, container, irPath, cls, parentFrame) {
+    const css = frameCss(frame, parentFree, container, parentFrame);
     if (!css && !cls) return html;
     const pathAttr = irPath ? ` data-ir-path="${esc(irPath)}"` : "";
     const clsAttr = cls ? ` class="${cls}"` : "";
@@ -194,11 +206,11 @@
 
   /* ---------- элементы (children) ---------- */
 
-  function renderElement(el, uid, parentFree) {
+  function renderElement(el, uid, parentFree, parentFrame) {
     const irPath = el.__path || null;
-    const html = renderElementInner(el, uid, parentFree);
+    const html = renderElementInner(el, uid, parentFree, parentFrame);
     if (el.type === "card") return html; // card ставит data-ir-path сам
-    const wrapped = withFrame(html, el.frame, parentFree, false, irPath);
+    const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame);
     // если frame пустой и withFrame не обернул — добавляем span-обёртку с path
     if (wrapped === html && irPath) {
       return `<span data-ir-path="${esc(irPath)}" style="display:inline-block">${html}</span>`;
@@ -206,7 +218,7 @@
     return wrapped;
   }
 
-  function renderElementInner(el, uid, parentFree) {
+  function renderElementInner(el, uid, parentFree, parentFrame) {
     // data-ir-path НЕ ставится здесь — он добавляется на withFrame-обёртку в renderElement
     // или на card-корень. Исключение: props-элементы секций ставят path сами.
     switch (el.type) {
@@ -257,8 +269,8 @@
         return `<input class="input" placeholder="${esc(el.placeholder || el.label || "")}">`;
       case "card": {
         const free = el.frame && el.frame.layout === "free";
-        const inner = (el.children || []).map(c => renderElement(c, uid, free)).join("");
-        const fcss = frameCss(el.frame, parentFree, true);
+        const inner = (el.children || []).map(c => renderElement(c, uid, free, el.frame)).join("");
+        const fcss = frameCss(el.frame, parentFree, true, parentFrame);
         const cardPath = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
         return `<div class="card"${cardPath}${fcss ? ` style="${fcss}"` : ""}>
           ${el.icon ? `<span class="icon-dot" style="margin-bottom:12px">${esc(el.icon.slice(0, 2))}</span>` : ""}
@@ -283,7 +295,7 @@
     // position:relative — якорь для absolute-детей и free-позиционирования
     const style = (free || hasAbs) ? ' style="position:relative"'
       : cols ? ` style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:20px"` : "";
-    return `<div${style}>${children.map(c => renderElement(c, uid, free)).join("")}</div>`;
+    return `<div${style}>${children.map(c => renderElement(c, uid, free, parentFrame)).join("")}</div>`;
   }
 
   /* ---------- секции ---------- */
@@ -302,7 +314,7 @@
     const html = (isFree && hasChildren) ? "" : renderSectionInner(sec, uid);
     let childrenHtml = "";
     if (isFree && hasChildren) {
-      childrenHtml = sec.children.map(c => renderElement(c, uid, true)).join("");
+      childrenHtml = sec.children.map(c => renderElement(c, uid, true, sec.frame)).join("");
     }
     const combined = html + childrenHtml;
     // free-секция рендерится без .sec-внутренностей — класс sec-free сохраняет
@@ -382,8 +394,8 @@
       const rows = (sec.children || []).map((c, i) => {
         const media = `<div class="img-ph" style="min-height:240px">${esc(c.alt || c.imagePrompt || "изображение")}</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center;gap:12px">
-          ${c.title || c.text ? `<h3>${esc(c.title || "")}</h3><p class="muted">${esc(c.text || "")}</p>` : renderElement(c, uid)}
-          ${(c.children || []).map(ch => renderElement(ch, uid)).join("")}</div>`;
+          ${c.title || c.text ? `<h3>${esc(c.title || "")}</h3><p class="muted">${esc(c.text || "")}</p>` : renderElement(c, uid, false, sec.frame)}
+          ${(c.children || []).map(ch => renderElement(ch, uid, !!(c.frame && c.frame.layout === "free"), c.frame)).join("")}</div>`;
         return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;margin-bottom:48px">${i % 2 ? txt + media : media + txt}</div>`;
       }).join("");
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}${rows}</div></section>`;

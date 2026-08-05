@@ -1024,7 +1024,8 @@
         if (!sibEl) return null;
         const r = sibEl.getBoundingClientRect();
         return { x: Math.round((r.left - base.left) / s - bl),
-                 y: Math.round((r.top - base.top) / s - bt) };
+                 y: Math.round((r.top - base.top) / s - bt),
+                 w: Math.round(r.width / s), h: Math.round(r.height / s) };
       });
       parent.siblings.forEach((sib, j) => {
         const m = measured[j];
@@ -1035,6 +1036,11 @@
         const sf = Object.assign({}, getFrame(sibRef));
         if (typeof sf.x !== "number") sf.x = m.x;
         if (typeof sf.y !== "number") sf.y = m.y;
+        // fill у absolute-ребёнка тянется на весь padding-box родителя — это другая
+        // семантика, чем в раскладке; фиксируем измеренный размер, чтобы конверсия
+        // не «ломала» геометрию (баг «при перетаскивании всё ломается»)
+        if (sf.width === "fill") sf.width = m.w;
+        if (sf.height === "fill") sf.height = m.h;
         setFrameData(sibRef, sf);
       });
       // дефолтный padding секции при конверсии в free сохраняет рендерер (sec-free)
