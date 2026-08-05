@@ -845,9 +845,10 @@
     try {
       const res = await api("/api/clone", { url, component, provider: n.data.provider || "qwen" });
       n.data.ir = res.ir;
-      setStatus(n, "Клон готов", "ok");
+      setStatus(n, res.cached ? "Клон готов (из кэша — токены не тратились)" : "Клон готов", "ok");
       propagate(n.id);
       save();
+      refreshCacheStat();
     } catch (e) {
       setStatus(n, "Ошибка: " + e.message, "err");
     } finally {
@@ -876,6 +877,7 @@
       setStatus(n, `Готово: diff ${diffPct}%, цветов ${Object.keys(res.colors.colors || {}).length}, иконок ${res.icons_count}${cached}`, "ok");
       propagate(n.id);
       save();
+      refreshCacheStat();
     } catch (e) {
       setStatus(n, "Ошибка: " + e.message, "err");
     } finally {
@@ -1301,5 +1303,14 @@
     fit: fitAll,
   };
 
+  /** Счётчик сэкономленных кэшем LLM-вызовов (повторы reproduce/clone). */
+  function refreshCacheStat() {
+    fetch("/api/cache/stats").then(r => r.json()).then(s => {
+      const el = document.getElementById("cache-stat");
+      if (el) el.textContent = s.hits_total > 0 ? `💾 кэш сэкономил ${s.hits_total} вызов(ов)` : "";
+    }).catch(() => {});
+  }
+
   loadFromStorage();
+  refreshCacheStat();
 })();

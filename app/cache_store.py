@@ -21,8 +21,11 @@ def _conn() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH)
     con.execute(
         "CREATE TABLE IF NOT EXISTS llm_cache ("
-        " kind TEXT, key TEXT, payload TEXT, created_at TEXT,"
+        " kind TEXT, key TEXT, payload TEXT, created_at TEXT, hits INTEGER DEFAULT 0,"
         " PRIMARY KEY (kind, key))")
+    cols = [r[1] for r in con.execute("PRAGMA table_info(llm_cache)")]
+    if "hits" not in cols:  # миграция старых баз
+        con.execute("ALTER TABLE llm_cache ADD COLUMN hits INTEGER DEFAULT 0")
     return con
 
 
@@ -39,6 +42,9 @@ def get(kind: str, key: str) -> dict | None:
         with _conn() as con:
             row = con.execute(
                 "SELECT payload FROM llm_cache WHERE kind=? AND key=?", (kind, key)).fetchone()
+            if row:
+                con.execute("UPDATE llm_cache SET hits = hits + 1 WHERE kind=? AND key=?",
+                            (kind, key))
     return json.loads(row[0]) if row else None
 
 
@@ -52,8 +58,11 @@ def put(kind: str, key: str, payload: dict) -> None:
 
 
 def stats() -> dict:
+    """Сколько запросов отдано из кэша (≈ сэкономленные LLM-вызовы)."""
     with _lock:
         with _conn() as con:
+            total = con.execute("SELECT COALESCE(SUM(hits), 0) FROM llm_cache").fetchone()[0]
             rows = con.execute(
-                "SELECT kind, COUNT(*) FROM llm_cache GROUP BY kind").fetchall()
-    return {k: n for k, n in rows}
+                "SELECT kind, COUNT(*), COALESCE(SUM(hits), 0) FROM llm_cache GROUP BY kind").fetchall()
+    return {"hits_total": int(total),
+            "by_kind": {k: {"entries": n, "hits": h} for k, n, h in rows}}

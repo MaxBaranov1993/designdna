@@ -566,6 +566,12 @@ def reproduce(req: ReproduceReq):
     return {**payload, "cached": False}
 
 
+@app.get("/api/cache/stats")
+def cache_stats():
+    """Наблюдаемость кэша: сколько LLM-вызовов сэкономлено повторами."""
+    return cache_store.stats()
+
+
 @app.get("/")
 @app.get("/nodes")
 def nodes_page():
