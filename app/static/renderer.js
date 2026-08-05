@@ -45,22 +45,48 @@
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
+  /* ---------- санация значений из IR (контент от LLM — недоверенный) ---------- */
+
+  /** Цвет — только #rgb/#rrggbb/#rrggbbaa, иначе null (CSS-инъекции через токены). */
+  function safeColor(v) {
+    return /^#[0-9a-fA-F]{3,8}$/.test(String(v == null ? "" : v).trim()) ? v.trim() : null;
+  }
+
+  /** Имя шрифта — буквы/цифры/пробелы/дефис; всё остальное вырезается
+   *  (и для <style>, и для URL Google Fonts). */
+  function safeFontFamily(v) {
+    return String(v == null ? "" : v).replace(/[^\p{L}\p{N}\s-]/gu, "").trim().slice(0, 60) || "Inter";
+  }
+
+  /** text-align — whitelist, иначе null (инъекции в style-атрибут через el.align). */
+  function safeAlign(v) {
+    return ["left", "center", "right", "justify", "start", "end"].includes(v) ? v : null;
+  }
+
   function fontsUrl(tokens) {
     const fams = new Set();
     for (const key of ["display", "body"]) {
       const f = tokens.font && tokens.font[key];
-      if (f && f.family) fams.add(f.family.replace(/ /g, "+") + ":wght@" + (f.weight || 400));
+      if (f && f.family) {
+        const w = Math.min(900, Math.max(100, Math.round(Number(f.weight) || 400)));
+        fams.add(safeFontFamily(f.family).replace(/ /g, "+") + ":wght@" + w);
+      }
     }
     return "https://fonts.googleapis.com/css2?" + [...fams].map(f => "family=" + f).join("&") + "&display=swap";
   }
 
   function cssVars(tokens) {
     const c = tokens.color, scale = TYPE_SCALE[tokens.font.scale] || 1;
+    // цвета/шрифты/веса приходят из IR (контент недоверенный) — только санация
+    const d = DEFAULT_TOKENS.color;
+    const primary = safeColor(c.primary) || d.primary;
+    const col = (k, fb) => safeColor(c[k]) || fb;
+    const fw = (f, fb) => Math.min(900, Math.max(100, Math.round(Number(f && f.weight) || fb)));
     return `
-      --c-primary:${c.primary};--c-secondary:${c.secondary || c.primary};--c-accent:${c.accent || c.primary};
-      --c-bg:${c.background};--c-surface:${c.surface};--c-text:${c.text};--c-muted:${c.textMuted};--c-border:${c.border};
-      --font-display:'${tokens.font.display.family}',sans-serif;--font-body:'${tokens.font.body.family}',sans-serif;
-      --fw-display:${tokens.font.display.weight};--fw-body:${tokens.font.body.weight};
+      --c-primary:${primary};--c-secondary:${col("secondary", primary)};--c-accent:${col("accent", primary)};
+      --c-bg:${col("background", d.background)};--c-surface:${col("surface", d.surface)};--c-text:${col("text", d.text)};--c-muted:${col("textMuted", d.textMuted)};--c-border:${col("border", d.border)};
+      --font-display:'${safeFontFamily(tokens.font.display.family)}',sans-serif;--font-body:'${safeFontFamily(tokens.font.body.family)}',sans-serif;
+      --fw-display:${fw(tokens.font.display, 700)};--fw-body:${fw(tokens.font.body, 400)};
       --fs:${scale};
       --r-card:${RADIUS_PX[tokens.radius.card]};--r-btn:${RADIUS_PX[tokens.radius.button]};--r-input:${RADIUS_PX[tokens.radius.input]};
       --sec-py:${SECTION_PY[tokens.spacing.section]};--container:${CONTAINER_W[tokens.spacing.container]};
@@ -186,11 +212,13 @@
     switch (el.type) {
       case "heading": {
         const lvl = Math.min(4, Math.max(1, el.level || 2));
-        const align = el.align ? ` style="text-align:${el.align}"` : "";
+        const a = safeAlign(el.align);
+        const align = a ? ` style="text-align:${a}"` : "";
         return `<h${lvl}${align}>${esc(el.text || el.title || "")}</h${lvl}>`;
       }
       case "text": {
-        const align = el.align ? ` style="text-align:${el.align}"` : "";
+        const a = safeAlign(el.align);
+        const align = a ? ` style="text-align:${a}"` : "";
         const cls = el.size === "sm" || el.size === "xs" ? ' class="muted"' : "";
         return `<p${cls}${align}>${esc(el.text || "")}</p>`;
       }
