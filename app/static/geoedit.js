@@ -63,6 +63,12 @@
   .geo-dist-line { position:absolute; pointer-events:none; z-index:57; background:#34c759; }
   .geo-dist-line-h { height:calc(1px * var(--geo-inv,1)); }
   .geo-dist-line-v { width:calc(1px * var(--geo-inv,1)); }
+  /* equal spacing (фиолетовые метки равных зазоров, как в Figma) */
+  .geo-eq { position:absolute; pointer-events:none; z-index:57;
+    background:rgba(151,71,255,.16); outline:calc(1px * var(--geo-inv,1)) solid rgba(151,71,255,.45); }
+  .geo-eq-label { position:absolute; pointer-events:none; z-index:58; font-family:'Inter',system-ui,sans-serif;
+    font-weight:500; font-size:calc(9px * var(--geo-inv,1));
+    color:#9747ff; background:rgba(151,71,255,.12); padding:0 calc(3px * var(--geo-inv,1)); border-radius:2px; white-space:nowrap; }
   .geo-content-block { pointer-events:none !important; }
   .geo-content-block * { pointer-events:none !important; }
   .geo-content-block [data-ir-path].editing,
@@ -441,12 +447,79 @@
         if (!closestDist[k] || d.val < closestDist[k].val) closestDist[k] = d;
       });
 
-      return { guides: uniqueGuides, snaps: { dx: snapDx, dy: snapDy }, distances: Object.values(closestDist) };
+      // equal spacing: фиолетовые метки, когда зазор рядом с moving равен соседнему
+      // (3+ элементов в ряду/колонке; допуск — snap-порог в экранных px, как у snap)
+      const eq = [];
+      const eqSeen = new Set();
+      // ряд/колонка — только сиблинги moving (как в Figma: равные зазоры между
+      // братьями); вложенные элементы чужих контейнеров не дробят зазоры
+      const eqPar = parentOf(movingRef);
+      const sibKeys = new Set();
+      if (eqPar) {
+        eqPar.siblings.forEach((sib, j) => {
+          const r = eqPar.isRoot ? { secIdx: j, path: null }
+                                 : { secIdx: eqPar.secIdx, path: siblingPath(eqPar, j) };
+          sibKeys.add(refKey(r));
+        });
+      }
+      function eqMembers(axis) {
+        const mates = targets.filter(t => {
+          if (!sibKeys.has(refKey(t.ref))) return false;
+          const overlap = axis === "h"
+            ? Math.min(mB, t.y + t.h) - Math.max(mT, t.y)
+            : Math.min(mR, t.x + t.w) - Math.max(mL, t.x);
+          return overlap > 0;
+        });
+        const self = { x: movingRect.x, y: movingRect.y, w: movingRect.w, h: movingRect.h, _moving: true };
+        const list = mates.concat([self]);
+        list.sort((a, b) => (axis === "h" ? a.x - b.x : a.y - b.y));
+        return list;
+      }
+      function pushEqRegion(type, a, b, gap) {
+        // регион — сам зазор; поперечный диапазон — пересечение элементов,
+        // при его отсутствии — диапазон moving
+        let from, to, c0, c1;
+        if (type === "h") {
+          from = a.x + a.w; to = b.x;
+          c0 = Math.max(a.y, b.y); c1 = Math.min(a.y + a.h, b.y + b.h);
+          if (c1 - c0 < 2) { c0 = mT; c1 = mB; }
+        } else {
+          from = a.y + a.h; to = b.y;
+          c0 = Math.max(a.x, b.x); c1 = Math.min(a.x + a.w, b.x + b.w);
+          if (c1 - c0 < 2) { c0 = mL; c1 = mR; }
+        }
+        const key = type + ":" + Math.round(from) + ":" + Math.round(to);
+        if (eqSeen.has(key)) return;
+        eqSeen.add(key);
+        eq.push({ type, from, to, cross0: c0, cross1: c1, val: gap });
+      }
+      ["h", "v"].forEach(axis => {
+        const members = eqMembers(axis);
+        if (members.length < 3) return;
+        const gaps = [];
+        for (let j = 0; j + 1 < members.length; j++) {
+          gaps.push(axis === "h"
+            ? members[j + 1].x - (members[j].x + members[j].w)
+            : members[j + 1].y - (members[j].y + members[j].h));
+        }
+        const mi = members.findIndex(m => m._moving);
+        for (let j = 0; j + 1 < gaps.length; j++) {
+          // пара смежных зазоров должна касаться moving (он в одном из трёх элементов)
+          if (mi < j || mi > j + 2) continue;
+          const g1 = gaps[j], g2 = gaps[j + 1];
+          if (g1 > 0.5 && g2 > 0.5 && Math.abs(g1 - g2) <= snapThr) {
+            pushEqRegion(axis, members[j], members[j + 1], g1);
+            pushEqRegion(axis, members[j + 1], members[j + 2], g2);
+          }
+        }
+      });
+
+      return { guides: uniqueGuides, snaps: { dx: snapDx, dy: snapDy }, distances: Object.values(closestDist), eq };
     }
 
     function renderGuides(guidesData) {
       // очистить предыдущие
-      overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line").forEach(el => el.remove());
+      overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line, .geo-eq, .geo-eq-label").forEach(el => el.remove());
       if (!guidesData) return;
 
       // оверлей в canvas-координатах (живёт внутри трансформированного контейнера)
@@ -488,10 +561,40 @@
         }
         overlay().appendChild(label);
       });
+
+      // фиолетовые equal-spacing регионы и метки
+      (guidesData.eq || []).forEach(d => {
+        const region = document.createElement("div");
+        region.className = "geo-eq";
+        if (d.type === "h") {
+          region.style.left = d.from + "px";
+          region.style.width = Math.max(1, d.to - d.from) + "px";
+          region.style.top = d.cross0 + "px";
+          region.style.height = Math.max(2, d.cross1 - d.cross0) + "px";
+        } else {
+          region.style.top = d.from + "px";
+          region.style.height = Math.max(1, d.to - d.from) + "px";
+          region.style.left = d.cross0 + "px";
+          region.style.width = Math.max(2, d.cross1 - d.cross0) + "px";
+        }
+        overlay().appendChild(region);
+
+        const label = document.createElement("div");
+        label.className = "geo-eq-label";
+        label.textContent = Math.round(d.val) + "px";
+        if (d.type === "h") {
+          label.style.left = ((d.from + d.to) / 2 - 12 * inv) + "px";
+          label.style.top = (d.cross0 - 12 * inv) + "px";
+        } else {
+          label.style.left = (d.cross0 + 4 * inv) + "px";
+          label.style.top = ((d.from + d.to) / 2 - 6 * inv) + "px";
+        }
+        overlay().appendChild(label);
+      });
     }
 
     function clearGuides() {
-      overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line").forEach(el => el.remove());
+      overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line, .geo-eq, .geo-eq-label").forEach(el => el.remove());
     }
 
     function parentOf(ref) {
@@ -727,16 +830,18 @@
         return;
       }
 
+      // кандидаты — единый источник collectHitTargets (секции, children любой
+      // глубины, props-элементы). Секции и children глубины 1 берутся по
+      // пересечению (прежнее поведение), вложенные и props — только полностью
+      // внутри marquee, как в Figma
       const hits = [];
-      const ir = getIR();
-      if (ir && ir.tree) {
-        ir.tree.forEach((sec, si) => {
-          collectIntersecting({ secIdx: si, path: null }, mx, my, mw, mh, hits);
-          (sec.children || []).forEach((_, ci) => {
-            collectIntersecting({ secIdx: si, path: "children." + ci }, mx, my, mw, mh, hits);
-          });
-        });
-      }
+      collectHitTargets().forEach(t => {
+        const shallow = t.ref.path === null || /^children\.\d+$/.test(t.ref.path);
+        const inside = t.x >= mx && t.y >= my && t.x + t.w <= mx + mw && t.y + t.h <= my + mh;
+        if (!inside && !shallow) return;
+        const intersects = t.x < mx + mw && t.x + t.w > mx && t.y < my + mh && t.y + t.h > my;
+        if (inside || (shallow && intersects)) hits.push(t.ref);
+      });
 
       if (marquee.shiftKey) {
         const merged = marquee.prevSelections.slice();
@@ -858,15 +963,6 @@
       selections = [];
       select({ secIdx: cont.ref.secIdx, path: newPath });
       onMutated();
-    }
-
-    function collectIntersecting(ref, mx, my, mw, mh, out) {
-      const el = domAt(ref);
-      if (!el) return;
-      const r = boxRect(el);
-      if (r.left < mx + mw && r.left + r.width > mx && r.top < my + mh && r.top + r.height > my) {
-        out.push(ref);
-      }
     }
 
     /* --- мутации IR --- */
