@@ -9,3 +9,5 @@ data/
 start.bat
 .env
 .worker-brief-*.txt
+app/static/flow/
+frontend/node_modules/

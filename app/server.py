@@ -578,6 +578,14 @@ def nodes_page():
     return FileResponse(Path(__file__).resolve().parent / "static" / "nodes.html")
 
 
+@app.get("/flow")
+@app.get("/flow/{rest:path}")
+def flow_page():
+    # Новый нодовый редактор (React Flow, сборка из frontend/): SPA-фолбэк —
+    # любой подпуть отдаём index.html, ассеты приходят через /static/flow/
+    return FileResponse(Path(__file__).resolve().parent / "static" / "flow" / "index.html")
+
+
 app.mount("/static", StaticFiles(directory=Path(__file__).resolve().parent / "static"), name="static")
 
 
