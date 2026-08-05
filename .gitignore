@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 results/
 test-targets/
+data/
 *.log
 .DS_Store
 start.bat

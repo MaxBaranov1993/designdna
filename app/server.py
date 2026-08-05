@@ -27,6 +27,7 @@ from colorutils import mix_hex_colors
 from scraper import prepare_image_b64, analyze_url, extract_structure, parse_design_tokens
 from reproduce import run_pipeline as reproduce_pipeline
 from urlguard import validate_public_url
+import cache_store
 
 import jsonschema
 
@@ -42,9 +43,8 @@ COLOR_TOKEN_KEYS = ["primary", "secondary", "accent", "background", "surface", "
 PROVIDERS = ["qwen", "kimi", "groq", "gemini", "xai", "glm", "openrouter"]
 VISION_PROVIDERS = ["xai", "gemini", "groq", "qwen", "glm", "openrouter"]  # приоритет для vision
 
-# роли вызовов для роутинга OpenRouter (см. llm_client.ROUTING)
-ROLE_TASTE = "taste"      # генерация/правки «вкуса»
-ROLE_MECHANICS = "mechanics"  # repair/анализ структуры/клон
+# роли вызовов для роутинга OpenRouter — см. таблицу llm_client.ROUTING
+# (generate/edit/repair/clone/reference/...)
 
 
 # ---------- helpers ----------
@@ -72,7 +72,7 @@ def call_llm_ir(provider: str, user_content: str, temperature: float = 0.8, mode
         raw = llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt(mode)},
             {"role": "user", "content": user_content},
-        ], temperature, role=ROLE_TASTE)
+        ], temperature, role="generator" if mode == "generate" else "edit")
     except Exception as e:
         return None, str(e)
     return parse_ir_response(raw)
@@ -135,6 +135,7 @@ class ScrapeReq(BaseModel):
 
 class ReproduceReq(BaseModel):
     image: str = ""  # base64 data URL
+    url: str = ""  # или URL сайта: скриншот снимем сами, результат кэшируется
     provider: str = "qwen"  # любой провайдер для VLM-анализа структуры
     regions: list | None = None  # опциональные регионы для diff: [["name", x1, y1, x2, y2], ...]
 
@@ -214,7 +215,7 @@ def analyze_header(req: AnalyzeReq):
         raw = llm.chat(provider, [
             {"role": "system", "content": "Ты — senior веб-дизайнер и аналитик дизайн-систем. Отвечаешь строго одним JSON-объектом."},
             {"role": "user", "content": user},
-        ], 0.4, role=ROLE_MECHANICS)
+        ], 0.4, role="clone")
     except Exception as e:
         return err(502, str(e))
     data, error = parse_ir_response(raw)
@@ -269,7 +270,7 @@ def refine(req: RefineReq):
         return llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt()},
             {"role": "user", "content": content},
-        ], 0.3, role=ROLE_TASTE)
+        ], 0.3, role="edit")
 
     user = (
         "Вот текущий Design IR (JSON):\n" + ir_json +
@@ -328,6 +329,11 @@ def clone(req: CloneReq):
     except ValueError as e:
         return err(422, str(e))
 
+    # кэш: тот же сайт повторно — без траты токенов
+    hit = cache_store.get("clone_url", cache_store.key_url(url))
+    if hit:
+        return {**hit, "cached": True}
+
     # fetch страницы
     try:
         req_obj = urllib.request.Request(url, headers={
@@ -362,7 +368,7 @@ def clone(req: CloneReq):
         raw = llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt("edit")},
             {"role": "user", "content": user},
-        ], 0.2, role=ROLE_MECHANICS)
+        ], 0.2, role="clone")
     except Exception as e:
         return err(502, str(e))
     ir, error = parse_ir_response(raw)
@@ -379,13 +385,14 @@ def clone(req: CloneReq):
             raw2 = llm.chat(provider, [
                 {"role": "system", "content": llm.build_system_prompt("edit")},
                 {"role": "user", "content": repair},
-            ], 0.2, role=ROLE_MECHANICS)
+            ], 0.2, role="repair")
             ir2, _ = parse_ir_response(raw2)
             if ir2 and not validate_ir(ir2):
                 ir = ir2
         except Exception:
             pass
-    return {"ir": ir}
+    cache_store.put("clone_url", cache_store.key_url(url), {"ir": ir})
+    return {"ir": ir, "cached": False}
 
 
 VISION_SYSTEM_PROMPT = """Ты — pixel-perfect дизайн-инженер. Тебе дают скриншот веб-страницы.
@@ -428,7 +435,8 @@ def vision_decompose(req: VisionDecomposeReq):
     all_errors = []
     for provider in providers_to_try:
         try:
-            raw = llm.chat_vision(provider, img_url, user_prompt, VISION_SYSTEM_PROMPT, 0.1)
+            raw = llm.chat_vision(provider, img_url, user_prompt, VISION_SYSTEM_PROMPT, 0.1,
+                                  role="vision")
         except Exception as e:
             all_errors.append(f"{provider}: {e}")
             continue
@@ -448,7 +456,8 @@ def vision_decompose(req: VisionDecomposeReq):
                 + json.dumps(ir, ensure_ascii=False)
             )
             try:
-                raw2 = llm.chat_vision(provider, img_url, repair_prompt, VISION_SYSTEM_PROMPT, 0.1)
+                raw2 = llm.chat_vision(provider, img_url, repair_prompt, VISION_SYSTEM_PROMPT, 0.1,
+                                       role="vision")
                 ir2, _ = parse_ir_response(raw2)
                 if ir2 and not validate_ir(ir2):
                     ir = ir2
@@ -491,9 +500,37 @@ def reproduce(req: ReproduceReq):
     """Pixel-perfect reproduction: скриншот → VLM-структура → Python-измерения → HTML → diff.
 
     Работает с любым провайдером для VLM-анализа. Все измерения — из пикселей.
+    Повторный запрос того же скриншота/сайта — из кэша, без траты токенов.
     """
-    if not req.image:
-        return err(422, "Нужно изображение (base64 data URL).")
+    url = req.url.strip()
+    image = req.image
+    url_key = None
+    if url:
+        try:
+            validate_public_url(url)
+        except ValueError as e:
+            return err(422, str(e))
+        url_key = cache_store.key_url(url)
+        hit = cache_store.get("reproduce_url", url_key)
+        if hit:
+            return {**hit, "cached": True}
+        # скриншот сайта снимаем один раз — дальше он же и кэшируется
+        try:
+            page = analyze_url(url, use_playwright=True)
+        except Exception as e:
+            return err(502, f"Не удалось снять скриншот {url}: {e}")
+        if not page.screenshot_b64:
+            return err(502, "Пустой скриншот сайта.")
+        image = f"data:image/png;base64,{page.screenshot_b64}"
+    if not image:
+        return err(422, "Нужно изображение (base64 data URL) или URL сайта.")
+
+    # кэш по хэшу изображения: тот же скриншот от любого пользователя — бесплатно
+    img_key = cache_store.key_image(image)
+    hit = cache_store.get("reproduce_img", img_key)
+    if hit:
+        return {**hit, "cached": True}
+
     provider = normalize_provider(req.provider)
 
     regions = None
@@ -502,7 +539,7 @@ def reproduce(req: ReproduceReq):
 
     try:
         result = reproduce_pipeline(
-            image_b64=req.image,
+            image_b64=image,
             provider=provider,
             llm_module=llm,
             regions=regions,
@@ -511,7 +548,7 @@ def reproduce(req: ReproduceReq):
         traceback.print_exc()
         return err(502, f"Ошибка пайплайна: {e}")
 
-    return {
+    payload = {
         "structure": result.get("structure", {}),
         "colors": result.get("colors", {}),
         "measurements": result.get("measurements", {}),
@@ -523,6 +560,10 @@ def reproduce(req: ReproduceReq):
         "repro_png": f"data:image/png;base64,{result['repro_png_b64']}" if result.get("repro_png_b64") else "",
         "provider_used": provider,
     }
+    cache_store.put("reproduce_img", img_key, payload)
+    if url_key:
+        cache_store.put("reproduce_url", url_key, payload)
+    return {**payload, "cached": False}
 
 
 @app.get("/")

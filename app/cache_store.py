@@ -1,0 +1,59 @@
+"""Кэш результатов reproduce/clone (sqlite, stdlib).
+
+Повторный запрос того же сайта/скриншота отдаётся из базы без траты токенов:
+владелец площадки платит за обработку один раз, дальше — из имеющихся сессий.
+"""
+import hashlib
+import json
+import sqlite3
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = ROOT / "data" / "cache.db"
+
+_lock = threading.Lock()
+
+
+def _conn() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(DB_PATH)
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS llm_cache ("
+        " kind TEXT, key TEXT, payload TEXT, created_at TEXT,"
+        " PRIMARY KEY (kind, key))")
+    return con
+
+
+def key_image(image_data_url: str) -> str:
+    return hashlib.sha256(image_data_url.encode("utf-8")).hexdigest()
+
+
+def key_url(url: str) -> str:
+    return hashlib.sha256(url.strip().lower().rstrip("/").encode("utf-8")).hexdigest()
+
+
+def get(kind: str, key: str) -> dict | None:
+    with _lock:
+        with _conn() as con:
+            row = con.execute(
+                "SELECT payload FROM llm_cache WHERE kind=? AND key=?", (kind, key)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def put(kind: str, key: str, payload: dict) -> None:
+    with _lock:
+        with _conn() as con:
+            con.execute(
+                "INSERT OR REPLACE INTO llm_cache (kind, key, payload, created_at) VALUES (?,?,?,?)",
+                (kind, key, json.dumps(payload, ensure_ascii=False),
+                 datetime.now(timezone.utc).isoformat()))
+
+
+def stats() -> dict:
+    with _lock:
+        with _conn() as con:
+            rows = con.execute(
+                "SELECT kind, COUNT(*) FROM llm_cache GROUP BY kind").fetchall()
+    return {k: n for k, n in rows}

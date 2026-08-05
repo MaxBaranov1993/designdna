@@ -221,6 +221,7 @@
     if (n.type === "reproduce") {
       inner = `<img class="ref-img" alt="скриншот" style="max-height:120px;object-fit:contain">
         <label class="ref-drop">Кликните: скриншот UI для воспроизведения<input type="file" accept="image/*" class="f-file" hidden></label>
+        <input type="text" class="f-url" placeholder="или URL сайта — повторные запросы из кэша, без токенов" value="${esc(n.data.url || "")}">
         <div class="ctl-row">
           <select class="f-provider">
             <option value="qwen">qwen (vision)</option>
@@ -269,7 +270,7 @@
     if (type === "edit") return { ir: null };
     if (type === "mix") return { inputs: ["a", "b"], weights: { a: 70, b: 30 }, ir: null };
     if (type === "clone") return { url: "", component: "", ir: null };
-    if (type === "reproduce") return { image: null, fileName: "", provider: "qwen", result: null };
+    if (type === "reproduce") return { image: null, fileName: "", url: "", provider: "qwen", result: null };
     return {};
   }
 
@@ -439,6 +440,8 @@
       });
       el.querySelector(".f-provider").value = n.data.provider || "qwen";
       el.querySelector(".f-provider").addEventListener("change", (e) => { n.data.provider = e.target.value; save(); });
+      const urlIn = el.querySelector(".f-url");
+      urlIn.addEventListener("input", () => { n.data.url = urlIn.value; save(); });
       el.querySelector(".f-run").addEventListener("click", () => runReproduce(n));
       el.querySelector(".f-view-html").addEventListener("click", () => {
         if (!n.data.result || !n.data.result.html) { toast("Сначала запустите Reproduce", "error"); return; }
@@ -855,18 +858,22 @@
   /* ---------- reproduce (pixel-perfect) ---------- */
 
   async function runReproduce(n) {
-    if (!n.data.image) { setStatus(n, "Загрузите скриншот UI", "err"); return; }
-    setStatus(n, `Reproduce (${n.data.provider}): VLM → пиксели → HTML → diff… 30–120 сек`);
+    const url = (n.data.url || "").trim();
+    if (!n.data.image && !url) { setStatus(n, "Загрузите скриншот или укажите URL сайта", "err"); return; }
+    setStatus(n, url ? `Reproduce ${url.slice(0, 30)}… (кэш проверяется первым)`
+                     : `Reproduce (${n.data.provider}): VLM → пиксели → HTML → diff… 30–120 сек`);
     n.el.querySelector(".f-run").disabled = true;
     try {
       const res = await api("/api/reproduce", {
-        image: n.data.image,
+        image: n.data.image || "",
+        url,
         provider: n.data.provider || "qwen",
       });
       n.data.result = res;
       renderReproResults(n);
       const diffPct = res.diff && res.diff.overall_pct != null ? res.diff.overall_pct : "?";
-      setStatus(n, `Готово: diff ${diffPct}%, цветов ${Object.keys(res.colors.colors || {}).length}, иконок ${res.icons_count}`, "ok");
+      const cached = res.cached ? " · из кэша, токены не тратились" : "";
+      setStatus(n, `Готово: diff ${diffPct}%, цветов ${Object.keys(res.colors.colors || {}).length}, иконок ${res.icons_count}${cached}`, "ok");
       propagate(n.id);
       save();
     } catch (e) {

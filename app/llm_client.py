@@ -92,13 +92,29 @@ PROVIDERS = {
     },
 }
 
-# Роутинг моделей через OpenRouter (таблица владельца от 2026-08-04):
-# mechanics — черновики/механика (дёшево и быстро), taste — «вкус»/критика.
-# Списки можно переопределить env: OPENROUTER_MODELS_MECHANICS / _TASTE (через запятую).
+# Роутинг моделей через OpenRouter — таблица владельца от 2026-08-05
+# (нода → [основная, fallback]); slug'и сверены с каталогом openrouter.ai/api/v1/models.
+# Любую роль можно переопределить env: OPENROUTER_MODELS_<ROLE> (через запятую).
 ROUTING = {
-    "mechanics": ["deepseek/deepseek-v4-flash", "qwen/qwen3-coder-plus", "google/gemini-3.6-flash"],
-    "taste": ["moonshotai/kimi-k3", "openai/gpt-5.6", "x-ai/grok-4.5"],
-    "vision": ["google/gemini-2.0-flash-001", "qwen/qwen2.5-vl-72b-instruct"],
+    # канонические роли владельца (конфиг от 2026-08-05)
+    "prompt_enhancer": ["openai/gpt-5.6-terra", "anthropic/claude-opus-5"],
+    "planner":    ["z-ai/glm-5.2", "openai/gpt-5.6-terra"],
+    "generator":  ["moonshotai/kimi-k3", "z-ai/glm-5.2"],
+    "repair":     ["qwen/qwen3-coder-plus", "z-ai/glm-5.2"],
+    "style_analysis": ["anthropic/claude-opus-5", "openai/gpt-5.6-terra"],
+    "vision":     ["google/gemini-3.6-flash", "openai/gpt-5.6-terra"],
+    "judge":      ["openai/gpt-5.6-terra", "anthropic/claude-opus-5"],
+    # дополнительные роли из таблицы 2026-08-04
+    "edit":       ["moonshotai/kimi-k3", "openai/gpt-5.6-terra"],
+    "optimizer":  ["qwen/qwen3-coder-plus", "openai/gpt-5.6-terra"],
+    "tokens":     ["anthropic/claude-opus-5", "openai/gpt-5.6-terra"],
+    "components": ["google/gemini-3.6-flash", "qwen/qwen3-vl-235b-a22b-instruct"],
+    "clone":      ["qwen/qwen3-coder-plus", "openai/gpt-5.6-terra"],
+    "a11y":       ["openai/gpt-5.6-terra", "anthropic/claude-opus-5"],
+    "docs":       ["openai/gpt-5.6-terra", "anthropic/claude-opus-5"],
+    # legacy-роли (старые вызовы и env-оверрайды)
+    "mechanics":  ["qwen/qwen3-coder-plus", "z-ai/glm-5.2"],
+    "taste":      ["moonshotai/kimi-k3", "openai/gpt-5.6-terra"],
 }
 
 
@@ -224,7 +240,7 @@ def chat(provider: str, messages: list, temperature: float, timeout: int | None 
 
 def chat_vision(provider: str, image_data_url: str, text_prompt: str,
                 system_prompt: str = "", temperature: float = 0.2,
-                timeout: int | None = None) -> str:
+                timeout: int | None = None, role: str = "vision") -> str:
     """Вызов vision-модели с изображением (base64 data URL) + текст.
     Поддерживает OpenAI-совместимый API и Gemini API.
     Пробует несколько vision-моделей из конфига (fallback при 404)."""
@@ -234,8 +250,8 @@ def chat_vision(provider: str, image_data_url: str, text_prompt: str,
 
     vision_models = cfg.get("vision_models")
     if not vision_models:
-        # OpenRouter (model=None) — цепочка vision-моделей из ROUTING
-        vision_models = routing_models("vision") if cfg["model"] is None else [cfg["model"]]
+        # OpenRouter (model=None) — цепочка vision-моделей из ROUTING по роли
+        vision_models = routing_models(role) if cfg["model"] is None else [cfg["model"]]
     if isinstance(vision_models, str):
         vision_models = [vision_models]
 
