@@ -107,6 +107,9 @@
     // если владелец сам опрашивает consumeEscape() с handle (DNA-редактор),
     // собственный document-обработчик Esc не срабатывает — порядок не должен быть контрактом
     const escapeViaHandle = !!opts.escapeViaHandle;
+    // владелец может залочить слои: такие ref не попадают в hit-test/marquee
+    const isLocked = opts.isLocked || null;
+    function skipLocked(ref) { return !!isLocked && isLocked(ref); }
     let _onMutated = opts.onMutated || function(){};
     function blockContentEarly() {
       const irEl = previewEl.querySelector('[class^="ir-"]');
@@ -311,6 +314,7 @@
       for (let i = targets.length - 1; i >= 0; i--) {
         const t = targets[i];
         if (pt.x >= t.x && pt.x <= t.x + t.w && pt.y >= t.y && pt.y <= t.y + t.h) {
+          if (skipLocked(t.ref)) continue; // залоченные слои прозрачны для выделения
           // deep mode: пропустить секцию (path===null), вернуть child
           if (deep && t.ref.path === null) continue;
           // если в containerCtx — принимать только children этого контейнера
@@ -323,6 +327,7 @@
         for (let i = targets.length - 1; i >= 0; i--) {
           const t = targets[i];
           if (pt.x >= t.x && pt.x <= t.x + t.w && pt.y >= t.y && pt.y <= t.y + t.h) {
+            if (skipLocked(t.ref)) continue;
             return t.ref;
           }
         }
@@ -854,6 +859,7 @@
       // внутри marquee, как в Figma
       const hits = [];
       collectHitTargets().forEach(t => {
+        if (skipLocked(t.ref)) return; // залоченные слои не выделяются marquee
         const shallow = t.ref.path === null || /^children\.\d+$/.test(t.ref.path);
         const inside = t.x >= mx && t.y >= my && t.x + t.w <= mx + mw && t.y + t.h <= my + mh;
         if (!inside && !shallow) return;

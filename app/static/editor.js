@@ -58,7 +58,14 @@
   .fe-layer:hover { background:#313244; }
   .fe-layer.selected { background:#45475a; color:#cba6f7; }
   .fe-layer .fe-li { width:14px; text-align:center; font-size:10px; color:#6c7086; flex:none; }
-  .fe-layer .fe-ln { overflow:hidden; text-overflow:ellipsis; }
+  .fe-layer .fe-ln { overflow:hidden; text-overflow:ellipsis; flex:1; }
+  .fe-layer .fe-lbtn { visibility:hidden; border:none; background:none; color:#9aa0b5; cursor:pointer;
+    font-size:11px; padding:0 3px; flex:none; }
+  .fe-layer:hover .fe-lbtn, .fe-layer.flag-hidden .fe-lbtn, .fe-layer.flag-locked .fe-lbtn { visibility:visible; }
+  .fe-layer.flag-hidden .fe-ln { opacity:.45; text-decoration:line-through; }
+  .fe-layer.flag-locked .fe-li { color:#e0af58; }
+  .fe-search { margin:4px 8px 6px; width:calc(100% - 16px); background:#1e2030; border:1px solid #313244;
+    color:#cdd6f4; border-radius:6px; padding:4px 8px; font-size:11px; }
   .fe-layer.depth-1 { padding-left:24px; }
   .fe-layer.depth-2 { padding-left:36px; }
   .fe-layer.depth-3 { padding-left:48px; }
@@ -153,7 +160,7 @@
         <button class="fe-btn primary" data-act="save">💾 Сохранить</button>
       </div>
       <div class="fe-body">
-        <div class="fe-layers"><div class="fe-layers-head">Слои</div><div class="fe-layers-tree"></div></div>
+        <div class="fe-layers"><div class="fe-layers-head">Слои</div><input class="fe-search" placeholder="Поиск слоёв…"><div class="fe-layers-tree"></div></div>
         <div class="fe-canvas">
           <div class="fe-ruler-corner"></div>
           <div class="fe-ruler-h"><canvas></canvas></div>
@@ -174,6 +181,11 @@
     overlay.querySelector(".fe-rail").addEventListener("click", (e) => {
       const b = e.target.closest("[data-tool]");
       if (b) setTool(b.dataset.tool);
+    });
+    overlay.querySelector(".fe-search").addEventListener("input", (e) => {
+      if (!state) return;
+      state.layerQuery = e.target.value.trim();
+      renderLayers();
     });
   }
 
@@ -231,6 +243,8 @@
       panX: 40,
       panY: 40,
       tool: "select",
+      layerFlags: {}, // refKey -> {hidden, locked}; сессия редактора, не часть IR
+      layerQuery: "",
     };
     overlay.style.display = "flex";
     renderCanvas();
@@ -288,8 +302,60 @@
   function renderCanvas() {
     const inner = overlay.querySelector(".fe-canvas-inner");
     IRRenderer.renderIR(inner, state.ir); // _frames применяет сам рендерер
+    applyLayerFlags();
     applyTransform();
     attachGeoEdit();
+  }
+
+  /* ---------- флаги слоёв (hide/lock): сессия редактора, вне IR ---------- */
+
+  function refKeyOf(ref) { return ref.secIdx + ":" + (ref.path || ""); }
+
+  /** true если ref или любой предок (карточка/секция/артборд) несёт флаг kind. */
+  function refFlag(ref, kind) {
+    if (!state || !state.layerFlags) return false;
+    const check = (si, p) => {
+      const f = state.layerFlags[si + ":" + (p || "")];
+      return !!(f && f[kind]);
+    };
+    let path = ref.path || null;
+    while (path) {
+      if (check(ref.secIdx, path)) return true;
+      const segs = path.split(".");
+      segs.pop(); segs.pop();
+      path = segs.length ? segs.join(".") : null;
+    }
+    if (ref.secIdx != null && check(ref.secIdx, null)) return true;
+    return check(null, null);
+  }
+
+  function domAtCanvas(ref) {
+    const inner = overlay.querySelector(".fe-canvas-inner");
+    if (ref.secIdx == null) return inner.querySelector('[class^="ir-"]');
+    const secEl = inner.querySelector(`[data-ir-sec="${ref.secIdx}"]`);
+    if (!secEl) return null;
+    if (ref.path == null) return secEl;
+    return secEl.querySelector(`[data-ir-path="${ref.path}"]`) ||
+           secEl.querySelector(`[data-ir-path^="${ref.path}"]`);
+  }
+
+  /** hidden-слои убираются с канваса; locked живут, но не выделяются (geoedit.isLocked). */
+  function applyLayerFlags() {
+    if (!state || !state.layerFlags) return;
+    for (const [key, f] of Object.entries(state.layerFlags)) {
+      const [si, path] = key.split(":");
+      const el = domAtCanvas({ secIdx: si === "null" ? null : Number(si), path: path || null });
+      if (el) el.style.display = f.hidden ? "none" : "";
+    }
+  }
+
+  function toggleLayerFlag(ref, kind) {
+    const key = refKeyOf(ref);
+    const f = state.layerFlags[key] || (state.layerFlags[key] = {});
+    f[kind] = !f[kind];
+    if (f[kind] && state.sel.some(s => refKeyOf(s.ref) === key) && state.geo) state.geo.clear();
+    applyLayerFlags();
+    renderLayers();
   }
 
   function applyTransform() {
@@ -431,6 +497,7 @@
       previewEl,
       tools: true,
       escapeViaHandle: true, // Esc обрабатываем сами через geo.consumeEscape()
+      isLocked: (ref) => refFlag(ref, "locked"), // locked-слои не выделяются на канвасе
       scrollEl: panAdapter,
       onToolChange: (t) => { if (state && state.tool !== t) setTool(t); },
       getIR: () => state.ir,
@@ -445,6 +512,7 @@
       onMutated: () => {
         const savedRefs = state.sel.map(s => s.ref);
         IRRenderer.renderIR(inner, state.ir);
+        applyLayerFlags();
         applyTransform();
         attachGeoEdit();
         renderLayers();
@@ -509,13 +577,24 @@
   }
 
   function addLayerItem(container, irNode, ref, depth, label, iconOverride) {
+    if (state.layerQuery && !label.toLowerCase().includes(state.layerQuery.toLowerCase())) return;
+    const key = refKeyOf(ref);
+    const fl = state.layerFlags[key] || {};
     const div = document.createElement("div");
     div.className = "fe-layer depth-" + Math.min(depth, 3);
+    div.dataset.key = key;
+    if (fl.hidden) div.classList.add("flag-hidden");
+    if (fl.locked) div.classList.add("flag-locked");
     if (state.sel.some(s => s.ref.secIdx === ref.secIdx && s.ref.path === ref.path)) div.classList.add("selected");
     const icons = { navbar: "☰", hero: "◈", card: "▢", heading: "H", text: "T", button: "⬛", image: "▣", badge: "•", pricing: "$", faq: "?", footer: "⊥" };
     const icon = iconOverride || icons[irNode.type] || "◇";
-    div.innerHTML = `<span class="fe-li">${icon}</span><span class="fe-ln">${esc(label)}</span>`;
-    div.addEventListener("click", () => {
+    div.innerHTML = `<span class="fe-li">${icon}</span><span class="fe-ln">${esc(label)}</span>` +
+      `<button class="fe-lbtn" data-flag="hidden" title="Скрыть/показать слой">${fl.hidden ? "🚫" : "👁"}</button>` +
+      `<button class="fe-lbtn" data-flag="locked" title="Залочить/разлочить">${fl.locked ? "🔒" : "🔓"}</button>`;
+    div.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-flag]");
+      if (btn) { toggleLayerFlag(ref, btn.dataset.flag); return; }
+      if (refFlag(ref, "locked")) return; // залочен — не выделяется
       if (state.geo) state.geo.select(ref);
     });
     container.appendChild(div);
@@ -659,6 +738,7 @@
   function rerenderEditorCanvas() {
     const inner = overlay.querySelector(".fe-canvas-inner");
     IRRenderer.renderIR(inner, state.ir); // _frames применяет сам рендерер
+    applyLayerFlags();
     applyTransform();
     attachGeoEdit();
     renderLayers();
