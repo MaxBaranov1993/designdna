@@ -1,6 +1,9 @@
 """Пайплайн мульти-агентного ревью: diff спринта → два независимых ревьювера
-(qwen3.8-max и glm-5.2 через OpenRouter) → консолидированный JSON-отчёт.
+(оба — qwencloud/Bailian, провайдер qwen) → консолидированный JSON-отчёт.
 
+Политика владельца от 2026-08-05: разработка и ревью — только API qwencloud
+(провайдер qwen, Bailian Token Plan); OpenRouter и прямые API других вендоров —
+только LLM-вызовы внутри продукта (ноды).
 Оркестрация — на мне (lead): модели дают независимые мнения, триаж и фиксы — человек/lead.
 Использование:
     .venv/Scripts/python app/review_pipeline.py [git-range]   (по умолчанию 737478f..HEAD)
@@ -17,14 +20,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import llm_client
 
-# Политика владельца: разработка/ревью — прямые API; OpenRouter — только ноды.
-# glm-5.2 доступен лишь через OpenRouter, поэтому по умолчанию второе мнение —
-# gemini (прямой ключ); glm включается явно флагом --allow-openrouter.
-# (имя, provider, model, fallback) — fallback срабатывает при ошибке (напр. 401 у gemini)
+# Политика владельца от 2026-08-05: разработка/ревью — только qwencloud (провайдер
+# qwen, Bailian Token Plan); gemini/xai и прочие прямые API — только ноды продукта.
+# (имя, provider, model, fallback) — fallback срабатывает при ошибке вызова.
 REVIEWERS = [
     ("qwen3.8-max", "qwen", "qwen3.8-max", None),
-    ("gemini", "gemini", None, ("xai", "grok-3-beta")),
+    # вторая модель qwen для независимого мнения; qwen3-max и qwen-plus на
+    # token-plan эндпоинте отсутствуют (404), из доступных выбран qwen3.7-max
+    ("qwen3.7-max", "qwen", "qwen3.7-max", None),
 ]
+# Вариант через OpenRouter — только для работ по нодам продукта (по политике
+# ноды ходят в OpenRouter); включается явно флагом --allow-openrouter.
 REVIEWERS_OR = [
     ("qwen3.8-max", "openrouter", "qwen/qwen3.8-max", None),
     ("glm-5.2", "openrouter", "z-ai/glm-5.2", None),
@@ -69,6 +75,9 @@ def parse_items(raw: str) -> list:
 
 
 def main() -> int:
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(__doc__)
+        return 0
     flags = [a for a in sys.argv[1:] if a.startswith("--")]
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     rng = args[0] if args else "737478f..HEAD"
@@ -92,7 +101,12 @@ def main() -> int:
     print(f"diff {rng}: {len(diff)} символов")
 
     report = {"range": rng, "reviewers": {}}
-    for name, provider, model, fallback in reviewers:
+    empty = not diff.strip()
+    if empty:
+        # правок app/ в диапазоне нет: нечего ревьювить, вызовы LLM не делаем
+        print("diff пуст: правок app/ нет, ревью без вызовов LLM")
+        report["reviewers"] = {name: [] for name, _, _, _ in reviewers}
+    for name, provider, model, fallback in ([] if empty else reviewers):
         try:
             try:
                 raw = llm_client.chat(provider, [
