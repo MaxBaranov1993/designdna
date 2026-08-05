@@ -137,6 +137,20 @@
 
     function scale() { const s = getScale(); return s > 0 ? s : 1; }
 
+    /** Собственный transform previewEl: в DNA-редакторе оверлей живёт внутри
+     *  трансформированного контейнера (overlayScale == scale), в ноде Edit зум
+     *  висит на артборде-ребёнке, а оверлей вне его (overlayScale == 1). */
+    function overlayScale() {
+      const ow = previewEl.offsetWidth;
+      return ow > 0 ? previewEl.getBoundingClientRect().width / ow : 1;
+    }
+
+    /** Перевод canvas-координат в координаты оверлея (для визуальных элементов). */
+    function canvasK() {
+      const os = overlayScale();
+      return os > 0 ? scale() / os : 1;
+    }
+
     /** Перерисовка рамок через кадр: владелец (Edit-нода) применяет зум через rAF
      *  уже после ре-рендера — без этого рамки встали бы по до-зумовой геометрии. */
     function scheduleBoxSync() {
@@ -522,13 +536,15 @@
       overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line, .geo-eq, .geo-eq-label").forEach(el => el.remove());
       if (!guidesData) return;
 
-      // оверлей в canvas-координатах (живёт внутри трансформированного контейнера)
-      const inv = 1 / scale();
+      // guides/eq/dist приходят в canvas-координатах; оверлей может жить вне
+      // transform артборда (нода Edit) — переводим в координаты оверлея через k
+      const k = canvasK();
+      const inv = 1 / overlayScale(); // экранные смещения меток в координатах оверлея
       guidesData.guides.forEach(g => {
         const el = document.createElement("div");
         el.className = "geo-guide " + (g.axis === "h" ? "geo-guide-h" : "geo-guide-v");
-        if (g.axis === "h") el.style.top = g.pos + "px";
-        else el.style.left = g.pos + "px";
+        if (g.axis === "h") el.style.top = (g.pos * k) + "px";
+        else el.style.left = (g.pos * k) + "px";
         overlay().appendChild(el);
       });
 
@@ -538,13 +554,13 @@
         const line = document.createElement("div");
         line.className = "geo-dist-line " + (d.type === "h" ? "geo-dist-line-h" : "geo-dist-line-v");
         if (d.type === "h") {
-          line.style.left = d.from + "px";
-          line.style.width = (d.to - d.from) + "px";
-          line.style.top = d.y + "px";
+          line.style.left = (d.from * k) + "px";
+          line.style.width = ((d.to - d.from) * k) + "px";
+          line.style.top = (d.y * k) + "px";
         } else {
-          line.style.top = d.from + "px";
-          line.style.height = (d.to - d.from) + "px";
-          line.style.left = d.x + "px";
+          line.style.top = (d.from * k) + "px";
+          line.style.height = ((d.to - d.from) * k) + "px";
+          line.style.left = (d.x * k) + "px";
         }
         overlay().appendChild(line);
 
@@ -553,11 +569,11 @@
         label.className = "geo-dist";
         label.textContent = Math.round(d.val) + "px";
         if (d.type === "h") {
-          label.style.left = ((d.from + d.to) / 2 - 12 * inv) + "px";
-          label.style.top = (d.y - 12 * inv) + "px";
+          label.style.left = ((d.from + d.to) / 2 * k - 12 * inv) + "px";
+          label.style.top = (d.y * k - 12 * inv) + "px";
         } else {
-          label.style.left = (d.x + 4 * inv) + "px";
-          label.style.top = ((d.from + d.to) / 2 - 6 * inv) + "px";
+          label.style.left = (d.x * k + 4 * inv) + "px";
+          label.style.top = ((d.from + d.to) / 2 * k - 6 * inv) + "px";
         }
         overlay().appendChild(label);
       });
@@ -567,15 +583,15 @@
         const region = document.createElement("div");
         region.className = "geo-eq";
         if (d.type === "h") {
-          region.style.left = d.from + "px";
-          region.style.width = Math.max(1, d.to - d.from) + "px";
-          region.style.top = d.cross0 + "px";
-          region.style.height = Math.max(2, d.cross1 - d.cross0) + "px";
+          region.style.left = (d.from * k) + "px";
+          region.style.width = (Math.max(1, d.to - d.from) * k) + "px";
+          region.style.top = (d.cross0 * k) + "px";
+          region.style.height = (Math.max(2, d.cross1 - d.cross0) * k) + "px";
         } else {
-          region.style.top = d.from + "px";
-          region.style.height = Math.max(1, d.to - d.from) + "px";
-          region.style.left = d.cross0 + "px";
-          region.style.width = Math.max(2, d.cross1 - d.cross0) + "px";
+          region.style.top = (d.from * k) + "px";
+          region.style.height = (Math.max(1, d.to - d.from) * k) + "px";
+          region.style.left = (d.cross0 * k) + "px";
+          region.style.width = (Math.max(2, d.cross1 - d.cross0) * k) + "px";
         }
         overlay().appendChild(region);
 
@@ -583,11 +599,11 @@
         label.className = "geo-eq-label";
         label.textContent = Math.round(d.val) + "px";
         if (d.type === "h") {
-          label.style.left = ((d.from + d.to) / 2 - 12 * inv) + "px";
-          label.style.top = (d.cross0 - 12 * inv) + "px";
+          label.style.left = ((d.from + d.to) / 2 * k - 12 * inv) + "px";
+          label.style.top = (d.cross0 * k - 12 * inv) + "px";
         } else {
-          label.style.left = (d.cross0 + 4 * inv) + "px";
-          label.style.top = ((d.from + d.to) / 2 - 6 * inv) + "px";
+          label.style.left = (d.cross0 * k + 4 * inv) + "px";
+          label.style.top = ((d.from + d.to) / 2 * k - 6 * inv) + "px";
         }
         overlay().appendChild(label);
       });
@@ -644,9 +660,10 @@
       return ov;
     }
 
-    /** Компенсация зума: экранные размеры ручек/чипов постоянны при любом scale. */
+    /** Компенсация зума: экранные размеры ручек/чипов постоянны при любом scale.
+     *  Зависят от собственного transform оверлея, а не от зума артборда. */
     function syncZoom(ov) {
-      (ov || overlay()).style.setProperty("--geo-inv", String(1 / scale()));
+      (ov || overlay()).style.setProperty("--geo-inv", String(1 / overlayScale()));
     }
 
     function selContainer() {
@@ -809,8 +826,9 @@
       const x = Math.min(marquee.startX, cx), y = Math.min(marquee.startY, cy);
       const w = Math.abs(cx - marquee.startX), h = Math.abs(cy - marquee.startY);
       const el = marquee.el;
-      el.style.left = x + "px"; el.style.top = y + "px";
-      el.style.width = w + "px"; el.style.height = h + "px";
+      const k = canvasK(); // canvas → координаты оверлея
+      el.style.left = (x * k) + "px"; el.style.top = (y * k) + "px";
+      el.style.width = (w * k) + "px"; el.style.height = (h * k) + "px";
     }
 
     function onMarqueeUp(e) {
@@ -922,8 +940,9 @@
       const pt = screenToCanvas(e.clientX, e.clientY);
       const x = Math.min(create.start.x, pt.x), y = Math.min(create.start.y, pt.y);
       const w = Math.abs(pt.x - create.start.x), h = Math.abs(pt.y - create.start.y);
-      create.el.style.left = x + "px"; create.el.style.top = y + "px";
-      create.el.style.width = w + "px"; create.el.style.height = h + "px";
+      const k = canvasK(); // canvas → координаты оверлея
+      create.el.style.left = (x * k) + "px"; create.el.style.top = (y * k) + "px";
+      create.el.style.width = (w * k) + "px"; create.el.style.height = (h * k) + "px";
     }
 
     function onCreateUp(e) {
@@ -942,7 +961,12 @@
 
       onCommit();
       const parentFree = !!(contNode.frame && contNode.frame.layout === "free");
-      const fr = { x: Math.round(rx - cont.x), y: Math.round(ry - cont.y) };
+      // x/y нового элемента — от padding-box контейнера (контракт frame.x/y)
+      const contEl = domAt(cont.ref);
+      const contCs = contEl ? getComputedStyle(contEl) : null;
+      const cbl = contCs ? parseFloat(contCs.borderLeftWidth) || 0 : 0;
+      const cbt = contCs ? parseFloat(contCs.borderTopWidth) || 0 : 0;
+      const fr = { x: Math.round(rx - cont.x - cbl), y: Math.round(ry - cont.y - cbt) };
       // как в pen.dev: layoutPosition:absolute — новый элемент не ломает раскладку родителя
       if (!parentFree) fr.absolute = true;
       let child;
@@ -971,10 +995,12 @@
       const s = scale();
       const base = baseEl.getBoundingClientRect();
       const r = el.getBoundingClientRect();
+      // контракт frame.x/y — от padding-box родителя (как у CSS absolute),
+      // поэтому вычитаем border, а не padding
       const cs = getComputedStyle(baseEl);
-      const pl = parseFloat(cs.paddingLeft) || 0, pt = parseFloat(cs.paddingTop) || 0;
-      return { x: Math.round((r.left - base.left) / s - pl),
-               y: Math.round((r.top - base.top) / s - pt) };
+      const bl = parseFloat(cs.borderLeftWidth) || 0, bt = parseFloat(cs.borderTopWidth) || 0;
+      return { x: Math.round((r.left - base.left) / s - bl),
+               y: Math.round((r.top - base.top) / s - bt) };
     }
 
     /** Конвертация родителя в free-layout: измеряем позиции всех детей ДО
@@ -984,25 +1010,16 @@
       const s = scale();
       const cs = getComputedStyle(parent.dom);
       const bl = parseFloat(cs.borderLeftWidth) || 0, bt = parseFloat(cs.borderTopWidth) || 0;
-      const padL = parseFloat(cs.paddingLeft) || 0, padT = parseFloat(cs.paddingTop) || 0;
-      // сначала измеряем всё разом: DOM ещё в состоянии до конвертации.
-      // Координаты — от верхнего левого угла родителя (padding box): именно так
-      // рендерер ставит absolute-детей во free-раскладке (relPos вычитает padding
-      // и дал бы смещение на величину padding)
+      // измеряем всё разом: DOM ещё в состоянии до конвертации. Координаты —
+      // от padding-box родителя: единый контракт frame.x/y (как у CSS absolute)
       const base = parent.dom.getBoundingClientRect();
       const measured = parent.siblings.map((sib, j) => {
         const sibEl = siblingDom(parent, j);
         if (!sibEl) return null;
         const r = sibEl.getBoundingClientRect();
         return { x: Math.round((r.left - base.left) / s - bl),
-                 y: Math.round((r.top - base.top) / s - bt),
-                 h: r.height / s };
+                 y: Math.round((r.top - base.top) / s - bt) };
       });
-      // дети с layout auto/free во free-родителе рендерятся как position:relative
-      // (конфликт рендерера: relative перекрывает absolute), поэтому x/y им
-      // пишем как смещение от их потоковой позиции (вертикальный стек таких же
-      // детей от верха контент-бокса); остальным — координаты от padding box
-      let flowY = padT;
       parent.siblings.forEach((sib, j) => {
         const m = measured[j];
         if (!m) return;
@@ -1010,21 +1027,12 @@
         const sibRef = parent.isRoot ? { secIdx: j, path: null }
                                      : { secIdx: parent.secIdx, path: siblingPath(parent, j) };
         const sf = Object.assign({}, getFrame(sibRef));
-        m.inFlow = (sf.layout === "auto" || sf.layout === "free") && sf.absolute !== true;
-        if (m.inFlow) { m.fx = padL; m.fy = flowY; flowY += m.h; }
-        if (typeof sf.x !== "number") sf.x = Math.round(m.x - (m.inFlow ? m.fx : 0));
-        if (typeof sf.y !== "number") sf.y = Math.round(m.y - (m.inFlow ? m.fy : 0));
+        if (typeof sf.x !== "number") sf.x = m.x;
+        if (typeof sf.y !== "number") sf.y = m.y;
         setFrameData(sibRef, sf);
       });
-      // при конверсии в free рендерер меняет разметку родителя (у секций исчезают
-      // дефолтные padding) — фиксируем текущий padding, иначе позиции детей «уплывут»
-      let keepPadding = {};
-      if (!parent.node.frame || parent.node.frame.padding === undefined) {
-        const pad = [parseFloat(cs.paddingTop) || 0, parseFloat(cs.paddingRight) || 0,
-                     parseFloat(cs.paddingBottom) || 0, parseFloat(cs.paddingLeft) || 0];
-        if (pad.some(v => v > 0)) keepPadding = { padding: pad };
-      }
-      parent.node.frame = Object.assign({}, parent.node.frame, keepPadding, {
+      // дефолтный padding секции при конверсии в free сохраняет рендерер (sec-free)
+      parent.node.frame = Object.assign({}, parent.node.frame, {
         layout: "free",
         // frame у родителя может отсутствовать (свежий IR от LLM) — берём измеренную высоту
         height: (parent.node.frame && parent.node.frame.height) || Math.round(parent.dom.getBoundingClientRect().height / s),
@@ -1055,11 +1063,10 @@
       const measured = makeParentFree(parent);
       const m = measured[parent.siblings.indexOf(irNodeAt(d.ref))] || null;
       const f = Object.assign({}, getFrame(d.ref));
-      // dragged-элементу — измеренная позиция + дельта, а не старый frame:
-      // в auto-раскладке x/y может не быть, и элемент телепортировался бы в начало координат.
-      // Для потоковых детей (см. makeParentFree) база — их потоковая позиция
-      const bx = m ? m.x - (m.inFlow ? m.fx : 0) : (typeof f.x === "number" ? f.x : 0);
-      const by = m ? m.y - (m.inFlow ? m.fy : 0) : (typeof f.y === "number" ? f.y : 0);
+      // dragged-элементу — измеренная позиция (padding-box) + дельта, а не старый frame:
+      // в auto-раскладке x/y может не быть, и элемент телепортировался бы в начало координат
+      const bx = m ? m.x : (typeof f.x === "number" ? f.x : 0);
+      const by = m ? m.y : (typeof f.y === "number" ? f.y : 0);
       f.x = Math.round(bx + dx);
       f.y = Math.round(by + dy);
       setFrameData(d.ref, f);
@@ -1253,26 +1260,29 @@
     /* --- выравнивание (Figma-like) --- */
 
     function selectedRects() {
+      // canvas-координаты (boxRect в ноде Edit даёт единицы оверлея — не те)
+      const targets = collectHitTargets();
       return selections
         .filter(s => s.ref.secIdx != null)
         .map(s => {
-          const el = domAt(s.ref);
-          if (!el) return null;
-          const r = boxRect(el); // canvas-координаты
-          return { ref: s.ref, x: r.left, y: r.top, w: r.width, h: r.height };
+          const t = targets.find(tt => refKey(tt.ref) === refKey(s.ref));
+          if (!t) return null;
+          return { ref: s.ref, x: t.x, y: t.y, w: t.w, h: t.h };
         })
         .filter(Boolean);
     }
 
-    /** Контентный бокс родителя в canvas-координатах (для одиночного выравнивания). */
-    function parentContentRect(ref) {
+    /** Padding-box родителя в canvas-координатах (для одиночного выравнивания):
+     *  frame.x/y считаются от padding-box — как CSS absolute. */
+    function parentBox(ref) {
       const parent = parentOf(ref);
       if (!parent || !parent.dom) return null;
-      const r = boxRect(parent.dom);
+      const s = scale();
+      const r = parent.dom.getBoundingClientRect();
       const cs = getComputedStyle(parent.dom);
-      const pl = parseFloat(cs.paddingLeft) || 0, pr = parseFloat(cs.paddingRight) || 0;
-      const pt = parseFloat(cs.paddingTop) || 0, pb = parseFloat(cs.paddingBottom) || 0;
-      return { w: r.width - pl - pr, h: r.height - pt - pb };
+      const bl = parseFloat(cs.borderLeftWidth) || 0, br = parseFloat(cs.borderRightWidth) || 0;
+      const bt = parseFloat(cs.borderTopWidth) || 0, bb = parseFloat(cs.borderBottomWidth) || 0;
+      return { w: r.width / s - bl - br, h: r.height / s - bt - bb };
     }
 
     function applyAlign(mutator, single) {
@@ -1281,7 +1291,7 @@
       onCommit();
       if (rects.length === 1) {
         // как в Pencil: одиночное выделение выравнивается внутри родителя
-        const pc = parentContentRect(rects[0].ref);
+        const pc = parentBox(rects[0].ref);
         if (pc) {
           ensureParentFree(rects[0].ref);
           const f = Object.assign({}, getFrame(rects[0].ref));

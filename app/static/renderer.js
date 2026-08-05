@@ -78,7 +78,7 @@
       .ir-${uid} h2 { font-size:calc(30px * var(--fs)); letter-spacing:-.01em; }
       .ir-${uid} h3 { font-size:calc(20px * var(--fs)); }
       .ir-${uid} h4 { font-size:calc(16px * var(--fs)); }
-      .ir-${uid} .sec { padding:var(--sec-py) 32px; position:relative; }
+      .ir-${uid} .sec, .ir-${uid} .sec-free { padding:var(--sec-py) 32px; position:relative; }
       .ir-${uid} .wrap { max-width:var(--container); margin:0 auto; }
       .ir-${uid} .muted { color:var(--c-muted); }
       .ir-${uid} .btn { display:inline-flex; align-items:center; gap:8px; padding:12px 22px; border-radius:var(--r-btn);
@@ -132,16 +132,18 @@
     if (f.clip) s.push("overflow:hidden");
     if (typeof f.rotation === "number" && f.rotation) s.push(`transform:rotate(${f.rotation}deg)`);
     // absolute — элемент выведен из раскладки родителя (аналог layoutPosition:absolute в pen.dev)
-    if ((parentFree || f.absolute) && (typeof f.x === "number" || typeof f.y === "number")) {
+    const placed = (parentFree || f.absolute) && (typeof f.x === "number" || typeof f.y === "number");
+    if (placed) {
       s.push("position:absolute", `left:${typeof f.x === "number" ? f.x : 0}px`, `top:${typeof f.y === "number" ? f.y : 0}px`);
     }
     if (typeof f.padding === "number") s.push(`padding:${f.padding}px`);
     else if (Array.isArray(f.padding) && f.padding.length === 4) s.push(`padding:${f.padding.map(n => n + "px").join(" ")}`);
     else if (Array.isArray(f.padding) && f.padding.length === 2) s.push(`padding:${f.padding[0]}px ${f.padding[1]}px`);
     if (container) {
-      // relative нужен и free, и auto: якорь для детей с absolute;
-      // но не для absolute-узла — у него самого position:absolute
-      if ((f.layout === "free" || f.layout === "auto") && !f.absolute) s.push("position:relative");
+      // relative нужен и free, и auto: якорь для детей с absolute.
+      // placed-узлу НЕ добавляем: position:relative в inline-стиле перезаписал бы
+      // position:absolute (конфликт), а absolute-узел сам содержит absolute-детей
+      if ((f.layout === "free" || f.layout === "auto") && !placed) s.push("position:relative");
       if (f.layout === "auto") {
         s.push("display:flex", `flex-direction:${f.direction === "row" ? "row" : "column"}`);
         if (typeof f.gap === "number") s.push(`gap:${f.gap}px`);
@@ -154,12 +156,14 @@
   }
 
   /** Оборачивает html в div-бокс по frame (для секций и листовых элементов).
- *  data-ir-path переносится на обёртку чтобы GeoEdit работал с frame-контейнером. */
-  function withFrame(html, frame, parentFree, container, irPath) {
+ *  data-ir-path переносится на обёртку чтобы GeoEdit работал с frame-контейнером.
+ *  cls — опциональный класс обёртки (например sec-free для дефолтного padding). */
+  function withFrame(html, frame, parentFree, container, irPath, cls) {
     const css = frameCss(frame, parentFree, container);
-    if (!css) return html;
+    if (!css && !cls) return html;
     const pathAttr = irPath ? ` data-ir-path="${esc(irPath)}"` : "";
-    return `<div data-ir-frame${pathAttr} style="${css}">${html}</div>`;
+    const clsAttr = cls ? ` class="${cls}"` : "";
+    return `<div data-ir-frame${pathAttr}${clsAttr} style="${css}">${html}</div>`;
   }
 
   /* ---------- элементы (children) ---------- */
@@ -273,7 +277,10 @@
       childrenHtml = sec.children.map(c => renderElement(c, uid, true)).join("");
     }
     const combined = html + childrenHtml;
-    return withFrame(combined, sec.frame, parentFree, isFree);
+    // free-секция рендерится без .sec-внутренностей — класс sec-free сохраняет
+    // дефолтный padding секции, иначе при конверсии в free дети «уплывают»
+    return withFrame(combined, sec.frame, parentFree, isFree, null,
+      (isFree && hasChildren) ? "sec-free" : "");
   }
 
   function renderSectionInner(sec, uid) {
