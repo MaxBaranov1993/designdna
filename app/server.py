@@ -27,6 +27,7 @@ import run_test as llm  # spike/run_test.py: chat, chat_vision, build_system_pro
 from colorutils import mix_hex_colors
 from scraper import prepare_image_b64, analyze_url, extract_structure, parse_design_tokens
 from reproduce import run_pipeline as reproduce_pipeline
+from urlguard import validate_public_url
 
 import jsonschema
 
@@ -318,6 +319,12 @@ def clone(req: CloneReq):
         return err(422, "Опишите, какой компонент клонировать.")
     provider = normalize_provider(req.provider)
 
+    # SSRF-гард: только публичные http/https URL
+    try:
+        validate_public_url(url)
+    except ValueError as e:
+        return err(422, str(e))
+
     # fetch страницы
     try:
         req_obj = urllib.request.Request(url, headers={
@@ -456,6 +463,10 @@ def scrape(req: ScrapeReq):
     url = req.url.strip()
     if not url:
         return err(422, "Укажите URL сайта.")
+    try:
+        validate_public_url(url)  # SSRF-гард (422, а не 502)
+    except ValueError as e:
+        return err(422, str(e))
     try:
         data = analyze_url(url, use_playwright=req.use_playwright)
     except Exception as e:

@@ -20,6 +20,8 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 from PIL import Image
 
+from urlguard import validate_public_url
+
 # ---------- data ----------
 
 @dataclass
@@ -46,6 +48,7 @@ _HEADERS = {
 
 def fetch_html(url: str, timeout: float = 20.0) -> str:
     """Быстрый fetch HTML через httpx (без JS-рендера)."""
+    validate_public_url(url)  # SSRF-гард
     with httpx.Client(follow_redirects=True, timeout=timeout, headers=_HEADERS) as client:
         resp = client.get(url)
         resp.raise_for_status()
@@ -211,6 +214,7 @@ def render_page_sync(url: str, viewport_w: int = 1440, viewport_h: int = 900,
     """Рендер страницы в headless Chromium: HTML после JS + скриншот + computed styles."""
     from playwright.sync_api import sync_playwright
 
+    validate_public_url(url)  # SSRF-гард: headless Chromium тоже не ходит во внутреннюю сеть
     result = PageData(url=url, viewport={"width": viewport_w, "height": viewport_h})
 
     with sync_playwright() as p:
