@@ -6,6 +6,7 @@
 import concurrent.futures
 import copy
 import json
+import mimetypes
 import re
 import sys
 import traceback
@@ -13,6 +14,13 @@ import urllib.request
 import urllib.error
 import webbrowser
 from pathlib import Path
+
+# Windows: реестр может не знать MIME для .js/.css/woff — без корректного
+# content-type браузер отказывается выполнять module-скрипты сборки /flow
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("font/woff", ".woff")
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
