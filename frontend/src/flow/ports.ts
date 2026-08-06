@@ -1,4 +1,4 @@
-import type { AnyNodeData, MixNodeData, NodeType, PortKind } from "./types";
+import type { AnyNodeData, BlockParseNodeData, MixNodeData, NodeType, PortKind } from "./types";
 
 export type PortDecl = { name: string; label: string; kind: PortKind };
 
@@ -11,9 +11,12 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   mix: { title: "Микс", icon: "⊕", w: 290 },
   clone: { title: "Клон (сайт)", icon: "", w: 310 },
   reproduce: { title: "Reproduce (pixel)", icon: "◎", w: 340 },
+  blockparse: { title: "BlockParse", icon: "⧉", w: 340 },
+  reskin: { title: "Reskin", icon: "✦", w: 340 },
 };
 
-/* Зеркало PORTS (nodes.js:35-48); у mix входы динамические — из data.inputs (portsOfNode) */
+/* Зеркало PORTS (nodes.js:35-48); у mix входы динамические — из data.inputs (portsOfNode),
+ * у blockparse выходы динамические — из зажжённых блоков (portsOfNode, NODES-HOUDINI.md §7.5) */
 export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   prompt: { in: [], out: [{ name: "out", label: "текст", kind: "text" }] },
   reference: {
@@ -41,9 +44,19 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
       { name: "diff", label: "diff", kind: "text" },
     ],
   },
+  blockparse: { in: [], out: [{ name: "tokens", label: "токены", kind: "tokens" }] },
+  reskin: {
+    in: [
+      { name: "ir", label: "IR", kind: "ir" },
+      { name: "tokens", label: "токены", kind: "tokens" },
+    ],
+    out: [{ name: "ir", label: "IR", kind: "ir" }],
+  },
 };
 
-/* Зеркало portsOf (nodes.js:77-83): у mix входы строятся из data.inputs, все kind "ir" */
+/* Зеркало portsOf (nodes.js:77-83): у mix входы строятся из data.inputs, все kind "ir";
+ * у blockparse выходы — по именам зажжённых блоков (lit, handle id = имя блока) +
+ * постоянный порт tokens (решение владельца 9). */
 export function portsOfNode(n: {
   type: NodeType;
   data?: AnyNodeData;
@@ -53,6 +66,17 @@ export function portsOfNode(n: {
     return {
       in: inputs.map((name) => ({ name, label: name, kind: "ir" as PortKind })),
       out: PORTS.mix.out,
+    };
+  }
+  if (n.type === "blockparse") {
+    const blocks = (n.data as BlockParseNodeData | undefined)?.blocks || [];
+    const lit = blocks.filter((b) => b.lit && !b.error);
+    return {
+      in: PORTS.blockparse.in,
+      out: [
+        ...lit.map((b) => ({ name: b.name, label: b.name, kind: "ir" as PortKind })),
+        ...PORTS.blockparse.out,
+      ],
     };
   }
   return PORTS[n.type];
@@ -75,6 +99,15 @@ export function defaultData(type: NodeType): AnyNodeData {
       return { url: "", component: "", provider: "qwen", ir: null };
     case "reproduce":
       return { image: null, fileName: "", url: "", provider: "qwen", result: null };
+    case "blockparse":
+      return { url: "", mine: false, blocks: [], tokens: null };
+    case "reskin":
+      return {
+        prompt: "",
+        mask: { colors: true, fonts: true, radii: true, shadows: true, texts: false, images: false },
+        ir: null,
+        log: [],
+      };
   }
 }
 
@@ -87,4 +120,6 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "mix", note: "смешение по весам" },
   { type: "clone", note: "клон с сайта по URL" },
   { type: "reproduce", note: "pixel-perfect из скриншота" },
+  { type: "blockparse", note: "блоки сайта → IR + токены" },
+  { type: "reskin", note: "AI-рестайл с локом структуры" },
 ];

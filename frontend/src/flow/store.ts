@@ -3,7 +3,14 @@ import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import type { EdgeChange, NodeChange } from "@xyflow/react";
 
 import { api } from "./api";
-import type { CloneResp, GenerateResp, MixResp, ReproduceResp } from "./api";
+import type {
+  BlockParseResp,
+  CloneResp,
+  GenerateResp,
+  MixResp,
+  ReproduceResp,
+  ReskinResp,
+} from "./api";
 import { NODE_DEFS, defaultData, portsOfNode } from "./ports";
 import { deepClone, outValue, pullInput, reachable } from "./dataflow";
 import {
@@ -17,6 +24,7 @@ import {
 import { toast } from "./toast";
 import type {
   AnyNodeData,
+  BlockParseNodeData,
   CloneNodeData,
   FlowEdge,
   FlowNode,
@@ -28,6 +36,7 @@ import type {
   MixNodeData,
   NodeType,
   ReproduceNodeData,
+  ReskinNodeData,
 } from "./types";
 
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
@@ -61,6 +70,8 @@ export interface FlowStoreState {
   runMix: (id: number) => Promise<void>;
   runClone: (id: number) => Promise<void>;
   runReproduce: (id: number) => Promise<void>;
+  runBlockParse: (id: number) => Promise<void>;
+  runReskin: (id: number) => Promise<void>;
   sendToNode: (id: number, targetType: "edit" | "reference") => void;
   addMixInput: (id: number) => void;
   removeMixInput: (id: number, name: string) => void;
@@ -219,6 +230,8 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     else if (n.type === "mix") void get().runMix(id);
     else if (n.type === "clone") void get().runClone(id);
     else if (n.type === "reproduce") void get().runReproduce(id);
+    else if (n.type === "blockparse") void get().runBlockParse(id);
+    else if (n.type === "reskin") void get().runReskin(id);
   },
 
   /* Зеркало runGenerator (nodes.js:498-518): бриф тянем из входа prompt (pull-based)
@@ -380,6 +393,94 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       const msg = e instanceof Error ? e.message : String(e);
       get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Reproduce: " + msg, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  /* BlockParse (решение владельца 11, NODES-HOUDINI.md §7): payload {url} —
+   * в v1 парсим все блоки (поле blocks не используем, повторы экономит кэш).
+   * Ответ: список блоков (ошибка блока — в его записи) + design-токены.
+   * lit сохраняется по имени блока при повторном разборе; провода с портов,
+   * которых больше нет, снимаются (аналог removeMixInput). */
+  runBlockParse: async (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "blockparse" || st.busy[id]) return;
+    const data = n.data as BlockParseNodeData;
+    const url = (data.url || "").trim();
+    if (!url) {
+      get().setStatus(id, "Введите URL сайта", "err");
+      return;
+    }
+    if (!data.mine) {
+      get().setStatus(id, "Отметьте «Это мой сайт» — разбирать можно только свои страницы", "err");
+      return;
+    }
+    get().setStatus(id, `Разбираю ${url.slice(0, 30)}…`);
+    get().setBusy(id, true);
+    try {
+      const res = await api<BlockParseResp>("/api/block-parse", { url });
+      const litBefore = new Set(data.blocks.filter((b) => b.lit).map((b) => b.name));
+      const blocks = (res.blocks || []).map((b) => ({ ...b, lit: litBefore.has(b.name) }));
+      get().setNodeData(id, { blocks, tokens: res.tokens || null });
+      const sid = String(id);
+      const alive = new Set<string>(["tokens", ...blocks.map((b) => b.name)]);
+      set((state) => ({
+        edges: state.edges.filter(
+          (e) => e.source !== sid || alive.has(e.sourceHandle ?? ""),
+        ),
+      }));
+      const errCount = blocks.filter((b) => b.error).length;
+      const cachedNote = res.cached ? " · из кэша" : "";
+      get().setStatus(id, `${blocks.length} блоков (${errCount} ошибок)${cachedNote}`, "ok");
+      get().propagate(id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      get().setStatus(id, "Ошибка: " + msg, "err");
+      toast("BlockParse: " + msg, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  /* Reskin (решение владельца 11, NODES-HOUDINI.md §7): входы ir/tokens тянутся
+   * проводами (pull-модель); payload {ir, prompt, tokens?, mask}; пустая маска
+   * не запускается (бэкенд вернул бы IR без изменений). Ответ: {ir, log} —
+   * log (журнал merge-back) показывается свёрнутым блоком в ноде. */
+  runReskin: async (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "reskin" || st.busy[id]) return;
+    const data = n.data as ReskinNodeData;
+    if (!Object.values(data.mask).some(Boolean)) {
+      get().setStatus(id, "Пустая маска: отметьте, что разрешено менять", "err");
+      return;
+    }
+    const ir = pullInput(st.nodes, st.edges, n, "ir") as IRObject | null;
+    if (!ir) {
+      get().setStatus(id, "Подключите IR ко входу (например, из BlockParse)", "err");
+      return;
+    }
+    const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
+    get().setStatus(id, "Рестайл: LLM + merge-back… 20–120 сек");
+    get().setBusy(id, true);
+    try {
+      const payload: Record<string, unknown> = {
+        ir,
+        prompt: data.prompt || "",
+        mask: data.mask,
+      };
+      if (tokensRaw && typeof tokensRaw === "object") payload.tokens = tokensRaw;
+      const res = await api<ReskinResp>("/api/reskin", payload);
+      const log = Array.isArray(res.log) ? res.log : [];
+      get().setNodeData(id, { ir: res.ir || null, log });
+      get().setStatus(id, `Готово · журнал merge-back: ${log.length}`, "ok");
+      get().propagate(id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      get().setStatus(id, "Ошибка: " + msg, "err");
+      toast("Reskin: " + msg, "error");
     } finally {
       get().setBusy(id, false);
     }

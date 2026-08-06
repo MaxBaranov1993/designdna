@@ -63,6 +63,7 @@
   --flow-ok: #34c37b;
   --flow-err: #e5534b;
   --flow-wire-text: #7a7a8c;
+  --flow-wire-tokens: #d6a13b;
 }
 
 /* каркас ноды */
@@ -175,6 +176,9 @@
 }
 .port-dot.port-ir.react-flow__handle {
   border-color: var(--flow-accent);
+}
+.port-dot.port-tokens.react-flow__handle {
+  border-color: var(--flow-wire-tokens);
 }
 
 /* контролы внутри нод — зеркало .node textarea/select/input (nodes.html) */
@@ -477,6 +481,118 @@
 .repro-diff {
   font-size: 11px;
   color: var(--flow-muted);
+}
+
+/* blockparse: отметка «мой сайт» и подсказка (юридика NODES-HOUDINI.md §7.4) */
+.bp-mine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--flow-muted);
+  cursor: pointer;
+}
+.bp-mine input {
+  accent-color: var(--flow-accent);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+.bp-hint,
+.rs-hint {
+  font-size: 11px;
+  color: var(--flow-muted);
+}
+
+/* blockparse: список блоков — миниатюра IR + чекбокс «зажечь» порт */
+.bp-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.bp-block {
+  background: var(--flow-panel-2);
+  border: 1px solid var(--flow-border);
+  border-radius: 8px;
+  padding: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bp-lit {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--flow-text);
+  cursor: pointer;
+}
+.bp-lit input {
+  accent-color: var(--flow-accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+.bp-lit input:disabled {
+  cursor: default;
+}
+.bp-name {
+  font-weight: 600;
+}
+.bp-cached {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--flow-ok);
+  border: 1px solid rgba(52, 195, 123, 0.4);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+.bp-error {
+  font-size: 11px;
+  color: var(--flow-err);
+}
+
+/* reskin: сетка чекбоксов маски и свёрнутый журнал merge-back */
+.rs-mask {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 5px 8px;
+}
+.rs-mask label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--flow-muted);
+  cursor: pointer;
+}
+.rs-mask input {
+  accent-color: var(--flow-accent);
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+}
+.rs-log {
+  font-size: 11px;
+  color: var(--flow-muted);
+  background: var(--flow-panel-2);
+  border: 1px solid var(--flow-border);
+  border-radius: 8px;
+  padding: 6px 9px;
+}
+.rs-log summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.rs-log-lines {
+  margin-top: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-wrap: anywhere;
 }
 
 /* контекстное меню — зеркало #ctx-menu (nodes.html) */

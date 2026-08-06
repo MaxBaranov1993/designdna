@@ -27,6 +27,8 @@ export const NODE_TYPES: NodeType[] = [
   "mix",
   "clone",
   "reproduce",
+  "blockparse",
+  "reskin",
 ];
 
 /* Зеркало stripHeavy (nodes.js:1161-1172): при квоте выкидываем base64/data-URL

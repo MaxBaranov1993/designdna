@@ -75,7 +75,8 @@ def main():
         # правый клик по канвасу — контекстное меню создания ноды
         pg.click(".react-flow__pane", button="right", position={"x": 320, "y": 300})
         check("контекстное меню открыто", pg.is_visible("#ctx-menu"))
-        check("в меню 7 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 7"))
+        # 9 типов: 7 базовых + BlockParse и Reskin (бриф W11)
+        check("в меню 9 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 9"))
 
         # создать Промпт
         pg.click("#ctx-menu .ctx-item[data-type='prompt']")

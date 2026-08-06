@@ -26,6 +26,8 @@ import { MixNode } from "./nodes/MixNode";
 import { PromptNode } from "./nodes/PromptNode";
 import { ReferenceNode } from "./nodes/ReferenceNode";
 import { ReproduceNode } from "./nodes/ReproduceNode";
+import { BlockParseNode } from "./nodes/BlockParseNode";
+import { ReskinNode } from "./nodes/ReskinNode";
 
 /* Реестр кастомных нод — вне компонента, ключи = legacy type (конвертация данных не нужна) */
 const nodeTypes = {
@@ -36,6 +38,8 @@ const nodeTypes = {
   mix: MixNode,
   clone: CloneNode,
   reproduce: ReproduceNode,
+  blockparse: BlockParseNode,
+  reskin: ReskinNode,
 } satisfies NodeTypes;
 
 type CtxMenuState = { x: number; y: number; flowX: number; flowY: number };

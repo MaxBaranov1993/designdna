@@ -3,6 +3,13 @@ import { portsOfNode } from "../flow/ports";
 import type { AnyNodeData, NodeType } from "../flow/types";
 import { cn } from "../lib/utils";
 
+/* kind-классы хендлов: ir — акцентный, tokens — янтарный (решение владельца 9) */
+function kindClass(kind: string) {
+  if (kind === "ir") return "port-ir";
+  if (kind === "tokens") return "port-tokens";
+  return "";
+}
+
 /* Входные порты — строки слева (зеркало .port-row.in). У mix входы динамические
  * и рендерятся прямо в MixNode вместе со слайдерами весов. */
 export function InPorts({ type, data }: { type: NodeType; data?: AnyNodeData }) {
@@ -15,7 +22,7 @@ export function InPorts({ type, data }: { type: NodeType; data?: AnyNodeData }) 
             id={p.name}
             type="target"
             position={Position.Left}
-            className={cn("port-dot", "pp-in-" + p.name, p.kind === "ir" && "port-ir")}
+            className={cn("port-dot", "pp-in-" + p.name, kindClass(p.kind))}
           />
           <span className="plabel">{p.label}</span>
         </div>
@@ -35,7 +42,7 @@ export function OutPorts({ type, data }: { type: NodeType; data?: AnyNodeData })
             id={p.name}
             type="source"
             position={Position.Right}
-            className={cn("port-dot", "pp-out-" + p.name, p.kind === "ir" && "port-ir")}
+            className={cn("port-dot", "pp-out-" + p.name, kindClass(p.kind))}
           />
         </div>
       ))}

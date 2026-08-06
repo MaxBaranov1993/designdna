@@ -31,3 +31,19 @@ export type ReproduceResp = {
   cached?: boolean;
   provider_used?: string;
 };
+/* BlockParse/Reskin (решение владельца 11, server.py /api/block-parse, /api/reskin):
+ * ошибка отдельного блока — в его записи (error), остальные работают */
+export type BlockParseBlockResp = {
+  name: string;
+  selector: string;
+  ir?: IRObject;
+  error?: string;
+  cached?: boolean;
+};
+export type BlockParseResp = {
+  url: string;
+  blocks: BlockParseBlockResp[];
+  tokens: Record<string, unknown> | null;
+  cached?: boolean;
+};
+export type ReskinResp = { ir?: IRObject | null; log?: string[] };

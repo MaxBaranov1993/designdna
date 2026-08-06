@@ -1,10 +1,12 @@
 import { portsOfNode } from "./ports";
 import type { FlowEdge, FlowNode, PortKind } from "./types";
 
-/* Цвета проводов — зеркало #wires path в nodes.html: text серый, ir акцентный */
+/* Цвета проводов — зеркало #wires path в nodes.html: text серый, ir акцентный;
+ * tokens — янтарный (решение владельца 9) */
 export const WIRE_COLORS: Record<PortKind, string> = {
   text: "#7a7a8c",
   ir: "#5b5bd6",
+  tokens: "#d6a13b",
 };
 
 /* Зеркало clone() (nodes.js:74) */
@@ -12,8 +14,9 @@ export function deepClone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
 }
 
-/* Зеркало outValue (nodes.js:923-932) — значение выходного порта ноды */
-export function outValue(n: FlowNode): unknown {
+/* Зеркало outValue (nodes.js:923-932) — значение выходного порта ноды.
+ * port нужен blockparse: у него выходы динамические, по именам зажжённых блоков. */
+export function outValue(n: FlowNode, port?: string): unknown {
   switch (n.type) {
     case "prompt":
       return n.data.text || "";
@@ -29,6 +32,11 @@ export function outValue(n: FlowNode): unknown {
       return n.data.ir || null;
     case "reproduce":
       return n.data.result ? n.data.result.ir || null : null;
+    case "blockparse":
+      if (port === "tokens") return n.data.tokens || null;
+      return n.data.blocks.find((b) => b.name === port && b.lit)?.ir || null;
+    case "reskin":
+      return n.data.ir || null;
   }
 }
 
@@ -42,7 +50,7 @@ export function pullInput(
   const e = edges.find((ed) => ed.target === n.id && ed.targetHandle === port);
   if (!e) return null;
   const src = nodes.find((x) => x.id === e.source);
-  return src ? outValue(src) : null;
+  return src ? outValue(src, e.sourceHandle ?? undefined) : null;
 }
 
 /* Зеркало edgeKind (nodes.js:988-993): kind провода наследуется от выходного порта источника */
