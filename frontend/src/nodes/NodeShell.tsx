@@ -5,7 +5,8 @@ import type { NodeType } from "../flow/types";
 import { cn } from "../lib/utils";
 
 /* Общий каркас ноды: шапка (иконка, название, ✕) и тело.
- * Зеркало .node-head/.node-body legacy; классы n-<type> и f-* сохранены для тестов. */
+ * Зеркало .node-head/.node-body legacy; классы n-<type>, f-* и data-id
+ * сохранены для тестов (dataset.id на .node — контракт buildNodeDom legacy). */
 export function NodeShell({
   id,
   type,
@@ -20,7 +21,11 @@ export function NodeShell({
   const def = NODE_DEFS[type];
   const deleteNode = useFlowStore((s) => s.deleteNode);
   return (
-    <div className={cn("fnode node", "n-" + type, selected && "selected")} style={{ width: def.w }}>
+    <div
+      className={cn("fnode node", "n-" + type, selected && "selected")}
+      data-id={id}
+      style={{ width: def.w }}
+    >
       <div className="node-head">
         <span className="n-icon">{def.icon}</span>
         <span className="n-title">{def.title}</span>

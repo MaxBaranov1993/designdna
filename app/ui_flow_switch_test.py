@@ -1,13 +1,14 @@
-"""Playwright-тест переключения `/` на новый React Flow UI (Спринт 5, Фаза C).
+"""Playwright-тест маршрутов после снятия legacy /nodes (Спринт 5 закрыт).
 Нужен запущенный сервер: .venv/Scripts/python app/server.py (порт 8420)
 Запуск: .venv/Scripts/python app/ui_flow_switch_test.py
 
 Проверяет: GET / → 200 и новый UI (.react-flow__pane, шим window.GraphDev,
-легаси-маркеры nodes.html отсутствуют); GET /nodes → 200 и legacy-редактор
-nodes.js (топбар/#viewport/.node, number-id, без react-flow); GET /flow → 200,
-поведение не изменилось; граф, созданный на `/`, виден после перезагрузки и
-разделяется с /flow (ключ designai-flow-v1); legacy /nodes читает/пишет свой
-designai-graph-v1 и не трогает flow-ключ (в обе стороны).
+легаси-маркеры nodes.html отсутствуют); GET /flow → 200, поведение не
+изменилось; GET /nodes → 307-редирект на / (legacy-граф снят, nodes.*
+удалены): браузер и API-клиент приходят в новый UI, legacy-ключ
+designai-graph-v1 больше не создаётся и designai-flow-v1 не трогается;
+граф, созданный на `/`, виден после перезагрузки и разделяется с /flow
+(ключ designai-flow-v1).
 """
 import sys
 import time
@@ -21,7 +22,7 @@ FAILS = []
 
 def check(name, cond, extra=""):
     tag = "OK " if cond else "FAIL"
-    print(f"[{tag}] {name}" + (f" — {extra}" if extra and not cond else ""))
+    print(f"[{tag}] {name}" + ((" — " + extra) if (extra and not cond) else ""))
     if not cond:
         FAILS.append(name)
 
@@ -38,16 +39,30 @@ def one_prompt(pg):
     )
 
 
+def no_legacy_markers(pg):
+    return pg.evaluate(
+        "!document.querySelector('#viewport') && !document.querySelector('#wires') && "
+        "!document.querySelector('script[src*=\"nodes.js\"]') && "
+        "document.title === 'DesignAI — нодовый редактор'"
+    )
+
+
 def main():
     with sync_playwright() as p:
-        # доступность маршрутов страниц
+        # доступность маршрутов страниц (API-клиент следует редиректам)
         api = p.request.new_context()
-        for path in ("/", "/nodes", "/flow"):
+        for path in ("/", "/flow"):
             try:
                 r = api.get(BASE + path)
                 check(f"GET {path} -> 200", r.status == 200, str(r.status))
             except Exception as e:
                 check(f"GET {path} -> 200", False, str(e))
+        try:
+            r = api.get(BASE + "/nodes")
+            check("GET /nodes -> 200 (через редирект на /)", r.status == 200, str(r.status))
+            check("GET /nodes: финальный URL — /", r.url.rstrip("/") == BASE, r.url)
+        except Exception as e:
+            check("GET /nodes -> 200 (через редирект на /)", False, str(e))
         api.dispose()
 
         browser = p.chromium.launch(headless=True)
@@ -75,18 +90,12 @@ def main():
                 "typeof window.GraphDev.state === 'function'"
             ),
         )
-        check(
-            "на / нет легаси-маркеров nodes.html",
-            pg.evaluate(
-                "!document.querySelector('#viewport') && !document.querySelector('#wires') && "
-                "!document.querySelector('script[src*=\"nodes.js\"]') && "
-                "document.title === 'DesignAI — нодовый редактор'"
-            ),
-        )
+        check("на / нет легаси-маркеров nodes.html", no_legacy_markers(pg))
 
         # граф, созданный на `/`: автосейв в designai-flow-v1, legacy-ключ не трогается
         added = pg.evaluate("window.GraphDev.add('prompt', 140, 160)")
-        check("на / создана нода с number-id", bool(added) and isinstance(added.get("id"), int))
+        check("на / создана нода (GraphDev.add работает)",
+              bool(added) and isinstance(added.get("id"), int))
         pg.wait_for_timeout(600)  # автосейв, debounce 300 мс (serialize.ts)
         check("автосейв: designai-flow-v1 записан",
               pg.evaluate("localStorage.getItem('designai-flow-v1') !== null"))
@@ -104,24 +113,20 @@ def main():
         check("/flow видит тот же граф (общий ключ designai-flow-v1)", one_prompt(pg))
         flow_saved = pg.evaluate("localStorage.getItem('designai-flow-v1')")
 
-        # GET /nodes — legacy-редактор из nodes.js без изменений
+        # GET /nodes — legacy снят: редирект приводит в новый UI
         pg.goto(BASE + "/nodes")
-        pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
-        check("legacy: топбар и холст #viewport на месте",
-              pg.evaluate("!!document.querySelector('.topbar') && !!document.querySelector('#viewport')"))
-        check("legacy: .react-flow__pane отсутствует",
-              pg.evaluate("!document.querySelector('.react-flow__pane')"))
-        check("legacy: GraphDev c number-id (nodes.js)",
-              pg.evaluate("typeof window.GraphDev.add('prompt', 120, 120).id === 'number'"))
-        check("legacy: нода отрисована на холсте",
-              pg.evaluate("document.querySelectorAll('#world .node').length === 1"))
-        pg.wait_for_timeout(600)  # автосейв, debounce 300 мс (nodes.js:1175)
-        check("legacy: пишет свой ключ designai-graph-v1",
-              pg.evaluate("localStorage.getItem('designai-graph-v1') !== null"))
-        check("legacy: не трогает designai-flow-v1",
+        wait_flow_ready(pg)
+        check("/nodes: браузер выведен на / (редирект)", pg.url.rstrip("/") == BASE, pg.url)
+        check("/nodes: рендерится новый UI (.react-flow__pane)",
+              pg.is_visible(".react-flow__pane"))
+        check("/nodes: легаси-маркеров nodes.html нет", no_legacy_markers(pg))
+        pg.wait_for_timeout(600)  # автосейв после loadGraph
+        check("/nodes: legacy-ключ designai-graph-v1 не создаётся",
+              pg.evaluate("localStorage.getItem('designai-graph-v1') === null"))
+        check("/nodes: designai-flow-v1 не тронут",
               pg.evaluate("(v) => localStorage.getItem('designai-flow-v1') === v", flow_saved))
 
-        # в обе стороны: после legacy `/` новый UI на `/` с тем же графом
+        # возврат на / — граф цел
         pg.goto(BASE + "/")
         wait_flow_ready(pg)
         check("после /nodes граф на / не тронут", one_prompt(pg))

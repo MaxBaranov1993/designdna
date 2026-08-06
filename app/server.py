@@ -23,7 +23,7 @@ mimetypes.add_type("font/woff2", ".woff2")
 mimetypes.add_type("font/woff", ".woff")
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -739,8 +739,9 @@ def cache_stats():
 
 @app.get("/nodes")
 def nodes_page():
-    # Legacy-редактор нод (nodes.html): остаётся до полного паритета с новым UI
-    return FileResponse(Path(__file__).resolve().parent / "static" / "nodes.html")
+    # Legacy-граф снят (Спринт 5 завершён, Фазы A/B1/B2/B3/C в main): старый
+    # адрес перенаправляет на новый React Flow UI
+    return RedirectResponse(url="/", status_code=307)
 
 
 @app.get("/")

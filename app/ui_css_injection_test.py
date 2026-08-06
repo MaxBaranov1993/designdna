@@ -1,4 +1,5 @@
 """CSS-инъекции из IR: токены/шрифты/align санятся (контент от LLM недоверенный).
+Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /.
 Нужен запущенный сервер: .venv/Scripts/python app/server.py
 Запуск: .venv/Scripts/python app/ui_css_injection_test.py
 """
@@ -57,7 +58,7 @@ def main():
         pg = browser.new_page(viewport={"width": 1700, "height": 1000})
         for _ in range(30):
             try:
-                pg.goto(BASE + "/nodes", timeout=2000)
+                pg.goto(BASE + "/", timeout=2000)
                 break
             except Exception:
                 time.sleep(1)
@@ -66,9 +67,10 @@ def main():
             sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector("#viewport")
+        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
-        nid = pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id")
+        nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
         pg.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, IR)
         pg.wait_for_timeout(700)
 
