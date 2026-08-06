@@ -7,6 +7,7 @@
   3) «Absolute Position» в инспекторе не сдвигает элемент (posOf = padding-box);
   4) одиночное выравнивание работает в тех же координатах (align-right к
      padding-box границе родителя).
+Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /.
 Нужен запущенный сервер: .venv/Scripts/python app/server.py
 Запуск: .venv/Scripts/python app/ui_renderer_frame_test.py
 """
@@ -83,7 +84,7 @@ def main():
         pg = browser.new_page(viewport={"width": 1700, "height": 1100})
         for _ in range(30):
             try:
-                pg.goto(BASE + "/nodes", timeout=2000)
+                pg.goto(BASE + "/", timeout=2000)
                 break
             except Exception:
                 time.sleep(1)
@@ -92,12 +93,42 @@ def main():
             sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector("#viewport")
+        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
-        nid = pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id")
+        nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
         pg.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, IR)
         pg.wait_for_timeout(700)
+
+        # Новый UI: renderer.js асинхронно подгружает Google-шрифты IR и делает
+        # reflow превью (в legacy соединение грел page-шрифт nodes.html). Пока
+        # шрифты не догружены, геометрия плавает — замеры и drag расходятся.
+        def wait_ir_ready(sel, polls=3, interval=150):
+            hits = 0
+            for _ in range(80):
+                st = pg.evaluate("document.fonts ? document.fonts.status : 'loaded'")
+                hits = hits + 1 if st == "loaded" else 0
+                if hits >= polls:
+                    break
+                pg.wait_for_timeout(interval)
+            last, geo_hits = None, 0
+            for _ in range(50):
+                r = pg.evaluate(
+                    "(s) => { const el = document.querySelector(s); if (!el) return null;"
+                    " const b = el.getBoundingClientRect();"
+                    " return [b.left, b.top, b.width, b.height]; }", sel)
+                if r is not None and r == last:
+                    geo_hits += 1
+                    if geo_hits >= polls:
+                        return True
+                else:
+                    geo_hits = 0
+                last = r
+                pg.wait_for_timeout(interval)
+            return False
+
+        wait_ir_ready('.n-edit .edit-inner [class^="ir-"]')
 
         scale = pg.evaluate(
             "(() => { const el = document.querySelector('.n-edit [data-ir-sec=\"1\"]');"

@@ -1,4 +1,5 @@
-"""Скриншот ноды «Редактор» со свежим IR и выделением (для визуальной проверки)."""
+"""Скриншот ноды «Редактор» со свежим IR и выделением (для визуальной проверки).
+Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /."""
 import json
 import pathlib
 
@@ -14,12 +15,13 @@ def main():
     with sync_playwright() as p:
         b = p.chromium.launch(headless=True)
         pg = b.new_page(viewport={"width": 1700, "height": 1000})
-        pg.goto(BASE + "/nodes")
+        pg.goto(BASE + "/")
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector("#viewport")
+        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
-        nid = pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id")
+        nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
         pg.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, ir)
         pg.wait_for_timeout(700)
         el = pg.query_selector('.n-edit [data-ir-path="children.0"]')

@@ -55,16 +55,16 @@ orca terminal send --terminal <handle> --text "<бриф>" --enter --json
 
 ## Продуктовый фокус (текущий)
 
-**Спринт 5 (с 2026-08-05): фронтенд нодового редактора на React Flow + shadcn/ui.** Фаза A — фундамент: скаффолд React/Vite/TS в `frontend/`, сборка в `app/static/flow/`, маршрут `/flow`, тёмная shadcn-тема, спека миграции (контракт данных графа из `nodes.js`). Фаза B — перенос графа: кастомные ноды (Промпт/Референс/Генератор/Редактор/Микс/Клон), валидация проводов (text/ir, циклы, один провод на вход), автосейв и экспорт/импорт в формате, совместимом с legacy. Фаза C — переключение `/` на новый UI, legacy `/nodes` остаётся до полной паритета.
+**Спринт 5 (2026-08-05 — 2026-08-06, закрыт): фронтенд нодового редактора на React Flow + shadcn/ui.** Фаза A — фундамент: скаффолд React/Vite/TS в `frontend/`, сборка в `app/static/flow/` (gitignored), маршрут `/flow`, тёмная shadcn-тема. Фаза B — перенос графа: 9 типов нод (Промпт/Референс/Генератор/Редактор/Микс/Клон/Reproduce/BlockParse/Reskin), валидация проводов (kind `text`/`ir`/`tokens`, циклы, один провод на вход), pull-based dataflow, автосейв в ключ `designai-flow-v1`, экспорт/импорт в legacy-совместимом формате. Фаза C — переключение `/` на новый UI. Финальный шаг — **снятие legacy `/nodes`**: `nodes.html`/`nodes.js` удалены, `/nodes` → 307-редирект на `/`, ключ `designai-graph-v1` выведен из обращения; 11 движковых тестовых сьютов ретаргетены на edit-ноду в новом UI (edit-нода — точка монтирования Figma-движка `renderer.js`/`geoedit.js`/`inspector.js`/`irhistory.js`/`editor.js`; движок не переписывался, селекторы тестов сохранены; `NodeShell` держит legacy-DOM-контракт `.node[data-id]`/`.node-head`/`.node-body`); quota-fallback и beforeunload-флаш — parity в `frontend/src/flow/serialize.ts`.
 
-Параллельно со Спринтом 5 разрешён бэкенд пайплайна BlockParse/Reskin (решение 11): чисто Python-слой, по файлам с фронтенд-миграцией не пересекается.
+Следующий фокус по решению владельца 12: механизм правил **Quality Gate + Constraints** (общая инфраструктура правил поверх IR; бэкенд пайплайна BlockParse/Reskin уже в main), затем Wedge, Timeline, Taste Memory.
 
-Спринты 1–4 (закрыты Kimi): Figma-ядро geoedit (drag/resize/guides/equal-spacing/marquee/deep-select/enter-container), undo в Edit-ноде (`irhistory.js`), Lock/Hide + search слоёв, Shift-constrain + Alt+drag, numeric math + drag-scrub, OpenRouter-gateway с ролями (только ноды), sqlite-кэш reproduce/clone, Z-order/Group/Ungroup/constraints, мульти-ревью пайплайн. Опорные документы: `README.md`, `PLAN.md`, `SPEC.md`, `docs/FIGMA-MAP.md`.
+Спринты 1–4 (закрыты Kimi): Figma-ядро geoedit (drag/resize/guides/equal-spacing/marquee/deep-select/enter-container), undo в Edit-ноде (`irhistory.js`), Lock/Hide + search слоёв, Shift-constrain + Alt+drag, numeric math + drag-scrub, OpenRouter-gateway с ролями (только ноды), sqlite-кэш reproduce/clone, Z-order/Group/Ungroup/constraints, мульти-ревью пайплайн. Опорные документы: `README.md` (упоминания `/nodes` и `nodes.html` устарели — новый UI на `/` и `/flow`), `PLAN.md`, `SPEC.md`, `docs/FIGMA-MAP.md`.
 
 ## Стандарты качества (для всех агентов)
 
 - Минимальный дифф: не рефакторить вокруг задачи, не трогать чужие файлы.
-- Стиль проекта: vanilla JS на фронте (IIFE-модули, глобалы `IRRenderer`/`GeoEdit`/`Inspector`/`Editor`), Python stdlib + FastAPI на бэке; комментарии на русском, по делу.
+- Стиль проекта: UI графа — React + TS в `frontend/src` (shadcn/ui, zustand-стор `flow/store.ts`); Figma-движок — vanilla JS (IIFE-модули, глобалы `IRRenderer`/`GeoEdit`/`Inspector`/`Editor`); Python stdlib + FastAPI на бэке; комментарии на русском, по делу.
 - Любая правка редактора проверяется Playwright-тестом (`app/ui_edit_test.py`, `app/ui_editor_test.py` — нужен запущенный сервер на 8420).
 - IR — единственный источник правды; рендерер не мутирует IR.
 - Контент от LLM — недоверенный: экранировать при вставке в DOM/CSS/URL.

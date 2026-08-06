@@ -1,4 +1,5 @@
 """UI-тест ноды «Редактор»: выделение, drag, инспектор (модель pen.dev).
+Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /.
 Нужен запущенный сервер: .venv/Scripts/python app/server.py
 Запуск: .venv/Scripts/python app/ui_edit_test.py
 """
@@ -30,7 +31,7 @@ def main():
         import time
         for _ in range(30):
             try:
-                pg.goto(BASE + "/nodes", timeout=2000)
+                pg.goto(BASE + "/", timeout=2000)
                 break
             except Exception:
                 time.sleep(1)
@@ -38,14 +39,46 @@ def main():
             print("server not ready"); sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector("#viewport")
+        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
-        nid = pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id")
+        nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
         pg.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, ir)
         pg.wait_for_timeout(700)
 
         NODE = ".node.n-edit"
+
+        # Новый UI: renderer.js асинхронно подгружает Google-шрифты IR и делает
+        # reflow превью (в legacy соединение с Google Fonts грел page-шрифт из
+        # nodes.html, гонка не проявлялась). Пока шрифты не догружены, геометрия
+        # элементов плавает — замеры и drag расходятся. Ждём окончательной
+        # загрузки шрифтов и стабилизации геометрии IR.
+        def wait_ir_ready(sel, polls=3, interval=150):
+            hits = 0
+            for _ in range(80):
+                st = pg.evaluate("document.fonts ? document.fonts.status : 'loaded'")
+                hits = hits + 1 if st == "loaded" else 0
+                if hits >= polls:
+                    break
+                pg.wait_for_timeout(interval)
+            last, geo_hits = None, 0
+            for _ in range(50):
+                r = pg.evaluate(
+                    "(s) => { const el = document.querySelector(s); if (!el) return null;"
+                    " const b = el.getBoundingClientRect();"
+                    " return [b.left, b.top, b.width, b.height]; }", sel)
+                if r is not None and r == last:
+                    geo_hits += 1
+                    if geo_hits >= polls:
+                        return True
+                else:
+                    geo_hits = 0
+                last = r
+                pg.wait_for_timeout(interval)
+            return False
+
+        wait_ir_ready(f'{NODE} .edit-inner [class^="ir-"]')
 
         # 1) оверлей GeoEdit живёт внутри .edit-inner после рендера
         check("оверлей GeoEdit внутри .edit-inner", pg.evaluate(

@@ -140,6 +140,11 @@ function FlowCanvas() {
         }}
         /* RF сам гасит клавиши в полях ввода (isInputDOMNode) — зеркало гарда nodes.js:1147-1151 */
         deleteKeyCode={["Delete", "Backspace"]}
+        /* Shift+drag внутри edit-ноды — это marquee GeoEdit, а не рамка выделения RF.
+         * RF по умолчанию слушает Shift для своей рамки и перехватывает жест даже
+         * внутри ноды (d3-zoom висит на обёртке), поэтому selectionKeyCode гасим —
+         * в legacy рамочного выделения нод графа не было. */
+        selectionKeyCode={null}
         connectionLineStyle={{ stroke: "#9d9de8", strokeWidth: 2, strokeDasharray: "5 4" }}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="#23232e" />

@@ -179,7 +179,22 @@ export function EditNode({ id, data, selected }: NodeProps<EditFlowNode>) {
       return;
     }
     if (!window.Editor) return;
-    window.Editor.open({ data: { ir } }, (savedIr: IRObject) => {
+    // editor.js не только мутирует node.data.ir in-place, но и ЗАМЕНЯЕТ его
+    // снапшотом при undo/redo (state.node.data.ir = snap). В legacy node.data.ir
+    // был живым объектом ноды — делаем write-through в стор, иначе после undo
+    // state.ir расходится с data.ir ноды и правки перестают быть видны снаружи.
+    const nodeLike: { data: { ir: IRObject | null } } = {
+      data: {
+        get ir(): IRObject | null {
+          const n = useFlowStore.getState().nodes.find((x) => Number(x.id) === nodeId);
+          return n ? (n.data as { ir?: IRObject | null }).ir ?? null : null;
+        },
+        set ir(v: IRObject | null) {
+          useFlowStore.getState().setNodeData(nodeId, { ir: v });
+        },
+      },
+    };
+    window.Editor.open(nodeLike, (savedIr: IRObject) => {
       const sameRef = irRef.current === savedIr;
       irRef.current = savedIr;
       const st = useFlowStore.getState();
