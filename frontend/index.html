@@ -7,9 +7,16 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- Legacy-рендерер IR: глобал IRRenderer = {renderIR, fitPreview, DESIGN_WIDTH}.
-         Код не копируем — подключаем оригинал из app/static (решение владельца №6). -->
+    <!-- Legacy-ядро превью/Figma-правки: подключаем оригиналы из app/static БЕЗ
+         переписывания (решение владельца №6). Порядок — как в nodes.html (171-176),
+         кроме nodes.js (его заменяет этот бандл):
+         IRRenderer (renderer.js), GeoEdit (geoedit.js), Inspector (inspector.js),
+         IRHistory (irhistory.js), Editor (editor.js). -->
     <script src="/static/renderer.js"></script>
+    <script src="/static/geoedit.js"></script>
+    <script src="/static/inspector.js"></script>
+    <script src="/static/irhistory.js"></script>
+    <script src="/static/editor.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

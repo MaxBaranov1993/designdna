@@ -318,6 +318,70 @@
   color: var(--flow-err);
 }
 
+/* редактор (DNA): раскладка legacy edit-ноды (nodes.html) — превью слева с
+ * Figma-правкой GeoEdit, инспектор справа как в pen.dev */
+.edit-wrap {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+.edit-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.edit-preview {
+  position: relative;
+  background: #fff;
+  border-radius: 8px;
+  overflow: auto;
+  min-height: 320px;
+  max-height: 430px;
+}
+/* .edit-inner в JSX несёт и класс .ir-preview-inner (position:absolute;top/left:0) —
+ * здесь только transform-origin как у legacy */
+.edit-inner {
+  transform-origin: 0 0;
+}
+.edit-preview .placeholder {
+  padding: 50px 16px;
+  text-align: center;
+  color: #999;
+  font-size: 12px;
+  background: #f4f4f7;
+}
+.edit-inspector {
+  width: 252px;
+  flex: none;
+  background: var(--flow-panel-2);
+  border: 1px solid var(--flow-border);
+  border-radius: 8px;
+  padding: 10px;
+  overflow-y: auto;
+  max-height: 430px;
+  min-height: 320px;
+}
+.geo-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--flow-muted);
+}
+.geo-tools .sel-label {
+  color: var(--flow-accent);
+  font-weight: 700;
+}
+.geo-tools .zoom-label {
+  color: var(--flow-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  width: 44px;
+  text-align: center;
+}
+
 /* превью IR (renderer.js): фиксированная высота, дизайн масштабируется
  * fitPreview под ширину контейнера, лишнее скрывается */
 .ir-preview {
