@@ -737,17 +737,19 @@ def cache_stats():
     return cache_store.stats()
 
 
-@app.get("/")
 @app.get("/nodes")
 def nodes_page():
+    # Legacy-редактор нод (nodes.html): остаётся до полного паритета с новым UI
     return FileResponse(Path(__file__).resolve().parent / "static" / "nodes.html")
 
 
+@app.get("/")
 @app.get("/flow")
 @app.get("/flow/{rest:path}")
 def flow_page():
-    # Новый нодовый редактор (React Flow, сборка из frontend/): SPA-фолбэк —
-    # любой подпуть отдаём index.html, ассеты приходят через /static/flow/
+    # Главный маршрут и /flow — новый нодовый редактор (React Flow, сборка из
+    # frontend/): SPA-фолбэк — любой подпуть отдаём index.html, ассеты приходят
+    # через /static/flow/
     return FileResponse(Path(__file__).resolve().parent / "static" / "flow" / "index.html")
 
 
