@@ -57,19 +57,19 @@ def main():
 
         r = http.post(BASE + "/api/clone",
                       json={"url": "http://127.0.0.1:8420/", "component": "header"})
-        check("/api/clone loopback → 422", r.status_code == 422, f"{r.status_code} {r.text[:120]}")
+        check("/api/clone loopback -> 422", r.status_code == 422, f"{r.status_code} {r.text[:120]}")
         check("/api/clone loopback: человекочитаемая причина",
               "внутреннюю сеть" in r.text or "не разрешена" in r.text, r.text[:200])
 
         r = http.post(BASE + "/api/clone",
                       json={"url": "file:///C:/Windows/win.ini", "component": "x"})
-        check("/api/clone file:// → 422", r.status_code == 422, f"{r.status_code}")
+        check("/api/clone file:// -> 422", r.status_code == 422, f"{r.status_code}")
 
         r = http.post(BASE + "/api/scrape", json={"url": "http://localhost:8420"})
-        check("/api/scrape localhost → 422", r.status_code == 422, f"{r.status_code} {r.text[:120]}")
+        check("/api/scrape localhost -> 422", r.status_code == 422, f"{r.status_code} {r.text[:120]}")
 
         r = http.post(BASE + "/api/scrape", json={"url": "http://169.254.169.254/latest"})
-        check("/api/scrape metadata-IP → 422", r.status_code == 422, f"{r.status_code}")
+        check("/api/scrape metadata-IP -> 422", r.status_code == 422, f"{r.status_code}")
 
     print()
     if FAILS:
