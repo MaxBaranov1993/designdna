@@ -63,15 +63,81 @@
     return ["left", "center", "right", "justify", "start", "end"].includes(v) ? v : null;
   }
 
-  function fontsUrl(tokens) {
+  /** Локальные стили импортированного DOM-слоя. Набор сознательно мал и
+   * санитизируется: BlockParse должен переносить измеренный вид, не открывая
+   * путь для CSS-инъекций из внешней страницы. */
+  function visualCss(style) {
+    if (!style || typeof style !== "object") return "";
+    const s = [];
+    const color = safeColor(style.color); if (color) s.push(`color:${color}`);
+    const bg = safeColor(style.background); if (bg) s.push(`background:${bg}`);
+    const border = safeColor(style.borderColor); if (border) s.push(`border-color:${border}`);
+    const bw = Number(style.borderWidth); if (Number.isFinite(bw) && bw >= 0 && bw <= 64) s.push(`border-style:solid`, `border-width:${bw}px`);
+    const family = style.fontFamily ? safeFontFamily(style.fontFamily) : ""; if (family) s.push(`font-family:'${family}',sans-serif`);
+    const fs = Number(style.fontSize); if (Number.isFinite(fs) && fs >= 1 && fs <= 512) s.push(`font-size:${fs}px`);
+    const fw = Number(style.fontWeight); if (Number.isFinite(fw) && fw >= 100 && fw <= 900) s.push(`font-weight:${Math.round(fw)}`);
+    const lh = Number(style.lineHeight); if (Number.isFinite(lh) && lh >= .5 && lh <= 10) s.push(`line-height:${lh}`);
+    const ls = Number(style.letterSpacing); if (Number.isFinite(ls) && ls >= -20 && ls <= 100) s.push(`letter-spacing:${ls}px`);
+    const radius = Number(style.borderRadius); if (Number.isFinite(radius) && radius >= 0 && radius <= 1000) s.push(`border-radius:${radius}px`);
+    if (typeof style.boxShadow === "string" && style.boxShadow.length <= 300 && !/[;{}<>]/.test(style.boxShadow)) s.push(`box-shadow:${style.boxShadow}`);
+    if (["none", "underline", "line-through", "overline"].includes(style.textDecoration)) s.push(`text-decoration:${style.textDecoration}`);
+    if (["normal", "nowrap", "pre", "pre-wrap", "pre-line", "break-spaces"].includes(style.whiteSpace)) s.push(`white-space:${style.whiteSpace}`);
+    if (["visible", "hidden", "clip", "scroll", "auto"].includes(style.overflow)) s.push(`overflow:${style.overflow}`);
+    if (["none", "uppercase", "lowercase", "capitalize"].includes(style.textTransform)) s.push(`text-transform:${style.textTransform}`);
+    const op = Number(style.opacity); if (Number.isFinite(op) && op >= 0 && op <= 1) s.push(`opacity:${op}`);
+    if (["contain", "cover", "fill", "none", "scale-down"].includes(style.objectFit)) s.push(`object-fit:${style.objectFit}`);
+    return s.join(";");
+  }
+  function visualTextCss(style) {
+    if (!style || typeof style !== "object") return "";
+    const s = [];
+    const color = safeColor(style.color); if (color) s.push(`color:${color}`);
+    const family = style.fontFamily ? safeFontFamily(style.fontFamily) : ""; if (family) s.push(`font-family:'${family}',sans-serif`);
+    const fs = Number(style.fontSize); if (Number.isFinite(fs) && fs >= 1 && fs <= 512) s.push(`font-size:${fs}px`);
+    const fw = Number(style.fontWeight); if (Number.isFinite(fw) && fw >= 100 && fw <= 900) s.push(`font-weight:${Math.round(fw)}`);
+    const lh = Number(style.lineHeight); if (Number.isFinite(lh) && lh >= .5 && lh <= 10) s.push(`line-height:${lh}`);
+    const ls = Number(style.letterSpacing); if (Number.isFinite(ls) && ls >= -20 && ls <= 100) s.push(`letter-spacing:${ls}px`);
+    if (["none", "underline", "line-through", "overline"].includes(style.textDecoration)) s.push(`text-decoration:${style.textDecoration}`);
+    if (["none", "uppercase", "lowercase", "capitalize"].includes(style.textTransform)) s.push(`text-transform:${style.textTransform}`);
+    return s.join(";");
+  }
+  function styleAttr(style, extra) {
+    const css = [extra || "", visualCss(style)].filter(Boolean).join(";");
+    return css ? ` style="${css}"` : "";
+  }
+
+  function shouldLoadGoogleFont(family) {
+    const name = safeFontFamily(family);
+    const catalog = global.DesignAIFontCatalog;
+    if (catalog && catalog.isSystemFamily && catalog.isSystemFamily(name)) return false;
+    if (catalog && catalog.isGoogleFamily) return catalog.isGoogleFamily(name);
+    return !!name;
+  }
+
+  function addFontFamily(fams, family, weight) {
+    const name = safeFontFamily(family);
+    if (!name || !shouldLoadGoogleFont(name)) return;
+    const w = Math.min(900, Math.max(100, Math.round(Number(weight) || 400)));
+    fams.add(name.replace(/ /g, "+") + ":wght@" + w);
+  }
+
+  function collectStyleFonts(node, fams) {
+    if (!node || typeof node !== "object") return;
+    if (node.style && node.style.fontFamily) addFontFamily(fams, node.style.fontFamily, node.style.fontWeight);
+    if (Array.isArray(node.children)) node.children.forEach(child => collectStyleFonts(child, fams));
+    if (Array.isArray(node.tree)) node.tree.forEach(sec => collectStyleFonts(sec, fams));
+  }
+
+  function fontsUrl(tokens, ir) {
     const fams = new Set();
     for (const key of ["display", "body"]) {
       const f = tokens.font && tokens.font[key];
       if (f && f.family) {
-        const w = Math.min(900, Math.max(100, Math.round(Number(f.weight) || 400)));
-        fams.add(safeFontFamily(f.family).replace(/ /g, "+") + ":wght@" + w);
+        addFontFamily(fams, f.family, f.weight);
       }
     }
+    collectStyleFonts(ir, fams);
+    if (!fams.size) return "";
     return "https://fonts.googleapis.com/css2?" + [...fams].map(f => "family=" + f).join("&") + "&display=swap";
   }
 
@@ -105,6 +171,12 @@
       .ir-${uid} h3 { font-size:calc(20px * var(--fs)); }
       .ir-${uid} h4 { font-size:calc(16px * var(--fs)); }
       .ir-${uid} .sec, .ir-${uid} .sec-free { padding:var(--sec-py) 32px; position:relative; }
+      .ir-${uid} .sec-source { padding:0; position:relative; margin:0; }
+      .ir-${uid} .source-underlay { position:absolute; inset:0; width:100%; height:100%; object-fit:fill; pointer-events:none; user-select:none; }
+      .ir-${uid} .sec-source.with-underlay > [data-ir-frame] > * { opacity:0 !important; }
+      .ir-${uid} .sec-source.with-underlay > [data-ir-frame].editing > * { opacity:.92 !important; }
+      .dna-editor .ir-${uid} .sec-source.with-underlay .source-underlay { opacity:0 !important; }
+      .dna-editor .ir-${uid} .sec-source.with-underlay > [data-ir-frame] > * { opacity:1 !important; }
       .ir-${uid} .wrap { max-width:var(--container); margin:0 auto; }
       .ir-${uid} .muted { color:var(--c-muted); }
       .ir-${uid} .btn { display:inline-flex; align-items:center; gap:8px; padding:12px 22px; border-radius:var(--r-btn);
@@ -121,6 +193,8 @@
       .ir-${uid} .badge.tone-accent { background:var(--c-accent); color:#fff; border-color:transparent; }
       .ir-${uid} .input { width:100%; padding:12px 16px; border-radius:var(--r-input); border:1px solid var(--c-border);
         background:var(--c-bg); color:var(--c-text); font-size:calc(14px * var(--fs)); }
+      .ir-${uid} .source-control, .ir-${uid} .source-input { appearance:none; background:transparent; border:0;
+        color:inherit; font:inherit; text-decoration:none; }
       .ir-${uid} .icon-dot { width:34px; height:34px; border-radius:var(--r-btn); background:var(--c-primary);
         color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:15px; flex:none; }
       .ir-${uid} .img-ph { background:linear-gradient(135deg, var(--c-surface), var(--c-border)); border-radius:var(--r-card);
@@ -196,8 +270,8 @@
   /** Оборачивает html в div-бокс по frame (для секций и листовых элементов).
  *  data-ir-path переносится на обёртку чтобы GeoEdit работал с frame-контейнером.
  *  cls — опциональный класс обёртки (например sec-free для дефолтного padding). */
-  function withFrame(html, frame, parentFree, container, irPath, cls, parentFrame) {
-    const css = frameCss(frame, parentFree, container, parentFrame);
+  function withFrame(html, frame, parentFree, container, irPath, cls, parentFrame, extraCss) {
+    const css = [frameCss(frame, parentFree, container, parentFrame), extraCss || ""].filter(Boolean).join(";");
     if (!css && !cls) return html;
     const pathAttr = irPath ? ` data-ir-path="${esc(irPath)}"` : "";
     const clsAttr = cls ? ` class="${cls}"` : "";
@@ -207,9 +281,10 @@
   /* ---------- элементы (children) ---------- */
 
   function renderElement(el, uid, parentFree, parentFrame) {
+    if (el && el.__responsiveHidden) return "";
     const irPath = el.__path || null;
     const html = renderElementInner(el, uid, parentFree, parentFrame);
-    if (el.type === "card") return html; // card ставит data-ir-path сам
+    if (el.type === "card" || ((el.type === "button" || el.type === "input") && el.children && el.children.length)) return html;
     const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame);
     // если frame пустой и withFrame не обернул — добавляем span-обёртку с path
     if (wrapped === html && irPath) {
@@ -225,24 +300,37 @@
       case "heading": {
         const lvl = Math.min(4, Math.max(1, el.level || 2));
         const a = safeAlign(el.align);
-        const align = a ? ` style="text-align:${a}"` : "";
-        return `<h${lvl}${align}>${esc(el.text || el.title || "")}</h${lvl}>`;
+        const align = styleAttr(el.style, a ? `text-align:${a}` : "");
+        const childText = Array.isArray(el.children)
+          ? el.children.map((c) => c && (c.text || c.title || "")).filter(Boolean).join(" ")
+          : "";
+        return `<h${lvl}${align}>${esc(el.text || el.title || childText || "")}</h${lvl}>`;
       }
       case "text": {
         const a = safeAlign(el.align);
-        const align = a ? ` style="text-align:${a}"` : "";
+        const align = styleAttr(el.style, a ? `text-align:${a}` : "");
         const cls = el.size === "sm" || el.size === "xs" ? ' class="muted"' : "";
         return `<p${cls}${align}>${esc(el.text || "")}</p>`;
       }
-      case "button":
-        return `<a class="btn btn-${el.variant || "primary"}"><span>${esc(el.text || "")}</span></a>`;
+      case "button": {
+        const free = el.frame && el.frame.layout === "free";
+        const kids = (el.children || []).map(c => renderElement(c, uid, free, el.frame)).join("");
+        if (kids) {
+          const fcss = frameCss(el.frame, parentFree, true, parentFrame);
+          const css = [fcss, "padding:0", visualCss(el.style)].filter(Boolean).join(";");
+          const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
+          return `<button type="button" class="source-control"${path}${css ? ` style="${css}"` : ""}>${kids}</button>`;
+        }
+        const textCss = visualTextCss(el.style);
+        return `<a class="btn btn-${el.variant || "primary"}"${styleAttr(el.style)}><span${textCss ? ` style="${textCss}"` : ""}>${esc(el.text || "")}</span></a>`;
+      }
       case "badge":
         return `<span class="badge${el.tone && el.tone !== "default" ? " tone-" + el.tone : ""}">${esc(el.text || el.label || "")}</span>`;
       case "icon":
         return `<span class="icon-dot">${esc((el.icon || "✦").slice(0, 2))}</span>`;
       case "image":
         if (el.src) {
-          return `<img src="${esc(el.src)}" alt="${esc(el.alt || "")}" style="display:block;width:100%;height:100%;object-fit:contain" loading="lazy">`;
+          return `<img src="${esc(el.src)}" alt="${esc(el.alt || "")}"${styleAttr(el.style, "display:block;width:100%;height:100%;object-fit:contain")} loading="lazy">`;
         }
         return `<div class="img-ph">${esc(el.alt || el.imagePrompt || "изображение")}</div>`;
       case "divider":
@@ -250,7 +338,7 @@
       case "rect": {
         const bg = /^#[0-9a-fA-F]{3,8}$/.test(el.fill || "") ? el.fill : "#8B5CF6";
         const rad = typeof el.radius === "number" ? el.radius : 8;
-        return `<div style="background:${bg};border-radius:${rad}px;min-height:16px;width:100%;height:100%"></div>`;
+        return `<div${styleAttr(el.style, `background:${bg};border-radius:${rad}px;min-height:1px;width:100%;height:100%`)}></div>`;
       }
       case "avatar":
         return `<span style="display:inline-flex;align-items:center;gap:12px"><span class="avatar">${esc(initials(el.name))}</span>
@@ -266,13 +354,26 @@
         return `<ul style="list-style:none;display:flex;flex-direction:column;gap:8px">${(el.items || []).map(i =>
           `<li style="display:flex;gap:8px;align-items:flex-start"><span style="color:var(--c-primary)">✓</span><span>${esc(i)}</span></li>`).join("")}</ul>`;
       case "input":
+        if (el.children && el.children.length) {
+          const free = el.frame && el.frame.layout === "free";
+          const kids = el.children.map(c => renderElement(c, uid, free, el.frame)).join("");
+          const fcss = frameCss(el.frame, parentFree, true, parentFrame);
+          const css = [fcss, "padding:0", visualCss(el.style)].filter(Boolean).join(";");
+          const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
+          return `<div class="source-input"${path}${css ? ` style="${css}"` : ""}>${kids}</div>`;
+        }
         return `<input class="input" placeholder="${esc(el.placeholder || el.label || "")}">`;
       case "card": {
         const free = el.frame && el.frame.layout === "free";
         const inner = (el.children || []).map(c => renderElement(c, uid, free, el.frame)).join("");
         const fcss = frameCss(el.frame, parentFree, true, parentFrame);
         const cardPath = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
-        return `<div class="card"${cardPath}${fcss ? ` style="${fcss}"` : ""}>
+        if (el.role) {
+          const sourceCss = [fcss, visualCss(el.style)].filter(Boolean).join(";");
+          return `<div${cardPath}${sourceCss ? ` style="${sourceCss}"` : ""}>${inner}</div>`;
+        }
+        const css = [fcss, visualCss(el.style)].filter(Boolean).join(";");
+        return `<div class="card"${cardPath}${css ? ` style="${css}"` : ""}>
           ${el.icon ? `<span class="icon-dot" style="margin-bottom:12px">${esc(el.icon.slice(0, 2))}</span>` : ""}
           ${el.title ? `<h3 style="margin-bottom:8px">${esc(el.title)}</h3>` : ""}
           ${el.text ? `<p class="muted">${esc(el.text)}</p>` : ""}
@@ -294,7 +395,7 @@
     // во free-контейнере дети позиционируются по своим x/y — grid-сетка не нужна;
     // position:relative — якорь для absolute-детей и free-позиционирования
     const style = (free || hasAbs) ? ' style="position:relative"'
-      : cols ? ` style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:20px"` : "";
+      : cols ? ` style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:20px"` : "";
     return `<div${style}>${children.map(c => renderElement(c, uid, free, parentFrame)).join("")}</div>`;
   }
 
@@ -309,18 +410,49 @@
   function renderSection(sec, uid, parentFree) {
     const isFree = !!(sec.frame && sec.frame.layout === "free");
     const hasChildren = sec.children && sec.children.length > 0;
-    // free-layout с children: рендерим ТОЛЬКО children (reproduction-режим),
-    // inner HTML секции пропускаем чтобы не перекрывать извлечённые изображения
-    const html = (isFree && hasChildren) ? "" : renderSectionInner(sec, uid);
-    let childrenHtml = "";
-    if (isFree && hasChildren) {
-      childrenHtml = sec.children.map(c => renderElement(c, uid, true, sec.frame)).join("");
+    // Browser-captured layers already contain exact x/y values relative to the
+    // source block. Generic section padding would shift every layer and can
+    // force a 73px header to a 128px minimum box.
+    const isMeasuredSource = sec.type === "source-block" || sec.variant === "dom-capture";
+    const sourcePreview = isMeasuredSource && (sec.preview || sec.sourcePreview || (sec.props && sec.props.sourcePreview));
+    const isStructuredSource = isMeasuredSource && hasChildren;
+    // free-секция с children — тоже reproduction-режим (как source-block):
+    // рендерим ТОЛЬКО children прямо в обёртку [data-ir-sec]. Иначе generic-inner
+    // (<section class="sec"> с дефолтным padding + .wrap) давал двойной отступ и
+    // перехватывал absolute-якорь детей — контракт frame.x/y от padding-box секции
+    // ломался (элементы съезжали на 64/32 + margin .wrap).
+    const reproduction = isStructuredSource || (isFree && hasChildren);
+    // absolute-дети auto-секции поднимаем на уровень обёртки [data-ir-sec]: их x/y —
+    // от padding-box секции (контракт geoedit relPos/posOf), а generic-inner
+    // (<section class="sec"> с дефолтным padding + .wrap) сместил бы якорь на 64/32+.
+    // Flow-дети остаются внутри generic-структуры и не сдвигаются.
+    let absChildren = null;
+    if (!reproduction && hasChildren) {
+      const abs = sec.children.filter(c => c && c.frame && c.frame.absolute &&
+        (typeof c.frame.x === "number" || typeof c.frame.y === "number"));
+      if (abs.length) absChildren = abs;
     }
-    const combined = html + childrenHtml;
+    const innerSec = absChildren
+      ? Object.assign({}, sec, { children: sec.children.filter(c => absChildren.indexOf(c) < 0) })
+      : sec;
+    const html = reproduction ? "" : renderSectionInner(innerSec, uid);
+    let childrenHtml = "";
+    if (reproduction) {
+      childrenHtml = sec.children.map(c => renderElement(c, uid, isFree, sec.frame)).join("");
+    } else if (absChildren) {
+      childrenHtml = absChildren.map(c => renderElement(c, uid, false, sec.frame)).join("");
+    }
+    // Source screenshots are comparison evidence, never the editable canvas.
+    const underlay = "";
+    const combined = underlay + html + childrenHtml;
+    const secStyle = visualCss(sec.style);
+    // обёртка — якорь hoisted absolute-детей: position:relative без flex-раскладки
+    // (extraCss гарантирует и саму обёртку, даже если у секции пустой frame)
+    const extraCss = [secStyle, absChildren ? "position:relative" : ""].filter(Boolean).join(";");
     // free-секция рендерится без .sec-внутренностей — класс sec-free сохраняет
     // дефолтный padding секции, иначе при конверсии в free дети «уплывают»
-    return withFrame(combined, sec.frame, parentFree, isFree, null,
-      (isFree && hasChildren) ? "sec-free" : "");
+    return withFrame(combined, sec.frame, parentFree, isStructuredSource || isFree, null,
+      isStructuredSource ? "sec-source" : ((isFree && hasChildren) ? "sec-free" : ""), null, extraCss);
   }
 
   function renderSectionInner(sec, uid) {
@@ -358,7 +490,7 @@
       if (v === "split" || v === "split-reverse") {
         const media = p.media ? `<div class="img-ph" style="min-height:320px">${esc(p.media.alt || p.media.imagePrompt || "")}</div>` : `<div class="img-ph" style="min-height:320px">медиа</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center">${badge}${head}${sub}${btns}</div>`;
-        return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center">
+        return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:48px;align-items:center">
           ${v === "split" ? txt + media : media + txt}</div></section>`;
       }
       if (v === "media-bg" || v === "gradient") {
@@ -396,7 +528,7 @@
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center;gap:12px">
           ${c.title || c.text ? `<h3>${esc(c.title || "")}</h3><p class="muted">${esc(c.text || "")}</p>` : renderElement(c, uid, false, sec.frame)}
           ${(c.children || []).map(ch => renderElement(ch, uid, !!(c.frame && c.frame.layout === "free"), c.frame)).join("")}</div>`;
-        return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;margin-bottom:48px">${i % 2 ? txt + media : media + txt}</div>`;
+        return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:48px;align-items:center;margin-bottom:48px">${i % 2 ? txt + media : media + txt}</div>`;
       }).join("");
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}${rows}</div></section>`;
     }
@@ -407,26 +539,26 @@
         <div class="muted" data-ir-path="props.items.${i}.label">${esc(it.label)}</div></div>`).join("");
       return `<section class="sec ${base}"><div class="wrap">
         ${p.heading ? `<h2 data-ir-path="props.heading" style="text-align:center;margin-bottom:40px">${esc(p.heading)}</h2>` : ""}
-        <div style="display:grid;grid-template-columns:repeat(${Math.min(4, (p.items || []).length || 3)},1fr);gap:24px">${items}</div></div></section>`;
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:24px">${items}</div></div></section>`;
     }
 
     if (t === "steps") {
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
-        <div style="display:grid;grid-template-columns:repeat(${Math.min(4, (sec.children || []).length || 3)},1fr);gap:20px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:20px">
         ${(sec.children || []).map((c, i) => `<div class="card"><div class="icon-dot" style="margin-bottom:12px">${i + 1}</div>
           <h3 style="margin-bottom:8px">${esc(c.title || c.text || "Шаг " + (i + 1))}</h3><p class="muted">${esc(c.text || "")}</p></div>`).join("")}</div></div></section>`;
     }
 
     if (t === "gallery") {
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:16px">
         ${(sec.children || []).map((c, i) => `<div class="img-ph" style="min-height:${v === "masonry" ? 140 + ((i * 67) % 120) : 200}px">${esc(c.alt || c.imagePrompt || "фото")}</div>`).join("")}</div></div></section>`;
     }
 
     if (t === "testimonials") {
       const cols = v === "grid-2" ? 2 : v === "single-featured" ? 1 : 3;
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
-        <div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:20px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:20px">
         ${(sec.children || []).map(c => `<div class="card">
           ${c.children && c.children.some(x => x.type === "rating") ? "" : '<span class="stars">★★★★★</span>'}
           <p style="margin:12px 0 16px">${esc(c.text || "")}</p>
@@ -436,7 +568,7 @@
 
     if (t === "pricing") {
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
-        <div style="display:grid;grid-template-columns:repeat(${(p.tiers || []).length || 3},1fr);gap:20px;align-items:stretch">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:20px;align-items:stretch">
         ${(p.tiers || []).map((tier, i) => `<div class="card" style="display:flex;flex-direction:column;${tier.highlighted ? "border-color:var(--c-primary);box-shadow:var(--shadow);position:relative" : ""}">
           ${tier.highlighted ? '<span class="badge tone-primary" style="position:absolute;top:-12px;left:50%;transform:translateX(-50%)">Популярный</span>' : ""}
           <h3 data-ir-path="props.tiers.${i}.name">${esc(tier.name)}</h3>
@@ -451,7 +583,7 @@
       const twoCol = v === "two-column";
       return `<section class="sec ${base}"><div class="wrap" style="${twoCol ? "" : "max-width:720px"}">
         ${secHead(p)}
-        <div style="display:${twoCol ? "grid;grid-template-columns:1fr 1fr;gap:16px" : "flex;flex-direction:column;gap:12px"}">
+        <div style="display:${twoCol ? "grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px" : "flex;flex-direction:column;gap:12px"}">
         ${(p.items || []).map((it, i) => `<div class="card" style="padding:18px 22px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
           <strong data-ir-path="props.items.${i}.question">${esc(it.question)}</strong><span style="color:var(--c-muted)">+</span></div>
@@ -463,7 +595,7 @@
       const inner = `${p.heading ? `<h2 data-ir-path="props.heading" style="margin-bottom:12px">${esc(p.heading)}</h2>` : ""}
         ${p.subheading ? `<p class="muted" data-ir-path="props.subheading" style="margin-bottom:24px;max-width:520px;${v === "split" ? "" : "margin-left:auto;margin-right:auto"}">${esc(p.subheading)}</p>` : ""}
         <div style="display:flex;gap:12px;flex-wrap:wrap;${v === "split" ? "" : "justify-content:center"}">${btnHtml(p.ctaPrimary, "primary", "props.ctaPrimary.text")}${btnHtml(p.ctaSecondary, "outline", "props.ctaSecondary.text")}</div>`;
-      if (v === "split") return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:32px;align-items:center">${inner}</div></section>`;
+      if (v === "split") return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:32px;align-items:center">${inner}</div></section>`;
       return `<section class="sec ${base}" style="${bold ? "background:var(--c-primary);" : "background:var(--c-surface);"}text-align:center"><div class="wrap">${inner}</div></section>`;
     }
 
@@ -489,7 +621,7 @@
         <h2 data-ir-path="props.heading">${esc(p.heading || "")}</h2>
         ${p.subheading ? `<p class="muted" data-ir-path="props.subheading">${esc(p.subheading)}</p>` : ""}</div>`;
       if (v === "split-info" || v === "map") {
-        return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:start">${info}${form}</div></section>`;
+        return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:48px;align-items:start">${info}${form}</div></section>`;
       }
       return `<section class="sec ${base}"><div class="wrap" style="max-width:560px">
         <h2 data-ir-path="props.heading" style="text-align:center;margin-bottom:10px">${esc(p.heading || "")}</h2>
@@ -508,7 +640,7 @@
           <span class="muted" style="font-size:calc(13px*var(--fs))" data-ir-path="props.copyright">${esc(p.copyright || "")}</span></div></footer>`;
       }
       return `<footer class="sec ${base}" style="border-top:1px solid var(--c-border)"><div class="wrap">
-        <div style="display:grid;grid-template-columns:1.4fr repeat(${Math.max(1, (p.columns || []).length)},1fr);gap:32px;margin-bottom:40px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:32px;margin-bottom:40px">
           <div><strong style="font-family:var(--font-display);font-size:calc(19px*var(--fs))"><span data-ir-path="props.logoText">${esc(p.logoText || "")}</span></strong>
           ${p.tagline ? `<p class="muted" data-ir-path="props.tagline" style="margin-top:12px;font-size:calc(14px*var(--fs));max-width:260px">${esc(p.tagline)}</p>` : ""}</div>
           ${cols}</div>
@@ -536,8 +668,37 @@
 
   let uidCounter = 0;
 
+  function materializeResponsiveIR(source, viewport) {
+    if (!source || !source.responsive || !source.responsive.viewports) return source;
+    (source.tree || []).forEach(sec => annotatePaths(sec, "", false));
+    const ir = JSON.parse(JSON.stringify(source));
+    const meta = ir.responsive.viewports[viewport] || ir.responsive.viewports.desktop;
+    if (meta) ir.frame = Object.assign({}, ir.frame || {}, { width: meta.width, height: meta.height });
+    function resolveNode(node) {
+      if (!node || typeof node !== "object") return node;
+      const override = node.responsive && node.responsive[viewport];
+      if (override && override.visible === false) node.__responsiveHidden = true;
+      if (override && override.frame) node.frame = Object.assign({}, node.frame || {}, override.frame);
+      if (override && override.style) node.style = Object.assign({}, node.style || {}, override.style);
+      if (Array.isArray(node.children)) node.children = node.children.map(resolveNode);
+      return node;
+    }
+    ir.tree = (ir.tree || []).map(resolveNode);
+    if (meta && meta.preview && ir.tree[0]) {
+      ir.sourcePreview = meta.preview;
+      ir.tree[0].preview = meta.preview;
+    }
+    return ir;
+  }
+
   /** Рендерит IR в container (внутри .preview-clip). Масштабирует под ширину контейнера. */
-  function renderIR(container, ir) {
+  function renderIR(container, ir, options) {
+    // работаем на глубокой копии: mergeDefaults/__path/sourcePreview — рантайм-данные,
+    // они не должны протекать в канонический IR вызывающего (editor.buildActiveIR
+    // передаёт state.ir напрямую)
+    if (ir) ir = JSON.parse(JSON.stringify(ir));
+    const responsiveSource = !!(ir && ir.responsive && ir.responsive.viewports);
+    ir = materializeResponsiveIR(ir, options && options.viewport ? options.viewport : "desktop");
     const uid = ++uidCounter;
     const tokens = (ir.tokens = mergeDefaults(ir.tokens));
     const tree = ir.tree || [];
@@ -549,10 +710,19 @@
       styleEl.rel = "stylesheet";
       document.head.appendChild(styleEl);
     }
-    if (tokens.font) styleEl.href = fontsUrl(tokens);
+    if (tokens.font) {
+      const href = fontsUrl(tokens, ir);
+      if (href) styleEl.href = href;
+    }
 
     // артборд: корневой frame задаёт ширину холста и (опционально) free-позиционирование секций
-    const rootFrame = ir.frame && typeof ir.frame === "object" ? ir.frame : null;
+    // Source Import IR created before the root-frame contract may still live in
+    // saved graphs/localStorage. Infer its artboard from the only measured
+    // source section so old nodes render correctly without re-importing.
+    const legacySourceFrame = tree.length === 1 && tree[0] &&
+      (tree[0].type === "source-block" || tree[0].variant === "dom-capture") &&
+      tree[0].frame && typeof tree[0].frame === "object" ? tree[0].frame : null;
+    const rootFrame = ir.frame && typeof ir.frame === "object" ? ir.frame : legacySourceFrame;
     const rootFree = !!(rootFrame && rootFrame.layout === "free");
     const artW = rootFrame && typeof rootFrame.width === "number" ? rootFrame.width : DESIGN_WIDTH;
     const artStyle = [`width:${artW}px`];
@@ -564,8 +734,14 @@
     }
 
     const css = `.ir-${uid}{${cssVars(tokens)}}` + baseCss(uid);
+    const rootSourcePreview = ir.sourcePreview || (ir.meta && ir.meta.sourcePreview);
     const body = tree.map((sec, i) => {
-      annotatePaths(sec);
+      if (rootSourcePreview && sec &&
+        (sec.type === "source-block" || sec.variant === "dom-capture") &&
+        !sec.preview && !sec.sourcePreview && !(sec.props && sec.props.sourcePreview)) {
+        sec.props = Object.assign({}, sec.props || {}, { sourcePreview: rootSourcePreview });
+      }
+      annotatePaths(sec, "", responsiveSource);
       // помечаем корневой тег секции её индексом — нужно редактору для точной записи в IR
       return renderSection(sec, uid, rootFree).replace(/^<(\w+)/, `<$1 data-ir-sec="${i}"`);
     }).join("");
@@ -573,7 +749,9 @@
     container.innerHTML = `<style>${css}</style><div class="ir-${uid}" data-design-width="${artW}" style="${artStyle.join(";")}">${body}</div>`;
     const inner = container.firstElementChild ? container.querySelector(".ir-" + uid) : null;
     applyFrameOverrides(container, tree);
-    requestAnimationFrame(() => fitPreview(container, inner));
+    // fitPreview сжимает артборд под ширину контейнера — нужно только в превью нод;
+    // DNA-редактор управляет масштабом сам (zoom/pan), двойной scale ломал геометрию
+    if (!options || options.fit !== false) requestAnimationFrame(() => fitPreview(container, inner));
   }
 
   /** Применяет sec._frames (frame-оверрайды props-элементов) как inline-стили.
@@ -603,19 +781,19 @@
   }
 
   /** Проставляет __path элементам children для редактирования. */
-  function annotatePaths(sec, prefix) {
+  function annotatePaths(sec, prefix, preserve) {
     prefix = prefix || "";
     (sec.children || []).forEach((el, i) => {
-      el.__path = `${prefix}children.${i}`;
-      annotatePathsEl(el, el.__path);
+      if (!preserve || !el.__path) el.__path = `${prefix}children.${i}`;
+      annotatePathsEl(el, el.__path, preserve);
     });
   }
-  function annotatePathsEl(el, path) {
+  function annotatePathsEl(el, path, preserve) {
     (el.children || []).forEach((c, i) => {
-      c.__path = `${path}.children.${i}`;
-      annotatePathsEl(c, c.__path);
+      if (!preserve || !c.__path) c.__path = `${path}.children.${i}`;
+      annotatePathsEl(c, c.__path, preserve);
     });
   }
 
-  global.IRRenderer = { renderIR, fitPreview, DESIGN_WIDTH };
+  global.IRRenderer = { renderIR, materializeResponsiveIR, fitPreview, DESIGN_WIDTH };
 })(window);

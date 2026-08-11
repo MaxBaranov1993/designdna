@@ -291,6 +291,7 @@
         const sr = secEl.getBoundingClientRect();
         targets.push({
           ref: { secIdx: si, path: null },
+          depth: 0,
           x: (sr.left - base.left + previewEl.scrollLeft) / s,
           y: (sr.top - base.top + previewEl.scrollTop) / s,
           w: sr.width / s,
@@ -306,6 +307,7 @@
           if (r.width < 2 || r.height < 2) return;
           targets.push({
             ref: { secIdx: si, path: normalizePropsPath(rawPath) },
+            depth: rawPath.startsWith("children.") ? rawPath.split(".children.").length : 1,
             x: (r.left - base.left + previewEl.scrollLeft) / s,
             y: (r.top - base.top + previewEl.scrollTop) / s,
             w: r.width / s,
@@ -316,20 +318,49 @@
       return targets;
     }
 
+    function parentRef(ref) {
+      if (!ref || ref.secIdx == null || !ref.path || !ref.path.startsWith("children.")) return null;
+      const parts = ref.path.split(".");
+      if (parts.length <= 2) return { secIdx: ref.secIdx, path: null };
+      parts.pop(); parts.pop();
+      return { secIdx: ref.secIdx, path: parts.join(".") };
+    }
+
+    function nearestSelectableContainer(ref, hitKeys) {
+      let parent = parentRef(ref);
+      while (parent) {
+        const node = irNodeAt(parent);
+        if (parent.path && node && node.children && node.children.length && hitKeys.has(refKey(parent)) && !skipLocked(parent)) {
+          return parent;
+        }
+        parent = parentRef(parent);
+      }
+      return null;
+    }
+
     /** Геометрический hit-test: возвращает ref элемента под точкой (или null).
      *  deep=true: пропустить контейнеры (секции), выбрать самый вложенный child. */
     function hitTest(clientX, clientY, deep) {
       const pt = screenToCanvas(clientX, clientY);
       const targets = collectHitTargets();
+      const hits = [];
       // идём с конца (верхний z-order первый)
       for (let i = targets.length - 1; i >= 0; i--) {
         const t = targets[i];
         if (pt.x >= t.x && pt.x <= t.x + t.w && pt.y >= t.y && pt.y <= t.y + t.h) {
           if (skipLocked(t.ref)) continue; // залоченные слои прозрачны для выделения
+          hits.push(t);
           // deep mode: пропустить секцию (path===null), вернуть child
           if (deep && t.ref.path === null) continue;
           // если в containerCtx — принимать только children этого контейнера
           if (containerCtx && t.ref.path === null) continue;
+          if (!deep) {
+            const hitKeys = new Set(hits.map(h => refKey(h.ref)).concat(targets
+              .filter(q => pt.x >= q.x && pt.x <= q.x + q.w && pt.y >= q.y && pt.y <= q.y + q.h)
+              .map(q => refKey(q.ref))));
+            const container = nearestSelectableContainer(t.ref, hitKeys);
+            if (container) return container;
+          }
           return t.ref;
         }
       }
@@ -355,8 +386,8 @@
       const s = scale();
       const r = el.getBoundingClientRect();
       const base = previewEl.getBoundingClientRect();
-      const hx = (r.left - base.left) / s;
-      const hy = (r.top - base.top) / s;
+      const hx = (r.left - base.left + previewEl.scrollLeft) / s;
+      const hy = (r.top - base.top + previewEl.scrollTop) / s;
       const hw = r.width / s;
       const hh = r.height / s;
       const pt = screenToCanvas(clientX, clientY);
@@ -948,9 +979,34 @@
       return null;
     }
 
+    /** Фолбэк для startCreate: под курсором нет контейнера (пустое место артборда) —
+     *  рисуем в корневую секцию. Возвращает target в формате collectHitTargets. */
+    function rootSectionFallback(pt) {
+      const ir = getIR();
+      if (!ir || !ir.tree || !ir.tree.length) return null;
+      const board = artboardEl();
+      const secEl = previewEl.querySelector('[data-ir-sec="0"]');
+      if (!board || !secEl) return null;
+      // только если точка внутри артборда — клик по серому канвасу вокруг не создаёт элементы
+      const base = previewEl.getBoundingClientRect();
+      const s = scale();
+      const br = board.getBoundingClientRect();
+      const bx = (br.left - base.left + previewEl.scrollLeft) / s;
+      const by = (br.top - base.top + previewEl.scrollTop) / s;
+      if (!(pt.x >= bx && pt.x <= bx + br.width / s && pt.y >= by && pt.y <= by + br.height / s)) return null;
+      const r = secEl.getBoundingClientRect();
+      return {
+        ref: { secIdx: 0, path: null },
+        x: (r.left - base.left + previewEl.scrollLeft) / s,
+        y: (r.top - base.top + previewEl.scrollTop) / s,
+        w: r.width / s,
+        h: r.height / s,
+      };
+    }
+
     function startCreate(e) {
       const pt = screenToCanvas(e.clientX, e.clientY);
-      const cont = containerAt(pt);
+      const cont = containerAt(pt) || rootSectionFallback(pt);
       if (!cont) return;
       const el = document.createElement("div");
       el.className = "geo-marquee";
@@ -1091,14 +1147,35 @@
         setFrameData(d.ref, f);
         return;
       }
-      // родитель не free — конвертируем сиблингов в free (позиции измерены ДО перерендера)
-      const measured = makeParentFree(parent);
-      const m = measured[parent.siblings.indexOf(irNodeAt(d.ref))] || null;
-      const f = Object.assign({}, getFrame(d.ref));
-      // dragged-элементу — измеренная позиция (padding-box) + дельта, а не старый frame:
+      // родитель не free — dragged-ребёнок покидает поток (absolute), родитель
+      // остаётся auto (Figma/pen.dev): сиблинги не трогаем, padding в IR не пишем.
+      // Исключение — корень: секцию нельзя выводить в absolute, пока артборд не
+      // free (он тогда не позиционированный якорь) — корень конвертируем в free.
+      if (parent.isRoot) {
+        const measured = makeParentFree(parent);
+        const mr = measured[parent.siblings.indexOf(irNodeAt(d.ref))] || null;
+        const fr = Object.assign({}, getFrame(d.ref));
+        fr.x = Math.round((mr ? mr.x : (typeof fr.x === "number" ? fr.x : 0)) + dx);
+        fr.y = Math.round((mr ? mr.y : (typeof fr.y === "number" ? fr.y : 0)) + dy);
+        setFrameData(d.ref, fr);
+        return;
+      }
+      const childDom = domAt(d.ref);
+      // измеренная позиция (padding-box родителя), а не старый frame:
       // в auto-раскладке x/y может не быть, и элемент телепортировался бы в начало координат
+      const m = childDom ? relPos(childDom, parent.dom) : null;
+      const f = Object.assign({}, getFrame(d.ref));
       const bx = m ? m.x : (typeof f.x === "number" ? f.x : 0);
       const by = m ? m.y : (typeof f.y === "number" ? f.y : 0);
+      if (childDom) {
+        // fill у absolute-ребёнка тянется на весь padding-box родителя — другая семантика,
+        // чем в раскладке; фиксируем измеренный размер, иначе «при перетаскивании всё ломается»
+        const rect = childDom.getBoundingClientRect();
+        const s = scale();
+        if (f.width === "fill") f.width = Math.round(rect.width / s);
+        if (f.height === "fill") f.height = Math.round(rect.height / s);
+      }
+      f.absolute = true;
       f.x = Math.round(bx + dx);
       f.y = Math.round(by + dy);
       setFrameData(d.ref, f);
@@ -1121,6 +1198,10 @@
       if (dir.includes("w")) { w = d.w0 - dx; tx = dx; }
       if (dir.includes("n")) { h = d.h0 - dy; ty = dy; }
       w = Math.max(8, w); h = Math.max(8, h);
+      // в auto-родителе commitResize сдвиг x/y не коммитит — не показываем его
+      // и в live-превью, иначе превью расходится с результатом
+      const parent = parentOf(d.ref);
+      if (!parent || !parent.node.frame || parent.node.frame.layout !== "free") { tx = 0; ty = 0; }
       d.wLive = w; d.hLive = h; d.txLive = tx; d.tyLive = ty;
       d.el.style.width = w + "px";
       d.el.style.height = h + "px";
@@ -1746,6 +1827,34 @@
       onMutated();
     }
 
+    function setNodeStyle(partial) {
+      if (!selections.length) return;
+      onCommit();
+      selections.forEach(sel => {
+        const node = irNodeAt(sel.ref);
+        if (!node) return;
+        const style = Object.assign({}, node.style || {});
+        for (const [k, v] of Object.entries(partial)) {
+          if (v === undefined) continue;
+          if (v === null || v === "") delete style[k];
+          else style[k] = v;
+        }
+        if (node.type === "rect") {
+          if (partial.background !== undefined) {
+            if (partial.background === null || partial.background === "") delete node.fill;
+            else node.fill = partial.background;
+          }
+          if (partial.borderRadius !== undefined) {
+            if (partial.borderRadius === null || partial.borderRadius === "") delete node.radius;
+            else node.radius = Math.max(0, Math.round(Number(partial.borderRadius) || 0));
+          }
+        }
+        if (Object.keys(style).length) node.style = style;
+        else delete node.style;
+      });
+      onMutated();
+    }
+
     /** Измеренная позиция элемента относительно родителя (canvas-px). */
     function posOf(ref) {
       const el = domAt(ref);
@@ -1878,8 +1987,11 @@
         const newRefs = duplicateSelections();
         newRefs.forEach(r => {
           const node = irNodeAt(r);
-          // сдвиг копии на 10px, чтобы не сливалась с оригиналом
-          if (node && node.frame) {
+          const parent = parentOf(r);
+          const parentFree = !!(parent && parent.node.frame && parent.node.frame.layout === "free");
+          // сдвиг копии на 10px только во free-родителе, чтобы не сливалась с оригиналом;
+          // в auto-раскладке копия остаётся в потоке — как при Alt+drag (commitDuplicateMove)
+          if (parentFree && node && node.frame) {
             node.frame.x = (node.frame.x || 0) + 10;
             node.frame.y = (node.frame.y || 0) + 10;
           }
@@ -2015,6 +2127,7 @@
       consumeEscape,
       setFrame,
       setFrameProps,
+      setNodeStyle,
       frameOf,
       posOf,
       sizeOf,

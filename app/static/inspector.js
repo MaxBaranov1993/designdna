@@ -28,8 +28,13 @@
   .pi input[type=number], .pi input[type=text] { width:100%; min-width:0; background:var(--panel,#313244);
     border:1px solid var(--border,#45475a); color:var(--text,#cdd6f4); border-radius:6px; padding:4px 6px;
     font-size:11.5px; outline:none; font-variant-numeric:tabular-nums; }
+  .pi input[type=color] { width:28px; height:24px; flex:none; background:transparent;
+    border:1px solid var(--border,#45475a); border-radius:6px; padding:1px; cursor:pointer; }
   .pi input:focus { border-color:var(--accent,#cba6f7); }
   .pi input:disabled { opacity:.4; }
+  .pi select { width:100%; min-width:0; background:var(--panel,#313244); border:1px solid var(--border,#45475a);
+    color:var(--text,#cdd6f4); border-radius:6px; padding:4px 6px; font-size:11.5px; outline:none; }
+  .pi select:focus { border-color:var(--accent,#cba6f7); }
   .pi .pi-btnrow { display:flex; gap:4px; }
   .pi .pi-ibtn { flex:1; height:24px; display:inline-flex; align-items:center; justify-content:center;
     background:var(--panel,#313244); border:1px solid var(--border,#45475a); border-radius:6px;
@@ -77,6 +82,26 @@
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  function fullHex(v, fallback) {
+    const s = String(v || "").trim();
+    if (/^#[0-9a-f]{3}$/i.test(s)) return "#" + s.slice(1).split("").map(c => c + c).join("").toLowerCase();
+    if (/^#[0-9a-f]{6}$/i.test(s)) return s.toLowerCase();
+    return fallback;
+  }
+
+  const FONT_CATALOG = global.DesignAIFontCatalog || null;
+  const FONTS = FONT_CATALOG ? FONT_CATALOG.families : ["Inter", "Sora", "Manrope", "Playfair Display", "Space Grotesk", "DM Sans", "IBM Plex Mono", "Montserrat"];
+  function fontOptionsHtml(selected, autoLabel) {
+    const auto = autoLabel == null ? "" : `<option value="">${autoLabel}</option>`;
+    if (!FONT_CATALOG || !FONT_CATALOG.groups) {
+      return auto + FONTS.map(fnt => `<option value="${fnt}" ${selected === fnt ? "selected" : ""}>${fnt}</option>`).join("");
+    }
+    return auto + FONT_CATALOG.groups.map(group =>
+      `<optgroup label="${esc(group.label)}">${group.fonts.map(fnt =>
+        `<option value="${fnt}" ${selected === fnt ? "selected" : ""}>${fnt}</option>`).join("")}</optgroup>`
+    ).join("");
   }
 
   /* ---------- рендер ---------- */
@@ -209,6 +234,41 @@
         <label class="pi-check"><input type="checkbox" data-pi="clip" ${f.clip ? "checked" : ""}> Clip Content</label>
       </div>
       </div>`;
+
+    /* Appearance */
+    if (!isRoot) {
+      const st = node.style || {};
+      const fill = fullHex(st.background || node.fill, "#ffffff");
+      const color = fullHex(st.color, "#111111");
+      const stroke = fullHex(st.borderColor, "#e0e0e0");
+      const radius = typeof st.borderRadius === "number" ? st.borderRadius : (typeof node.radius === "number" ? node.radius : "");
+      const fontFamily = st.fontFamily || "";
+      const fontSize = typeof st.fontSize === "number" ? st.fontSize : "";
+      const fontWeight = typeof st.fontWeight === "number" ? st.fontWeight : "";
+      const isText = node.type === "text" || node.type === "heading" || node.type === "button" || node.text != null || node.title != null;
+      html += `<div class="pi-group"><span class="pi-glabel">Appearance</span>
+        <div class="pi-row">
+          <div class="pi-field"><label>Fill</label><input type="color" data-style-color="background" value="${fill}"><input type="text" data-style-text="background" value="${esc(st.background || node.fill || "")}" placeholder="auto"></div>
+        </div>
+        ${isText ? `<div class="pi-row">
+          <div class="pi-field"><label>Text</label><input type="color" data-style-color="color" value="${color}"><input type="text" data-style-text="color" value="${esc(st.color || "")}" placeholder="auto"></div>
+        </div>` : ""}
+        <div class="pi-row">
+          <div class="pi-field"><label>Line</label><input type="color" data-style-color="borderColor" value="${stroke}"><input type="text" data-style-text="borderColor" value="${esc(st.borderColor || "")}" placeholder="auto"></div>
+        </div>
+        <div class="pi-row">
+          <div class="pi-field"><label>R</label><input type="text" inputmode="decimal" data-style-num="borderRadius" value="${radius}" placeholder="0"></div>
+          <div class="pi-field"><label>BW</label><input type="text" inputmode="decimal" data-style-num="borderWidth" value="${typeof st.borderWidth === "number" ? st.borderWidth : ""}" placeholder="0"></div>
+        </div>
+        ${isText ? `<div class="pi-row">
+          <div class="pi-field"><label>Font</label><select data-style-select="fontFamily">${fontOptionsHtml(fontFamily, "Auto")}</select></div>
+        </div>
+        <div class="pi-row">
+          <div class="pi-field"><label>Sz</label><input type="text" inputmode="decimal" data-style-num="fontSize" value="${fontSize}" placeholder="auto"></div>
+          <div class="pi-field"><label>Wt</label><input type="text" inputmode="decimal" data-style-num="fontWeight" value="${fontWeight}" placeholder="auto"></div>
+        </div>` : ""}
+      </div>`;
+    }
 
     if (!isRoot) {
       html += `<div class="pi-group"><button class="pi-ibtn pi-wide" data-act="reset-frame">Сбросить frame</button></div>`;
@@ -350,6 +410,36 @@
         } else if (key === "hugh") {
           geo.setFrameProps({ height: inp.checked ? "hug" : null });
         }
+      });
+    });
+
+    container.querySelectorAll("[data-style-color]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const key = inp.dataset.styleColor;
+        const text = container.querySelector(`[data-style-text="${key}"]`);
+        if (text) text.value = inp.value;
+        geo.setNodeStyle({ [key]: inp.value });
+      });
+    });
+    container.querySelectorAll("[data-style-text]").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const key = inp.dataset.styleText;
+        const value = String(inp.value || "").trim();
+        geo.setNodeStyle({ [key]: value || null });
+      });
+    });
+    container.querySelectorAll("[data-style-num]").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const key = inp.dataset.styleNum;
+        const v = readNumInput(inp);
+        if (v === undefined) return;
+        if (v !== null) inp.value = String(Math.max(0, v));
+        geo.setNodeStyle({ [key]: v == null ? null : Math.max(0, v) });
+      });
+    });
+    container.querySelectorAll("[data-style-select]").forEach(sel => {
+      sel.addEventListener("change", () => {
+        geo.setNodeStyle({ [sel.dataset.styleSelect]: sel.value || null });
       });
     });
 

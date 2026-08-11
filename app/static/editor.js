@@ -7,13 +7,24 @@
   "use strict";
 
   let overlay = null;
-  let state = null; // { ir, node, onSave, geo, history (IRHistory), sel, zoom, panX, panY, tool }
+  let state = null; // { ir, node, onSave, onClose, geo, history (IRHistory), sel, zoom, panX, panY, tool }
 
   function getByPath(obj, path) {
     return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
   }
 
-  const FONT_FAMILIES = ["Inter", "Sora", "Manrope", "Playfair Display", "Space Grotesk", "DM Sans", "IBM Plex Mono", "Montserrat"];
+  const FONT_CATALOG = global.DesignAIFontCatalog || null;
+  const FONT_FAMILIES = FONT_CATALOG ? FONT_CATALOG.families : ["Inter", "Sora", "Manrope", "Playfair Display", "Space Grotesk", "DM Sans", "IBM Plex Mono", "Montserrat"];
+  function fontOptionsHtml(selected, autoLabel) {
+    const auto = autoLabel == null ? "" : `<option value="">${autoLabel}</option>`;
+    if (!FONT_CATALOG || !FONT_CATALOG.groups) {
+      return auto + FONT_FAMILIES.map(ff => `<option value="${ff}" ${ff===selected?"selected":""}>${ff}</option>`).join("");
+    }
+    return auto + FONT_CATALOG.groups.map(group =>
+      `<optgroup label="${esc(group.label)}">${group.fonts.map(ff =>
+        `<option value="${ff}" ${ff===selected?"selected":""}>${ff}</option>`).join("")}</optgroup>`
+    ).join("");
+  }
   const COLOR_KEYS = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"];
   const COLOR_LABELS = { primary: "Primary", secondary: "Secondary", accent: "Accent", background: "Фон", surface: "Surface", text: "Текст", textMuted: "Muted", border: "Border" };
 
@@ -35,6 +46,8 @@
   .fe-tbtn:disabled { opacity:.35; cursor:default; }
   .fe-sep { width:1px; height:20px; background:#313244; margin:0 4px; }
   .fe-zoom { font-size:11px; color:#a6adc8; width:44px; text-align:center; font-variant-numeric:tabular-nums; }
+  .fe-viewports { display:inline-flex; gap:2px; padding:2px; border:1px solid #313244; border-radius:6px; }
+  .fe-viewports .fe-tbtn { width:30px; height:24px; font-size:10px; font-weight:700; }
   .fe-spacer { flex:1; }
   .fe-align-group { display:inline-flex; align-items:center; gap:2px; }
   .fe-btn { padding:5px 12px; border-radius:6px; border:1px solid #45475a; background:#313244;
@@ -143,6 +156,12 @@
         <button class="fe-tbtn" data-act="zoom-in" title="Увеличить">+</button>
         <button class="fe-tbtn" data-act="zoom-fit" title="Вписать">⊡</button>
         <span class="fe-sep"></span>
+        <span class="fe-viewports" hidden>
+          <button class="fe-tbtn active" data-viewport="desktop" title="Desktop 1440 px">D</button>
+          <button class="fe-tbtn" data-viewport="tablet" title="Tablet 768 px">T</button>
+          <button class="fe-tbtn" data-viewport="mobile" title="Mobile 390 px">M</button>
+        </span>
+        <span class="fe-sep fe-responsive-sep" hidden></span>
         <span class="fe-align-group" hidden>
           <button class="fe-tbtn" data-act="align-left" title="По левому краю">⫷</button>
           <button class="fe-tbtn" data-act="align-center-h" title="По центру по горизонтали">⫿</button>
@@ -161,6 +180,7 @@
         <button class="fe-tbtn" data-act="group" title="Группа (Ctrl+G)">⧉</button>
         <button class="fe-tbtn" data-act="ungroup" title="Разгруппировать (Ctrl+Shift+G)">⧠</button>
         <button class="fe-tbtn" data-act="undo" title="Отменить (Ctrl+Z)">↩</button>
+        <button class="fe-tbtn" data-act="redo" title="Повторить (Ctrl+Shift+Z)">↪</button>
         <span class="fe-spacer"></span>
         <button class="fe-btn danger" data-act="close">Закрыть</button>
         <button class="fe-btn primary" data-act="save">💾 Сохранить</button>
@@ -199,9 +219,10 @@
 
   function wireToolbar() {
     overlay.querySelector(".fe-toolbar").addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-tool],[data-act]");
+      const btn = e.target.closest("[data-tool],[data-act],[data-viewport]");
       if (!btn) return;
       if (btn.dataset.tool) setTool(btn.dataset.tool);
+      else if (btn.dataset.viewport) setViewport(btn.dataset.viewport);
       else handleAct(btn.dataset.act);
     });
   }
@@ -215,10 +236,29 @@
     if (state.geo && state.geo.getTool() !== tool) state.geo.setTool(tool);
   }
 
+  function setViewport(viewport) {
+    if (!state || !["desktop", "tablet", "mobile"].includes(viewport) || state.viewport === viewport) return;
+    syncActiveIR();
+    state.viewport = viewport;
+    // прокидываем выбранное устройство в канонический IR: превью ноды и downstream
+    // (Page → провода) показывают тот же вьюпорт, что редактировали последним
+    if (state.ir && state.ir.responsive) {
+      state.ir.meta = state.ir.meta || {};
+      state.ir.meta.activeViewport = viewport;
+    }
+    overlay.querySelectorAll("[data-viewport]").forEach(b => b.classList.toggle("active", b.dataset.viewport === viewport));
+    state.sel = [];
+    renderCanvas();
+    renderLayers();
+    renderInspector();
+    zoomFit();
+  }
+
   function handleAct(act) {
     if (act === "save") save();
     else if (act === "close") close();
     else if (act === "undo") undo();
+    else if (act === "redo") redo();
     else if (act === "zoom-in") zoomBy(1.2);
     else if (act === "zoom-out") zoomBy(1 / 1.2);
     else if (act === "zoom-fit") zoomFit();
@@ -240,12 +280,14 @@
 
   /* ---------- открытие / закрытие ---------- */
 
-  function open(node, onSave) {
+  function open(node, onSave, onClose) {
     ensureOverlay();
+    upgradeSourceNesting(node.data.ir);
     state = {
       ir: node.data.ir,
       node,
       onSave,
+      onClose,
       geo: null,
       history: IRHistory.createHistory({ limit: 50 }),
       sel: [], // массив выделенных {ref, label, node}
@@ -253,23 +295,120 @@
       panX: 40,
       panY: 40,
       tool: "select",
+      viewport: "desktop",
+      activeIR: null,
       layerFlags: {}, // refKey -> {hidden, locked}; сессия редактора, не часть IR
       layerQuery: "",
     };
     overlay.style.display = "flex";
+    const responsive = !!(state.ir && state.ir.responsive && state.ir.responsive.viewports);
+    // вьюпорт из графа: Page/Source Import прокидывают meta.activeViewport вниз —
+    // редактор открывается на том же устройстве, что показывает нода
+    const irVp = state.ir && state.ir.meta && state.ir.meta.activeViewport;
+    if (responsive && ["desktop", "tablet", "mobile"].includes(irVp)) state.viewport = irVp;
+    overlay.querySelector(".fe-viewports").hidden = !responsive;
+    overlay.querySelector(".fe-responsive-sep").hidden = !responsive;
+    overlay.querySelectorAll("[data-viewport]").forEach(b => b.classList.toggle("active", b.dataset.viewport === state.viewport));
     renderCanvas();
     renderLayers();
     renderInspector();
+    updateUndoBtn();
     attachCanvasEvents();
     setTool("select");
+    requestAnimationFrame(zoomFit);
+  }
+
+  function upgradeSourceNesting(ir) {
+    if (!ir || !Array.isArray(ir.tree)) return false;
+    let changed = false;
+    ir.tree.forEach(sec => {
+      if (!sec || !(sec.type === "source-block" || sec.variant === "dom-capture") || !Array.isArray(sec.children)) return;
+      if (sec.children.some(ch => ch && Array.isArray(ch.children) && ch.children.length)) return;
+      const sf = sec.frame || ir.frame || {};
+      const rootArea = Math.max(1, Number(sf.width || 0) * Number(sf.height || 0));
+      const assigned = new Set();
+      const containers = [];
+      sec.children.forEach((el, i) => {
+        if (!el || el.type !== "rect" || !el.frame) return;
+        const f = el.frame;
+        const w = Number(f.width || 0), h = Number(f.height || 0);
+        const area = w * h;
+        const bg = (el.style && el.style.background) || el.fill || "";
+        const hasVisual = !!bg || Number(el.radius || 0) > 0 || Number(el.style && el.style.borderWidth || 0) > 0;
+        if (!hasVisual || w < 18 || h < 12 || w > 460 || h > 96 || area > rootArea * .28) return;
+        const kids = [];
+        sec.children.forEach((child, ci) => {
+          if (ci === i || assigned.has(ci) || !child || !child.frame) return;
+          if (!["text", "image", "icon"].includes(child.type)) return;
+          const cf = child.frame;
+          const cx = Number(cf.x || 0) + Number(cf.width || 0) / 2;
+          const cy = Number(cf.y || 0) + Number(cf.height || 0) / 2;
+          if (cx >= Number(f.x || 0) && cx <= Number(f.x || 0) + w &&
+              cy >= Number(f.y || 0) && cy <= Number(f.y || 0) + h) {
+            kids.push({ child, index: ci });
+          }
+        });
+        if (!kids.length) return;
+        containers.push({ el, index: i, kids, area });
+      });
+      containers.sort((a, b) => a.area - b.area);
+      const byRect = new Map();
+      containers.forEach(c => {
+        if (assigned.has(c.index)) return;
+        const usableKids = c.kids.filter(k => !assigned.has(k.index));
+        if (!usableKids.length) return;
+        usableKids.forEach(k => assigned.add(k.index));
+        byRect.set(c.index, usableKids);
+      });
+      if (!byRect.size) return;
+      const next = [];
+      sec.children.forEach((el, i) => {
+        if (assigned.has(i)) return;
+        const kids = byRect.get(i);
+        if (!kids) { next.push(el); return; }
+        const f = el.frame || {};
+        const texts = kids.map(k => k.child).filter(ch => ch.type === "text");
+        const label = texts.map(t => t.text || "").join(" ").trim();
+        const bg = ((el.style && el.style.background) || el.fill || "").toLowerCase();
+        const isAction = label && label.length <= 42 && (
+          /найти|войти|разместить|search|login|sign|post|submit|buy|send/i.test(label) ||
+          !["#ffffff", "#fff", "transparent"].includes(bg)
+        );
+        const isInput = !isAction && (Number(f.width || 0) >= 170 || /поиск|ищет|search|email|phone/i.test(label));
+        const frame = Object.assign({}, f, { layout: "free", clip: true });
+        const style = Object.assign({}, el.style || {});
+        if (el.fill && !style.background) style.background = el.fill;
+        let group;
+        if (isAction) {
+          group = { type: "button", text: label, variant: "primary", style, frame, children: [] };
+        } else if (isInput) {
+          group = { type: "input", placeholder: label, style, frame, children: [] };
+        } else {
+          group = { type: "card", role: "source-container", style, frame, children: [] };
+        }
+        kids.sort((a, b) => a.index - b.index).forEach(k => {
+          const child = JSON.parse(JSON.stringify(k.child));
+          child.frame = Object.assign({}, child.frame || {});
+          child.frame.x = Math.round((Number(child.frame.x || 0) - Number(f.x || 0)) * 1000) / 1000;
+          child.frame.y = Math.round((Number(child.frame.y || 0) - Number(f.y || 0)) * 1000) / 1000;
+          group.children.push(child);
+        });
+        next.push(group);
+      });
+      sec.children = next;
+      changed = true;
+    });
+    return changed;
   }
 
   function save() {
+    syncActiveIR();
     if (state.onSave) state.onSave(state.ir);
-    close();
+    close(true);
   }
 
-  function close() {
+  function close(saved) {
+    if (state && state.onClose) state.onClose(!!saved);
     if (state && state.geo) { state.geo.destroy(); state.geo = null; }
     state = null;
     overlay.style.display = "none";
@@ -297,9 +436,25 @@
     updateAlignVisibility();
   }
 
+  function redo() {
+    const snap = state.history.redo(() => state.ir);
+    if (!snap) return;
+    state.ir = snap;
+    state.node.data.ir = state.ir;
+    if (state.geo) { state.geo.destroy(); state.geo = null; }
+    renderCanvas();
+    renderLayers();
+    state.sel = [];
+    renderInspector();
+    updateUndoBtn();
+    updateAlignVisibility();
+  }
+
   function updateUndoBtn() {
     const btn = overlay.querySelector('[data-act="undo"]');
     if (btn) btn.disabled = !state.history.canUndo();
+    const redoBtn = overlay.querySelector('[data-act="redo"]');
+    if (redoBtn) redoBtn.disabled = !state.history.canRedo();
   }
 
   function updateAlignVisibility() {
@@ -309,9 +464,100 @@
 
   /* ---------- канвас ---------- */
 
+  function buildActiveIR() {
+    if (!state.ir || !state.ir.responsive || !state.ir.responsive.viewports) {
+      state.activeIR = state.ir;
+      return state.activeIR;
+    }
+    state.activeIR = IRRenderer.materializeResponsiveIR(state.ir, state.viewport);
+    delete state.activeIR.responsive;
+    return state.activeIR;
+  }
+
+  function sourceNodeMap(ir) {
+    const out = new Map();
+    function visit(node, fallback) {
+      if (!node || typeof node !== "object") return;
+      const key = node.sourceKey || node.__path || fallback;
+      if (key) out.set(key, node);
+      (node.children || []).forEach((child, i) => visit(child, `${fallback}.children.${i}`));
+    }
+    (ir.tree || []).forEach((sec, i) => visit(sec, `tree.${i}`));
+    return out;
+  }
+
+  let manualSourceKey = 0;
+
+  function syncSharedStructure() {
+    const active = state.activeIR;
+    const canonical = state.ir;
+    if (!active || !canonical || !canonical.responsive) return;
+    const targetByKey = sourceNodeMap(canonical);
+
+    function ensureKey(node) {
+      if (!node.sourceKey) node.sourceKey = `manual:${Date.now().toString(36)}:${++manualSourceKey}`;
+      (node.children || []).forEach(ensureKey);
+    }
+    (active.tree || []).forEach(ensureKey);
+
+    function cleanRuntime(node) {
+      delete node.__path;
+      delete node.__responsiveHidden;
+      (node.children || []).forEach(cleanRuntime);
+      return node;
+    }
+
+    function reconcile(activeParent, targetParent) {
+      const next = [];
+      (activeParent.children || []).forEach(activeChild => {
+        const key = activeChild.sourceKey;
+        let targetChild = targetByKey.get(key);
+        if (!targetChild) {
+          targetChild = cleanRuntime(JSON.parse(JSON.stringify(activeChild)));
+          targetByKey.set(key, targetChild);
+        }
+        next.push(targetChild);
+        reconcile(activeChild, targetChild);
+      });
+      targetParent.children = next;
+    }
+
+    const canonicalSections = new Map((canonical.tree || []).map(sec => [sec.sourceKey || sec.id, sec]));
+    (active.tree || []).forEach((activeSec, index) => {
+      const targetSec = canonicalSections.get(activeSec.sourceKey || activeSec.id) || canonical.tree[index];
+      if (targetSec) reconcile(activeSec, targetSec);
+    });
+  }
+
+  function syncActiveIR() {
+    if (!state.activeIR || state.activeIR === state.ir || !state.ir.responsive) return;
+    syncSharedStructure();
+    const source = sourceNodeMap(state.activeIR);
+    const target = sourceNodeMap(state.ir);
+    const sharedKeys = ["text", "title", "placeholder", "value", "label", "src", "alt", "href"];
+    target.forEach((node, key) => {
+      const active = source.get(key);
+      if (!active) return;
+      sharedKeys.forEach(prop => {
+        if (Object.prototype.hasOwnProperty.call(active, prop)) node[prop] = active[prop];
+      });
+      if (state.viewport === "desktop") {
+        if (active.frame) node.frame = JSON.parse(JSON.stringify(active.frame));
+        if (active.style) node.style = JSON.parse(JSON.stringify(active.style));
+      } else {
+        node.responsive = node.responsive || {};
+        const override = node.responsive[state.viewport] || {};
+        override.visible = true;
+        if (active.frame) override.frame = JSON.parse(JSON.stringify(active.frame));
+        if (active.style) override.style = JSON.parse(JSON.stringify(active.style));
+        node.responsive[state.viewport] = override;
+      }
+    });
+  }
+
   function renderCanvas() {
     const inner = overlay.querySelector(".fe-canvas-inner");
-    IRRenderer.renderIR(inner, state.ir); // _frames применяет сам рендерер
+    IRRenderer.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
     applyLayerFlags();
     applyTransform();
     attachGeoEdit();
@@ -510,7 +756,7 @@
       isLocked: (ref) => refFlag(ref, "locked"), // locked-слои не выделяются на канвасе
       scrollEl: panAdapter,
       onToolChange: (t) => { if (state && state.tool !== t) setTool(t); },
-      getIR: () => state.ir,
+      getIR: () => state.activeIR || state.ir,
       getScale: () => {
         const irEl = inner.querySelector('[class^="ir-"]');
         if (!irEl) return 1;
@@ -520,8 +766,9 @@
       },
       onCommit: () => pushHistory(),
       onMutated: () => {
+        syncActiveIR();
         const savedRefs = state.sel.map(s => s.ref);
-        IRRenderer.renderIR(inner, state.ir);
+        IRRenderer.renderIR(inner, buildActiveIR(), { fit: false });
         applyLayerFlags();
         applyTransform();
         attachGeoEdit();
@@ -578,13 +825,26 @@
       propsElements(sec).forEach(pe => {
         addLayerItem(tree, getByPath(sec, pe.path) || {}, { secIdx: si, path: pe.path }, 2, pe.label, pe.icon);
       });
-      // children-элементы
-      (sec.children || []).forEach((el, ci) => {
-        addLayerItem(tree, el, { secIdx: si, path: `children.${ci}` }, 2, el.type + (el.text ? ` · ${el.text.slice(0, 16)}` : el.title ? ` · ${el.title.slice(0, 16)}` : ""));
-        (el.children || []).forEach((ch, chi) => {
-          addLayerItem(tree, ch, { secIdx: si, path: `children.${ci}.children.${chi}` }, 3, ch.type + (ch.text ? ` · ${ch.text.slice(0, 14)}` : ch.title ? ` · ${ch.title.slice(0, 14)}` : ""));
-        });
-      });
+      renderChildLayers(tree, sec.children || [], si, "children", 2);
+    });
+  }
+
+  function layerLabel(el, maxText) {
+    const base = el.type === "card" && el.role ? "div" : el.type;
+    const suffix = el.text ? ` · ${String(el.text).slice(0, maxText)}`
+      : el.title ? ` · ${String(el.title).slice(0, maxText)}`
+      : el.placeholder ? ` · ${String(el.placeholder).slice(0, maxText)}`
+      : "";
+    return base + suffix;
+  }
+
+  function renderChildLayers(tree, children, secIdx, basePath, depth) {
+    children.forEach((el, i) => {
+      const path = `${basePath}.${i}`;
+      addLayerItem(tree, el, { secIdx, path }, depth, layerLabel(el, depth > 2 ? 14 : 16));
+      if (el.children && el.children.length) {
+        renderChildLayers(tree, el.children, secIdx, `${path}.children`, depth + 1);
+      }
     });
   }
 
@@ -594,6 +854,7 @@
     const fl = state.layerFlags[key] || {};
     const div = document.createElement("div");
     div.className = "fe-layer depth-" + Math.min(depth, 3);
+    if (depth > 3) div.style.paddingLeft = (48 + (depth - 3) * 12) + "px";
     div.dataset.key = key;
     // reorder drag&drop — только не-артборд
     if (!(ref.secIdx == null && ref.path == null)) {
@@ -629,7 +890,7 @@
     if (fl.locked) div.classList.add("flag-locked");
     if (state.sel.some(s => s.ref.secIdx === ref.secIdx && s.ref.path === ref.path)) div.classList.add("selected");
     const icons = { navbar: "☰", hero: "◈", card: "▢", heading: "H", text: "T", button: "⬛", image: "▣", badge: "•", pricing: "$", faq: "?", footer: "⊥" };
-    const icon = iconOverride || icons[irNode.type] || "◇";
+    const icon = iconOverride || (irNode.type === "card" && irNode.role ? "◇" : icons[irNode.type]) || "◇";
     div.innerHTML = `<span class="fe-li">${icon}</span><span class="fe-ln">${esc(label)}</span>` +
       `<button class="fe-lbtn" data-flag="hidden" title="Скрыть/показать слой">${fl.hidden ? "🚫" : "👁"}</button>` +
       `<button class="fe-lbtn" data-flag="locked" title="Залочить/разлочить">${fl.locked ? "🔒" : "🔓"}</button>`;
@@ -651,7 +912,7 @@
       return;
     }
 
-    // Position / Alignment / Flex Layout — общий инспектор (модель pen.dev), тот же что в ноде Edit
+    // Position / Alignment / Flex Layout — общий инспектор полноэкранного редактора (модель pen.dev)
     let html = `<div class="fe-shared-insp"></div>`;
 
     if (state.sel.length > 1) {
@@ -680,9 +941,28 @@
     }
 
     if (node.type === "button") {
+      const st = node.style || {};
+      const fill = toFullHex(st.background || node.fill || "");
+      const textColor = toFullHex(st.color || "");
+      const radius = typeof st.borderRadius === "number" ? st.borderRadius : (typeof node.radius === "number" ? node.radius : "");
+      const fontFamily = st.fontFamily || "";
+      const fontSize = typeof st.fontSize === "number" ? st.fontSize : "";
+      const fontWeight = typeof st.fontWeight === "number" ? st.fontWeight : "";
       html += `<div class="fe-insp-group"><span class="fe-glabel">Кнопка</span>
         <div class="fe-field" style="margin-bottom:6px"><label>Txt</label><input type="text" data-el-prop="text" value="${esc(node.text || "")}"></div>
-        <div class="fe-field"><label>Var</label><select data-el-prop="variant"><option value="primary" ${(!node.variant||node.variant==="primary")?"selected":""}>Primary</option><option value="secondary" ${node.variant==="secondary"?"selected":""}>Secondary</option><option value="outline" ${node.variant==="outline"?"selected":""}>Outline</option><option value="ghost" ${node.variant==="ghost"?"selected":""}>Ghost</option></select></div></div>`;
+        <div class="fe-field" style="margin-bottom:6px"><label>Var</label><select data-el-prop="variant"><option value="primary" ${(!node.variant||node.variant==="primary")?"selected":""}>Primary</option><option value="secondary" ${node.variant==="secondary"?"selected":""}>Secondary</option><option value="outline" ${node.variant==="outline"?"selected":""}>Outline</option><option value="ghost" ${node.variant==="ghost"?"selected":""}>Ghost</option></select></div>
+        <div class="fe-color-row"><label>Fill</label><input type="color" data-node-style-color="background" value="${fill}"><span class="fe-hex">${esc(st.background || "")}</span></div>
+        <div class="fe-color-row"><label>Text</label><input type="color" data-node-style-color="color" value="${textColor}"><span class="fe-hex">${esc(st.color || "")}</span></div>
+        <div class="fe-row">
+          <div class="fe-field"><label>Font</label><select data-node-style-select="fontFamily">${fontOptionsHtml(fontFamily, "Auto")}</select></div>
+        </div>
+        <div class="fe-row">
+          <div class="fe-field"><label>Sz</label><input type="text" inputmode="decimal" data-node-style-num="fontSize" value="${fontSize}" placeholder="auto"></div>
+          <div class="fe-field"><label>Wt</label><input type="text" inputmode="decimal" data-node-style-num="fontWeight" value="${fontWeight}" placeholder="auto"></div>
+        </div>
+        <div class="fe-row">
+          <div class="fe-field"><label>R</label><input type="text" inputmode="decimal" data-node-style-num="borderRadius" value="${radius}" placeholder="auto"></div>
+        </div></div>`;
     }
 
     // --- цвета токенов (для артборда) ---
@@ -700,8 +980,8 @@
     // --- шрифты (для артборда) ---
     if (isRoot && t.font) {
       html += `<div class="fe-insp-group"><span class="fe-glabel">Шрифты</span>
-        <div class="fe-field" style="margin-bottom:4px"><label>D</label><select data-font="display">${FONT_FAMILIES.map(ff => `<option ${ff===t.font.display.family?"selected":""}>${ff}</option>`).join("")}</select></div>
-        <div class="fe-field" style="margin-bottom:4px"><label>B</label><select data-font="body">${FONT_FAMILIES.map(ff => `<option ${ff===t.font.body.family?"selected":""}>${ff}</option>`).join("")}</select></div>
+        <div class="fe-field" style="margin-bottom:4px"><label>D</label><select data-font="display">${fontOptionsHtml(t.font.display.family)}</select></div>
+        <div class="fe-field" style="margin-bottom:4px"><label>B</label><select data-font="body">${fontOptionsHtml(t.font.body.family)}</select></div>
         <div class="fe-field"><label>Sc</label><select data-token="font.scale"><option value="compact" ${t.font.scale==="compact"?"selected":""}>Compact</option><option value="default" ${(!t.font.scale||t.font.scale==="default")?"selected":""}>Default</option><option value="spacious" ${t.font.scale==="spacious"?"selected":""}>Spacious</option></select></div></div>`;
     }
 
@@ -775,11 +1055,32 @@
         rerenderEditorCanvas();
       });
     });
+    panel.querySelectorAll("[data-node-style-color]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        if (!state.geo || !state.geo.setNodeStyle) return;
+        state.geo.setNodeStyle({ [inp.dataset.nodeStyleColor]: inp.value });
+      });
+    });
+    panel.querySelectorAll("[data-node-style-num]").forEach(inp => {
+      inp.addEventListener("change", () => {
+        if (!state.geo || !state.geo.setNodeStyle) return;
+        const raw = String(inp.value || "").trim();
+        const value = raw === "" ? null : Number(raw);
+        if (raw !== "" && !Number.isFinite(value)) return;
+        state.geo.setNodeStyle({ [inp.dataset.nodeStyleNum]: value == null ? null : Math.max(0, value) });
+      });
+    });
+    panel.querySelectorAll("[data-node-style-select]").forEach(sel => {
+      sel.addEventListener("change", () => {
+        if (!state.geo || !state.geo.setNodeStyle) return;
+        state.geo.setNodeStyle({ [sel.dataset.nodeStyleSelect]: sel.value || null });
+      });
+    });
   }
 
   function rerenderEditorCanvas() {
     const inner = overlay.querySelector(".fe-canvas-inner");
-    IRRenderer.renderIR(inner, state.ir); // _frames применяет сам рендерер
+    IRRenderer.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
     applyLayerFlags();
     applyTransform();
     attachGeoEdit();
@@ -796,7 +1097,11 @@
     if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return;
     if (e.key === "v" || e.key === "V" || e.key === "м" || e.key === "М") setTool("select");
     if (e.key === "h" || e.key === "H" || e.key === "р" || e.key === "Р") setTool("hand");
-    if ((e.key === "z" || e.key === "Z" || e.key === "я" || e.key === "Я") && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undo(); }
+    if ((e.key === "z" || e.key === "Z" || e.key === "я" || e.key === "Я") && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+    }
+    if ((e.key === "y" || e.key === "Y" || e.key === "н" || e.key === "Н") && (e.ctrlKey || e.metaKey)) { e.preventDefault(); redo(); }
     // Esc: сначала отдаём GeoEdit (выход из контейнера / снятие выделения);
     // закрываем редактор, только если geoedit событие не поглотил
     if (e.key === "Escape") {
@@ -814,5 +1119,5 @@
     return "#888888";
   }
 
-  global.Editor = { open, close, isOpen: () => !!state };
+  global.Editor = { open, close, isOpen: () => !!state, getIR: () => state && (state.activeIR || state.ir) };
 })(window);
