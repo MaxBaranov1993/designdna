@@ -4,6 +4,7 @@
 Запуск:  .venv/Scripts/python app/server.py   (порт 8420)
 """
 import concurrent.futures
+import contextlib
 import copy
 import json
 import mimetypes
@@ -32,27 +33,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import llm_client as llm  # chat, chat_vision, build_system_prompt, extract_json
 from colorutils import mix_hex_colors
-from scraper import prepare_image_b64, analyze_url, extract_structure, parse_design_tokens
+from scraper import analyze_url
 from reproduce import run_pipeline as reproduce_pipeline
 from urlguard import validate_public_url
 import cache_store
 import blockparse
 import mergeback
 import qualitygate
+import project_store
+import typography
+import designkb
 
 import jsonschema
 
 SCHEMA = json.loads((ROOT / "schema" / "design-ir.schema.json").read_text(encoding="utf-8"))
 VALIDATOR = jsonschema.Draft7Validator(SCHEMA)
-ANALYSIS_PATH = ROOT / "test-targets" / "rsale-site" / "analysis.json"
 
 EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
-app = FastAPI(title="DesignAI Web", docs_url=None, redoc_url=None)
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    EXECUTOR.shutdown(wait=True)
+
+
+app = FastAPI(title="DesignAI Web", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 COLOR_TOKEN_KEYS = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"]
-PROVIDERS = ["qwen", "kimi", "groq", "gemini", "xai", "glm", "openrouter"]
-VISION_PROVIDERS = ["xai", "gemini", "groq", "qwen", "glm", "openrouter"]  # приоритет для vision
+PRODUCT_PROVIDER = "openrouter"
 
 # роли вызовов для роутинга OpenRouter — см. таблицу llm_client.ROUTING
 # (generate/edit/repair/clone/reference/...)
@@ -94,7 +103,9 @@ def err(status: int, message: str) -> JSONResponse:
 
 
 def normalize_provider(provider: str | None) -> str:
-    return provider if provider in PROVIDERS else "qwen"
+    # Старые сейвы могли передавать имя прямого провайдера. Продукт всегда
+    # маршрутизирует вызов через OpenRouter, поэтому вход намеренно игнорируется.
+    return PRODUCT_PROVIDER
 
 
 # ---------- models ----------
@@ -102,14 +113,11 @@ def normalize_provider(provider: str | None) -> str:
 class GenerateReq(BaseModel):
     brief: str = ""
     count: int = 3
-    provider: str = "qwen"
+    provider: str = "openrouter"
     styleHint: str | None = None
     seedTag: str | None = None
-
-
-class AnalyzeReq(BaseModel):
-    force: bool = False
-    provider: str = "qwen"
+    tokens: dict | None = None  # Style DNA: залоченные design-токены
+    preset: str = ""  # стилевой пресет: minimal|bento|editorial|brutal|glass
 
 
 class MixReq(BaseModel):
@@ -117,25 +125,16 @@ class MixReq(BaseModel):
     weights: list
 
 
-class RefineReq(BaseModel):
-    ir: dict
-    instruction: str = ""
-    provider: str = "qwen"
-
-
-class ValidateReq(BaseModel):
-    ir: dict
-
-
 class CloneReq(BaseModel):
     url: str = ""
     component: str = ""
-    provider: str = "qwen"
+    provider: str = "openrouter"
 
 
 class BlockParseReq(BaseModel):
     url: str = ""
     blocks: list | None = None  # опционально: [{name, selector}] — клонировать только их
+    viewports: list[dict] | None = None
 
 
 class ReskinReq(BaseModel):
@@ -145,15 +144,17 @@ class ReskinReq(BaseModel):
     mask: dict = {}             # чекбоксы: colors/fonts/radii/shadows/texts/images
 
 
-class VisionDecomposeReq(BaseModel):
-    image: str = ""  # base64 data URL
-    brief: str = ""
-    provider: str = "qwen"
-
-
 class QualityGateReq(BaseModel):
     ir: dict
     fix: bool = True  # авто-доводка solver'ом (без LLM) того, что чинится
+
+
+class QualityPassReq(BaseModel):
+    ir: dict
+    brief: str = ""
+    min_score: int = 85
+    repair: bool = True
+    rejudge: bool = True
 
 
 class ConstraintsCheckReq(BaseModel):
@@ -169,8 +170,19 @@ class ScrapeReq(BaseModel):
 class ReproduceReq(BaseModel):
     image: str = ""  # base64 data URL
     url: str = ""  # или URL сайта: скриншот снимем сами, результат кэшируется
-    provider: str = "qwen"  # любой провайдер для VLM-анализа структуры
+    provider: str = "openrouter"  # роль vision выбирает модель из ROUTING
     regions: list | None = None  # опциональные регионы для diff: [["name", x1, y1, x2, y2], ...]
+
+
+class ProjectSaveReq(BaseModel):
+    project: dict
+    user_id: str = project_store.DEFAULT_USER_ID
+    project_id: str = project_store.DEFAULT_PROJECT_ID
+
+
+class ProjectLoadReq(BaseModel):
+    user_id: str = project_store.DEFAULT_USER_ID
+    project_id: str = project_store.DEFAULT_PROJECT_ID
 
 
 # ---------- endpoints ----------
@@ -184,7 +196,26 @@ def generate(req: GenerateReq):
     count = max(1, min(int(req.count or 1), 5))
     has_style = bool(req.styleHint and req.styleHint.strip())
     style = f"\n\n## Reference / style context\n{req.styleHint.strip()}" if has_style else ""
+    memory_hint = project_store.build_prompt_memory_hint()
+    memory = f"\n\n{memory_hint}" if memory_hint else ""
     mode = "edit" if has_style else "generate"
+    dna_keys = ("mode", "color", "font", "radius", "spacing", "shadow")
+    if isinstance(req.tokens, dict):
+        dna = {k: v for k, v in req.tokens.items() if k in dna_keys}
+        if not dna:
+            dna = None
+    else:
+        dna = None
+    preset = typography.PRESETS.get(req.preset or "")
+    ptype, pinfo = designkb.detect_product(brief)
+    # Шрифт из Style DNA — без подбора своей пары; иначе — библиотека typography.
+    # Предпочтение: пресет → рекомендация design KB по типу продукта → настроение брифа.
+    pair = None
+    if not (dna and isinstance(dna.get("font"), dict)):
+        pair = typography.pick_pair(
+            set(preset["moods"]) if preset else typography.brief_moods(brief),
+            prefer=(preset.get("font") if preset else None) or pinfo["fonts"][0])
+    scale = typography.type_scale()
 
     def gen_one(n: int):
         if mode == "edit":
@@ -196,68 +227,73 @@ def generate(req: GenerateReq):
                 f"Do NOT invent content not present in the reference."
             )
         else:
+            vary = ("своя композиция, раскладка и настроение в рамках токенов DNA" if dna
+                    else "своя палитра, типографика, настроение и композиция")
             user = (
                 f"## Brief\n{brief}\n\n"
                 f"Вариант {n} из {count}: сделай визуально отличное решение №{n} — "
-                f"своя палитра, типографика, настроение и композиция, не повторяй другие варианты."
+                f"{vary}, не повторяй другие варианты."
             )
         if req.seedTag:
             user += f"\nseedTag: {req.seedTag}"
-        return call_llm_ir(provider, user, 0.8 if mode == "generate" else 0.3, mode)
+        if style and mode != "edit":
+            user += style
+        if memory:
+            user += memory
+        if dna:
+            user += ("\n\n## Style DNA — обязательные design-токены (залочены)\n"
+                     + json.dumps(dna, ensure_ascii=False)
+                     + "\nГотовый IR обязан использовать эти tokens в точности "
+                       "(mode/color/font/radius/spacing/shadow): вариативность — "
+                       "в композиции и контенте, не в токенах.")
+            if preset:
+                user += (f"\n\nСтилевое направление «{preset['label']}»: "
+                         + preset["prompt"])
+        elif pair:
+            user += "\n\n" + typography.typography_guide(pair, scale, preset)
+        palette = None
+        if mode == "generate":
+            if not dna:
+                direction, palette = designkb.design_direction(ptype, pinfo, n)
+                user += "\n\n" + direction
+            else:
+                user += ("\n\nАнти-паттерны — НИКОГДА так не делай:\n"
+                         + "\n".join("- " + a for a in designkb.ANTI_AI))
+        ir, error = call_llm_ir(provider, user, 0.8 if mode == "generate" else 0.3, mode)
+        qa = None
+        if ir is not None:
+            if dna:
+                # DNA залочена: токены — не предмет вариативности, фиксируем детерминированно
+                ir["tokens"] = copy.deepcopy(dna)
+            elif isinstance(ir.get("tokens"), dict):
+                # без DNA: шрифтовая пара и кураторская палитра из design KB — лок
+                if pair:
+                    ir["tokens"]["font"] = typography.font_tokens(pair)
+                if palette:
+                    ir["tokens"]["color"] = dict(palette)
+            # сгенерированный IR — responsive-документ: вьюпорты артборда, чтобы
+            # Page/редактор переключали устройства и per-device правки имели куда писаться
+            ir.setdefault("responsive", {"viewports": {
+                "desktop": {"width": 1440}, "tablet": {"width": 768}, "mobile": {"width": 390}}})
+            # авто quality-gate: детерминированный autofix (контраст/сетка/overflow)
+            ir, fixlog = qualitygate.autofix(ir)
+            qa = {"index": n, "fixed": len(fixlog),
+                  "violations": [v["rule"] for v in qualitygate.check(ir)]}
+        return ir, error, qa
 
     futures = [EXECUTOR.submit(gen_one, i + 1) for i in range(count)]
-    variants, errors = [], []
+    variants, errors, qa = [], [], []
     for i, f in enumerate(futures):
-        ir, error = f.result()
+        ir, error, q = f.result()
         if ir is not None:
             variants.append(ir)
+            qa.append(q)
         else:
             errors.append({"index": i + 1, "error": error})
     if not variants:
         return err(502, f"Ни один вариант не сгенерирован. {errors[0]['error'] if errors else ''}")
-    return {"variants": variants, "errors": errors}
-
-
-@app.post("/api/analyze-header")
-def analyze_header(req: AnalyzeReq):
-    if ANALYSIS_PATH.exists() and not req.force:
-        try:
-            return json.loads(ANALYSIS_PATH.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            pass  # битый кэш — перегенерируем
-
-    provider = normalize_provider(req.provider)
-    header_html = (ROOT / "test-targets" / "rsale-site" / "header-extracted.html").read_text(encoding="utf-8")
-    page_html = (ROOT / "test-targets" / "rsale-site" / "page-ru.html").read_text(encoding="utf-8")
-    # из страницы берём куски со стилями и начало body, чтобы уложиться в контекст
-    styles = " ".join(re.findall(r"<style[^>]*>(.*?)</style>", page_html, re.S))[:6000]
-    body_start = re.sub(r"\s+", " ", page_html)[:6000]
-
-    user = (
-        "Ты — senior веб-дизайнер. Проанализируй HTML шапки реального сайта "
-        "(маркетплейс объявлений Rsale, Сербия) и верни ОДИН JSON-объект с полями:\n"
-        '- "structureSummary": markdown-строка (на русском): структура шапки, элементы, их порядок, паттерны.\n'
-        '- "suggestedTokens": объект design-токенов по схеме Design IR (mode/color/font/radius/spacing/shadow), '
-        "подобранные по визуальному стилю этого сайта.\n"
-        '- "headerBrief": строка (на русском) — бриф для генерации НОВЫХ шапок (одна секция navbar) '
-        "в стиле и нише этого сайта: что за продукт, какие элементы шапки нужны, настроение.\n"
-        "Никакого markdown вокруг, только JSON.\n\n"
-        f"## HTML шапки\n{header_html}\n\n## CSS стилей страницы (фрагмент)\n{styles}\n\n## Начало страницы (фрагмент)\n{body_start}"
-    )
-    try:
-        raw = llm.chat(provider, [
-            {"role": "system", "content": "Ты — senior веб-дизайнер и аналитик дизайн-систем. Отвечаешь строго одним JSON-объектом."},
-            {"role": "user", "content": user},
-        ], 0.4, role="clone")
-    except Exception as e:
-        return err(502, str(e))
-    data, error = parse_ir_response(raw)
-    if data is None:
-        return err(502, error)
-    if not isinstance(data, dict) or "structureSummary" not in data or "headerBrief" not in data:
-        return err(502, "Модель вернула JSON без обязательных полей structureSummary/headerBrief")
-    ANALYSIS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return data
+    return {"variants": variants, "errors": errors, "qa": qa,
+            "design": {"type": ptype, "label": pinfo["label"]}}
 
 
 @app.post("/api/mix")
@@ -289,60 +325,6 @@ def mix(req: MixReq):
         meta["name"] = f"{meta['name']} (mix)"
     meta["mixOf"] = [{"index": i, "weight": weights[i]} for i in range(len(irs))]
     return {"ir": result}
-
-
-@app.post("/api/refine")
-def refine(req: RefineReq):
-    provider = normalize_provider(req.provider)
-    instruction = req.instruction.strip()
-    if not instruction:
-        return err(422, "Пустая инструкция правки.")
-    ir_json = json.dumps(req.ir, ensure_ascii=False)
-
-    def ask(content: str):
-        return llm.chat(provider, [
-            {"role": "system", "content": llm.build_system_prompt()},
-            {"role": "user", "content": content},
-        ], 0.3, role="edit")
-
-    user = (
-        "Вот текущий Design IR (JSON):\n" + ir_json +
-        "\n\nПравка пользователя (часть могла быть уже применена вручную — учитывай оба источника): "
-        + instruction +
-        "\n\nВерни обновлённый ПОЛНЫЙ валидный Design IR по схеме. Только JSON."
-    )
-    try:
-        raw = ask(user)
-    except Exception as e:
-        return err(502, str(e))
-    ir, error = parse_ir_response(raw)
-    errors = validate_ir(ir) if ir is not None else [error]
-
-    if errors:
-        # один repair-вызов
-        repair = (
-            "Следующий JSON не прошёл валидацию по схеме. Ошибки:\n- " + "\n- ".join(errors[:10]) +
-            "\n\nИсправь минимально и верни только исправленный JSON:\n\n" +
-            (ir_json if ir is None else json.dumps(ir, ensure_ascii=False))
-        )
-        try:
-            raw2 = ask(repair)
-        except Exception as e:
-            return err(502, str(e))
-        ir2, error2 = parse_ir_response(raw2)
-        if ir2 is None:
-            return err(502, f"repair не помог: {error2}")
-        errors2 = validate_ir(ir2)
-        if errors2:
-            return err(502, "refine не прошёл валидацию после repair: " + "; ".join(errors2[:5]))
-        ir = ir2
-    return {"ir": ir}
-
-
-@app.post("/api/validate")
-def validate(req: ValidateReq):
-    errors = validate_ir(req.ir)
-    return {"ok": not errors, "errors": errors}
 
 
 @app.post("/api/clone")
@@ -428,7 +410,7 @@ def clone(req: CloneReq):
     return {"ir": ir, "cached": False}
 
 
-# ---------- BlockParse / Reskin (решение владельца 11, docs/NODES-HOUDINI.md §7) ----------
+# ---------- Source Import / Reskin (см. docs/ARCHITECTURE.md и docs/NODES.md) ----------
 
 # человекочитаемые категории маски для промпта Reskin
 _MASK_LABELS = {
@@ -452,7 +434,7 @@ def block_parse(req: BlockParseReq):
     except ValueError as e:
         return err(422, str(e))
     try:
-        return blockparse.parse_blocks(url, blocks=req.blocks)
+        return blockparse.parse_blocks(url, blocks=req.blocks, viewports=req.viewports)
     except ValueError as e:  # кривой список блоков
         return err(422, str(e))
     except Exception as e:
@@ -464,7 +446,7 @@ def block_parse(req: BlockParseReq):
 def reskin(req: ReskinReq):
     """Reskin: AI-рестайл блока с локом структуры.
 
-    LLM (только qwen, решение владельца 7) → детерминированный merge-back
+    LLM через OpenRouter → детерминированный merge-back
     (залоченные поля принудительно из входного IR) → валидация по схеме →
     один repair-вызов по существующему паттерну. Дрейф структуры невозможен.
     """
@@ -493,12 +475,12 @@ def reskin(req: ReskinReq):
     if req.prompt.strip():
         user += f"\n\n## Пожелания по новому стилю\n{req.prompt.strip()}"
 
-    provider = "qwen"  # решение владельца 7: только qwencloud
+    provider = "openrouter"  # роль reskin: закреплённая модель и fallback из ROUTING
     try:
         raw = llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt("edit")},
             {"role": "user", "content": user},
-        ], 0.7, role="edit")
+        ], 0.7, role="reskin")
     except Exception as e:
         return err(502, str(e))
     model_ir, parse_error = parse_ir_response(raw)
@@ -509,7 +491,7 @@ def reskin(req: ReskinReq):
     merged, journal = mergeback.merge_back(req.ir, model_ir, mask)
     errors = validate_ir(merged)
     if errors:
-        # один repair-вызов (паттерн /api/refine); после repair — повторный merge-back
+        # один repair-вызов; после repair — повторный merge-back
         repair = (
             "Следующий JSON не прошёл валидацию по схеме. Ошибки:\n- " + "\n- ".join(errors[:10]) +
             "\n\nИсправь минимально и верни только исправленный JSON:\n\n" +
@@ -550,6 +532,144 @@ def quality_gate(req: QualityGateReq):
             "fixed_ir": fixed_ir, "journal": journal}
 
 
+QUALITY_JUDGE_SYSTEM = """Ты — строгий арт-директор и QA-судья DesignAI.
+Оцениваешь Design IR, а не пишешь новый дизайн. Проверяй соответствие брифу,
+визуальную иерархию, композицию, консистентность токенов, семантику блоков,
+реалистичность контента и доступность. Не хвали и не придумывай отсутствующие факты.
+Верни только JSON-объект:
+{
+  "score": 0,
+  "verdict": "pass|needs_repair",
+  "summary": "краткий вывод",
+  "issues": [{"category": "brief|hierarchy|composition|consistency|content|accessibility", "severity": "critical|major|minor", "path": "путь IR или (root)", "problem": "что не так", "instruction": "как исправить"}],
+  "repair_instruction": "единая точная инструкция; пустая строка, если repair не нужен"
+}
+score — целое 0..100. Учитывай только наблюдаемые данные в IR и брифе."""
+
+
+def _quality_scorecard(ir: dict, brief: str) -> dict:
+    """Независимая LLM-оценка. Нормализует недоверенный JSON до публичного контракта."""
+    raw = llm.chat(PRODUCT_PROVIDER, [
+        {"role": "system", "content": QUALITY_JUDGE_SYSTEM},
+        {"role": "user", "content": "## Бриф\n" + (brief.strip() or "(не указан)")
+         + "\n\n## Design IR\n" + json.dumps(ir, ensure_ascii=False)},
+    ], 0.2, role="quality_judge")
+    try:
+        parsed = json.loads(llm.extract_json(raw))
+    except (json.JSONDecodeError, ValueError) as e:
+        raise ValueError(f"судья вернул невалидный JSON: {e}") from e
+    if not isinstance(parsed, dict):
+        raise ValueError("судья вернул не объект")
+    try:
+        score = int(parsed.get("score"))
+    except (TypeError, ValueError) as e:
+        raise ValueError("судья не вернул числовой score") from e
+    issues = []
+    for item in parsed.get("issues", []):
+        if not isinstance(item, dict):
+            continue
+        severity = str(item.get("severity", "minor"))
+        if severity not in {"critical", "major", "minor"}:
+            severity = "minor"
+        issues.append({
+            "category": str(item.get("category", "consistency")),
+            "severity": severity,
+            "path": str(item.get("path", "(root)")),
+            "problem": str(item.get("problem", "")),
+            "instruction": str(item.get("instruction", "")),
+        })
+    verdict = str(parsed.get("verdict", "needs_repair"))
+    return {
+        "score": max(0, min(score, 100)),
+        "verdict": verdict if verdict in {"pass", "needs_repair"} else "needs_repair",
+        "summary": str(parsed.get("summary", "")),
+        "issues": issues[:12],
+        "repair_instruction": str(parsed.get("repair_instruction", "")),
+        "model_route": "OpenRouter / quality_judge",
+    }
+
+
+def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None, str | None]:
+    """Адресная починка только по замечаниям независимого судьи."""
+    instructions = scorecard.get("repair_instruction", "").strip()
+    if not instructions:
+        instructions = "\n".join(
+            str(issue.get("instruction", "")) for issue in scorecard.get("issues", [])
+            if issue.get("severity") in {"critical", "major"}
+        ).strip()
+    if not instructions:
+        return None, "судья не дал инструкций для repair"
+    user = (
+        "Исправь Design IR строго по замечаниям Quality Pass. Сохрани полезный контент, "
+        "не добавляй неупомянутые секции и верни только полный валидный JSON.\n\n"
+        f"## Бриф\n{brief.strip() or '(не указан)'}\n\n"
+        f"## Инструкции\n{instructions}\n\n"
+        f"## Входной Design IR\n{json.dumps(ir, ensure_ascii=False)}"
+    )
+    try:
+        raw = llm.chat(PRODUCT_PROVIDER, [
+            {"role": "system", "content": llm.build_system_prompt("edit")},
+            {"role": "user", "content": user},
+        ], 0.25, role="quality_repair")
+        repaired, parse_error = parse_ir_response(raw)
+        if repaired is None:
+            return None, parse_error
+        schema_errors = validate_ir(repaired)
+        if schema_errors:
+            return None, "; ".join(schema_errors[:5])
+        return repaired, None
+    except Exception as e:
+        return None, str(e)
+
+
+@app.post("/api/quality-pass")
+def quality_pass(req: QualityPassReq):
+    """Премиальный контур: детерминированные правила → независимый judge → repair → rejudge.
+
+    API всегда возвращает исходный валидный IR, если repair не удался: результат
+    контролируем и не подменяем граф битым ответом модели.
+    """
+    schema_errors = validate_ir(req.ir)
+    if schema_errors:
+        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
+    deterministic_before = qualitygate.check(req.ir)
+    try:
+        initial = _quality_scorecard(req.ir, req.brief)
+    except Exception as e:
+        return err(502, f"Quality Pass judge недоступен: {e}")
+    min_score = max(0, min(int(req.min_score), 100))
+    important = any(i["severity"] in {"critical", "major"} for i in initial["issues"])
+    needs_repair = bool(deterministic_before) or important or initial["score"] < min_score
+    output_ir = copy.deepcopy(req.ir)
+    repair = {"attempted": False, "applied": False, "error": None}
+    final = initial
+    if req.repair and needs_repair:
+        repair["attempted"] = True
+        repaired, repair_error = _quality_repair(req.ir, initial, req.brief)
+        if repaired is None:
+            repair["error"] = repair_error
+        else:
+            output_ir = repaired
+            repair["applied"] = True
+            if req.rejudge:
+                try:
+                    final = _quality_scorecard(output_ir, req.brief)
+                except Exception as e:
+                    repair["error"] = f"rejudge недоступен: {e}"
+    deterministic_after = qualitygate.check(output_ir)
+    passed = (final["score"] >= min_score and final["verdict"] == "pass"
+              and not deterministic_after)
+    return {
+        "ir": output_ir,
+        "passed": passed,
+        "min_score": min_score,
+        "scorecard": final,
+        "initial_scorecard": initial,
+        "deterministic": {"before": deterministic_before, "after": deterministic_after},
+        "repair": repair,
+    }
+
+
 @app.post("/api/constraints/check")
 def constraints_check(req: ConstraintsCheckReq):
     """Проверка декларативных ограничений (локи полей по путям + диапазоны)."""
@@ -558,80 +678,6 @@ def constraints_check(req: ConstraintsCheckReq):
     except ValueError as e:
         return err(422, str(e))
     return {"ok": not violations, "violations": violations}
-
-
-VISION_SYSTEM_PROMPT = """Ты — pixel-perfect дизайн-инженер. Тебе дают скриншот веб-страницы.
-Твоя задача — воспроизвести ТОЧНО то, что видишь, как Design IR (JSON по схеме).
-
-ПРАВИЛА:
-1. НЕ ПРИДУМЫВАЙ контент. Используй ТОЛЬКО тексты, кнопки, логотипы видимые на скриншоте.
-2. Воспроизведи ТОЧНУЮ структуру: navbar, hero, секции, footer — в том же порядке.
-3. Извлеки ЦВЕТА пиксель-точно: фон, текст, кнопки, бордеры — запиши в tokens.color.
-4. Извлеки ШРИФТЫ: определи family (Inter/Sora/Manrope/etc), weight, размеры заголовков/текста.
-5. Извлеки ОТСТУПЫ: padding секций, gap между элементами, margin — запиши в frame (padding/gap).
-6. Извлеки РАДИУСЫ кнопок/карточек — запиши в tokens.radius.
-7. Вложенность: если видишь карточку с иконкой+заголовком+текстом — это children внутри card.
-8. Кнопки: текст verbatim, variant (primary/secondary/outline/ghost) по визуальному стилю.
-9. Позиции: если элементы расположены горизонтально — frame.direction="row", вертикально — "column".
-10. Верни ОДИН валидный JSON по схеме Design IR. Без markdown, без пояснений."""
-
-
-@app.post("/api/vision-decompose")
-def vision_decompose(req: VisionDecomposeReq):
-    """Vision-анализ скриншота → pixel-perfect Design IR.
-    Автоматически перебирает провайдеров (gemini → groq → qwen)."""
-    if not req.image:
-        return err(422, "Нужно изображение (base64 data URL).")
-
-    # подготавливаем изображение (resize для vision API)
-    img_url = prepare_image_b64(req.image)
-
-    brief_hint = f"\n\nДополнительный контекст: {req.brief}" if req.brief.strip() else ""
-    user_prompt = (
-        "Проанализируй этот скриншот и верни Design IR (JSON), который ТОЧНО воспроизводит "
-        "всё видимое: структуру, тексты, цвета, шрифты, отступы, радиусы, вложенность. "
-        "Каждый видимый элемент должен быть в IR. Не добавляй ничего от себя."
-        + brief_hint
-    )
-
-    # перебираем провайдеров vision
-    providers_to_try = VISION_PROVIDERS if req.provider not in VISION_PROVIDERS else [req.provider] + [p for p in VISION_PROVIDERS if p != req.provider]
-
-    all_errors = []
-    for provider in providers_to_try:
-        try:
-            raw = llm.chat_vision(provider, img_url, user_prompt, VISION_SYSTEM_PROMPT, 0.1,
-                                  role="vision")
-        except Exception as e:
-            all_errors.append(f"{provider}: {e}")
-            continue
-
-        ir, error = parse_ir_response(raw)
-        if ir is None:
-            all_errors.append(f"{provider}: {error}")
-            continue
-
-        errors = validate_ir(ir)
-        if errors:
-            # repair attempt
-            repair_prompt = (
-                "Следующий JSON не прошёл валидацию по схеме Design IR. Ошибки:\n- "
-                + "\n- ".join(errors[:8])
-                + "\n\nИсправь минимально и верни только исправленный JSON:\n\n"
-                + json.dumps(ir, ensure_ascii=False)
-            )
-            try:
-                raw2 = llm.chat_vision(provider, img_url, repair_prompt, VISION_SYSTEM_PROMPT, 0.1,
-                                       role="vision")
-                ir2, _ = parse_ir_response(raw2)
-                if ir2 and not validate_ir(ir2):
-                    ir = ir2
-            except Exception:
-                pass
-
-        return {"ir": ir, "provider_used": provider}
-
-    return err(502, f"Все vision-провайдеры недоступны. Ошибки: {' | '.join(all_errors)}. Установите GROQ_API_KEY (console.groq.com) или GEMINI_API_KEY (aistudio.google.com) — оба бесплатны.")
 
 
 @app.post("/api/scrape")
@@ -737,20 +783,42 @@ def cache_stats():
     return cache_store.stats()
 
 
+@app.post("/api/project/save")
+def project_save(req: ProjectSaveReq):
+    return project_store.save_project(req.project, req.user_id, req.project_id)
+
+
+@app.post("/api/project/load")
+def project_load(req: ProjectLoadReq):
+    saved = project_store.load_project(req.user_id, req.project_id)
+    if not saved:
+        return {"project": None, "updated_at": None}
+    return {"project": saved["payload"], "updated_at": saved["updated_at"]}
+
+
+@app.get("/api/project/taste")
+def project_taste():
+    return project_store.load_taste_profile()
+
+
 @app.get("/nodes")
 def nodes_page():
-    # Legacy-граф снят (Спринт 5 завершён, Фазы A/B1/B2/B3/C в main): старый
-    # адрес перенаправляет на новый React Flow UI
-    return RedirectResponse(url="/", status_code=307)
+    # Legacy-граф снят: старый адрес ведёт в единственную актуальную SPA.
+    return RedirectResponse(url="/flow", status_code=307)
 
 
 @app.get("/")
+def root_page():
+    # Корень не является отдельной поверхностью продукта: канонический UI только /flow.
+    return RedirectResponse(url="/flow", status_code=307)
+
+
 @app.get("/flow")
 @app.get("/flow/{rest:path}")
 def flow_page():
-    # Главный маршрут и /flow — новый нодовый редактор (React Flow, сборка из
-    # frontend/): SPA-фолбэк — любой подпуть отдаём index.html, ассеты приходят
-    # через /static/flow/
+    # Единственная актуальная SPA: новый нодовый редактор (React Flow, сборка из
+    # frontend/). Любой подпуть /flow отдаёт index.html, ассеты приходят через
+    # /static/flow/.
     return FileResponse(Path(__file__).resolve().parent / "static" / "flow" / "index.html")
 
 
@@ -765,7 +833,7 @@ async def unhandled(request, exc):
 
 if __name__ == "__main__":
     import uvicorn
-    url = "http://127.0.0.1:8420"
+    url = "http://127.0.0.1:8420/flow"
     print(f"DesignAI Web: {url}")
     try:
         webbrowser.open(url)

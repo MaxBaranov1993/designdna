@@ -10,6 +10,7 @@
 import base64
 import io
 import json
+import re
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -476,13 +477,14 @@ STRUCTURE_SYSTEM = """Ты — UI-аналитик. Тебе дают скрин
 
 
 def analyze_structure(image_b64: str, provider: str, llm_module) -> dict:
-    """VLM-анализ структуры скриншота. Работает с любым провайдером."""
+    """VLM-анализ структуры скриншота через OpenRouter роль reproduce."""
     prompt = (
         "Проанализируй этот UI-скриншот. Опиши структуру: какие компоненты видны, "
         "их тип и расположение. Верни JSON по схеме."
     )
     try:
-        raw = llm_module.chat_vision(provider, image_b64, prompt, STRUCTURE_SYSTEM, 0.2)
+        raw = llm_module.chat_vision(provider, image_b64, prompt, STRUCTURE_SYSTEM, 0.2,
+                                     role="reproduce")
         return json.loads(llm_module.extract_json(raw))
     except Exception as e:
         return {"components": [], "layout": "", "error": str(e)}
@@ -490,11 +492,11 @@ def analyze_structure(image_b64: str, provider: str, llm_module) -> dict:
 
 # ---------- полный пайплайн ----------
 
-def run_pipeline(image_b64: str, provider: str = "qwen", llm_module=None,
+def run_pipeline(image_b64: str, provider: str = "openrouter", llm_module=None,
                  regions: list | None = None) -> dict:
     """Полный пайплайн pixel-perfect reproduction.
 
-    1. VLM-анализ структуры (любой провайдер)
+    1. VLM-анализ структуры через OpenRouter
     2. Python-измерения: цвета, bounding boxes
     3. Извлечение иконок/контента как PNG base64
     4. Сборка HTML с absolute positioning
@@ -641,6 +643,12 @@ def to_design_ir(colors: dict, measurements: dict, structure: dict,
     # строим props в зависимости от типа
     if section_type == "navbar":
         props = _build_navbar_props(components, contents, icons, measurements)
+    elif section_type == "contact-form":
+        props = _build_contact_form_props(components)
+    elif section_type == "pricing":
+        props = _build_pricing_props(components)
+    elif section_type == "stats":
+        props = _build_stats_props(components)
     else:
         props = _build_generic_props(components, contents, icons, measurements)
 
@@ -724,6 +732,22 @@ def _guess_section_type(components: list, layout: str, measurements: dict) -> st
     if content_h and content_h < 150:
         return "navbar"
 
+    # структурные сигналы вместо слепого fallback в hero
+    if any(w in types_lower for w in ["input", "textarea", "checkbox", "form field"]):
+        return "contact-form"
+    if sum(1 for c in components
+           if "link" in (c.get("type", "") + " " + c.get("description", "")).lower()) >= 3:
+        return "navbar"
+    names = " ".join(str(c.get("name", "")) for c in components)
+    type_counts = Counter(str(c.get("type", "")).lower() for c in components if c.get("type"))
+    repeated = type_counts.most_common(1)[0][1] if type_counts else 0
+    if repeated >= 3:  # повторяющиеся карточки
+        if re.search(r"[$€£₽]\s*\d|\d+\s*(?:usd|eur|rub|/mo|month)", names, re.I):
+            return "pricing"
+        if sum(1 for c in components
+               if re.search(r"\d[\d\s.,]*[%kK+]|\b\d{2,}\b", str(c.get("name", "")))) >= 2:
+            return "stats"
+
     return "hero"
 
 
@@ -756,6 +780,78 @@ def _build_navbar_props(components: list, contents: list, icons: list,
     }
 
 
+def _build_contact_form_props(components: list) -> dict:
+    """contact-form props из VLM-структуры: поля формы и кнопка submit."""
+    texts = [str(c.get("name", "")) for c in components
+             if c.get("type", "").lower() in ("text", "heading") and c.get("name")]
+    fields = []
+    for c in components:
+        blob = (str(c.get("type", "")) + " " + str(c.get("name", "")) + " "
+                + str(c.get("description", ""))).lower()
+        if not any(w in blob for w in ("input", "textarea", "checkbox", "field")):
+            continue
+        name = str(c.get("name") or "").strip()
+        input_type = ("textarea" if "textarea" in blob or "message" in blob else
+                      "email" if "mail" in blob else
+                      "tel" if "phone" in blob or "tel" in blob else "text")
+        fields.append({"label": (name or input_type.title())[:60], "inputType": input_type})
+    if not fields:
+        fields = [{"label": "Email", "inputType": "email"}]
+    buttons = [str(c.get("name", "")) for c in components
+               if c.get("type", "").lower() == "button" and c.get("name")]
+    props = {
+        "heading": (texts[0] if texts else "Contact us")[:120],
+        "fields": fields[:8],
+        "submitText": (buttons[0] if buttons else "Send")[:40],
+    }
+    if len(texts) > 1:
+        props["subheading"] = texts[1][:300]
+    return props
+
+
+def _build_pricing_props(components: list) -> dict:
+    """pricing props: повторяющиеся карточки → тарифы с реальными ценами."""
+    texts = [str(c.get("name", "")) for c in components
+             if c.get("type", "").lower() in ("text", "heading") and c.get("name")]
+    cards = [c for c in components
+             if c.get("type", "").lower() in ("card", "panel", "tile", "item")] or components[:1]
+    tiers = []
+    for c in cards[:4]:
+        name = str(c.get("name") or "").strip()
+        desc = str(c.get("description") or "").strip()
+        price = re.search(r"[$€£₽]\s*\d[\d\s.,]*|\d[\d\s.,]*\s*(?:usd|eur|rub|₽)",
+                          name + " " + desc, re.I)
+        tiers.append({
+            "name": (name or f"Plan {len(tiers) + 1}")[:60],
+            "price": price.group(0).strip()[:40] if price else "Custom",
+            "features": ([desc[:120]] if desc else [(name or "See plan details")[:120]]),
+            "cta": "Choose",
+        })
+    return {"heading": (texts[0] if texts else "Pricing")[:120], "tiers": tiers}
+
+
+def _build_stats_props(components: list) -> dict:
+    """stats props: числовые компоненты → value/label (минимум 2 гарантировано типом)."""
+    items = []
+    for c in components:
+        name = str(c.get("name") or "").strip()
+        match = re.search(r"\d[\d\s.,]*[%kK+]|\b\d{2,}\b", name)
+        if not match:
+            continue
+        value = match.group(0).strip()
+        label = name.replace(value, "").strip(" -–—:·")[:60]
+        items.append({"value": value[:20], "label": label or str(c.get("type") or "metric")[:60]})
+        if len(items) >= 6:
+            break
+    props: dict = {"items": items}
+    heading = next((str(c.get("name")) for c in components
+                    if c.get("type", "").lower() in ("text", "heading") and c.get("name")
+                    and not re.search(r"\d", str(c.get("name")))), "")
+    if heading:
+        props["heading"] = heading[:120]
+    return props
+
+
 def _build_generic_props(components: list, contents: list, icons: list,
                          measurements: dict) -> dict:
     """Собрать hero props как fallback для произвольной структуры."""
@@ -770,8 +866,10 @@ def _build_generic_props(components: list, contents: list, icons: list,
     buttons = [c.get("name", "Button") for c in components
                if c.get("type", "").lower() == "button"]
 
-    return {
+    props = {
         "heading": heading[:120],
-        "subheading": subheading[:300] if subheading else "Pixel-perfect reproduction from screenshot",
         "ctaPrimary": {"text": buttons[0] if buttons else "Get Started", "variant": "primary"},
     }
+    if subheading:
+        props["subheading"] = subheading[:300]
+    return props

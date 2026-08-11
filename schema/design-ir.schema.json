@@ -8,6 +8,11 @@
   "additionalProperties": false,
   "properties": {
     "version": { "const": "1.0" },
+    "sourcePreview": {
+      "type": "string",
+      "description": "Exact screenshot data URL for Source Import pixel-reference rendering."
+    },
+    "responsive": { "$ref": "#/$defs/responsiveDocument" },
     "frame": {
       "$ref": "#/$defs/frame",
       "description": "Артборд: width — ширина холста (по умолчанию 960), height — обычно hug; layout:free разрешает секциям абсолютное позиционирование по x/y"
@@ -18,6 +23,10 @@
       "properties": {
         "name": { "type": "string" },
         "description": { "type": "string" },
+        "activeViewport": {
+          "enum": ["desktop", "tablet", "mobile"],
+          "description": "Активный вьюпорт предпросмотра (заполняет UI, не генератор)"
+        },
         "styleTags": {
           "type": "array",
           "items": { "type": "string" },
@@ -145,6 +154,52 @@
         "clip": { "type": "boolean", "description": "Обрезать содержимое за границами узла, overflow:hidden (clip в pen.dev)" }
       }
     },
+    "responsiveDocument": {
+      "type": "object",
+      "required": ["viewports"],
+      "additionalProperties": false,
+      "properties": {
+        "viewports": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "desktop": { "$ref": "#/$defs/sourceViewport" },
+            "tablet": { "$ref": "#/$defs/sourceViewport" },
+            "mobile": { "$ref": "#/$defs/sourceViewport" }
+          }
+        }
+      }
+    },
+    "sourceViewport": {
+      "type": "object",
+      "required": ["width", "height"],
+      "additionalProperties": false,
+      "properties": {
+        "width": { "type": "number", "minimum": 1 },
+        "height": { "type": "number", "minimum": 1 },
+        "preview": { "type": "string" },
+        "coverage": { "type": "number", "minimum": 0, "maximum": 100 },
+        "fidelity": { "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "responsiveOverrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "desktop": { "$ref": "#/$defs/responsiveOverride" },
+        "tablet": { "$ref": "#/$defs/responsiveOverride" },
+        "mobile": { "$ref": "#/$defs/responsiveOverride" }
+      }
+    },
+    "responsiveOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "visible": { "type": "boolean" },
+        "frame": { "$ref": "#/$defs/frame" },
+        "style": { "$ref": "#/$defs/elementStyle" }
+      }
+    },
     "frameSize": {
       "description": "Число px, fill — растянуть до родителя, hug — по содержимому",
       "oneOf": [
@@ -167,21 +222,29 @@
       "additionalProperties": false,
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "sourceKey": { "type": "string", "maxLength": 500 },
+        "responsive": { "$ref": "#/$defs/responsiveOverrides" },
         "frame": { "$ref": "#/$defs/frame" },
+        "style": { "$ref": "#/$defs/elementStyle" },
         "_frames": {
           "type": "object",
           "description": "Frame-оверрайды для внутренних props-элементов секции. Ключи — пути (props.links.0, props.cta, props.heading), значения — frame-объекты.",
           "additionalProperties": { "$ref": "#/$defs/frame" }
         },
+        "semantic": { "$ref": "#/$defs/sourceSemantic" },
         "type": {
           "enum": [
             "navbar", "hero", "logo-cloud", "feature-grid", "feature-alternating",
             "stats", "steps", "gallery", "testimonials", "pricing", "comparison",
             "team", "blog-grid", "faq", "cta", "contact-form", "newsletter",
-            "banner", "footer"
+            "banner", "footer", "source-block"
           ]
         },
         "variant": { "type": "string", "description": "Вариант из каталога BLOCKS.md для данного type" },
+        "preview": {
+          "type": "string",
+          "description": "Exact source screenshot data URL for DOM-capture sections."
+        },
         "props": { "type": "object" },
         "children": {
           "type": "array",
@@ -222,6 +285,21 @@
           "then": { "properties": { "props": { "$ref": "#/$defs/footerProps" } } }
         }
       ]
+    },
+
+    "sourceSemantic": {
+      "type": "object",
+      "required": ["role", "label", "selector"],
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "enum": ["header", "footer", "carousel", "categories", "product-grid", "services-grid", "journal", "how-it-works", "faq", "cta", "trust", "pricing", "testimonials", "gallery", "section"]
+        },
+        "label": { "type": "string" },
+        "selector": { "type": "string" },
+        "repeatCount": { "type": "integer", "minimum": 1 },
+        "repeatKind": { "type": "string" }
+      }
     },
 
     "navbarProps": {
@@ -393,6 +471,8 @@
           "enum": ["heading", "text", "button", "image", "badge", "card", "icon", "divider", "avatar", "rating", "input", "stat", "list", "rect"]
         },
         "frame": { "$ref": "#/$defs/frame" },
+        "sourceKey": { "type": "string", "maxLength": 500 },
+        "responsive": { "$ref": "#/$defs/responsiveOverrides" },
         "text": { "type": "string" },
         "title": { "type": "string" },
         "level": { "type": "integer", "minimum": 1, "maximum": 4 },
@@ -408,6 +488,7 @@
         "tone": { "enum": ["default", "primary", "accent", "muted", "success", "warning", "error"] },
         "fill": { "type": "string", "pattern": "^#[0-9a-fA-F]{3,8}$", "description": "Цвет заливки rect (hex)" },
         "radius": { "type": "number", "minimum": 0, "description": "Скругление углов rect, px" },
+        "style": { "$ref": "#/$defs/elementStyle" },
         "name": { "type": "string" },
         "role": { "type": "string" },
         "value": { "type": ["string", "number"] },
@@ -418,6 +499,30 @@
           "type": "array",
           "items": { "$ref": "#/$defs/element" }
         }
+      }
+    },
+    "elementStyle": {
+      "type": "object",
+      "description": "Sanitized local computed style for an imported DOM layer.",
+      "additionalProperties": false,
+      "properties": {
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{3,8}$" },
+        "background": { "type": "string", "pattern": "^#[0-9a-fA-F]{3,8}$" },
+        "fontFamily": { "type": "string", "maxLength": 160 },
+        "fontSize": { "type": "number", "minimum": 1, "maximum": 512 },
+        "fontWeight": { "type": "integer", "minimum": 100, "maximum": 900 },
+        "lineHeight": { "type": "number", "minimum": 0.5, "maximum": 10 },
+        "letterSpacing": { "type": "number", "minimum": -20, "maximum": 100 },
+        "borderColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{3,8}$" },
+        "borderWidth": { "type": "number", "minimum": 0, "maximum": 64 },
+        "borderRadius": { "type": "number", "minimum": 0, "maximum": 1000 },
+        "boxShadow": { "type": "string", "maxLength": 300 },
+        "textDecoration": { "enum": ["none", "underline", "line-through", "overline"] },
+        "whiteSpace": { "enum": ["normal", "nowrap", "pre", "pre-wrap", "pre-line", "break-spaces"] },
+        "overflow": { "enum": ["visible", "hidden", "clip", "scroll", "auto"] },
+        "textTransform": { "enum": ["none", "uppercase", "lowercase", "capitalize"] },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "objectFit": { "enum": ["contain", "cover", "fill", "none", "scale-down"] }
       }
     },
     "buttonElement": {

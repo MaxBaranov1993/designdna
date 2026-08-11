@@ -1,9 +1,7 @@
-"""Пайплайн мульти-агентного ревью: diff спринта → два независимых ревьювера
-(оба — qwencloud/Bailian, провайдер qwen) → консолидированный JSON-отчёт.
+"""Пайплайн независимого ревью: diff спринта → два OpenRouter-ревьювера
+→ консолидированный JSON-отчёт.
 
-Политика владельца от 2026-08-05: разработка и ревью — только API qwencloud
-(провайдер qwen, Bailian Token Plan); OpenRouter и прямые API других вендоров —
-только LLM-вызовы внутри продукта (ноды).
+Все LLM-вызовы проходят через OpenRouter.
 Оркестрация — на мне (lead): модели дают независимые мнения, триаж и фиксы — человек/lead.
 Использование:
     .venv/Scripts/python app/review_pipeline.py [git-range]   (по умолчанию 737478f..HEAD)
@@ -20,20 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import llm_client
 
-# Политика владельца от 2026-08-05: разработка/ревью — только qwencloud (провайдер
-# qwen, Bailian Token Plan); gemini/xai и прочие прямые API — только ноды продукта.
-# (имя, provider, model, fallback) — fallback срабатывает при ошибке вызова.
+# (имя, provider, model, fallback) — все модели вызываются через OpenRouter.
 REVIEWERS = [
-    ("qwen3.8-max", "qwen", "qwen3.8-max", None),
-    # вторая модель qwen для независимого мнения; qwen3-max и qwen-plus на
-    # token-plan эндпоинте отсутствуют (404), из доступных выбран qwen3.7-max
-    ("qwen3.7-max", "qwen", "qwen3.7-max", None),
-]
-# Вариант через OpenRouter — только для работ по нодам продукта (по политике
-# ноды ходят в OpenRouter); включается явно флагом --allow-openrouter.
-REVIEWERS_OR = [
-    ("qwen3.8-max", "openrouter", "qwen/qwen3.8-max", None),
-    ("glm-5.2", "openrouter", "z-ai/glm-5.2", None),
+    ("architecture", "openrouter", "anthropic/claude-opus-5", ("openrouter", "anthropic/claude-sonnet-5")),
+    ("implementation", "openrouter", "qwen/qwen3-coder-plus", ("openrouter", "anthropic/claude-sonnet-5")),
 ]
 
 PROMPT = (
@@ -93,7 +81,7 @@ def main() -> int:
         if chk.returncode != 0:
             print("некорректная ревизия в диапазоне:", rev)
             return 2
-    reviewers = REVIEWERS_OR if "--allow-openrouter" in flags else REVIEWERS
+    reviewers = REVIEWERS
     # '--' отделяет ревизии от pathspec: аргументы после него git не примет за флаги
     diff = subprocess.run(
         ["git", "-C", str(ROOT), "diff", rng, "--", "app/"],

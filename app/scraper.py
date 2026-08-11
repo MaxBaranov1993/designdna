@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import base64
+import copy
 import io
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -72,13 +74,55 @@ def extract_text_content(html: str) -> str:
     return soup.get_text(separator="\n", strip=True)[:8000]
 
 
-# ---------- детекция границ блоков (BlockParse, §7.1 NODES-HOUDINI.md) ----------
+# ---------- детекция границ блоков (Source Import, docs/ARCHITECTURE.md) ----------
 
 # Контентные семантические теги — кандидаты в блоки; шапка/подвал — отдельно
-_BLOCK_TAGS = ("main", "section", "article", "aside")
-# clone каждого блока = LLM-вызов; ограничиваем расход (§7.4)
-_MAX_BLOCKS = 12
+_BLOCK_TAGS = ("main", "section", "aside")
+# clone каждого блока = LLM-вызов; ограничиваем расход
+_MAX_BLOCKS = 16
 _SAFE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+
+_SEMANTIC_PATTERNS = (
+    ("carousel", re.compile(r"carousel|slider|slideshow|swiper|\bhero\b|promo[-_ ]?slider", re.I)),
+    ("categories", re.compile(r"categor|catalog|rubric|taxonomy|departments", re.I)),
+    ("product-grid", re.compile(r"listing|product[-_ ]?grid|product[-_ ]?list|shelf|market[-_ ]?grid", re.I)),
+    ("journal", re.compile(r"journal|blog|editorial|articles|stories|news[-_ ]?grid", re.I)),
+    ("how-it-works", re.compile(r"how[-_ ]?(?:it[-_ ]?)?works|steps|process", re.I)),
+    ("faq", re.compile(r"faq|questions|accordion|help[-_ ]?center", re.I)),
+    ("cta", re.compile(r"\bcta\b|seller|sell[-_ ]?banner|conversion|call[-_ ]?to[-_ ]?action", re.I)),
+    ("trust", re.compile(r"trust|safety|security|benefits|advantages|guarantee", re.I)),
+    ("pricing", re.compile(r"pricing|plans|tariffs", re.I)),
+    ("testimonials", re.compile(r"testimonials|reviews|social[-_ ]?proof", re.I)),
+    ("gallery", re.compile(r"gallery|portfolio|showcase", re.I)),
+)
+
+_HEADING_PATTERNS = (
+    ("services-grid", re.compile(r"услуг|services?|мастер", re.I)),
+    ("product-grid", re.compile(r"новое|товар|объявлен|products?|listings?", re.I)),
+    ("journal", re.compile(r"журнал|блог|стать", re.I)),
+    ("how-it-works", re.compile(r"как это работает|how it works", re.I)),
+    ("faq", re.compile(r"частые вопросы|вопросы и ответы|frequently asked|faq", re.I)),
+    ("trust", re.compile(r"безопас|защит|гарант|trust|safety", re.I)),
+    ("cta", re.compile(r"продать|разместить|начать|sell|place an ad|get started", re.I)),
+)
+
+_ROLE_LABELS = {
+    "header": "Header",
+    "footer": "Footer",
+    "carousel": "Carousel",
+    "categories": "Categories",
+    "product-grid": "Product cards",
+    "services-grid": "Service cards",
+    "journal": "Journal",
+    "how-it-works": "How it works",
+    "faq": "FAQ",
+    "cta": "CTA",
+    "trust": "Trust / benefits",
+    "pricing": "Pricing",
+    "testimonials": "Testimonials",
+    "gallery": "Gallery",
+    "section": "Section",
+}
 
 
 def _slug(text: str) -> str:
@@ -116,6 +160,49 @@ def _block_heading(el: Tag) -> str:
     return h.get_text(" ", strip=True)[:80] if h else ""
 
 
+def _identity_role(el: Tag) -> str:
+    """Role expressed by tag/id/class only; safe for promoting generic divs."""
+    if el.name == "header":
+        return "header"
+    if el.name == "footer":
+        return "footer"
+
+    identity = " ".join((
+        str(el.get("id") or ""),
+        " ".join(el.get("class") or []),
+        str(el.get("role") or ""),
+    ))
+    for role, pattern in _SEMANTIC_PATTERNS:
+        if pattern.search(identity):
+            return role
+
+    if el.name == "nav":
+        return "categories"
+    return "section"
+
+
+def _semantic_role(el: Tag) -> str:
+    """Best-effort semantic role without treating repeated cards as page sections."""
+    identity_role = _identity_role(el)
+    if identity_role != "section":
+        if identity_role == "product-grid" and _HEADING_PATTERNS[0][1].search(_block_heading(el)):
+            return "services-grid"
+        return identity_role
+
+    heading = _block_heading(el)
+    for role, pattern in _HEADING_PATTERNS:
+        if pattern.search(heading):
+            return role
+    if el.find("h1"):
+        return "carousel"
+    return "section"
+
+
+def _block_label(el: Tag, role: str) -> str:
+    heading = _block_heading(el)
+    return heading or _ROLE_LABELS.get(role, role.replace("-", " ").title())
+
+
 def detect_blocks(html: str) -> list:
     """Детерминированная детекция границ блоков страницы.
 
@@ -127,71 +214,79 @@ def detect_blocks(html: str) -> list:
     Страницы без семантики: контейнер каждого h1/h2 вне уже найденных блоков.
     """
     soup = BeautifulSoup(html, "lxml")
-    blocks = []
-    names = set()
-    covered = []  # элементы, ставшие блоком (для исключения вложенных дублей)
+    body = soup.body or soup
+    candidates: list[Tag] = []
 
-    def unique(base: str) -> str:
-        base = base or f"block-{len(blocks) + 1}"
-        name, n = base, 1
+    def add(el: Tag | None) -> None:
+        if el is not None and el not in candidates:
+            candidates.append(el)
+
+    # Global chrome is one block each. Nested section headers never become outputs.
+    add(body.find("header"))
+
+    # A semantic container is the unit of output. Repeated <article> cards/slides are
+    # intentionally not candidates: their parent carousel/grid becomes one block.
+    for el in body.find_all(_BLOCK_TAGS):
+        add(el)
+    for el in body.find_all("nav"):
+        if el.find_parent("main") is not None and el.find_parent("section") is None:
+            add(el)
+
+    # Modern component frameworks often render page sections as divs. Promote only
+    # containers with a meaningful id/class; a generic wrapper stays internal.
+    for el in body.find_all(["div", "ol", "ul"]):
+        if _identity_role(el) != "section":
+            add(el)
+
+    add(body.find("footer"))
+
+    # Drop page-wide main and nested aliases of the same semantic block.
+    meaningful = []
+    for el in candidates:
+        nested = [other for other in candidates if other is not el and other in el.descendants]
+        if el.name == "main" and len(nested) >= 2:
+            continue
+        if any(parent is not el and parent.name != "main" and el in parent.descendants and
+               (parent.name in ("header", "footer", "section", "aside") or
+                _semantic_role(parent) == _semantic_role(el))
+               for parent in candidates):
+            continue
+        meaningful.append(el)
+
+    # Preserve document order, so footer is last rather than the second output.
+    document_order = {id(el): i for i, el in enumerate(body.find_all(True))}
+    meaningful.sort(key=lambda el: document_order.get(id(el), 10**9))
+
+    # Fallback for sites without semantic markup: nearest page-level h1/h2 wrapper.
+    if len(meaningful) <= 2:
+        for h in body.find_all(["h1", "h2"])[:20]:
+            node = h
+            while node.parent is not None and node.parent is not body:
+                if node.parent.name in ("main", "section", "article", "aside"):
+                    break
+                node = node.parent
+            if node is not h and node is not body and len(node.get_text(" ", strip=True)) >= 40:
+                add(node)
+        meaningful = [el for el in candidates if el.name != "main"]
+        meaningful.sort(key=lambda el: document_order.get(id(el), 10**9))
+
+    blocks = []
+    names: set[str] = set()
+    for el in meaningful[:_MAX_BLOCKS]:
+        role = _semantic_role(el)
+        name, n = role, 1
         while name in names:
             n += 1
-            name = f"{base}-{n}"
+            name = f"{role}-{n}"
         names.add(name)
-        return name
-
-    def register(el: Tag, base: str) -> None:
-        if len(blocks) >= _MAX_BLOCKS:
-            return
-        blocks.append({"name": unique(base), "selector": _css_selector(el),
-                       "tag": el.name, "heading": _block_heading(el)})
-        covered.append(el)
-
-    def inside_covered(el: Tag) -> bool:
-        return any(el is c or c in el.parents for c in covered)
-
-    # 1) шапка: header (или nav, если header нет) — один блок
-    header = soup.find("header") or soup.find("nav")
-    if header is not None:
-        register(header, "header")
-
-    # 2) подвал
-    footer = soup.find("footer")
-    if footer is not None and not inside_covered(footer):
-        register(footer, "footer")
-
-    # 3) контентные семантические блоки
-    candidates = [el for el in soup.find_all(_BLOCK_TAGS) if not inside_covered(el)]
-    h1 = soup.find("h1")
-    # контейнеры из ≥2 вложенных блоков (main с секциями) не клонируем целиком
-    kept = [el for el in candidates
-            if sum(1 for other in candidates if other is not el and other in el.descendants) < 2]
-    for el in kept:
-        if len(blocks) >= _MAX_BLOCKS:
-            break
-        if any(other is not el and el in other.descendants for other in kept):
-            continue  # вложенный в уже взятый блок — не дублируем
-        base = "hero" if h1 is not None and h1 in el.descendants else \
-            (_slug(_block_heading(el)) or el.name)
-        register(el, base)
-
-    # 4) секционирование по заголовкам — страницы без семантической разметки
-    body = soup.body or soup
-    for h in body.find_all(["h1", "h2"])[:20]:
-        if len(blocks) >= _MAX_BLOCKS:
-            break
-        if inside_covered(h):
-            continue
-        # контейнер блока — ближайший предок заголовка, прямой потомок body
-        node = h
-        while node.parent is not None and node.parent is not body:
-            node = node.parent
-        if node is body or node is h or node.name in ("script", "style", "head"):
-            continue
-        if inside_covered(node) or len(node.get_text(" ", strip=True)) < 40:
-            continue
-        register(node, _slug(h.get_text(" ", strip=True)) or f"section-{len(blocks) + 1}")
-
+        blocks.append({
+            "name": name,
+            "label": _block_label(el, role),
+            "kind": role,
+            "selector": _css_selector(el),
+            "tag": el.name,
+            "heading": _block_heading(el),
+        })
     return blocks
 
 
@@ -308,7 +403,7 @@ def parse_design_tokens(css_text: str) -> dict:
 
 # ---------- image prep (Pillow) ----------
 
-MAX_VISION_DIM = 1568  # qwen-vl-max max dimension
+MAX_VISION_DIM = 1568  # безопасный предел для vision-маршрута OpenRouter
 
 
 def prepare_image_b64(data_url: str) -> str:
@@ -398,6 +493,941 @@ def render_page_sync(url: str, viewport_w: int = 1440, viewport_h: int = 900,
     result.css_text = extract_css(result.html)
     result.structure = extract_structure(result.html)
     return result
+
+
+def rendered_html(url: str, timeout_ms: int = 20000) -> str:
+    """HTML живого DOM после JS (один headless-проход Chromium).
+
+    Детекция блоков по raw httpx HTML расходится с capture, который resolve'ит
+    селекторы в post-JS DOM (SSR/hydration); page.content() снимает именно его.
+    Тот же settle, что и в capture_block_irs: domcontentloaded + 900ms + kill
+    анимаций, чтобы раскладка успела стать финальной.
+    """
+    from playwright.sync_api import sync_playwright
+
+    validate_public_url(url)  # SSRF-гард
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            page.wait_for_timeout(900)
+            page.add_style_tag(content="""
+              *, *::before, *::after { animation:none !important; transition:none !important; }
+              html { scroll-behavior:auto !important; }
+            """)
+            return page.content()
+        finally:
+            browser.close()
+
+
+# ---------- BlockParse: точный редактируемый DOM-слепок ----------
+
+def _css_color_to_hex(value: str, fallback: str) -> str:
+    """Безопасно приводит computed CSS color к hex для Design IR."""
+    value = (value or "").strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{3,8}", value):
+        return value[:7]
+    match = re.fullmatch(r"rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[^)]+)?\)", value)
+    if not match:
+        return fallback
+    return "#" + "".join(f"{min(255, int(part)):02x}" for part in match.groups())
+
+
+# JS: сырые сигналы дизайн-токенов со всей страницы (один desktop-проход).
+# Считаем частоты по живому DOM: фоны кнопок, цвета ссылок, бордеры, мелкий
+# (muted) текст, шрифты заголовков/тела, радиусы, тени, отступы секций и
+# max-width контейнеров. Маппинг в закрытый enum-контракт схемы — в Python.
+_PAGE_TOKEN_SIGNALS_JS = """() => {
+  const num = (v) => Number.parseFloat(v) || 0;
+  const hex = (v) => {
+    const value=String(v||'');
+    const rgb=value.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/);
+    if(rgb){
+      if(rgb[4]!==undefined && Number(rgb[4])<=.05) return null;
+      return '#'+rgb.slice(1,4).map(x=>(+x).toString(16).padStart(2,'0')).join('');
+    }
+    return null;
+  };
+  const visible = (el) => {
+    const r=el.getBoundingClientRect(), cs=getComputedStyle(el);
+    return r.width>=1 && r.height>=1 && cs.display!=='none' && cs.visibility!=='hidden' && Number(cs.opacity)!==0;
+  };
+  const tally = (map,key) => { if(key) map[key]=(map[key]||0)+1; };
+  const top = (map) => { const e=Object.entries(map).sort((a,b)=>b[1]-a[1]); return e.length?e[0][0]:null; };
+  const bodyCs=getComputedStyle(document.body);
+  const sig={bodyBg:hex(bodyCs.backgroundColor)||hex(getComputedStyle(document.documentElement).backgroundColor)||'#ffffff',
+    bodyColor:hex(bodyCs.color),buttonBg:{},linkColor:{},borderColor:{},mutedColor:{},
+    buttonRadius:[],cardRadius:[],inputRadius:[],cardShadowBlur:[],sectionPadding:[],containerWidth:[]};
+  const radiusOf=(cs,r)=>{ const rad=num(cs.borderTopLeftRadius); const side=Math.min(r.width,r.height);
+    return side>0 && rad*2>=side ? 9999 : rad; };
+  for(const el of [...document.body.querySelectorAll('*')].slice(0,800)){
+    if(!visible(el)) continue;
+    const cs=getComputedStyle(el), r=el.getBoundingClientRect();
+    const bg=hex(cs.backgroundColor);
+    const isButton=el.matches('button,[role="button"]') || (el.tagName==='A' && (bg || num(cs.borderTopWidth)>0));
+    if(isButton && bg){ sig.buttonRadius.push(radiusOf(cs,r)); if(bg!==sig.bodyBg) tally(sig.buttonBg,bg); }
+    if(el.tagName==='A') tally(sig.linkColor,hex(cs.color));
+    if(num(cs.borderTopWidth)>0) tally(sig.borderColor,hex(cs.borderTopColor));
+    if(num(cs.fontSize)>0 && num(cs.fontSize)<13 && String(el.innerText||'').trim()) tally(sig.mutedColor,hex(cs.color));
+    if(el.matches('input,select,textarea')) sig.inputRadius.push(num(cs.borderTopLeftRadius));
+    if(el.matches('[class*="card"],article,[class*="tile"]')){
+      sig.cardRadius.push(radiusOf(cs,r));
+      if(cs.boxShadow && cs.boxShadow!=='none'){
+        const lens=[...cs.boxShadow.matchAll(/(-?\\d+(?:\\.\\d+)?)px/g)].map(m=>Math.abs(Number(m[1])));
+        if(lens.length) sig.cardShadowBlur.push(lens.length>=3?lens[2]:Math.max(...lens));
+      }
+    }
+    if(el.matches('body > main > *, body > section, body > div, [class*="section"]')){
+      const pad=num(cs.paddingTop)+num(cs.paddingBottom);
+      if(pad>0 && r.height>=80) sig.sectionPadding.push(pad);
+      if(num(cs.maxWidth)>0) sig.containerWidth.push(num(cs.maxWidth));
+    }
+  }
+  const fontOf=(el)=>{ const cs=getComputedStyle(el);
+    return {family:String(cs.fontFamily||''), weight:Number.parseInt(cs.fontWeight,10)||400}; };
+  const heading=[...document.querySelectorAll('h1,h2')].find(visible);
+  if(heading) sig.displayFont=fontOf(heading);
+  const para=[...document.querySelectorAll('p')].find(visible);
+  sig.bodyFont=fontOf(para||document.body);
+  sig.buttonBg=top(sig.buttonBg); sig.linkColor=top(sig.linkColor);
+  sig.borderColor=top(sig.borderColor); sig.mutedColor=top(sig.mutedColor);
+  return sig;
+}"""
+
+_GENERIC_FAMILIES = {"sans-serif", "serif", "monospace", "system-ui", "inherit", "initial",
+                     "ui-sans-serif", "ui-serif", "ui-monospace", "ui-rounded", "cursive",
+                     "fantasy", "emoji", "math", "fangsong"}
+
+
+def _luminance(hex_color: str) -> float:
+    """Относительная яркость hex-цвета, 0..1 (непонятное → светлое)."""
+    value = str(hex_color or "").lstrip("#")
+    if len(value) == 3:
+        value = "".join(c * 2 for c in value)
+    try:
+        r, g, b = (int(value[i:i + 2], 16) for i in (0, 2, 4))
+    except (ValueError, IndexError):
+        return 1.0
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+
+
+def _median(values: list) -> float | None:
+    nums = sorted(float(v) for v in values or [] if isinstance(v, (int, float)))
+    if not nums:
+        return None
+    mid = len(nums) // 2
+    return nums[mid] if len(nums) % 2 else (nums[mid - 1] + nums[mid]) / 2
+
+
+def _snap_weight(value, fallback: int = 400) -> int:
+    """fontWeight → 300..900 с шагом 100 (enum fontFace схемы)."""
+    try:
+        weight = int(round(float(value) / 100.0) * 100)
+    except (TypeError, ValueError):
+        return fallback
+    return min(900, max(300, weight))
+
+
+def _font_family(value: str, fallback: str = "Inter") -> str:
+    """Первая family из font-stack, без кавычек; generic-семейства не считаются."""
+    family = str(value or "").split(",")[0].strip().strip("'\" ").strip()
+    if not family or family.lower() in _GENERIC_FAMILIES:
+        return fallback
+    return family[:60]
+
+
+def _radius_enum(px: float | None) -> str:
+    if px is None:
+        return "md"
+    if px >= 999:  # pill: JS шлёт 9999, когда radius >= 50% меньшей стороны
+        return "full"
+    if px < 1:
+        return "none"
+    if px <= 4:
+        return "sm"
+    if px <= 8:
+        return "md"
+    if px <= 14:
+        return "lg"
+    return "xl"
+
+
+def _section_spacing_enum(px: float | None) -> str:
+    if px is None:
+        return "md"
+    if px < 40:
+        return "sm"
+    if px < 80:
+        return "md"
+    if px < 128:
+        return "lg"
+    return "xl"
+
+
+def _container_enum(px: float | None) -> str:
+    if px is None:
+        return "default"
+    if px < 720:
+        return "narrow"
+    if px <= 1152:
+        return "default"
+    if px <= 1440:
+        return "wide"
+    return "full"
+
+
+def _shadow_enum(blur: float | None) -> str:
+    if not blur:
+        return "none"
+    if blur <= 6:
+        return "sm"
+    if blur <= 20:
+        return "md"
+    return "lg"
+
+
+def _page_tokens_from_signals(signals: dict | None) -> dict | None:
+    """Сырые сигналы живой страницы → токены строго по контракту схемы.
+
+    Любой пробой отдельного сигнала — локальный дефолт (как раньше hardcode в
+    _captured_ir); полный сбой — None, и caller остаётся на прежних дефолтах.
+    """
+    if not isinstance(signals, dict):
+        return None
+    try:
+        bg = _css_color_to_hex(str(signals.get("bodyBg") or ""), "#ffffff")
+        text = _css_color_to_hex(str(signals.get("bodyColor") or ""), "#171717")
+        mode = "dark" if _luminance(bg) < 0.5 else "light"
+        primary = _css_color_to_hex(str(signals.get("buttonBg") or ""), text)
+        display = signals.get("displayFont") or {}
+        body_font = signals.get("bodyFont") or {}
+        return {
+            "mode": mode,
+            "color": {
+                "primary": primary,
+                "secondary": primary,
+                "accent": _css_color_to_hex(str(signals.get("linkColor") or ""), primary),
+                "background": bg,
+                "surface": bg,
+                "text": text,
+                "textMuted": _css_color_to_hex(str(signals.get("mutedColor") or ""),
+                                               "#9ca3af" if mode == "dark" else "#666666"),
+                "border": _css_color_to_hex(str(signals.get("borderColor") or ""),
+                                            "#374151" if mode == "dark" else "#d1d5db"),
+            },
+            "font": {
+                "display": {"family": _font_family(display.get("family")),
+                            "weight": _snap_weight(display.get("weight", 700), 700)},
+                "body": {"family": _font_family(body_font.get("family")),
+                         "weight": _snap_weight(body_font.get("weight", 400), 400)},
+                "scale": "default",
+            },
+            "radius": {
+                "card": _radius_enum(_median(signals.get("cardRadius"))),
+                "button": _radius_enum(_median(signals.get("buttonRadius"))),
+                "input": _radius_enum(_median(signals.get("inputRadius"))),
+            },
+            "spacing": {
+                "section": _section_spacing_enum(_median(signals.get("sectionPadding"))),
+                "container": _container_enum(_median(signals.get("containerWidth"))),
+            },
+            "shadow": _shadow_enum(_median(signals.get("cardShadowBlur"))),
+        }
+    except Exception:
+        return None
+
+
+def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) -> dict:
+    """DOM-capture → валидный свободный Design IR.
+
+    Это не попытка угадать, что такое «hero» или «footer». Блок остаётся
+    фреймом с измеренными слоями — именно такая модель нужна Editor-ноде.
+    """
+    name = block["name"]
+    root = capture["root"]
+    root_style = root.get("style", {})
+    bg = _css_color_to_hex(root_style.get("background", ""), "#ffffff")
+    text = _css_color_to_hex(root_style.get("color", ""), "#171717")
+    structured = capture.get("nodes")
+    children = copy.deepcopy(structured) if isinstance(structured, list) else [{
+        "type": "rect",
+        "fill": bg,
+        "radius": float(root_style.get("radius", 0) or 0),
+        "style": {"background": bg},
+        "frame": {"absolute": True, "x": 0, "y": 0,
+                  "width": root["width"], "height": root["height"]},
+    }]
+    by_id: dict[str, dict] = {}
+
+    def make_node(layer: dict) -> dict:
+        frame = {"absolute": True, "x": layer["x"], "y": layer["y"],
+                 "width": layer["width"], "height": layer["height"]}
+        style = {k: v for k, v in layer.get("style", {}).items() if v is not None}
+        if layer.get("kind") == "container":
+            role = str(layer.get("role") or "group")
+            if role == "button":
+                node = {"type": "button", "text": layer.get("text", ""),
+                        "variant": "primary", "style": style, "frame": frame,
+                        "children": []}
+            elif role == "input":
+                node = {"type": "input", "placeholder": layer.get("text", ""),
+                        "style": style, "frame": frame, "children": []}
+            else:
+                node = {"type": "card", "role": role, "style": style,
+                        "frame": frame, "children": []}
+            return node
+        if layer["kind"] == "rect":
+            fill = style.get("background", "#ffffff")
+            return {"type": "rect", "fill": fill,
+                    "radius": float(layer.get("radius", 0) or 0),
+                    "style": style, "frame": frame}
+        elif layer["kind"] == "image":
+            return {"type": "image", "src": layer.get("src", ""),
+                    "alt": layer.get("alt", ""), "style": style, "frame": frame}
+        return {"type": "text", "text": layer.get("text", ""),
+                "style": style, "frame": frame}
+
+    def shift_to_parent(node: dict, parent: dict) -> None:
+        nf = node.get("frame") or {}
+        pf = parent.get("frame") or {}
+        if "x" in nf and "x" in pf:
+            nf["x"] = round(float(nf["x"]) - float(pf["x"]), 3)
+        if "y" in nf and "y" in pf:
+            nf["y"] = round(float(nf["y"]) - float(pf["y"]), 3)
+
+    for layer in ([] if isinstance(structured, list) else capture.get("layers", [])):
+        node = make_node(layer)
+        layer_id = layer.get("id")
+        parent_id = layer.get("parentId")
+        if parent_id and parent_id in by_id:
+            parent = by_id[parent_id]
+            shift_to_parent(node, parent)
+            parent.setdefault("children", []).append(node)
+        else:
+            children.append(node)
+        if layer_id:
+            by_id[layer_id] = node
+
+    tokens = page_tokens or {
+        "mode": "light", "color": {"primary": text, "background": bg, "surface": bg,
+            "text": text, "textMuted": "#666666", "border": "#d1d5db"},
+        "font": {"display": {"family": "Inter", "weight": 700},
+                 "body": {"family": "Inter", "weight": 400}, "scale": "default"},
+        "radius": {"card": "md", "button": "md", "input": "md"},
+        "spacing": {"section": "md", "container": "default"}, "shadow": "none",
+    }
+    semantic = {
+        "role": block.get("kind", "section"),
+        "label": block.get("label") or name,
+        "selector": block.get("selector", ""),
+    }
+    repeat = capture.get("repeat") or {}
+    if int(repeat.get("count", 0) or 0) > 1:
+        semantic["repeatCount"] = int(repeat["count"])
+        semantic["repeatKind"] = str(repeat.get("kind") or "item")
+
+    source_preview = capture.get("preview") or ""
+    root_layout = str(capture.get("layout") or ("auto" if isinstance(structured, list) else "free"))
+
+    root_frame = {"width": root["width"], "height": root["height"],
+                  "layout": root_layout,
+                  "direction": capture.get("direction", "column"),
+                  "gap": float(capture.get("gap", 0) or 0),
+                  "padding": capture.get("padding", 0), "clip": True}
+    if capture.get("justify"):
+        root_frame["justify"] = capture.get("justify")
+    if capture.get("align"):
+        root_frame["align"] = capture.get("align")
+
+    return {
+        "version": "1.0",
+        "meta": {"name": f"Импорт: {semantic['label']}",
+                 "description": f"Rendered DOM capture · {semantic['role']}"},
+        "sourcePreview": source_preview,
+        # The browser measures this block as its own artboard. Keeping the same
+        # root frame prevents Editor from falling back to the generic 960px
+        # design canvas and makes section coordinates true artboard coordinates.
+        "frame": copy.deepcopy(root_frame),
+        "tokens": tokens,
+        "tree": [{"id": "imported-block", "type": "source-block", "variant": "dom-capture",
+                  "semantic": semantic, "props": {"sourcePreview": source_preview},
+                  "preview": source_preview,
+                  "sourceKey": capture.get("sourceKey", "root"),
+                  "style": {k: v for k, v in root_style.items() if v is not None},
+                  "frame": copy.deepcopy(root_frame),
+                  "children": children}],
+    }
+
+
+DEFAULT_SOURCE_VIEWPORTS = (
+    {"name": "desktop", "width": 1440, "height": 900},
+    {"name": "tablet", "width": 768, "height": 1024},
+    {"name": "mobile", "width": 390, "height": 844},
+)
+
+
+def _normalize_source_viewports(viewports: list[dict] | None) -> list[dict]:
+    allowed = {"desktop", "tablet", "mobile"}
+    source = viewports or list(DEFAULT_SOURCE_VIEWPORTS)
+    out = []
+    seen = set()
+    for raw in source:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").lower()
+        if name not in allowed or name in seen:
+            continue
+        width = max(240, min(3840, int(raw.get("width") or 0)))
+        height = max(320, min(2400, int(raw.get("height") or 0)))
+        out.append({"name": name, "width": width, "height": height})
+        seen.add(name)
+    if not out:
+        return [dict(v) for v in DEFAULT_SOURCE_VIEWPORTS]
+    order = {"desktop": 0, "tablet": 1, "mobile": 2}
+    return sorted(out, key=lambda v: order[v["name"]])
+
+
+def _walk_source_nodes(nodes: list, parent: dict | None = None):
+    for node in nodes or []:
+        if not isinstance(node, dict):
+            continue
+        yield node, parent
+        yield from _walk_source_nodes(node.get("children") or [], node)
+
+
+def _responsive_override(node: dict) -> dict:
+    override = {"visible": True}
+    if isinstance(node.get("frame"), dict):
+        override["frame"] = copy.deepcopy(node["frame"])
+    if isinstance(node.get("style"), dict) and node["style"]:
+        override["style"] = copy.deepcopy(node["style"])
+    return override
+
+
+def _merge_responsive_irs(variants: dict[str, dict], viewport_meta: dict[str, dict]) -> dict:
+    """Merge viewport captures into one shared tree keyed by stable DOM paths."""
+    base_name = "desktop" if "desktop" in variants else next(iter(variants))
+    merged = copy.deepcopy(variants[base_name])
+    merged["responsive"] = {"viewports": copy.deepcopy(viewport_meta)}
+    base_sec = merged["tree"][0]
+
+    def maps(sec: dict):
+        by_key = {str(sec.get("sourceKey") or "root"): sec}
+        parents = {}
+        for node, parent in _walk_source_nodes(sec.get("children") or [], sec):
+            key = str(node.get("sourceKey") or "")
+            if key:
+                by_key[key] = node
+                parents[key] = parent
+        return by_key, parents
+
+    base_map, _ = maps(base_sec)
+    all_names = list(viewport_meta)
+
+    def index_subtree(node: dict) -> None:
+        key = str(node.get("sourceKey") or "")
+        if key:
+            base_map[key] = node
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                index_subtree(child)
+
+    def has_missing_ancestor(key: str, current_parents: dict[str, dict], missing: set[str]) -> bool:
+        parent = current_parents.get(key)
+        while isinstance(parent, dict):
+            parent_key = str(parent.get("sourceKey") or "")
+            if parent_key in missing:
+                return True
+            if parent_key == "root":
+                return False
+            parent = current_parents.get(parent_key)
+        return False
+
+    for name, variant in variants.items():
+        current_sec = variant["tree"][0]
+        current_map, current_parents = maps(current_sec)
+
+        # Add viewport-only branches to the nearest shared parent. They stay hidden
+        # in the base viewport and become visible through their responsive override.
+        missing_keys = {key for key, current in current_map.items() if key not in base_map and current is not current_sec}
+        for key, current in sorted(list(current_map.items()), key=lambda item: item[0].count("/")):
+            if key in base_map or current is current_sec:
+                continue
+            if has_missing_ancestor(key, current_parents, missing_keys):
+                continue
+            parent = current_parents.get(key)
+            parent_key = str((parent or {}).get("sourceKey") or "root")
+            target_parent = base_map.get(parent_key, base_sec)
+            clone = copy.deepcopy(current)
+            clone["responsive"] = {bp: {"visible": False} for bp in all_names}
+            clone["responsive"][name] = _responsive_override(current)
+            target_parent.setdefault("children", []).append(clone)
+            index_subtree(clone)
+
+        for key, target in list(base_map.items()):
+            if target is base_sec:
+                continue
+            current = current_map.get(key)
+            target.setdefault("responsive", {})[name] = (
+                _responsive_override(current) if current else {"visible": False}
+            )
+
+        base_sec.setdefault("responsive", {})[name] = _responsive_override(current_sec)
+
+    # Desktop-base nodes need no redundant desktop override unless a node was
+    # introduced by another viewport and therefore explicitly hidden on desktop.
+    if base_name == "desktop":
+        for target in base_map.values():
+            responsive = target.get("responsive")
+            if isinstance(responsive, dict) and responsive.get("desktop", {}).get("visible") is True:
+                responsive.pop("desktop", None)
+            if responsive == {}:
+                target.pop("responsive", None)
+
+    # Viewport-only ветки копируются в общее дерево целиком, и их вложенные
+    # ключи могут совпасть с уже существующими (index_subtree молча перезаписывал
+    # base_map). sourceKey — адрес узла для merge-back/редактора, поэтому после
+    # слияния гарантируем уникальность: первое вхождение сохраняет ключ, повторы
+    # получают суффикс "#N" — контент не теряем, переименовываем только ключ.
+    # (Удалять «дубль» нельзя: это не byte-копия, а ветка другого viewport.)
+    seen_keys: set[str] = set()
+    for node, _parent in _walk_source_nodes([base_sec]):
+        key = str(node.get("sourceKey") or "")
+        if not key:
+            continue
+        unique, n = key, 1
+        while unique in seen_keys:
+            n += 1
+            unique = f"{key}#{n}"
+        if unique != key:
+            node["sourceKey"] = unique
+        seen_keys.add(unique)
+    return merged
+
+
+def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
+                      viewport_h: int = 900, timeout_ms: int = 20000,
+                      return_tokens: bool = False, viewports: list[dict] | None = None):
+    """Compile rendered DOM into compact responsive Design IR.
+
+    Text is collected from direct text nodes, so it always remains inside its
+    semantic DOM parent. Flex/grid geometry becomes auto-layout; absolute frames
+    are reserved for elements that are actually positioned out of flow.
+    """
+    from playwright.sync_api import sync_playwright
+
+    validate_public_url(url)
+    viewport_defs = _normalize_source_viewports(viewports)
+    captures: dict[str, dict[str, dict]] = {}
+    token_signals = None
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": viewport_defs[0]["width"], "height": viewport_defs[0]["height"]})
+        try:
+            for index, viewport in enumerate(viewport_defs):
+                if index:
+                    page.set_viewport_size({"width": viewport["width"], "height": viewport["height"]})
+                # Modern storefronts keep analytics/websocket requests alive, so
+                # networkidle can turn one capture into two full navigations.
+                # DOMContentLoaded plus a short render settle is deterministic and
+                # still measures the final Svelte/React layout used by the block.
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                page.wait_for_timeout(900)
+                page.add_style_tag(content="""
+                  *, *::before, *::after { animation:none !important; transition:none !important; }
+                  html { scroll-behavior:auto !important; }
+                """)
+                if index == 0:
+                    # дизайн-токены страницы снимаем один раз, на desktop-проходе
+                    try:
+                        token_signals = page.evaluate(_PAGE_TOKEN_SIGNALS_JS)
+                    except Exception:
+                        token_signals = None
+                raw = page.evaluate("""(blocks) => {
+                  const num = (v) => Number.parseFloat(v) || 0;
+                  const hex = (v) => {
+                    const value=String(v||'');
+                    const rgb=value.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/);
+                    if(rgb){
+                      if(rgb[4]!==undefined && Number(rgb[4])<=.05) return null;
+                      return '#'+rgb.slice(1,4).map(x=>(+x).toString(16).padStart(2,'0')).join('');
+                    }
+                    const srgb=value.match(/color\\(srgb\\s+([\\d.]+)\\s+([\\d.]+)\\s+([\\d.]+)(?:\\s*\\/\\s*([\\d.]+))?\\)/);
+                    if(!srgb || (srgb[4]!==undefined && Number(srgb[4])<=.05)) return null;
+                    return '#'+srgb.slice(1,4).map(x=>Math.round(Math.max(0,Math.min(1,Number(x)))*255).toString(16).padStart(2,'0')).join('');
+                  };
+                  const visible = (el,r,cs) => r.width>=1 && r.height>=1 && cs.display!=='none' &&
+                    cs.visibility!=='hidden' && Number(cs.opacity)!==0;
+                  const safeEnum = (v, allowed, fallback) => allowed.includes(v) ? v : fallback;
+                  const styleOf = (cs, warnings) => {
+                    if (cs.backgroundImage && cs.backgroundImage !== 'none') warnings.add('complex background');
+                    const deco=(cs.textDecorationLine||'none').split(' ')[0];
+                    const style={
+                      color:hex(cs.color), background:hex(cs.backgroundColor),
+                      fontFamily:String(cs.fontFamily||'').replace(/["']/g,'').slice(0,160),
+                      fontSize:Math.min(512,Math.max(1,num(cs.fontSize))),
+                      fontWeight:Math.min(900,Math.max(100,Number.parseInt(cs.fontWeight,10)||400)),
+                      lineHeight:(()=>{const lh=num(cs.lineHeight);return lh>0?Math.min(10,Math.max(.5,lh/Math.max(1,num(cs.fontSize)))):1.2})(),
+                      letterSpacing:Math.max(-20,Math.min(100,num(cs.letterSpacing))),
+                      borderColor:hex(cs.borderTopColor) || (num(cs.borderTopWidth)>0 ? '#e0e0e0' : null),
+                      borderWidth:Math.min(64,Math.max(0,num(cs.borderTopWidth))),
+                      borderRadius:Math.min(1000,Math.max(0,num(cs.borderTopLeftRadius))),
+                      boxShadow:cs.boxShadow && cs.boxShadow!=='none' ? cs.boxShadow.slice(0,300) : null,
+                      textDecoration:safeEnum(deco,['none','underline','line-through','overline'],'none'),
+                      whiteSpace:safeEnum(cs.whiteSpace,['normal','nowrap','pre','pre-wrap','pre-line','break-spaces'],'normal'),
+                      overflow:safeEnum(cs.overflow,['visible','hidden','clip','scroll','auto'],'visible'),
+                      textTransform:safeEnum(cs.textTransform,['none','uppercase','lowercase','capitalize'],'none'),
+                      opacity:Math.min(1,Math.max(0,num(cs.opacity))),
+                      objectFit:safeEnum(cs.objectFit,['contain','cover','fill','none','scale-down'],'fill')
+                    };
+                    return Object.fromEntries(Object.entries(style).filter(([,v])=>v!==null && v!==''));
+                  };
+                  const pathOf = (el,root) => {
+                    if(el===root) return 'root'; const parts=[]; let cur=el;
+                    while(cur && cur!==root){ const p=cur.parentElement; if(!p) break;
+                      const same=[...p.children].filter(x=>x.tagName===cur.tagName);
+                      parts.push(cur.tagName.toLowerCase()+':' + (same.indexOf(cur)+1)); cur=p; }
+                    return 'root/'+parts.reverse().join('/');
+                  };
+                  const justify = (v) => ({'flex-start':'start','flex-end':'end','space-evenly':'space-around'}[v]||v);
+                  const align = (v) => ({'flex-start':'start','flex-end':'end','normal':'stretch'}[v]||v);
+                  const paddingOf = (cs) => [num(cs.paddingTop),num(cs.paddingRight),num(cs.paddingBottom),num(cs.paddingLeft)].map(v=>Math.round(v));
+                  const svgDataUri = (el) => {
+                    try {
+                      const clone=el.cloneNode(true);
+                      clone.setAttribute('xmlns','http://www.w3.org/2000/svg');
+                      clone.querySelectorAll('script,foreignObject').forEach(node=>node.remove());
+                      const sourceNodes=[el,...el.querySelectorAll('*')];
+                      const cloneNodes=[clone,...clone.querySelectorAll('*')];
+                      sourceNodes.forEach((source,index)=>{
+                        const target=cloneNodes[index]; if(!target) return;
+                        const computed=getComputedStyle(source);
+                        if(computed.fill && computed.fill!=='none') target.setAttribute('fill',computed.fill);
+                        if(computed.stroke && computed.stroke!=='none') target.setAttribute('stroke',computed.stroke);
+                        if(computed.strokeWidth) target.setAttribute('stroke-width',computed.strokeWidth);
+                        if(computed.strokeLinecap) target.setAttribute('stroke-linecap',computed.strokeLinecap);
+                        if(computed.strokeLinejoin) target.setAttribute('stroke-linejoin',computed.strokeLinejoin);
+                        if(computed.opacity && computed.opacity!=='1') target.setAttribute('opacity',computed.opacity);
+                        target.removeAttribute('class');
+                      });
+                      const svg=new XMLSerializer().serializeToString(clone);
+                      return 'data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(svg)));
+                    } catch(_) { return ''; }
+                  };
+                  const overlaps = (a,b) => !(a.right<=b.left+1 || b.right<=a.left+1 || a.bottom<=b.top+1 || b.bottom<=a.top+1);
+                  const layoutOf = (el,cs,childRects) => {
+                    const explicitFlex=cs.display==='flex'||cs.display==='inline-flex';
+                    const explicitGrid=cs.display==='grid'||cs.display==='inline-grid';
+                    const positionedKids=[...el.children].some(c=>{ const ccs=getComputedStyle(c); return ['absolute','fixed'].includes(ccs.position) || ccs.transform!=='none'; });
+                    let direction='column', wrap=false;
+                    if(explicitFlex){ direction=cs.flexDirection.startsWith('row')?'row':'column'; wrap=cs.flexWrap!=='nowrap'; }
+                    else if(explicitGrid){ direction='row'; wrap=true; }
+                    else if(childRects.length>1){
+                      const row=childRects.slice(1).every(r=>Math.abs((r.top+r.height/2)-(childRects[0].top+childRects[0].height/2))<Math.max(6,childRects[0].height*.45));
+                      direction=row?'row':'column';
+                    }
+                    const sorted=[...childRects].sort((a,b)=>direction==='row' ? (a.left-b.left || a.top-b.top) : (a.top-b.top || a.left-b.left));
+                    const hasOverlap=sorted.some((r,i)=>sorted.slice(i+1).some(o=>overlaps(r,o)));
+                    const auto=(explicitFlex||explicitGrid||childRects.length>0) && !positionedKids && !hasOverlap;
+                    return {layout:auto?'auto':'free',direction,wrap};
+                  };
+                  const frameFor = (r,parentRect,cs,parentAuto,isContainer,layout) => {
+                    const frame={width:Math.round(r.width),height:Math.round(r.height)};
+                    const positioned=['absolute','fixed'].includes(cs.position)||cs.transform!=='none';
+                    if(positioned || !parentAuto){ frame.absolute=true; frame.x=Math.round(r.left-parentRect.left); frame.y=Math.round(r.top-parentRect.top); }
+                    if(isContainer){
+                      frame.layout=layout.layout; frame.direction=layout.direction;
+                      const rowGap=num(cs.rowGap), colGap=num(cs.columnGap);
+                      frame.gap=Math.round(layout.direction==='row'?colGap:rowGap);
+                      frame.padding=paddingOf(cs);
+                      frame.justify=safeEnum(justify(cs.justifyContent),['start','center','end','space-between','space-around'],'start');
+                      frame.align=safeEnum(align(cs.alignItems),['start','center','end','stretch','baseline'],'start');
+                      if(layout.wrap) frame.wrap=true;
+                    }
+                    if(cs.overflow==='hidden'||cs.overflow==='clip') frame.clip=true;
+                    return frame;
+                  };
+                  const compileBlock = (block) => {
+                    const root=document.querySelector(block.selector); if(!root) return {selector:block.selector,error:'DOM element not found'};
+                    const rr=root.getBoundingClientRect(), rcs=getComputedStyle(root); if(!visible(root,rr,rcs)) return {selector:block.selector,error:'DOM block is not visible'};
+                    const warnings=new Set(); let layerCount=0, candidateCount=0;
+                    const compile = (el,parentRect,parentAuto,rootEl) => {
+                      const tag=String(el.tagName||'').toUpperCase();
+                      if(['SCRIPT','STYLE','NOSCRIPT','TEMPLATE'].includes(tag)) return null;
+                      const r=el.getBoundingClientRect(), cs=getComputedStyle(el); if(!visible(el,r,cs)) return null;
+                      candidateCount++;
+                      const key=pathOf(el,rootEl), rawChildren=[];
+                      const childRects=[...el.children].map(c=>c.getBoundingClientRect()).filter(x=>x.width>=1&&x.height>=1);
+                      const layout=layoutOf(el,cs,childRects);
+                      const childParentAuto=layout.layout==='auto';
+                      [...el.childNodes].forEach((child,idx)=>{
+                        if(child.nodeType===Node.TEXT_NODE){
+                          const text=(child.textContent||'').replace(/\\s+/g,' ').trim(); if(!text) return;
+                          const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect(); if(tr.width<1||tr.height<1) return;
+                          const textFrame={width:Math.round(tr.width),height:Math.round(tr.height)};
+                          if(!childParentAuto){ textFrame.absolute=true; textFrame.x=Math.round(tr.left-r.left); textFrame.y=Math.round(tr.top-r.top); }
+                          rawChildren.push({type:'text',text:text.slice(0,1000),sourceKey:key+'::text'+idx,style:styleOf(cs,warnings),frame:textFrame}); layerCount++; candidateCount++;
+                        } else if(child.nodeType===Node.ELEMENT_NODE){
+                          const compiled=compile(child,r,childParentAuto,rootEl); if(compiled) rawChildren.push(compiled);
+                        }
+                      });
+                      let type='card', role=tag.toLowerCase();
+                      if(/^H[1-4]$/.test(tag)) type='heading';
+                      else if(el.matches('button,[role="button"]')) type='button';
+                      else if(el.matches('input,select,textarea')) type='input';
+                      else if(['IMG','SVG','CANVAS','VIDEO'].includes(tag)) type='image';
+                      else if(tag==='A' && (hex(cs.backgroundColor)||num(cs.borderTopWidth)>0)) type='button';
+                      const style=styleOf(cs,warnings);
+                      const directText=String(el.innerText||el.textContent||'').replace(/\\s+/g,' ').trim();
+                      const hasElementChildren=[...el.children].some(c=>{
+                        const cr=c.getBoundingClientRect(), ccs=getComputedStyle(c);
+                        return visible(c,cr,ccs);
+                      });
+                      const neutralTextTag=el.matches('span,strong,em,b,i,small,label,p');
+                      const textOnly=directText && !hasElementChildren && type==='card' && neutralTextTag &&
+                        !hex(cs.backgroundColor) && num(cs.borderTopWidth)===0 && (!cs.boxShadow || cs.boxShadow==='none');
+                      if(textOnly) type='text';
+                      if(type==='button' && childParentAuto && directText && rawChildren.length){
+                        const collectText=(item)=>{
+                          if(!item || typeof item!=='object') return '';
+                          if(item.type==='text' || item.type==='heading') return String(item.text||'');
+                          return (item.children||[]).map(collectText).filter(Boolean).join(' ');
+                        };
+                        const childText=rawChildren.map(collectText).filter(Boolean).join(' ').replace(/\\s+/g,' ').trim();
+                        let missing='', atStart=false;
+                        if(childText && directText!==childText && directText.endsWith(childText)){
+                          missing=directText.slice(0,directText.length-childText.length).trim(); atStart=true;
+                        } else if(childText && directText!==childText && directText.startsWith(childText)){
+                          missing=directText.slice(childText.length).trim();
+                        }
+                        if(missing){
+                          const canvas=document.createElement('canvas'), ctx=canvas.getContext('2d');
+                          if(ctx) ctx.font=String(cs.fontWeight)+' '+String(cs.fontSize)+' '+String(cs.fontFamily);
+                          const linePx=Math.max(1,Math.round(num(cs.lineHeight)||num(cs.fontSize)*1.2));
+                          const implicit={type:'text',text:missing.slice(0,120),sourceKey:key+(atStart?'::implicit-prefix':'::implicit-suffix'),
+                            style:styleOf(cs,warnings),frame:{width:Math.max(1,Math.ceil(ctx ? ctx.measureText(missing).width : num(cs.fontSize))),height:linePx}};
+                          if(atStart) rawChildren.unshift(implicit); else rawChildren.push(implicit);
+                          layerCount++; candidateCount++;
+                        }
+                      }
+                      const isContainer=type==='card'||type==='button'||type==='input';
+                      const node={type,sourceKey:key,style,frame:frameFor(r,parentRect,cs,parentAuto,isContainer,layout)};
+                      if(type==='heading'){ node.level=Number(tag.slice(1)); node.text=directText.slice(0,1000); }
+                      if(type==='text') node.text=directText.slice(0,1000);
+                      if(type==='button') node.text=String(el.innerText||'').replace(/\\s+/g,' ').trim().slice(0,1000);
+                      if(type==='input'){
+                        node.placeholder=(el.value||el.placeholder||el.options?.[el.selectedIndex]?.text||'').slice(0,1000);
+                        const value=node.placeholder;
+                        if(value && !rawChildren.length){
+                          const pad=paddingOf(cs), linePx=Math.max(1,Math.round(num(cs.lineHeight)||num(cs.fontSize)*1.2));
+                          const textStyle=Object.assign({},style,{whiteSpace:'nowrap',overflow:'hidden'});
+                          rawChildren.push({type:'text',text:value,sourceKey:key+'::value',style:textStyle,frame:{
+                            width:Math.max(1,Math.round(r.width)-pad[1]-pad[3]),height:Math.min(Math.max(1,Math.round(r.height)),linePx),
+                            absolute:true,x:pad[3],y:Math.max(0,Math.round((r.height-linePx)/2))
+                          }});
+                        }
+                      }
+                      if(type==='image'){
+                        if(tag==='IMG') node.src=el.currentSrc||el.src||'';
+                        else if(tag==='SVG') node.src=svgDataUri(el);
+                        else if(tag==='CANVAS'){ try{node.src=el.toDataURL('image/png');warnings.add('canvas raster fallback');}catch(_){warnings.add('canvas unavailable');} }
+                        else { node.src=el.poster||''; warnings.add('video poster fallback'); }
+                        node.alt=el.alt||el.getAttribute('aria-label')||'';
+                      }
+                      if(isContainer && rawChildren.length) node.children=rawChildren;
+                      if(type==='card') node.role=role;
+                      layerCount++;
+                      const pad=node.frame.padding||[0,0,0,0]; const neutral=!style.background && !style.borderWidth && !style.boxShadow && pad.every(x=>x===0);
+                      const semantic=el.matches('nav,form,header,footer,main,section,article,button,input,select,textarea,a,[role]')||!!el.id;
+                      const explicitLayout=['flex','inline-flex','grid','inline-grid'].includes(cs.display);
+                      if(type==='card' && rawChildren.length===0 && neutral && !explicitLayout) return null;
+                      if(type==='card' && rawChildren.length===1 && neutral && !semantic && !explicitLayout && layout.layout!=='auto') {
+                        const only=rawChildren[0];
+                        const of=only.frame||{};
+                        only.frame=Object.assign({}, of, {
+                          absolute:true,
+                          x:Math.round(r.left-parentRect.left+(Number(of.x)||0)),
+                          y:Math.round(r.top-parentRect.top+(Number(of.y)||0))
+                        });
+                        return only;
+                      }
+                      return node;
+                    };
+                    const rootChildRects=[...root.children].map(c=>c.getBoundingClientRect()).filter(x=>x.width>=1&&x.height>=1);
+                    const rootLayout=layoutOf(root,rcs,rootChildRects);
+                    const rootAuto=rootLayout.layout==='auto';
+                    const rootCentered=rootAuto && rootLayout.direction==='column' && rootChildRects.length>0 &&
+                      rootChildRects.every(r=>Math.abs((r.left+r.width/2)-(rr.left+rr.width/2))<=2);
+                    const rootAlign=rootCentered ? 'center' : safeEnum(align(rcs.alignItems),['start','center','end','stretch','baseline'],'start');
+                    const rootChildren=[]; [...root.childNodes].forEach((child,idx)=>{
+                      if(child.nodeType===Node.TEXT_NODE){
+                        const text=(child.textContent||'').replace(/\\s+/g,' ').trim();
+                        if(text){
+                          const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect();
+                          const textFrame={width:Math.round(tr.width),height:Math.round(tr.height)};
+                          if(!rootAuto){ textFrame.absolute=true; textFrame.x=Math.round(tr.left-rr.left); textFrame.y=Math.round(tr.top-rr.top); }
+                          rootChildren.push({type:'text',text:text.slice(0,1000),sourceKey:'root::text'+idx,style:styleOf(rcs,warnings),frame:textFrame});
+                          layerCount++; candidateCount++;
+                        }
+                      }
+                      else if(child.nodeType===Node.ELEMENT_NODE){ const node=compile(child,rr,rootAuto,root); if(node) rootChildren.push(node); }
+                    });
+                    return {selector:block.selector,sourceKey:'root',root:{width:Math.round(rr.width),height:Math.round(rr.height),style:styleOf(rcs,warnings)},nodes:rootChildren,layout:rootLayout.layout,direction:rootLayout.direction,gap:Math.round(rootLayout.direction==='row'?num(rcs.columnGap):num(rcs.rowGap)),padding:paddingOf(rcs),justify:safeEnum(justify(rcs.justifyContent),['start','center','end','space-between','space-around'],'start'),align:rootAlign,pixelPerfect:true,layerCount,candidateCount,warnings:[...warnings]};
+                  };
+                  return blocks.map(compileBlock);
+                }""", blocks)
+                by_selector = {item["selector"]: item for item in raw}
+                for block in blocks:
+                    item = by_selector.get(block["selector"])
+                    if not item or item.get("error"):
+                        continue
+                    try:
+                        shot = page.locator(block["selector"]).first.screenshot(type="jpeg", quality=82)
+                        item["preview"] = "data:image/jpeg;base64," + base64.b64encode(shot).decode()
+                    except Exception:
+                        pass
+                captures[viewport["name"]] = by_selector
+        finally:
+            browser.close()
+
+    page_tokens = _page_tokens_from_signals(token_signals)
+    result: dict[str, dict] = {}
+    for block in blocks:
+        selector = block["selector"]
+        variants = {}
+        meta = {}
+        warnings = set()
+        layers_by_viewport = {}
+        for viewport in viewport_defs:
+            name = viewport["name"]
+            item = captures.get(name, {}).get(selector)
+            if not item or item.get("error") or not item.get("nodes"):
+                continue
+            ir = _captured_ir(block, item, page_tokens)
+            variants[name] = ir
+            candidates = max(1, int(item.get("candidateCount") or item.get("layerCount") or 1))
+            coverage = max(0, min(100, round(100 * int(item.get("layerCount") or 0) / candidates)))
+            meta[name] = {"width": item["root"]["width"], "height": item["root"]["height"],
+                          "preview": item.get("preview", ""), "coverage": coverage}
+            warnings.update(item.get("warnings") or [])
+            layers_by_viewport[name] = int(item.get("layerCount", 0))
+        if not variants:
+            result[selector] = {"error": "DOM block has no editable visible layers in selected viewports"}
+            continue
+        merged = _merge_responsive_irs(variants, meta)
+        base_name = "desktop" if "desktop" in meta else next(iter(meta))
+        result[selector] = {
+            "ir": merged,
+            "layer_count": max(layers_by_viewport.values(), default=0),
+            "layers_by_viewport": layers_by_viewport,
+            "width": meta[base_name]["width"], "height": meta[base_name]["height"],
+            "preview": meta[base_name].get("preview", ""),
+            "previews": {name: value.get("preview", "") for name, value in meta.items()},
+            "sizes": {name: {"width": value["width"], "height": value["height"]} for name, value in meta.items()},
+            "coverage": {name: value["coverage"] for name, value in meta.items()},
+            "warnings": sorted(warnings),
+        }
+    try:
+        _attach_block_fidelity(result)
+    except Exception:
+        pass  # fidelity — честная диагностика, но не должна ронять импорт
+    return (result, page_tokens) if return_tokens else result
+
+
+# ---------- Fidelity: честное пиксельное сходство IR со скриншотом источника ----------
+
+_RENDERER_JS = Path(__file__).resolve().parent / "static" / "renderer.js"
+
+
+def _render_ir_jpeg(page, ir: dict, width: int, height: int) -> bytes:
+    """Отрисовать IR существующим app/static/renderer.js и вернуть JPEG-скриншот."""
+    page.set_viewport_size({"width": max(320, int(width)), "height": max(320, int(height) + 40)})
+    page.set_content(f'<div id="preview" style="width:{int(width)}px"></div>')
+    page.add_script_tag(path=str(_RENDERER_JS))
+    page.evaluate("(ir) => window.IRRenderer.renderIR(document.querySelector('#preview'), ir)", ir)
+    page.wait_for_selector('[data-ir-sec="0"]', timeout=5000)
+    # fitPreview выставляет высоту контейнера в requestAnimationFrame
+    page.wait_for_function("() => document.querySelector('#preview').style.height !== ''", timeout=5000)
+    return page.locator("#preview").screenshot(type="jpeg", quality=90)
+
+
+def _pixel_similarity(render_jpeg: bytes, reference_data_url: str) -> float | None:
+    """Доля пикселей с per-channel |diff| < 24 (после resize к одному размеру), 0-100."""
+    try:
+        import numpy as np
+        _, b64 = reference_data_url.split(",", 1)
+        ref = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+        got = Image.open(io.BytesIO(render_jpeg)).convert("RGB")
+        if got.size != ref.size:
+            got = got.resize(ref.size, Image.LANCZOS)
+        diff = np.abs(np.asarray(got, dtype=np.int16) - np.asarray(ref, dtype=np.int16))
+        return round(float((diff < 24).all(axis=2).mean()) * 100)
+    except Exception:
+        return None
+
+
+def ir_fidelity(ir: dict, reference_jpeg_data_url: str, width: int, height: int,
+                page=None) -> float | None:
+    """Пиксельное сходство рендера IR со скриншотом источника, 0-100.
+
+    Рендер — тем же app/static/renderer.js, что и редактор, поэтому метрика
+    измеряет именно то, что увидит пользователь. None при любой ошибке (нет
+    Chromium, битый data URL, renderer не отрисовал) — функция никогда не кидает.
+    page — переиспользуемая вкладка для пакетного прогона; без неё поднимаем
+    одноразовый headless Chromium.
+    """
+    try:
+        if not str(reference_jpeg_data_url or "").startswith("data:image"):
+            return None
+        if page is not None:
+            shot = _render_ir_jpeg(page, ir, width, height)
+        else:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                try:
+                    shot = _render_ir_jpeg(browser.new_page(), ir, width, height)
+                finally:
+                    browser.close()
+        return _pixel_similarity(shot, reference_jpeg_data_url)
+    except Exception:
+        return None
+
+
+def _attach_block_fidelity(result: dict) -> None:
+    """Fidelity base-viewport (desktop): merged IR против скриншота источника.
+
+    Один лёгкий Chromium на все блоки, после закрытия capture-браузера. Считаем
+    только base viewport — для метрики достаточно, а прогон остаётся быстрым.
+    """
+    jobs = []
+    for selector, item in result.items():
+        if not isinstance(item, dict) or item.get("error") or not isinstance(item.get("ir"), dict):
+            continue
+        preview = str(item.get("preview") or "")
+        width, height = item.get("width"), item.get("height")
+        if not preview.startswith("data:image") or not width or not height:
+            continue
+        jobs.append((selector, item["ir"], preview, int(width), int(height)))
+    if not jobs:
+        return
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            for selector, ir, preview, width, height in jobs:
+                score = ir_fidelity(ir, preview, width, height, page=page)
+                if score is None:
+                    continue
+                result[selector]["fidelity"] = score
+                viewports = result[selector]["ir"].get("responsive", {}).get("viewports") or {}
+                base = "desktop" if "desktop" in viewports else next(iter(viewports), None)
+                if base and isinstance(viewports.get(base), dict):
+                    viewports[base]["fidelity"] = score
+        finally:
+            browser.close()
 
 
 # ---------- high-level: full page analysis ----------

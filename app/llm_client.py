@@ -1,6 +1,6 @@
 """Продакшен LLM-клиент DesignAI Web (ранее жил в spike/run_test.py).
 
-Только stdlib. Поддерживает OpenAI-совместимые API и Gemini (текст + vision).
+Только stdlib. Все текстовые и vision-вызовы проходят через OpenRouter.
 Таймауты: LLM_TIMEOUT_S (по умолчанию 120с), раньше было 600с.
 """
 import json
@@ -39,52 +39,7 @@ def load_dotenv(path: Path | None = None) -> int:
 load_dotenv()
 
 PROVIDERS = {
-    # Kimi: локальная OAuth-авторизация kimi CLI (coding plan), ключ из
-    # ~/.kimi-code/credentials/kimi-code.json
-    "kimi": {
-        "url": "https://api.kimi.com/coding/v1/chat/completions",
-        "oauth_credentials": "~/.kimi-code/credentials/kimi-code.json",
-        "model": "k3",
-        "fixed_temperature": 1,  # k3 принимает только temperature=1
-    },
-    # Qwen: Alibaba Bailian Token Plan, ключ в env BAILIAN_TOKEN_PLAN_API_KEY
-    "qwen": {
-        "url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
-        "env": "BAILIAN_TOKEN_PLAN_API_KEY",
-        "model": "qwen3.7-max",
-        "vision_models": ["qwen-vl-max-latest", "qwen-vl-max", "qwen2.5-vl-72b-instruct", "qwen-vl-plus"],
-    },
-    # Groq: бесплатный tier, OpenAI-совместимый API, ключ GROQ_API_KEY
-    "groq": {
-        "url": "https://api.groq.com/openai/v1/chat/completions",
-        "env": "GROQ_API_KEY",
-        "model": "llama-3.3-70b-versatile",
-        "vision_models": ["llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"],
-    },
-    # Google Gemini: бесплатный tier, ключ GEMINI_API_KEY (aistudio.google.com)
-    "gemini": {
-        "url": "https://generativelanguage.googleapis.com/v1beta",
-        "env": "GEMINI_API_KEY",
-        "model": "gemini-2.0-flash",
-        "vision_models": ["gemini-2.0-flash", "gemini-2.0-flash-lite"],
-        "api_format": "gemini",
-    },
-    # xAI Grok: ключ XAI_API_KEY (console.x.ai), OpenAI-совместимый, vision через grok-2-vision
-    "xai": {
-        "url": "https://api.x.ai/v1/chat/completions",
-        "env": "XAI_API_KEY",
-        "model": "grok-3-beta",
-        "vision_models": ["grok-2-vision", "grok-2-vision-1212", "grok-vision-beta"],
-    },
-    # GLM (Zhipu AI): ключ GLM_API_KEY (open.bigmodel.cn), OpenAI-совместимый, vision через glm-4v
-    "glm": {
-        "url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-        "env": "GLM_API_KEY",
-        "model": "glm-4-plus",
-        "vision_models": ["glm-4v", "glm-4v-plus"],
-    },
-    # OpenRouter — единый gateway (решение владельца от 2026-08-04).
-    # Модель выбирается из ROUTING по роли вызова; прямые API — fallback.
+    # Единственный транспорт продукта. Модель выбирается из ROUTING по роли.
     "openrouter": {
         "url": "https://openrouter.ai/api/v1/chat/completions",
         "env": "OPENROUTER_API_KEY",
@@ -92,29 +47,46 @@ PROVIDERS = {
     },
 }
 
-# Роутинг моделей через OpenRouter — таблица владельца от 2026-08-05
-# (нода → [основная, fallback]); slug'и сверены с каталогом openrouter.ai/api/v1/models.
+# Роутинг моделей через OpenRouter (роль ноды → [основная, fallback]).
 # Любую роль можно переопределить env: OPENROUTER_MODELS_<ROLE> (через запятую).
+# Current quality-first routing:
+# - Claude owns taste, composition, design generation, reskin and judging.
+# - Gemini is a multimodal fallback for visual import/reproduction.
+# - Qwen is reserved for mechanical IR/JSON/schema repair.
+# - Kimi is intentionally not a default route; test it only via env overrides.
 ROUTING = {
     # канонические роли владельца (конфиг от 2026-08-05)
-    "prompt_enhancer": ["openai/gpt-5.6-terra", "anthropic/claude-opus-5"],
-    "planner":    ["z-ai/glm-5.2", "openai/gpt-5.6-terra"],
-    "generator":  ["moonshotai/kimi-k3", "z-ai/glm-5.2"],
-    "repair":     ["qwen/qwen3-coder-plus", "z-ai/glm-5.2"],
-    "style_analysis": ["anthropic/claude-opus-5", "openai/gpt-5.6-terra"],
-    "vision":     ["google/gemini-3.6-flash", "openai/gpt-5.6-terra"],
-    "judge":      ["openai/gpt-5.6-terra", "anthropic/claude-opus-5"],
+    "prompt_enhancer": ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
+    "planner":    ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+    "generator":  ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol"],
+    "reskin":     ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol"],
+    "repair":     ["qwen/qwen3-coder-plus", "anthropic/claude-sonnet-5"],
+    "style_analysis": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+    "vision":     ["anthropic/claude-opus-5", "google/gemini-3.6-flash", "openai/gpt-5.6-sol", "qwen/qwen3.8-max"],
+    "vision_fast": ["google/gemini-3.6-flash", "qwen/qwen3.8-max", "anthropic/claude-sonnet-5"],
+    "vision_pixel_qa": ["anthropic/claude-opus-5", "openai/gpt-5.6-sol", "google/gemini-3.6-flash"],
+    "judge":      ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+    # Премиальный Quality Pass: независимая оценка и адресная починка.
+    "quality_judge": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol-pro"],
+    "quality_repair": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "qwen/qwen3-coder-plus"],
     # дополнительные роли из таблицы 2026-08-04
-    "edit":       ["moonshotai/kimi-k3", "openai/gpt-5.6-terra"],
-    "optimizer":  ["qwen/qwen3-coder-plus", "openai/gpt-5.6-terra"],
-    "tokens":     ["anthropic/claude-opus-5", "openai/gpt-5.6-terra"],
-    "components": ["google/gemini-3.6-flash", "qwen/qwen3-vl-235b-a22b-instruct"],
-    "clone":      ["qwen/qwen3-coder-plus", "openai/gpt-5.6-terra"],
-    "a11y":       ["openai/gpt-5.6-terra", "anthropic/claude-opus-5"],
-    "docs":       ["openai/gpt-5.6-terra", "anthropic/claude-opus-5"],
+    "edit":       ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+    "derive":     ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+    "optimizer":  ["qwen/qwen3-coder-plus", "anthropic/claude-sonnet-5"],
+    "tokens":     ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+    "components": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "google/gemini-3.6-flash"],
+    "clone":      ["anthropic/claude-sonnet-5", "qwen/qwen3-coder-plus"],
+    "blockparse": ["anthropic/claude-sonnet-5", "qwen/qwen3-coder-plus"],
+    # Source Import geometry stays deterministic; Sonnet labels only ambiguous
+    # rendered containers. Opus is an escalation, not the pixel/layout engine.
+    "source_semantics": ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
+    "source_vision_audit": ["anthropic/claude-opus-5", "openai/gpt-5.6-sol", "google/gemini-3.6-flash"],
+    "reproduce":  ["anthropic/claude-opus-5", "google/gemini-3.6-flash", "qwen/qwen3.8-max"],
+    "a11y":       ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+    "docs":       ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
     # legacy-роли (старые вызовы и env-оверрайды)
-    "mechanics":  ["qwen/qwen3-coder-plus", "z-ai/glm-5.2"],
-    "taste":      ["moonshotai/kimi-k3", "openai/gpt-5.6-terra"],
+    "mechanics":  ["qwen/qwen3-coder-plus", "anthropic/claude-sonnet-5"],
+    "taste":      ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
 }
 
 
@@ -143,10 +115,6 @@ def _check_model_slug(slug) -> None:
 
 
 def get_key(cfg: dict) -> str:
-    if "oauth_credentials" in cfg:
-        cred_path = Path(os.path.expanduser(cfg["oauth_credentials"]))
-        cred = json.loads(cred_path.read_text(encoding="utf-8"))
-        return cred["access_token"]
     key = os.environ.get(cfg.get("env", ""))
     if not key:
         raise RuntimeError(f"Нет ключа: set {cfg.get('env', '?')}=...")
@@ -180,27 +148,6 @@ def _post_json(url: str, payload: dict, key: str | None, timeout: int) -> dict:
         return json.loads(resp.read())
 
 
-def _gemini_messages(messages: list, temperature: float) -> dict:
-    """OpenAI-сообщения → payload Gemini generateContent (текст)."""
-    payload = {"contents": [], "generationConfig": {
-        "temperature": temperature, "responseMimeType": "application/json"}}
-    for m in messages:
-        if m["role"] == "system":
-            payload["system_instruction"] = {"parts": [{"text": m["content"]}]}
-        else:
-            role = "model" if m["role"] == "assistant" else "user"
-            payload["contents"].append({"role": role, "parts": [{"text": m["content"]}]})
-    return payload
-
-
-def _gemini_text(data: dict, provider: str) -> str:
-    candidates = data.get("candidates", [])
-    if not candidates:
-        raise RuntimeError(f"{provider}: нет candidates в ответе Gemini")
-    parts = candidates[0].get("content", {}).get("parts", [])
-    return "".join(p.get("text", "") for p in parts)
-
-
 def _chat_openai_once(cfg, key, model, messages, temp, t) -> str:
     payload = {
         "model": model,
@@ -227,26 +174,17 @@ def _chat_openai_once(cfg, key, model, messages, temp, t) -> str:
 
 def chat(provider: str, messages: list, temperature: float, timeout: int | None = None,
          role: str = "mechanics", model: str | None = None) -> str:
-    """role — ключ ROUTING для OpenRouter: mechanics (черновики) / taste («вкус»).
-    model — явный slug модели (поверх cfg/ROUTING), для пайплайнов разработки."""
+    """Вызов OpenRouter. role выбирает цепочку ROUTING, model — явный override."""
     if model is not None:
         _check_model_slug(model)
-    cfg = PROVIDERS[provider]
+    if provider != "openrouter":
+        raise ValueError("Поддерживается только provider=openrouter")
+    cfg = PROVIDERS["openrouter"]
     key = get_key(cfg)
     t = timeout or TIMEOUT
-    temp = cfg.get("fixed_temperature", temperature)
+    temp = temperature
 
-    if cfg.get("api_format") == "gemini":
-        m = model or cfg["model"]
-        _check_model_slug(m)
-        data = _post_json(f"{cfg['url']}/models/{m}:generateContent",
-                          _gemini_messages(messages, temp), key, t)
-        content = _gemini_text(data, provider)
-        if not content.strip():
-            raise RuntimeError(f"{provider}: пустой ответ Gemini")
-        return content
-
-    # явный model > цепочка ROUTING (OpenRouter) > модель провайдера
+    # явный model > цепочка ROUTING
     if model:
         models = [model]
     else:
@@ -268,43 +206,24 @@ def chat(provider: str, messages: list, temperature: float, timeout: int | None 
 def chat_vision(provider: str, image_data_url: str, text_prompt: str,
                 system_prompt: str = "", temperature: float = 0.2,
                 timeout: int | None = None, role: str = "vision") -> str:
-    """Вызов vision-модели с изображением (base64 data URL) + текст.
-    Поддерживает OpenAI-совместимый API и Gemini API.
-    Пробует несколько vision-моделей из конфига (fallback при 404)."""
-    cfg = PROVIDERS[provider]
+    """Vision-вызов через OpenRouter с fallback-моделями роли."""
+    if provider != "openrouter":
+        raise ValueError("Поддерживается только provider=openrouter")
+    cfg = PROVIDERS["openrouter"]
     key = get_key(cfg)
     t = timeout or TIMEOUT
 
-    vision_models = cfg.get("vision_models")
-    if not vision_models:
-        # OpenRouter (model=None) — цепочка vision-моделей из ROUTING по роли
-        vision_models = routing_models(role) if cfg["model"] is None else [cfg["model"]]
+    vision_models = routing_models(role)
     if isinstance(vision_models, str):
         vision_models = [vision_models]
     for m in vision_models:
         _check_model_slug(m)
 
-    api_format = cfg.get("api_format", "openai")
-
-    # извлекаем base64 и mime из data URL
-    mime_type = "image/jpeg"
-    b64_data = image_data_url
-    if image_data_url.startswith("data:"):
-        header, b64_data = image_data_url.split(",", 1)
-        if "png" in header:
-            mime_type = "image/png"
-        elif "webp" in header:
-            mime_type = "image/webp"
-
     last_error = None
     for model in vision_models:
         try:
-            if api_format == "gemini":
-                content = _call_gemini_vision(cfg, key, model, b64_data, mime_type,
-                                              text_prompt, system_prompt, temperature, t)
-            else:
-                content = _call_openai_vision(cfg, key, model, image_data_url,
-                                              text_prompt, system_prompt, temperature, t)
+            content = _call_openai_vision(cfg, key, model, image_data_url,
+                                          text_prompt, system_prompt, temperature, t)
             if content and content.strip():
                 return content
         except urllib.error.HTTPError as e:
@@ -322,10 +241,10 @@ def chat_vision(provider: str, image_data_url: str, text_prompt: str,
 
 def _call_openai_vision(cfg, key, model, image_data_url, text_prompt, system_prompt,
                         temperature, timeout):
-    """OpenAI-совместимый vision вызов (Groq, Qwen, OpenAI, etc)."""
+    """OpenRouter vision-вызов в OpenAI-совместимом формате."""
     user_content = [
-        {"type": "image_url", "image_url": {"url": image_data_url}},
         {"type": "text", "text": text_prompt},
+        {"type": "image_url", "image_url": {"url": image_data_url}},
     ]
     messages = []
     if system_prompt:
@@ -341,32 +260,29 @@ def _call_openai_vision(cfg, key, model, image_data_url, text_prompt, system_pro
     return data["choices"][0]["message"].get("content") or ""
 
 
-def _call_gemini_vision(cfg, key, model, b64_data, mime_type, text_prompt, system_prompt,
-                        temperature, timeout):
-    """Google Gemini vision вызов."""
-    url = f"{cfg['url']}/models/{model}:generateContent"
-    parts = [
-        {"inline_data": {"mime_type": mime_type, "data": b64_data}},
-        {"text": text_prompt},
-    ]
-    payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {"temperature": temperature, "responseMimeType": "application/json"},
-    }
-    if system_prompt:
-        payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
-
-    data = _post_json(url, payload, key, timeout)
-    return _gemini_text(data, "Gemini")
-
-
 def extract_json(text: str) -> str:
     """Вытащить JSON даже если модель обернула в markdown."""
-    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
+    # 1. Markdown code block
+    m = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.S | re.I)
     if m:
-        return m.group(1)
-    m = re.search(r"\{.*\}", text, re.S)
-    return m.group(0) if m else text
+        candidate = m.group(1).strip()
+        try:
+            json.JSONDecoder().raw_decode(candidate)
+            return candidate
+        except ValueError:
+            pass
+
+    # 2. First valid JSON object anywhere in the text
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch in "{[":
+            try:
+                obj, end = decoder.raw_decode(text, i)
+                if isinstance(obj, dict):
+                    return text[i:end]
+            except ValueError:
+                continue
+    return text
 
 
 def main() -> int:

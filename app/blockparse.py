@@ -1,6 +1,6 @@
 """BlockParse: детекция блоков страницы и параллельный clone каждого в Design IR.
 
-Обвязка над готовыми механизмами (docs/NODES-HOUDINI.md §7.3):
+Внутренний движок Source Import (см. docs/ARCHITECTURE.md и docs/NODES.md):
 fetch — scraper.fetch_html, детекция границ — scraper.detect_blocks,
 клонирование — промпт-механика /api/clone (LLM в режиме edit, точное
 воспроизведение), кэш — cache_store (повторный разбор сайта бесплатен),
@@ -12,7 +12,6 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import json
-import re
 import traceback
 from pathlib import Path
 
@@ -20,7 +19,7 @@ from bs4 import BeautifulSoup
 
 import llm_client as llm
 import cache_store
-from scraper import fetch_html, detect_blocks, extract_css, parse_design_tokens
+from scraper import fetch_html, detect_blocks, rendered_html, capture_block_irs
 
 import jsonschema
 
@@ -29,12 +28,20 @@ ROOT = Path(__file__).resolve().parent.parent
 MAX_WORKERS = 4            # как EXECUTOR в server.py
 FRAGMENT_LIMIT = 12000     # HTML блока в промпте, символов
 STYLES_LIMIT = 6000        # CSS страницы в промпте, символов
-DEFAULT_PROVIDER = "qwen"  # решение владельца 7: разработка/ревью — только qwencloud
+DEFAULT_PROVIDER = "openrouter"  # роль clone/repair выбирает модель из ROUTING
 
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 _SCHEMA = json.loads((ROOT / "schema" / "design-ir.schema.json").read_text(encoding="utf-8"))
 _VALIDATOR = jsonschema.Draft7Validator(_SCHEMA)
+
+_SEMANTIC_ROLES = {
+    "header", "footer", "carousel", "categories", "product-grid", "services-grid",
+    "journal", "how-it-works", "faq", "cta", "trust", "pricing", "testimonials",
+    "gallery", "section",
+}
+
+SOURCE_COMPILER_VERSION = "dom-v21"
 
 
 def _validate(ir: dict) -> list:
@@ -47,85 +54,70 @@ def _validate(ir: dict) -> list:
 
 
 def _block_cache_key(url: str, name: str, selector: str) -> str:
-    raw = f"{url.strip().lower().rstrip('/')}|{name}|{selector}"
+    # Bump when the deterministic DOM compiler or responsive merge contract changes.
+    raw = f"{SOURCE_COMPILER_VERSION}|{url.strip().lower().rstrip('/')}|{name}|{selector}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _clone_block_prompt(name: str, selector: str, styles: str, fragment: str) -> str:
-    return (
-        "Ты — senior фронтенд-разработчик и дизайн-инженер. Тебе дали HTML+CSS реальной страницы.\n"
-        f"Задача: воспроизвести блок «{name}» (на странице он выбран селектором {selector}) "
-        "как Design IR (JSON).\n\n"
-        "ПРАВИЛА:\n"
-        "- Воспроизведи структуру блока ТОЧНО: те же элементы, тот же порядок, тот же текст.\n"
-        "- НЕ добавляй элементы, которых нет в HTML.\n"
-        "- НЕ убирай элементы из HTML.\n"
-        "- Тексты — verbatim из HTML (не перефразируй).\n"
-        "- Цвета/шрифты/радиусы — извлеки из CSS и запиши в tokens.\n"
-        "- Раскладку (flex/grid/позиции) — передай через frame (layout/direction/gap/padding).\n"
-        "- Верни ОДИН JSON-объект по схеме Design IR. Без markdown.\n\n"
-        f"## CSS стили страницы\n{styles}\n\n## HTML блока\n{fragment}"
-    )
+def _refine_ambiguous_blocks(html: str, blocks: list[dict], provider: str) -> list[dict]:
+    """Use a small semantic LLM pass only when DOM/tag/class heuristics are unsure.
 
-
-def _clone_one(url: str, html: str, styles: str, block: dict, provider: str) -> dict:
-    """Клон одного блока: кэш → фрагмент HTML → LLM(edit) → валидация → один repair."""
-    name, selector = block["name"], block["selector"]
-    head = {"name": name, "selector": selector}
-
-    hit = cache_store.get("clone_block", _block_cache_key(url, name, selector))
-    if hit and isinstance(hit.get("ir"), dict):
-        return {**head, "ir": hit["ir"], "cached": True}
-
-    try:
-        el = BeautifulSoup(html, "lxml").select_one(selector)
-    except Exception as e:
-        return {**head, "error": f"не удалось выбрать элемент по селектору: {e}"}
-    if el is None:
-        return {**head, "error": f"блок не найден по селектору {selector!r}"}
-
-    fragment = re.sub(r"<script[^>]*>.*?</script>", "", str(el), flags=re.S)
-    fragment = re.sub(r"\s+", " ", fragment)[:FRAGMENT_LIMIT]
-
-    def messages(user: str) -> list:
-        # системный промпт режима edit, как в /api/clone
-        return [{"role": "system", "content": llm.build_system_prompt("edit")},
-                {"role": "user", "content": user}]
-
-    try:
-        raw = llm.chat(provider, messages(_clone_block_prompt(name, selector, styles, fragment)),
-                       0.2, role="clone")
-    except Exception as e:
-        return {**head, "error": f"LLM-вызов: {e}"}
-
-    try:
-        ir = json.loads(llm.extract_json(raw))
-    except (json.JSONDecodeError, ValueError) as e:
-        return {**head, "error": f"невалидный JSON от модели: {e}"}
-
-    errors = _validate(ir) if isinstance(ir, dict) else ["модель вернула не объект"]
-    if errors:
-        # один repair-вызов — существующий паттерн /api/clone
-        repair = (
-            "Следующий JSON не прошёл валидацию. Ошибки:\n- " + "\n- ".join(errors[:8]) +
-            "\n\nИсправь минимально и верни только JSON:\n\n" + json.dumps(ir, ensure_ascii=False)
-        )
+    Selectors and geometry remain deterministic. The model can label a candidate,
+    but cannot invent, resize, merge or reorder source blocks.
+    """
+    ambiguous = [(i, b) for i, b in enumerate(blocks) if b.get("kind") == "section"]
+    if not ambiguous:
+        return blocks
+    soup = BeautifulSoup(html, "lxml")
+    candidates = []
+    for index, block in ambiguous:
         try:
-            raw2 = llm.chat(provider, messages(repair), 0.2, role="repair")
-            ir2 = json.loads(llm.extract_json(raw2))
-            if isinstance(ir2, dict) and not _validate(ir2):
-                ir, errors = ir2, []
+            el = soup.select_one(block["selector"])
         except Exception:
-            pass
-    if errors:
-        return {**head, "error": "блок не прошёл валидацию после repair: " + "; ".join(errors[:5])}
-
-    cache_store.put("clone_block", _block_cache_key(url, name, selector), {"ir": ir})
-    return {**head, "ir": ir, "cached": False}
+            el = None
+        candidates.append({
+            "index": index,
+            "tag": block.get("tag"),
+            "heading": block.get("heading", ""),
+            "text": (el.get_text(" ", strip=True)[:500] if el else ""),
+        })
+    prompt = (
+        "Classify ambiguous web page sections. Return JSON only: "
+        '{"blocks":[{"index":0,"role":"section","label":"Human label"}]}. '
+        "Allowed roles: " + ", ".join(sorted(_SEMANTIC_ROLES)) + ". "
+        "Do not add/remove/reorder candidates. A repeated group of products/listings is product-grid; "
+        "services is services-grid; editorial posts are journal.\n\n" +
+        json.dumps(candidates, ensure_ascii=False)
+    )
+    try:
+        raw = llm.chat(provider, [
+            {"role": "system", "content": "You label existing DOM sections. You never design or alter layout."},
+            {"role": "user", "content": prompt},
+        ], 0.1, role="source_semantics")
+        answer = json.loads(llm.extract_json(raw))
+    except Exception:
+        return blocks
+    refined = [dict(b) for b in blocks]
+    for item in answer.get("blocks", []) if isinstance(answer, dict) else []:
+        try:
+            index = int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        role = str(item.get("role", ""))
+        if index < 0 or index >= len(refined) or role not in _SEMANTIC_ROLES:
+            continue
+        if refined[index].get("kind") != "section":
+            continue
+        refined[index]["kind"] = role
+        label = str(item.get("label") or "").strip()
+        if label:
+            refined[index]["label"] = label[:100]
+    return refined
 
 
 def parse_blocks(url: str, blocks: list | None = None,
-                 provider: str = DEFAULT_PROVIDER) -> dict:
+                 provider: str = DEFAULT_PROVIDER,
+                 viewports: list[dict] | None = None) -> dict:
     """BlockParse: список блоков-IR + design-токены по URL.
 
     blocks — опциональный список {name, selector}: клонировать только их
@@ -146,39 +138,86 @@ def parse_blocks(url: str, blocks: list | None = None,
             raise ValueError("Пустой список блоков.")
 
     # кэш полного разбора — только когда берём все блоки (выборочный список не кэшируем)
-    full_key = cache_store.key_url(url)
+    # Не читаем результаты v1: там лежат LLM-аппроксимации, а не DOM-слои.
+    viewport_key = json.dumps(viewports or "default", sort_keys=True, separators=(",", ":"))
+    full_key = cache_store.key_url(SOURCE_COMPILER_VERSION + "|" + viewport_key + "|" + url)
     if wanted is None:
         hit = cache_store.get("blockparse_url", full_key)
-        if hit:
+        # Ошибочный частичный ответ никогда не должен выглядеть как успешный
+        # «кэш»: иначе временный 429/timeout навсегда блокирует повторный запуск.
+        if hit and not any(isinstance(block, dict) and block.get("error")
+                           for block in hit.get("blocks", [])):
             return {**hit, "cached": True}
 
-    try:
-        html = fetch_html(url)  # внутри SSRF-гард
-    except ValueError:
-        raise
-    except Exception as e:
-        raise RuntimeError(f"не удалось загрузить {url}: {e}")
-
     if wanted is None:
-        wanted = detect_blocks(html)
-    if not wanted:
-        raise RuntimeError("на странице не найдено ни одного блока "
-                           "(нет семантических тегов и заголовков)")
-
-    styles = extract_css(html)
-    tokens = parse_design_tokens(styles)
-
-    futures = {_EXECUTOR.submit(_clone_one, url, html, styles, b, provider): b
-               for b in wanted}
-    results = []
-    for f, b in futures.items():  # порядок wanted сохранён — dict упорядочен
+        # Детекция и refine — по живому DOM после JS (Chromium), чтобы селекторы
+        # гарантированно resolve'ились в capture; SSR/hydration-расхождение с raw
+        # HTML делало их хрупкими. При сбое рендера — тихий fallback на httpx
+        # (у payload нет warnings-канала).
         try:
-            results.append(f.result())
-        except Exception as e:  # ошибка блока не роняет остальные
-            traceback.print_exc()
-            results.append({"name": b["name"], "selector": b["selector"], "error": str(e)})
+            html = rendered_html(url)  # внутри SSRF-гард
+        except ValueError:
+            raise
+        except Exception:
+            try:
+                html = fetch_html(url)  # внутри SSRF-гард
+            except ValueError:
+                raise
+            except Exception as e:
+                raise RuntimeError(f"не удалось загрузить {url}: {e}")
+        wanted = detect_blocks(html)
+        wanted = _refine_ambiguous_blocks(html, wanted, provider)
+        if not wanted:
+            raise RuntimeError("на странице не найдено ни одного блока "
+                               "(нет семантических тегов и заголовков)")
+
+    # Токены страницы приезжают из capture (замер живого DOM); CSS-фолбэк по
+    # inline <style> больше не нужен — без capture осмысленных токенов нет.
+    tokens = None
+
+    # Один Chromium на всю страницу: снимаем реальный DOM после JS, computed
+    # styles и bbox каждого блока. Это даёт редактируемый фрейм, а не догадку
+    # LLM о том, к какому из 19 шаблонов отнести произвольный компонент.
+    try:
+        captured, rendered_tokens = capture_block_irs(url, wanted, return_tokens=True, viewports=viewports)
+        if rendered_tokens:
+            tokens = rendered_tokens
+    except Exception as e:
+        traceback.print_exc()
+        captured = {b["selector"]: {"error": f"не удалось снять DOM-слепок: {e}"}
+                    for b in wanted}
+
+    results = []
+    for b in wanted:  # порядок детекции остаётся порядком выходных портов
+        head = {"name": b["name"], "selector": b["selector"],
+                "label": b.get("label") or b["name"], "kind": b.get("kind", "section")}
+        item = captured.get(b["selector"], {"error": "DOM-слепок не получен"})
+        if item.get("error"):
+            # Responsive duplicates that are hidden at the canonical desktop viewport
+            # are not meaningful Source Import outputs.
+            if "не виден" in str(item["error"]):
+                continue
+            results.append({**head, "error": item["error"]})
+            continue
+        ir = item.get("ir")
+        errors = _validate(ir) if isinstance(ir, dict) else ["DOM-слепок не является IR"]
+        if errors:
+            results.append({**head, "error": "внутренняя ошибка DOM-импорта: " + "; ".join(errors[:3])})
+            continue
+        cache_store.put("clone_block", _block_cache_key(url, b["name"], b["selector"]), {"ir": ir})
+        results.append({**head, "ir": ir, "cached": False, "source": "dom",
+                        "layers": item.get("layer_count", 0), "size": {
+                            "width": item.get("width"), "height": item.get("height")},
+                        "preview": item.get("preview"), "previews": item.get("previews", {}),
+                        "sizes": item.get("sizes", {}),
+                        "layersByViewport": item.get("layers_by_viewport", {}),
+                        "coverage": item.get("coverage", {}),
+                        "fidelity": item.get("fidelity"),
+                        "warnings": item.get("warnings", []), "repeat": item.get("repeat")})
 
     payload = {"url": url, "blocks": results, "tokens": tokens}
-    if blocks is None:
+    # Сохраняем только полностью успешный разбор. Отдельные удачные блоки уже
+    # имеют свой clone_block-кэш; неудачные должны иметь шанс на повтор.
+    if blocks is None and not any(block.get("error") for block in results if isinstance(block, dict)):
         cache_store.put("blockparse_url", full_key, payload)
     return {**payload, "cached": False}

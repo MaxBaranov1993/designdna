@@ -1,7 +1,7 @@
 """Quality Gate + Constraints: детерминированная инфраструктура правил поверх IR.
 
-Решение владельца 12.2 (бэклог docs/NODES-HOUDINI.md §8): после бэкенда
-BlockParse/Reskin первым идёт общий движок правил. Без LLM: проверка и
+Controlled AI layer (см. docs/ARCHITECTURE.md и docs/ROADMAP.md):
+после Source Import/Reskin нужен общий движок правил. Без LLM: проверка и
 авто-доводка полностью детерминированы.
 
 Правило = данные: id, описание, severity, check(ir) -> список нарушений
@@ -20,7 +20,7 @@ from __future__ import annotations
 import copy
 import math
 
-from colorutils import hex_to_srgb
+from colorutils import hex_to_srgb, srgb_to_hex, srgb_to_oklch, oklch_to_srgb
 
 # лимиты v1 (по схеме design-ir.schema.json и ТЗ)
 WCAG_AA = 4.5
@@ -28,6 +28,8 @@ GRID_STEP = 8
 MAX_BUTTON_LEN = 40
 MAX_HEADING_LEN = 120
 MAX_SUBHEADING_LEN = 300
+MIN_TAP_TARGET = 24  # WCAG 2.2 AA: минимальный размер touch-target, px
+MIN_FONT_SIZE = 12   # WCAG: читаемый минимум текста, px
 DEFAULT_ARTBOARD_WIDTH = 960  # ширина холста по умолчанию (описание схемы)
 
 SEVERITY_ERROR = "error"
@@ -243,6 +245,45 @@ def _check_contrast(ir) -> list:
     return out
 
 
+def _fix_contrast(ir) -> list:
+    """Доводит tokens.color.text/textMuted до WCAG AA к background, двигая
+    lightness в OKLCH (hue/chroma сохраняются). Fallback — почти чёрный/белый."""
+    tokens = ir.get("tokens")
+    colors = tokens.get("color") if isinstance(tokens, dict) else None
+    if not isinstance(colors, dict):
+        return []
+    bg = colors.get("background")
+    if not isinstance(bg, str) or _wcag_luminance(bg) is None:
+        return []
+    bg_light = _wcag_luminance(bg) > 0.18  # светлый фон — текст затемняем
+    journal = []
+    for fg_key, _bg_key in _CONTRAST_PAIRS:
+        fg = colors.get(fg_key)
+        if not isinstance(fg, str) or _wcag_luminance(fg) is None:
+            continue
+        if contrast_ratio(fg, bg) >= WCAG_AA:
+            continue
+        try:
+            L, C, H = srgb_to_oklch(hex_to_srgb(fg))
+        except (ValueError, TypeError):
+            continue
+        best = None
+        for i in range(1, 26):
+            nl = max(0.0, L - 0.04 * i) if bg_light else min(1.0, L + 0.04 * i)
+            rgb = tuple(min(1.0, max(0.0, c)) for c in oklch_to_srgb((nl, C, H)))
+            cand = srgb_to_hex(rgb)
+            if contrast_ratio(cand, bg) >= WCAG_AA:
+                best = cand
+                break
+        if best is None:
+            best = "#171717" if bg_light else "#fafafa"
+            if contrast_ratio(best, bg) < WCAG_AA:
+                best = "#000000" if bg_light else "#ffffff"
+        colors[fg_key] = best
+        journal.append(f"rule contrast починило tokens.color.{fg_key}: {fg} -> {best}")
+    return journal
+
+
 # ---------- правило 6: сетка 8px ----------
 
 def _iter_frame_metrics(ir):
@@ -394,6 +435,67 @@ def _check_fonts(ir) -> list:
     return []
 
 
+# ---------- правило 9: touch-target (WCAG 2.2, 2.5.8) ----------
+
+def _iter_framed_controls(ir):
+    """(path, frame) интерактивных элементов (button/input) с числовым frame."""
+    for path, el in _iter_all_elements(ir):
+        if el.get("type") not in ("button", "input"):
+            continue
+        frame = el.get("frame")
+        if isinstance(frame, dict):
+            yield path, frame
+
+
+def _check_tap_target(ir) -> list:
+    out = []
+    for path, frame in _iter_framed_controls(ir):
+        h = frame.get("height")
+        if _is_num(h) and 0 < h < MIN_TAP_TARGET:
+            out.append({"path": f"{path}.frame.height",
+                        "message": f"touch-target {h}px < {MIN_TAP_TARGET}px (WCAG 2.2, 2.5.8)"})
+    return out
+
+
+def _fix_tap_target(ir) -> list:
+    journal = []
+    for path, frame in _iter_framed_controls(ir):
+        h = frame.get("height")
+        if _is_num(h) and 0 < h < MIN_TAP_TARGET:
+            frame["height"] = MIN_TAP_TARGET
+            journal.append(f"rule tap-target починило {path}.frame.height: {h} -> {MIN_TAP_TARGET}")
+    return journal
+
+
+# ---------- правило 10: минимальный кегль (WCAG readability) ----------
+
+def _iter_text_styles(ir):
+    """(path, style) элементов с числовым style.fontSize."""
+    for path, el in _iter_all_elements(ir):
+        style = el.get("style")
+        if isinstance(style, dict) and _is_num(style.get("fontSize")):
+            yield path, style
+
+
+def _check_min_font_size(ir) -> list:
+    out = []
+    for path, style in _iter_text_styles(ir):
+        size = style["fontSize"]
+        if 0 < size < MIN_FONT_SIZE:
+            out.append({"path": f"{path}.style.fontSize",
+                        "message": f"fontSize {size}px < {MIN_FONT_SIZE}px"})
+    return out
+
+
+def _fix_min_font_size(ir) -> list:
+    journal = []
+    for path, style in _iter_text_styles(ir):
+        size = style["fontSize"]
+        if 0 < size < MIN_FONT_SIZE:
+            style["fontSize"] = MIN_FONT_SIZE
+            journal.append(f"rule min-font-size починило {path}.style.fontSize: {size} -> {MIN_FONT_SIZE}")
+    return journal
+
 # ---------- реестр правил ----------
 
 RULES = [
@@ -412,7 +514,7 @@ RULES = [
      "check": _check_heading_limits},
     {"id": "contrast", "severity": SEVERITY_ERROR,
      "description": f"контраст текста к фону не ниже {WCAG_AA} (WCAG AA, по tokens)",
-     "check": _check_contrast},
+     "check": _check_contrast, "fix": _fix_contrast},
     {"id": "grid-8", "severity": SEVERITY_ERROR,
      "description": f"отступы/размеры секций кратны {GRID_STEP} (сетка snap)",
      "check": _check_grid, "fix": _fix_grid},
@@ -422,6 +524,12 @@ RULES = [
     {"id": "fonts-limit", "severity": SEVERITY_ERROR,
      "description": "не более двух шрифтов (display+body токены)",
      "check": _check_fonts},
+    {"id": "tap-target", "severity": SEVERITY_ERROR,
+     "description": f"интерактивные элементы не ниже {MIN_TAP_TARGET}px (WCAG 2.2, 2.5.8)",
+     "check": _check_tap_target, "fix": _fix_tap_target},
+    {"id": "min-font-size", "severity": SEVERITY_ERROR,
+     "description": f"текст не мельче {MIN_FONT_SIZE}px",
+     "check": _check_min_font_size, "fix": _fix_min_font_size},
 ]
 RULES_BY_ID = {r["id"]: r for r in RULES}
 
