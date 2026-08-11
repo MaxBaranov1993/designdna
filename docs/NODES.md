@@ -278,6 +278,23 @@ scene references and patch roots. Live runs are restricted to the approved
 origin, and CSS selectors are discarded after execution. Raw typed values stay
 outside Zustand and SQLite and are cleared after a successful run.
 
+### Motion Editor
+
+Turns Design IR plus Interaction IR into an editable video timeline.
+
+Inputs:
+
+- `ir` — canonical Design IR used to materialize preview scenes;
+- `interaction` — sanitized events and scene patches.
+
+Output: `motion`.
+
+The graph node provides a compact preview and scene selector. The fullscreen
+editor provides composition presets, frame rate, transport, scrubber,
+proportional scene clips, per-scene duration, transition type/duration and
+easing. Motion IR stores only montage decisions and hashes; editable scene IR is
+materialized through Interaction replay.
+
 ## Proposed killer nodes
 
 ### Project DNA

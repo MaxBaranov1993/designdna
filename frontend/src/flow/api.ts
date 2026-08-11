@@ -104,6 +104,8 @@ export type InteractionBuildResp = { interaction?: IRObject };
 export type InteractionValidateResp = { valid?: boolean; errors?: string[] };
 export type InteractionReplayResp = { ir?: IRObject };
 export type InteractionCaptureResp = { interaction?: IRObject };
+export type MotionBuildResp = { motion?: IRObject; sceneIrs?: Array<{ sceneId: string; ir: IRObject }> };
+export type MotionValidateResp = { valid?: boolean; errors?: string[] };
 
 export async function getConfig(): Promise<ConfigResp> {
   return apiGet<ConfigResp>("/api/config");

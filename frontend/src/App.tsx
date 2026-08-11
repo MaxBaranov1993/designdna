@@ -33,6 +33,7 @@ import { StyleDnaNode } from "./nodes/StyleDnaNode";
 import { DeriveNode } from "./nodes/DeriveNode";
 import { PageBridgeNode } from "./nodes/PageBridgeNode";
 import { RecorderNode } from "./nodes/RecorderNode";
+import { MotionNode } from "./nodes/MotionNode";
 
 /* Реестр кастомных нод — вне компонента, ключи = legacy type (конвертация данных не нужна) */
 const nodeTypes = {
@@ -48,6 +49,7 @@ const nodeTypes = {
   reskin: ReskinNode,
   qualitypass: QualityPassNode,
   recorder: RecorderNode,
+  motion: MotionNode,
   pagebridge: PageBridgeNode,
 } satisfies NodeTypes;
 

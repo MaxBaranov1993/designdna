@@ -2,11 +2,13 @@
 
 ## Mental model
 
-DesignAI Web has four layers:
+DesignAI Web has six cooperating layers:
 
 ```text
 Node Graph
   → Design IR
+  → Interaction IR
+  → Motion IR
   → DNA Editor
   → AI Operations through OpenRouter
 ```
@@ -76,6 +78,20 @@ enter graph persistence; the backend then performs a second recursive cleanup
 for emails, phones, credentials and tokens. CSS selectors are execution-only
 and are not included in Interaction IR.
 
+### Motion IR
+
+Motion IR is a versioned montage artifact derived from Interaction IR. It owns
+composition size, frame rate, contiguous scene timing, transitions, tracks and
+markers, but never embeds copies of Design IR scenes. Each motion scene points
+to an Interaction IR scene; `/api/motion/build` materializes preview Design IR
+through deterministic replay and returns those previews outside the canonical
+Motion IR document.
+
+The fullscreen Motion Editor edits scene duration, transition type/duration and
+easing, supports 16:9, 9:16 and 1:1 compositions, and provides transport,
+scrubbing and proportional scene clips. Applying changes rebuilds and validates
+Motion IR on the backend.
+
 ## Graph
 
 The graph is a procedural design workflow.
@@ -85,7 +101,8 @@ Current wire kinds:
 - `text` — prompts, summaries, instructions;
 - `ir` — full editable Design IR;
 - `tokens` — Style DNA without the full tree;
-- `interaction` — sanitized events and replayable Design IR scenes.
+- `interaction` — sanitized events and replayable Design IR scenes;
+- `motion` — validated timeline and render composition metadata.
 
 Rules:
 

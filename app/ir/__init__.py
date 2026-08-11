@@ -27,6 +27,11 @@ from .interaction import (
     diff as diff_interaction_scene,
     apply_patch as apply_interaction_patch,
 )
+from .motion import (
+    MOTION_VERSION,
+    build as build_motion,
+    validate as validate_motion,
+)
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
@@ -61,4 +66,7 @@ __all__ = [
     "sanitize_interaction_value",
     "diff_interaction_scene",
     "apply_interaction_patch",
+    "MOTION_VERSION",
+    "build_motion",
+    "validate_motion",
 ]

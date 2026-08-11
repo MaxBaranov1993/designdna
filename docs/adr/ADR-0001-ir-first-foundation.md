@@ -82,7 +82,7 @@ We introduce the following Python packages so that later stages have a clear hom
 - `app/ir/tailwind_projection.py` — style-engine/Tailwind projection (stub in stage 0).
 - `app/ir/responsive.py` — responsive-engine: viewport materialization, breakpoint rules, override resolution (stub in stage 0).
 - `app/ir/interaction.py` — interaction-runtime: Interaction IR types and sanitizers (stub in stage 0).
-- `app/ir/motion.py` — motion-runtime: Motion IR types and validators (stub in stage 0).
+- `app/ir/motion.py` — Motion IR build, timeline invariants and validators (implemented in stage 5).
 - `app/config/flags.py` — feature flags shared by backend and exposed to frontend.
 
 No broad rewrites of existing code are performed in stage 0; only the new contracts are added and the legacy call sites are updated to use `app/ir` utilities.

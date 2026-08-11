@@ -112,6 +112,8 @@ Editor tests:
 .venv\Scripts\python.exe -u app\interaction_ir_test.py
 .venv\Scripts\python.exe -u app\interaction_capture_test.py
 .venv\Scripts\python.exe -u app\ui_interaction_recorder_test.py
+.venv\Scripts\python.exe -u app\motion_ir_test.py
+.venv\Scripts\python.exe -u app\ui_motion_editor_test.py
 ```
 
 Style-system API:
@@ -140,6 +142,16 @@ The browser Recorder must redact typed PII before updating Zustand. The backend
 sanitizer is a second boundary, not a replacement for local cleanup.
 Hybrid capture additionally requires `mine=true`, validates every document
 navigation, rejects cross-origin transitions and caps scripts at 50 actions.
+
+Motion API:
+
+```text
+POST /api/motion/build
+POST /api/motion/validate
+```
+
+Motion build validates both source IR layers, produces canonical Motion IR and
+returns materialized Design IR scenes only as preview data.
 
 Sanity:
 

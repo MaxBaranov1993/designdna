@@ -36,6 +36,7 @@ export const NODE_TYPES: NodeType[] = [
   "reskin",
   "qualitypass",
   "recorder",
+  "motion",
   "pagebridge",
 ];
 

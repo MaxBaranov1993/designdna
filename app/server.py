@@ -203,6 +203,18 @@ class InteractionCaptureReq(BaseModel):
     actions: list[dict] = Field(default_factory=list)
 
 
+class MotionBuildReq(BaseModel):
+    base_ir: dict
+    interaction: dict
+    composition: dict = Field(default_factory=dict)
+    scene_settings: dict = Field(default_factory=dict)
+
+
+class MotionValidateReq(BaseModel):
+    motion: dict
+    interaction: dict | None = None
+
+
 class ScrapeReq(BaseModel):
     url: str = ""
     use_playwright: bool = True
@@ -961,6 +973,38 @@ def interaction_capture(req: InteractionCaptureReq):
     except Exception as exc:
         return err(502, f"Hybrid capture failed: {exc}")
     return {"interaction": interaction}
+
+
+@app.post("/api/motion/build")
+def motion_build(req: MotionBuildReq):
+    """Build Motion IR and materialize editable preview scenes."""
+    if not FEATURE_FLAGS.is_enabled("motionEditor"):
+        return err(404, "Motion Editor отключён feature flag.")
+    base_ir = ensure_current_ir(req.base_ir)
+    base_errors = validate_ir(base_ir)
+    interaction_errors = ir.validate_interaction(req.interaction)
+    if base_errors:
+        return err(422, "Base IR не проходит schema: " + "; ".join(base_errors[:5]))
+    if interaction_errors:
+        return err(422, "Interaction IR не проходит schema: " + "; ".join(interaction_errors[:5]))
+    try:
+        motion = ir.build_motion(req.interaction, req.composition, req.scene_settings)
+        scene_irs = []
+        for scene in motion["scenes"]:
+            scene_ir = ir.replay_interaction(base_ir, req.interaction, scene["interactionSceneId"])
+            replay_errors = validate_ir(scene_ir)
+            if replay_errors:
+                raise ValueError("Motion scene создаёт невалидный IR: " + "; ".join(replay_errors[:5]))
+            scene_irs.append({"sceneId": scene["id"], "ir": ensure_current_ir(scene_ir)})
+    except ValueError as exc:
+        return err(422, str(exc))
+    return {"motion": motion, "sceneIrs": scene_irs}
+
+
+@app.post("/api/motion/validate")
+def motion_validate(req: MotionValidateReq):
+    errors = ir.validate_motion(req.motion, req.interaction)
+    return {"valid": not errors, "errors": errors}
 
 
 @app.get("/nodes")

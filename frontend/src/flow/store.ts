@@ -47,6 +47,7 @@ import type {
   PageBridgeNodeData,
   RecorderNodeData,
   InteractionLiveAction,
+  MotionNodeData,
 } from "./types";
 
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
@@ -89,6 +90,7 @@ export interface FlowStoreState {
   runQualityPass: (id: number) => Promise<void>;
   runRecorder: (id: number) => Promise<void>;
   runLiveRecorder: (id: number, actions: InteractionLiveAction[]) => Promise<boolean>;
+  runMotion: (id: number) => Promise<void>;
   runPageBridge: (id: number) => void;
   sendToNode: (id: number, targetType: "edit" | "reference") => void;
   addMixInput: (id: number) => void;
@@ -377,6 +379,16 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
           get().setNodeData(consId, { ir: deepClone(ir), interaction: null, draftEvents: [], draftScenes: [{ id: "scene-0", viewport: "desktop", patch: [] }] });
           get().setStatus(consId, "Design IR ready for interaction recording", "ok");
         }
+      } else if (cons.type === "motion") {
+        const designIr = pullInput(nodes, edges, cons, "ir") as IRObject | null;
+        const interaction = pullInput(nodes, edges, cons, "interaction") as IRObject | null;
+        get().setNodeData(consId, {
+          ir: designIr ? deepClone(designIr) : null,
+          interaction: interaction ? deepClone(interaction) : null,
+          motion: null,
+          sceneIrs: [],
+        });
+        get().setStatus(consId, designIr && interaction ? "Motion inputs ready" : "Connect Design IR and Interaction IR");
       } else if (cons.type === "pagebridge") {
         get().runPageBridge(consId);
         get().propagate(consId, visited);
@@ -397,6 +409,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     else if (n.type === "reskin") void get().runReskin(id);
     else if (n.type === "qualitypass") void get().runQualityPass(id);
     else if (n.type === "recorder") void get().runRecorder(id);
+    else if (n.type === "motion") void get().runMotion(id);
     else if (n.type === "pagebridge") get().runPageBridge(id);
   },
 
@@ -775,6 +788,45 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       get().setStatus(id, "Live capture: " + message, "err");
       toast("Live capture: " + message, "error");
       return false;
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  runMotion: async (id) => {
+    const st = get();
+    const n = st.nodes.find((node) => Number(node.id) === id);
+    if (!n || n.type !== "motion" || st.busy[id]) return;
+    const data = n.data as MotionNodeData;
+    const designIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
+    const interaction = (pullInput(st.nodes, st.edges, n, "interaction") || data.interaction) as IRObject | null;
+    if (!designIr || !interaction) {
+      get().setStatus(id, "Connect Design IR and Interaction IR", "err");
+      return;
+    }
+    get().setBusy(id, true);
+    get().setStatus(id, "Building editable motion timeline...");
+    try {
+      const response = await api<{ motion?: IRObject; sceneIrs?: MotionNodeData["sceneIrs"] }>("/api/motion/build", {
+        base_ir: designIr,
+        interaction,
+        composition: data.composition,
+        scene_settings: data.sceneSettings,
+      });
+      const motion = response.motion || null;
+      const sceneIrs = response.sceneIrs || [];
+      const scenes = Array.isArray(motion?.scenes) ? motion.scenes : [];
+      get().setNodeData(id, {
+        ir: deepClone(designIr), interaction: deepClone(interaction), motion, sceneIrs,
+        selectedScene: Math.min(data.selectedScene || 0, Math.max(0, scenes.length - 1)),
+      });
+      const composition = motion?.composition as Record<string, unknown> | undefined;
+      get().setStatus(id, `Motion IR ready · ${scenes.length} scenes · ${(Number(composition?.duration || 0) / 1000).toFixed(1)}s`, "ok");
+      get().propagate(id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      get().setStatus(id, "Motion: " + message, "err");
+      toast("Motion: " + message, "error");
     } finally {
       get().setBusy(id, false);
     }

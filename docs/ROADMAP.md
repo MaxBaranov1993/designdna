@@ -15,11 +15,13 @@ Completed:
 - Stage 4A: Design IR preview recorder, local PII/secret cleanup, versioned
   Interaction IR, safe scene patches, validation and deterministic replay;
 - Stage 4B: owned-site Chromium runner, same-origin navigation guard, transient
-  action scripts and sanitized live form-state capture.
+  action scripts and sanitized live form-state capture;
+- Stage 5: versioned Motion IR, materialized editable scenes, fullscreen
+  timeline, transport, composition presets and transition inspector.
 
-Next vertical slice: Stage 5 Motion Editor over Interaction IR scenes. Video
-render and AI Director remain future stages and must not be marked implemented
-until their end-to-end acceptance scenarios pass.
+Next vertical slice: Stage 6 deterministic video render from Motion IR. AI
+Director remains a future stage and must not be marked implemented until its
+end-to-end acceptance scenarios pass.
 
 ## Phase 0 — Clean product foundation
 

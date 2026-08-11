@@ -8,6 +8,7 @@ function kindClass(kind: string) {
   if (kind === "ir") return "port-ir";
   if (kind === "tokens") return "port-tokens";
   if (kind === "interaction") return "port-interaction";
+  if (kind === "motion") return "port-motion";
   return "";
 }
 

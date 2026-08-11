@@ -16,6 +16,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   reskin: { title: "Reskin", icon: "✦", w: 340 },
   qualitypass: { title: "Quality Pass", icon: "✓", w: 350 },
   recorder: { title: "Interaction Recorder", icon: "REC", w: 420 },
+  motion: { title: "Motion Editor", icon: "M", w: 390 },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300 },
 };
 
@@ -74,6 +75,13 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   recorder: {
     in: [{ name: "ir", label: "Design IR", kind: "ir" }],
     out: [{ name: "interaction", label: "Interaction IR", kind: "interaction" }],
+  },
+  motion: {
+    in: [
+      { name: "ir", label: "Design IR", kind: "ir" },
+      { name: "interaction", label: "Interaction IR", kind: "interaction" },
+    ],
+    out: [{ name: "motion", label: "Motion IR", kind: "motion" }],
   },
   pagebridge: {
     in: [{ name: "ir", label: "component", kind: "ir" }],
@@ -156,6 +164,11 @@ export function defaultData(type: NodeType): AnyNodeData {
         draftEvents: [], draftScenes: [{ id: "scene-0", viewport: "desktop", patch: [] }],
         mode: "preview", liveUrl: "", mine: false, liveViewport: "desktop",
       };
+    case "motion":
+      return {
+        ir: null, interaction: null, motion: null, sceneIrs: [], selectedScene: 0,
+        composition: { width: 1920, height: 1080, fps: 30 }, sceneSettings: {},
+      };
     case "pagebridge":
       return { channel: "shared-component", mode: "send", ir: null };
   }
@@ -175,5 +188,6 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "reskin", note: "вариант с локом структуры" },
   { type: "qualitypass", note: "judge + repair + scorecard" },
   { type: "recorder", note: "IR actions -> Interaction IR" },
+  { type: "motion", note: "Interaction IR -> editable timeline" },
   { type: "pagebridge", note: "передать компонент между страницами" },
 ];

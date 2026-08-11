@@ -17,7 +17,7 @@ DEFAULT_FLAGS = {
     # Stage 4: interaction recorder.
     "interactionRecorder": True,
     # Stage 5: motion editor.
-    "motionEditor": False,
+    "motionEditor": True,
     # Stage 6: deterministic video render.
     "videoRender": False,
     # Stage 7: AI director for motion.
