@@ -167,7 +167,8 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "motion":
       return {
         ir: null, interaction: null, motion: null, sceneIrs: [], selectedScene: 0,
-        composition: { width: 1920, height: 1080, fps: 30 }, sceneSettings: {},
+        composition: { width: 1920, height: 1080, fps: 30 },
+        renderSettings: { format: "mp4", quality: "high" }, renderJob: null, sceneSettings: {},
       };
     case "pagebridge":
       return { channel: "shared-component", mode: "send", ir: null };

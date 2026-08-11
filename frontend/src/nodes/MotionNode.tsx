@@ -3,8 +3,9 @@ import { createPortal } from "react-dom";
 import type { CSSProperties } from "react";
 import type { NodeProps } from "@xyflow/react";
 import { IrPreview } from "../components/IrPreview";
+import { api, apiGet } from "../flow/api";
 import { useFlowStore } from "../flow/store";
-import type { MotionFlowNode, MotionNodeData, MotionSceneSettings, SourceViewport } from "../flow/types";
+import type { MotionFlowNode, MotionNodeData, MotionRenderJob, MotionSceneSettings, SourceViewport } from "../flow/types";
 import { NodeShell, NodeStatus } from "./NodeShell";
 import { InPorts, OutPorts } from "./PortHandles";
 
@@ -40,6 +41,10 @@ function formatTime(milliseconds: number): string {
   return `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, "0")}`;
 }
 
+function formatBytes(bytes = 0): string {
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
+}
+
 function MotionWorkspace({ nodeId, data, onClose }: { nodeId: number; data: MotionNodeData; onClose: () => void }) {
   const setNodeData = useFlowStore((state) => state.setNodeData);
   const runNode = useFlowStore((state) => state.runNode);
@@ -48,10 +53,14 @@ function MotionWorkspace({ nodeId, data, onClose }: { nodeId: number; data: Moti
   const total = durationOf(data);
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(() => scenes[data.selectedScene]?.start || 0);
+  const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth > 760);
   const activeIndex = Math.max(0, scenes.findIndex((scene, index) => playhead >= scene.start && (playhead < scene.start + scene.duration || index === scenes.length - 1)));
   const activeScene = scenes[activeIndex];
   const activeSourceId = activeScene?.interactionSceneId || "";
   const preview = previewFor(data, activeScene);
+  const renderSettings = data.renderSettings || { format: "mp4" as const, quality: "high" as const };
+  const renderJob = data.renderJob;
+  const rendering = renderJob?.status === "queued" || renderJob?.status === "rendering";
 
   useEffect(() => {
     if (!playing || total <= 0) return;
@@ -104,6 +113,32 @@ function MotionWorkspace({ nodeId, data, onClose }: { nodeId: number; data: Moti
     });
   };
 
+  const startRender = async () => {
+    if (!data.ir || !data.interaction || !data.motion || rendering) return;
+    try {
+      let job = await api<MotionRenderJob>("/api/motion/render", {
+        base_ir: data.ir,
+        interaction: data.interaction,
+        motion: data.motion,
+      });
+      setNodeData(nodeId, { renderJob: job });
+      while (job.status === "queued" || job.status === "rendering") {
+        await new Promise((resolve) => window.setTimeout(resolve, 400));
+        job = await apiGet<MotionRenderJob>(`/api/motion/render/${job.id}`);
+        setNodeData(nodeId, { renderJob: job });
+      }
+    } catch (error) {
+      setNodeData(nodeId, {
+        renderJob: {
+          id: renderJob?.id || "failed",
+          status: "error",
+          progress: 0,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  };
+
   const transition = activeScene?.transition || { type: "cut", duration: 0, easing: "linear" };
   const animationStyle = {
     "--motion-duration": `${transition.duration}ms`,
@@ -119,7 +154,13 @@ function MotionWorkspace({ nodeId, data, onClose }: { nodeId: number; data: Moti
           <button className="primary" onClick={() => { if (playhead >= total) setPlayhead(0); setPlaying((current) => !current); }}>{playing ? "Pause" : "Play"}</button>
           <span>{formatTime(playhead)} / {formatTime(total)}</span>
         </div>
-        <button className="motion-close" title="Close Motion Editor" onClick={onClose}>x</button>
+        <div className="motion-actions">
+          {rendering ? <span className="motion-render-progress">Rendering {renderJob?.progress || 0}%</span> : null}
+          {renderJob?.status === "complete" && renderJob.downloadUrl ? <a className="motion-download" href={renderJob.downloadUrl} download={renderJob.filename}><span className="motion-desktop-label">Download {renderJob.result?.bytes ? formatBytes(renderJob.result.bytes) : "video"}</span><span className="motion-mobile-label">Save</span></a> : null}
+          <button className="motion-export" disabled={busy || rendering || !data.motion} onClick={startRender}>{rendering ? "Exporting..." : `Export ${renderSettings.format.toUpperCase()}`}</button>
+          <button className="motion-inspector-toggle" onClick={() => setInspectorOpen((current) => !current)}>{inspectorOpen ? "Canvas" : "Inspector"}</button>
+          <button className="motion-close" title="Close Motion Editor" onClick={onClose}>x</button>
+        </div>
       </header>
       <main className="motion-main">
         <section className="motion-stage">
@@ -127,7 +168,7 @@ function MotionWorkspace({ nodeId, data, onClose }: { nodeId: number; data: Moti
             <IrPreview ir={preview} height={540} fitHeight={false} viewport={activeScene?.viewport} empty="Build Motion IR to preview scenes" />
           </div>
         </section>
-        <aside className="motion-inspector">
+        <aside className={`motion-inspector ${inspectorOpen ? "open" : ""}`}>
           <div className="motion-panel-title">Composition</div>
           <div className="motion-ratios">
             <button className={data.composition.width > data.composition.height ? "active" : ""} onClick={() => setNodeData(nodeId, { composition: { ...data.composition, width: 1920, height: 1080 } })}>16:9</button>
@@ -135,6 +176,9 @@ function MotionWorkspace({ nodeId, data, onClose }: { nodeId: number; data: Moti
             <button className={data.composition.height === data.composition.width ? "active" : ""} onClick={() => setNodeData(nodeId, { composition: { ...data.composition, width: 1080, height: 1080 } })}>1:1</button>
           </div>
           <label>Frame rate<select value={data.composition.fps} onChange={(event) => setNodeData(nodeId, { composition: { ...data.composition, fps: Number(event.target.value) } })}><option value="24">24 fps</option><option value="30">30 fps</option><option value="60">60 fps</option></select></label>
+          <label>Format<select value={renderSettings.format} onChange={(event) => setNodeData(nodeId, { renderSettings: { ...renderSettings, format: event.target.value as "mp4" | "webm" }, renderJob: null })}><option value="mp4">MP4 / H.264</option><option value="webm">WebM / VP9</option></select></label>
+          <label>Quality<select value={renderSettings.quality} onChange={(event) => setNodeData(nodeId, { renderSettings: { ...renderSettings, quality: event.target.value as "draft" | "high" | "lossless" }, renderJob: null })}><option value="draft">Draft</option><option value="high">High</option><option value="lossless">Lossless</option></select></label>
+          {renderJob?.status === "error" ? <div className="motion-render-error">{renderJob.error || "Render failed"}</div> : null}
           <div className="motion-panel-title">Scene {activeIndex + 1}</div>
           <label>Duration, ms<input type="number" min="250" max="30000" value={data.sceneSettings[activeSourceId]?.duration ?? activeScene?.duration ?? 1200} onChange={(event) => updateScene({ duration: Number(event.target.value) })} /></label>
           <label>Transition<select value={data.sceneSettings[activeSourceId]?.transition ?? transition.type} onChange={(event) => updateScene({ transition: event.target.value as MotionSceneSettings["transition"] })}><option value="cut">Cut</option><option value="fade">Fade</option><option value="slide-left">Slide left</option><option value="slide-up">Slide up</option><option value="zoom">Zoom</option></select></label>

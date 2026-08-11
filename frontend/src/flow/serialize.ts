@@ -159,13 +159,24 @@ export function makeRfEdge(
   return { ...base, style: { stroke: WIRE_COLORS[edgeKindOf(nodes, base)], strokeWidth: 2 } };
 }
 
+function dataForStorage(type: NodeType, data: AnyNodeData): AnyNodeData {
+  if (type !== "motion") return data;
+  const { renderJob: _runtime, ...persistent } = data as AnyNodeData & { renderJob?: unknown };
+  return persistent as AnyNodeData;
+}
+
+function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
+  if (type !== "motion") return data;
+  return { ...defaultData("motion"), ...data, renderJob: null } as AnyNodeData;
+}
+
 function legacyNodes(nodes: FlowNode[]): LegacyNodePayload[] {
   return nodes.map((n) => ({
     id: Number(n.id),
     type: n.type as NodeType,
     x: Math.round(n.position.x),
     y: Math.round(n.position.y),
-    data: n.data as AnyNodeData,
+    data: dataForStorage(n.type as NodeType, n.data as AnyNodeData),
   }));
 }
 
@@ -297,7 +308,7 @@ export function payloadToRf(payload: LegacyGraphPayload): {
         id: String(raw.id),
         type: raw.type,
         position: { x: raw.x, y: raw.y },
-        data: raw.data,
+        data: dataForRuntime(raw.type, raw.data),
       }) as FlowNode,
   );
   const ids = new Set(nodes.map((n) => n.id));
@@ -339,6 +350,7 @@ export function parseLegacyPayload(input: unknown): LegacyGraphPayload {
     if (r.type === "generator") {
       data = { ...data, provider: "openrouter" } as AnyNodeData;
     }
+    data = dataForRuntime(r.type as NodeType, data);
     nodes.push({ id, type: r.type as NodeType, x: Number(r.x) || 0, y: Number(r.y) || 0, data });
   }
 

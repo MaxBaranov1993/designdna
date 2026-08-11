@@ -39,6 +39,10 @@ def validate(document: dict, interaction: dict | None = None) -> list[str]:
             formatted.append(f"scenes/{index}/transition/duration: cannot exceed scene duration")
         cursor = int(scene.get("start") or 0) + int(scene.get("duration") or 0)
     composition = document.get("composition") if isinstance(document.get("composition"), dict) else {}
+    render_settings = document.get("renderSettings") if isinstance(document.get("renderSettings"), dict) else {}
+    expected_codec = "h264" if render_settings.get("format") == "mp4" else "vp9"
+    if render_settings.get("codec") and render_settings.get("codec") != expected_codec:
+        formatted.append(f"renderSettings/codec: {render_settings.get('format')} requires {expected_codec}")
     if scenes and composition.get("duration") != cursor:
         formatted.append("composition/duration: must equal the end of the last scene")
     by_id = {scene.get("id"): scene for scene in scenes if isinstance(scene, dict)}
@@ -65,7 +69,7 @@ def validate(document: dict, interaction: dict | None = None) -> list[str]:
 
 
 def build(interaction: dict, composition: dict | None = None,
-          scene_settings: dict | None = None) -> dict:
+          scene_settings: dict | None = None, render_settings: dict | None = None) -> dict:
     """Build deterministic contiguous Motion IR from Interaction IR scenes."""
     interaction_scenes = interaction.get("scenes") if isinstance(interaction.get("scenes"), list) else []
     if not interaction_scenes:
@@ -75,6 +79,13 @@ def build(interaction: dict, composition: dict | None = None,
     width = max(320, min(3840, int(raw_composition.get("width") or 1920)))
     height = max(240, min(2160, int(raw_composition.get("height") or 1080)))
     fps = max(12, min(60, int(raw_composition.get("fps") or 30)))
+    raw_render = render_settings or {}
+    output_format = str(raw_render.get("format") or "mp4")
+    if output_format not in {"mp4", "webm"}:
+        output_format = "mp4"
+    quality = str(raw_render.get("quality") or "high")
+    if quality not in {"draft", "high", "lossless"}:
+        quality = "high"
     scenes = []
     clips = []
     cursor = 0
@@ -117,7 +128,11 @@ def build(interaction: dict, composition: dict | None = None,
         "tracks": [{"id": "track-scenes", "type": "scene", "name": "Scenes", "clips": clips, "locked": False}],
         "markers": markers,
         "assets": [],
-        "renderSettings": {"format": "mp4", "codec": "h264", "quality": "high"},
+        "renderSettings": {
+            "format": output_format,
+            "codec": "h264" if output_format == "mp4" else "vp9",
+            "quality": quality,
+        },
     }
     errors = validate(document, interaction)
     if errors:

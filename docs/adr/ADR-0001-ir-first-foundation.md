@@ -72,17 +72,18 @@ Rules:
 - AI responses for design operations must be parseable JSON objects that validate against the current Design IR schema (1.1) or a declared IR patch schema.
 - Raw HTML, CSS, video or arbitrary prose are rejected at the API boundary.
 - `mergeback.py` enforces lock masks after every AI transformation.
-- Future Motion IR and Interaction IR will use the same rule: AI returns validated patches, never rendered artifacts.
+- Motion IR and Interaction IR use the same rule: future AI operations return validated patches, never rendered artifacts.
 
 ### 6. Module boundaries (stage-0 package structure)
 
 We introduce the following Python packages so that later stages have a clear home:
 
 - `app/ir/` — ir-core: schema loading, migration, validation, content hash, sourceKey utilities.
-- `app/ir/tailwind_projection.py` — style-engine/Tailwind projection (stub in stage 0).
-- `app/ir/responsive.py` — responsive-engine: viewport materialization, breakpoint rules, override resolution (stub in stage 0).
-- `app/ir/interaction.py` — interaction-runtime: Interaction IR types and sanitizers (stub in stage 0).
+- `app/ir/tailwind_projection.py` — deterministic Style DNA/Tailwind projection (implemented in stage 2).
+- `app/ir/responsive.py` — viewport materialization and override resolution (implemented in stage 3).
+- `app/ir/interaction.py` — Interaction IR build, sanitization and replay (implemented in stage 4).
 - `app/ir/motion.py` — Motion IR build, timeline invariants and validators (implemented in stage 5).
+- `app/motion_render.py` — deterministic browser compositor and video encoder (implemented in stage 6).
 - `app/config/flags.py` — feature flags shared by backend and exposed to frontend.
 
 No broad rewrites of existing code are performed in stage 0; only the new contracts are added and the legacy call sites are updated to use `app/ir` utilities.

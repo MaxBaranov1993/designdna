@@ -19,7 +19,7 @@ DEFAULT_FLAGS = {
     # Stage 5: motion editor.
     "motionEditor": True,
     # Stage 6: deterministic video render.
-    "videoRender": False,
+    "videoRender": True,
     # Stage 7: AI director for motion.
     "aiDirector": False,
 }

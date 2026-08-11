@@ -171,6 +171,17 @@ export type MotionSceneSettings = {
   easing: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out";
 };
 export type MotionScenePreview = { sceneId: string; ir: IRObject };
+export type MotionRenderJob = {
+  id: string;
+  status: "queued" | "rendering" | "complete" | "error";
+  progress: number;
+  framesDone?: number;
+  framesTotal?: number;
+  filename?: string;
+  downloadUrl?: string;
+  error?: string;
+  result?: { bytes?: number; frames?: number; width?: number; height?: number; fps?: number; duration?: number };
+};
 export type MotionNodeData = {
   ir: IRObject | null;
   interaction: InteractionObject | null;
@@ -178,6 +189,8 @@ export type MotionNodeData = {
   sceneIrs: MotionScenePreview[];
   selectedScene: number;
   composition: { width: number; height: number; fps: number };
+  renderSettings: { format: "mp4" | "webm"; quality: "draft" | "high" | "lossless" };
+  renderJob: MotionRenderJob | null;
   sceneSettings: Record<string, Partial<MotionSceneSettings>>;
 };
 

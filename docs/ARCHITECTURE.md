@@ -92,6 +92,20 @@ easing, supports 16:9, 9:16 and 1:1 compositions, and provides transport,
 scrubbing and proportional scene clips. Applying changes rebuilds and validates
 Motion IR on the backend.
 
+### Deterministic video render
+
+`app/motion_render.py` maps each output frame number to an exact Motion IR time,
+renders materialized scenes with the existing `renderer.js`, and composes
+cut/fade/slide/zoom transitions without wall-clock animation. PNG frames are
+streamed to a bundled FFmpeg binary with fixed single-threaded settings for
+repeatable MP4/H.264 or WebM/VP9 output.
+
+`POST /api/motion/render` verifies the Design/Interaction/Motion hash chain and
+queues one local render at a time. Status and progress are read through the job
+endpoint; downloads resolve only artifacts registered by that server process.
+The video is a derived artifact and is never written into Motion IR or project
+graph persistence.
+
 ## Graph
 
 The graph is a procedural design workflow.

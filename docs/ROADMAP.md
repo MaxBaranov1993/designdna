@@ -17,11 +17,13 @@ Completed:
 - Stage 4B: owned-site Chromium runner, same-origin navigation guard, transient
   action scripts and sanitized live form-state capture;
 - Stage 5: versioned Motion IR, materialized editable scenes, fullscreen
-  timeline, transport, composition presets and transition inspector.
+  timeline, transport, composition presets and transition inspector;
+- Stage 6: deterministic Chromium frame composition, MP4/H.264 and WebM/VP9
+  encoding, background render jobs, progress and guarded artifact download.
 
-Next vertical slice: Stage 6 deterministic video render from Motion IR. AI
-Director remains a future stage and must not be marked implemented until its
-end-to-end acceptance scenarios pass.
+Next vertical slice: Stage 7 AI Director over validated Motion IR patches. It
+remains a future stage and must not be marked implemented until its end-to-end
+acceptance scenarios pass.
 
 ## Phase 0 — Clean product foundation
 

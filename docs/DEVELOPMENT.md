@@ -64,6 +64,7 @@ Backend:
 - `app/reproduce.py` — screenshot/site reproduction.
 - `app/mergeback.py` — protected-field merge-back.
 - `app/qualitygate.py` — deterministic quality checks.
+- `app/motion_render.py` — frame-exact Chromium compositor and FFmpeg encoder.
 
 Editor runtime:
 
@@ -113,6 +114,7 @@ Editor tests:
 .venv\Scripts\python.exe -u app\interaction_capture_test.py
 .venv\Scripts\python.exe -u app\ui_interaction_recorder_test.py
 .venv\Scripts\python.exe -u app\motion_ir_test.py
+.venv\Scripts\python.exe -u app\motion_render_test.py
 .venv\Scripts\python.exe -u app\ui_motion_editor_test.py
 ```
 
@@ -148,10 +150,16 @@ Motion API:
 ```text
 POST /api/motion/build
 POST /api/motion/validate
+POST /api/motion/render
+GET  /api/motion/render/{id}
+GET  /api/motion/render/{id}/download
 ```
 
 Motion build validates both source IR layers, produces canonical Motion IR and
 returns materialized Design IR scenes only as preview data.
+Video render revalidates the complete hash chain, queues a single local encoder
+job and never accepts a client filesystem path. `imageio-ffmpeg` supplies the
+pinned FFmpeg binary on every supported development machine.
 
 Sanity:
 

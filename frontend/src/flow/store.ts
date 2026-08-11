@@ -812,12 +812,13 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
         interaction,
         composition: data.composition,
         scene_settings: data.sceneSettings,
+        render_settings: data.renderSettings || { format: "mp4", quality: "high" },
       });
       const motion = response.motion || null;
       const sceneIrs = response.sceneIrs || [];
       const scenes = Array.isArray(motion?.scenes) ? motion.scenes : [];
       get().setNodeData(id, {
-        ir: deepClone(designIr), interaction: deepClone(interaction), motion, sceneIrs,
+        ir: deepClone(designIr), interaction: deepClone(interaction), motion, sceneIrs, renderJob: null,
         selectedScene: Math.min(data.selectedScene || 0, Math.max(0, scenes.length - 1)),
       });
       const composition = motion?.composition as Record<string, unknown> | undefined;

@@ -746,6 +746,53 @@
 .motion-close {
   justify-self: end;
 }
+.motion-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.motion-export,
+.motion-download {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid #4b4b5b;
+  border-radius: 6px;
+  color: #ececf2;
+  background: #282832;
+  font: 700 10.5px "Inter", sans-serif;
+  text-decoration: none;
+  cursor: pointer;
+}
+.motion-export:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.motion-download {
+  color: #d9ffd9;
+  border-color: #47724d;
+  background: #213425;
+}
+.motion-render-progress {
+  white-space: nowrap;
+}
+.motion-inspector-toggle,
+.motion-mobile-label {
+  display: none;
+}
+.motion-render-error {
+  padding: 8px;
+  border: 1px solid #713d48;
+  border-radius: 6px;
+  color: #ffb7c0;
+  background: #352127;
+  font-size: 10px;
+  line-height: 1.35;
+}
 .motion-main {
   min-height: 0;
   display: grid;
@@ -924,9 +971,27 @@
   .motion-workspace { grid-template-rows: 78px minmax(0, 1fr) 160px; }
   .motion-topbar { grid-template-columns: 1fr auto; }
   .motion-transport { grid-column: 1 / -1; grid-row: 2; justify-content: center; }
+  .motion-topbar > div:first-child span,
+  .motion-render-progress { display: none; }
+  .motion-inspector-toggle {
+    min-height: 30px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 7px;
+    border: 1px solid #4b4b5b;
+    border-radius: 6px;
+    color: #ececf2;
+    background: #282832;
+    font: 700 10px "Inter", sans-serif;
+  }
+  .motion-desktop-label { display: none; }
+  .motion-mobile-label { display: inline; }
+  .motion-export,
+  .motion-download { padding: 0 7px; }
   .motion-main { grid-template-columns: minmax(0, 1fr); }
-  .motion-inspector { position: absolute; right: 0; top: 78px; bottom: 160px; width: 220px; background: rgba(23, 23, 29, 0.98); }
-  .motion-stage { padding-right: 230px; }
+  .motion-inspector { display: none; position: absolute; right: 0; top: 78px; bottom: 160px; width: min(280px, 78vw); background: rgba(23, 23, 29, 0.98); }
+  .motion-inspector.open { display: flex; }
+  .motion-stage { padding-right: 24px; }
 }
 .ir-preview-empty {
   position: absolute;

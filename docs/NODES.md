@@ -295,6 +295,11 @@ proportional scene clips, per-scene duration, transition type/duration and
 easing. Motion IR stores only montage decisions and hashes; editable scene IR is
 materialized through Interaction replay.
 
+Export settings are part of Motion IR: MP4 maps to H.264, WebM maps to VP9, and
+quality can be Draft, High or Lossless. Export runs as a background job with
+visible progress. The completed video is downloaded from a guarded artifact
+route; only the render settings and source hashes remain in the graph.
+
 ## Proposed killer nodes
 
 ### Project DNA
