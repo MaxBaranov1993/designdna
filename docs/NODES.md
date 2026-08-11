@@ -116,7 +116,16 @@ Outputs:
 - `tokens`
 - `summary`
 
-Future: should become a visual token inspector with palette, typography, spacing scale and rhythm previews.
+The fullscreen DNA Editor provides the visual Style DNA Inspector: semantic
+palette, typography, spacing/radius primitives, binding counts and linked-layer
+highlighting. It also owns the opt-in design-system workflow:
+
+- `Preview Normalize` shows every proposed property change before mutation;
+- `Apply Normalize` writes the previewed IR as one undoable editor operation;
+- `Exact Tailwind` preserves measured values with arbitrary utilities;
+- `Normalized Tailwind` prefers semantic Style DNA utilities and standard scales.
+
+Tailwind is derived output and is never stored as the canonical design state.
 
 ### Derive
 

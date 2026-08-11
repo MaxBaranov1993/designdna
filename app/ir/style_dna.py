@@ -62,7 +62,7 @@ def _responsive_styles(node: dict):
         return
     for viewport, override in responsive.items():
         if isinstance(override, dict) and isinstance(override.get("style"), dict):
-            yield viewport, override["style"]
+            yield viewport, override, override["style"]
 
 
 # ---------- primitives ----------
@@ -389,7 +389,7 @@ def bind_element_styles(ir: dict, tokens: dict | None = None) -> dict:
         if bindings:
             node["styleBindings"] = bindings
         # Bind responsive overrides too.
-        for viewport, rstyle in _responsive_styles(node):
+        for viewport, override, rstyle in _responsive_styles(node):
             rbindings: dict[str, dict] = {}
             for prop, value in rstyle.items():
                 token = _semantic_role_binding(node, prop, value)
@@ -398,8 +398,7 @@ def bind_element_styles(ir: dict, tokens: dict | None = None) -> dict:
                 if token:
                     rbindings[prop] = {"property": prop, "token": token, "origin": "imported"}
             if rbindings:
-                node.setdefault("responsive", {})
-                node["responsive"][viewport]["styleBindings"] = rbindings
+                override["styleBindings"] = rbindings
     return ir
 
 
@@ -433,8 +432,8 @@ def apply_tokens(ir: dict, tokens: dict) -> dict:
                     style[prop] = value
                     binding["origin"] = "manual"
         # Apply responsive bindings.
-        for viewport, rstyle in _responsive_styles(node):
-            rbindings = rstyle.get("styleBindings")
+        for viewport, override, rstyle in _responsive_styles(node):
+            rbindings = override.get("styleBindings")
             if isinstance(rbindings, dict):
                 for prop, binding in rbindings.items():
                     value = _resolve_token(binding.get("token", ""), tokens)

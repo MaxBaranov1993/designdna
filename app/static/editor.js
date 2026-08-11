@@ -49,6 +49,13 @@
   .fe-zoom { font-size:11px; color:#a6adc8; width:44px; text-align:center; font-variant-numeric:tabular-nums; }
   .fe-viewports { display:inline-flex; gap:2px; padding:2px; border:1px solid #313244; border-radius:6px; }
   .fe-viewports .fe-tbtn { width:30px; height:24px; font-size:10px; font-weight:700; }
+  .fe-viewport-width { width:62px; height:24px; border:0; border-left:1px solid #313244; background:#1e2030;
+    color:#cdd6f4; padding:2px 5px; font:10px 'IBM Plex Mono',monospace; outline:none; }
+  .fe-responsive-status { margin-bottom:8px; padding:7px; border:1px solid #313244; border-radius:6px; background:#1e2030; }
+  .fe-responsive-status-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; font-size:10px; color:#a6adc8; }
+  .fe-source-tag { padding:1px 5px; border-radius:4px; background:#313244; color:#cba6f7; font-size:9px; }
+  .fe-responsive-actions { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+  .fe-responsive-actions .fe-btn { padding:4px 5px; font-size:9px; }
   .fe-spacer { flex:1; }
   .fe-align-group { display:inline-flex; align-items:center; gap:2px; }
   .fe-btn { padding:5px 12px; border-radius:6px; border:1px solid #45475a; background:#313244;
@@ -168,6 +175,13 @@
     padding:2px 6px; font-size:10px; cursor:pointer; }
   .fe-dna-highlight:hover { background:rgba(203,166,247,.12); }
   .fe-dna-foot { font-size:10px; color:#6c7086; padding:8px 12px; border-top:1px solid #313244; }
+  .fe-dna-workflow-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px; }
+  .fe-dna-workflow-actions .fe-btn { padding:5px 7px; font-size:10px; }
+  .fe-dna-result { margin-top:8px; padding:8px; border:1px solid #313244; border-radius:6px; background:#11111b; }
+  .fe-dna-code { max-height:180px; overflow:auto; white-space:pre-wrap; word-break:break-word; color:#bac2de;
+    font:10px/1.45 'IBM Plex Mono',monospace; user-select:text; }
+  .fe-dna-change { padding:3px 0; border-bottom:1px solid #252536; font:10px/1.35 'IBM Plex Mono',monospace; }
+  .fe-dna-change:last-child { border-bottom:0; }
   `;
 
   /* ---------- DOM ---------- */
@@ -193,6 +207,7 @@
           <button class="fe-tbtn active" data-viewport="desktop" title="Desktop 1440 px">D</button>
           <button class="fe-tbtn" data-viewport="tablet" title="Tablet 768 px">T</button>
           <button class="fe-tbtn" data-viewport="mobile" title="Mobile 390 px">M</button>
+          <input class="fe-viewport-width" type="number" min="320" max="2560" step="1" value="1440" title="Custom canvas width">
         </span>
         <span class="fe-sep fe-responsive-sep" hidden></span>
         <span class="fe-align-group" hidden>
@@ -268,6 +283,7 @@
       state.layerQuery = e.target.value.trim();
       renderLayers();
     });
+    overlay.querySelector(".fe-viewport-width").addEventListener("change", (e) => setPreviewWidth(e.target.value));
   }
 
   /* ---------- тулбар ---------- */
@@ -292,9 +308,26 @@
   }
 
   function setViewport(viewport) {
-    if (!state || !["desktop", "tablet", "mobile"].includes(viewport) || state.viewport === viewport) return;
-    syncActiveIR();
+    if (!state || !["desktop", "tablet", "mobile"].includes(viewport)) return;
+    const widths = { desktop: 1440, tablet: 768, mobile: 390 };
+    activateViewport(viewport, widths[viewport]);
+  }
+
+  function viewportForWidth(width) {
+    return width < 640 ? "mobile" : (width < 1024 ? "tablet" : "desktop");
+  }
+
+  function setPreviewWidth(value) {
+    if (!state) return;
+    const width = Math.max(320, Math.min(2560, Math.round(Number(value) || 1440)));
+    activateViewport(viewportForWidth(width), width);
+  }
+
+  function activateViewport(viewport, width) {
+    if (!state) return;
+    if (state.activeIR) syncActiveIR();
     state.viewport = viewport;
+    state.previewWidth = width;
     // прокидываем выбранное устройство в канонический IR: превью ноды и downstream
     // (Page → провода) показывают тот же вьюпорт, что редактировали последним
     if (state.ir && state.ir.responsive) {
@@ -302,6 +335,8 @@
       state.ir.meta.activeViewport = viewport;
     }
     overlay.querySelectorAll("[data-viewport]").forEach(b => b.classList.toggle("active", b.dataset.viewport === viewport));
+    const widthInput = overlay.querySelector(".fe-viewport-width");
+    if (widthInput) widthInput.value = String(width);
     state.sel = [];
     renderCanvas();
     renderLayers();
@@ -356,6 +391,7 @@
       panY: 40,
       tool: "select",
       viewport: "desktop",
+      previewWidth: 1440,
       activeIR: null,
       layerFlags: {}, // refKey -> {hidden, locked}; сессия редактора, не часть IR
       layerQuery: "",
@@ -366,9 +402,13 @@
     // редактор открывается на том же устройстве, что показывает нода
     const irVp = state.ir && state.ir.meta && state.ir.meta.activeViewport;
     if (responsive && ["desktop", "tablet", "mobile"].includes(irVp)) state.viewport = irVp;
+    const viewportMeta = responsive ? state.ir.responsive.viewports[state.viewport] : null;
+    state.previewWidth = viewportMeta && viewportMeta.width ? viewportMeta.width : (state.ir.frame && state.ir.frame.width) || 1440;
     overlay.querySelector(".fe-viewports").hidden = !responsive;
     overlay.querySelector(".fe-responsive-sep").hidden = !responsive;
     overlay.querySelectorAll("[data-viewport]").forEach(b => b.classList.toggle("active", b.dataset.viewport === state.viewport));
+    const widthInput = overlay.querySelector(".fe-viewport-width");
+    if (widthInput) widthInput.value = String(state.previewWidth);
     renderCanvas();
     renderLayers();
     renderInspector();
@@ -664,6 +704,17 @@
     }
     html += `</div>`;
 
+    html += `<div class="fe-dna-section"><div class="fe-dna-label">Normalize & Tailwind</div>
+      <div class="fe-dna-meta">Exact IR remains canonical. Normalize is applied only after preview.</div>
+      <div class="fe-dna-workflow-actions">
+        <button class="fe-btn" data-dna-action="preview-normalize">Preview Normalize</button>
+        <button class="fe-btn" data-dna-action="tailwind-exact">Exact Tailwind</button>
+        <button class="fe-btn" data-dna-action="tailwind-normalized">Normalized Tailwind</button>
+        <button class="fe-btn" data-dna-action="copy-tailwind" disabled>Copy classes</button>
+      </div>
+      <div id="feDnaWorkflowResult"></div>
+    </div>`;
+
     body.innerHTML = html;
     if (foot) foot.textContent = `${bindings.length} bindings · ${Object.keys(counts).length} tokens`;
     wireStyleDnaEvents(body, bindings);
@@ -761,6 +812,103 @@
         if (state.geo && refs.length) state.geo.selectMulti(refs);
       });
     });
+    body.querySelectorAll("button[data-dna-action]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const action = btn.dataset.dnaAction;
+        if (action === "preview-normalize") previewStyleNormalization();
+        else if (action === "apply-normalize") applyNormalizationPreview();
+        else if (action === "tailwind-exact") loadTailwindProjection("exact");
+        else if (action === "tailwind-normalized") loadTailwindProjection("normalized");
+        else if (action === "copy-tailwind") copyTailwindClasses();
+      });
+    });
+  }
+
+  function workflowResult() {
+    return document.getElementById("feDnaWorkflowResult");
+  }
+
+  async function previewStyleNormalization() {
+    if (!state || !dnaPanelState) return;
+    const result = workflowResult();
+    if (result) result.innerHTML = '<div class="fe-dna-result fe-dna-empty">Building preview...</div>';
+    try {
+      const resp = await fetch("/api/style/normalize/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ir: state.ir, tolerance: 0.12 }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "HTTP " + resp.status);
+      dnaPanelState.normalization = data;
+      const patch = data.patch || [];
+      if (!result) return;
+      const changes = patch.slice(0, 12).map(change =>
+        `<div class="fe-dna-change"><strong>${esc(change.path)}</strong><br>${esc(JSON.stringify(change.before))} -> ${esc(JSON.stringify(change.after))}</div>`
+      ).join("");
+      result.innerHTML = `<div class="fe-dna-result">
+        <div class="fe-dna-meta">${patch.length} properties · risk ${esc((data.visualDelta || {}).risk || "none")}</div>
+        ${changes || '<div class="fe-dna-empty">Already aligned with Style DNA scale.</div>'}
+        ${patch.length > 12 ? `<div class="fe-dna-meta">+ ${patch.length - 12} more changes</div>` : ""}
+        ${patch.length ? '<button class="fe-btn primary" data-dna-action="apply-normalize" style="width:100%;margin-top:8px">Apply Normalize</button>' : ""}
+      </div>`;
+      const apply = result.querySelector('[data-dna-action="apply-normalize"]');
+      if (apply) apply.addEventListener("click", applyNormalizationPreview);
+    } catch (e) {
+      if (result) result.innerHTML = `<div class="fe-dna-result" style="color:#f38ba8">${esc(e.message)}</div>`;
+    }
+  }
+
+  function applyNormalizationPreview() {
+    if (!state || !dnaPanelState || !dnaPanelState.normalization || !dnaPanelState.normalization.normalizedIr) return;
+    const changed = (dnaPanelState.normalization.patch || []).length;
+    pushHistory();
+    state.ir = deepClone(dnaPanelState.normalization.normalizedIr);
+    state.node.data.ir = state.ir;
+    dnaPanelState.tokens = deepClone(state.ir.tokens || dnaPanelState.tokens);
+    dnaPanelState.originalTokens = deepClone(dnaPanelState.tokens);
+    dnaPanelState.normalization = null;
+    rerenderEditorCanvas();
+    renderLayers();
+    renderStyleDnaPanel();
+    const foot = document.getElementById("feDnaFoot");
+    if (foot) foot.textContent = `Normalized ${changed} properties`;
+  }
+
+  async function loadTailwindProjection(mode) {
+    if (!state || !dnaPanelState) return;
+    const result = workflowResult();
+    if (result) result.innerHTML = `<div class="fe-dna-result fe-dna-empty">Building ${esc(mode)} projection...</div>`;
+    try {
+      const resp = await fetch("/api/export/tailwind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ir: state.ir, mode }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "HTTP " + resp.status);
+      const lines = [];
+      for (const node of (data.nodes || []).slice(0, 30)) {
+        const classes = Object.values(node.classes || {}).flat().join(" ");
+        lines.push(`${node.sourceKey}: ${classes}`);
+      }
+      dnaPanelState.tailwindText = lines.join("\n");
+      if (result) result.innerHTML = `<div class="fe-dna-result">
+        <div class="fe-dna-meta">${esc(mode)} · ${(data.nodes || []).length} nodes · ${(data.diagnostics || []).length} diagnostics</div>
+        <pre class="fe-dna-code">${esc(dnaPanelState.tailwindText || "No editable nodes")}</pre>
+      </div>`;
+      const copy = document.querySelector('[data-dna-action="copy-tailwind"]');
+      if (copy) copy.disabled = !dnaPanelState.tailwindText;
+    } catch (e) {
+      if (result) result.innerHTML = `<div class="fe-dna-result" style="color:#f38ba8">${esc(e.message)}</div>`;
+    }
+  }
+
+  async function copyTailwindClasses() {
+    if (!dnaPanelState || !dnaPanelState.tailwindText || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(dnaPanelState.tailwindText);
+    const foot = document.getElementById("feDnaFoot");
+    if (foot) foot.textContent = "Tailwind classes copied";
   }
 
   function setSemanticToken(key, value) {
@@ -897,6 +1045,7 @@
       return state.activeIR;
     }
     state.activeIR = IRRenderer.materializeResponsiveIR(state.ir, state.viewport);
+    if (state.activeIR.frame && Number.isFinite(state.previewWidth)) state.activeIR.frame.width = state.previewWidth;
     delete state.activeIR.responsive;
     return state.activeIR;
   }
@@ -1353,6 +1502,10 @@
     const isRoot = sel.ref.secIdx == null;
     const t = state.ir.tokens || {};
 
+    if (!isRoot && state.ir.responsive && state.ir.responsive.viewports) {
+      html += responsiveInspectorHtml(sel);
+    }
+
     // --- текст (heading / text / button) ---
     if (node.type === "heading" || node.type === "text") {
       html += `<div class="fe-insp-group"><span class="fe-glabel">Текст</span>
@@ -1425,6 +1578,101 @@
     panel.innerHTML = html;
     Inspector.render(panel.querySelector(".fe-shared-insp"), { ir: state.ir, selections: state.sel, get geo() { return state.geo; } });
     wireInspectorEvents(panel);
+    wireResponsiveInspector(panel, sel);
+  }
+
+  function canonicalNode(ref) {
+    if (!state || !state.ir || ref.secIdx == null) return state && state.ir;
+    let node = (state.ir.tree || [])[ref.secIdx];
+    if (node && ref.path) node = getByPath(node, ref.path);
+    return node || null;
+  }
+
+  function responsiveInspectorHtml(sel) {
+    const canonical = canonicalNode(sel.ref) || {};
+    const override = state.viewport === "desktop" ? null : ((canonical.responsive || {})[state.viewport] || null);
+    const frameSource = override && override.frame ? state.viewport : "shared";
+    const styleSource = override && override.style ? state.viewport : "shared";
+    return `<div class="fe-responsive-status">
+      <div class="fe-responsive-status-head"><span>${esc(state.viewport)} · ${esc(state.previewWidth)} px</span><span><span class="fe-source-tag">frame ${esc(frameSource)}</span> <span class="fe-source-tag">style ${esc(styleSource)}</span></span></div>
+      <div class="fe-responsive-actions">
+        <button class="fe-btn" data-responsive-act="reset" ${state.viewport === "desktop" ? "disabled" : ""}>Reset override</button>
+        <button class="fe-btn" data-responsive-act="all">Apply to all</button>
+        <button class="fe-btn" data-responsive-copy="mobile">Copy to M</button>
+        <button class="fe-btn" data-responsive-copy="tablet">Copy to T</button>
+        <button class="fe-btn" data-responsive-copy="desktop">Copy to D</button>
+      </div>
+    </div>`;
+  }
+
+  function wireResponsiveInspector(panel, sel) {
+    const reset = panel.querySelector('[data-responsive-act="reset"]');
+    if (reset) reset.addEventListener("click", () => resetResponsiveOverride(sel));
+    const all = panel.querySelector('[data-responsive-act="all"]');
+    if (all) all.addEventListener("click", () => applyResponsiveToAll(sel));
+    panel.querySelectorAll("[data-responsive-copy]").forEach(button => {
+      button.addEventListener("click", () => copyResponsiveTo(sel, button.dataset.responsiveCopy));
+    });
+  }
+
+  function activeSelectionNode(sel) {
+    return (state.sel.find(item => item.ref.secIdx === sel.ref.secIdx && item.ref.path === sel.ref.path) || sel).node || null;
+  }
+
+  function finishResponsiveMutation() {
+    state.sel = [];
+    renderCanvas();
+    renderLayers();
+    renderInspector();
+    zoomFit();
+  }
+
+  function resetResponsiveOverride(sel) {
+    if (state.viewport === "desktop") return;
+    const target = canonicalNode(sel.ref);
+    if (!target || !target.responsive || !target.responsive[state.viewport]) return;
+    pushHistory();
+    delete target.responsive[state.viewport];
+    if (!Object.keys(target.responsive).length) delete target.responsive;
+    finishResponsiveMutation();
+  }
+
+  function applyResponsiveToAll(sel) {
+    const source = activeSelectionNode(sel);
+    const target = canonicalNode(sel.ref);
+    if (!source || !target) return;
+    pushHistory();
+    if (source.frame) target.frame = deepClone(source.frame);
+    if (source.style) target.style = deepClone(source.style);
+    if (source.styleBindings) target.styleBindings = deepClone(source.styleBindings);
+    for (const override of Object.values(target.responsive || {})) {
+      if (!override || typeof override !== "object") continue;
+      delete override.frame;
+      delete override.style;
+      delete override.styleBindings;
+    }
+    finishResponsiveMutation();
+  }
+
+  function copyResponsiveTo(sel, viewport) {
+    if (!["desktop", "tablet", "mobile"].includes(viewport)) return;
+    const source = activeSelectionNode(sel);
+    const target = canonicalNode(sel.ref);
+    if (!source || !target) return;
+    pushHistory();
+    if (viewport === "desktop") {
+      if (source.frame) target.frame = deepClone(source.frame);
+      if (source.style) target.style = deepClone(source.style);
+      if (source.styleBindings) target.styleBindings = deepClone(source.styleBindings);
+    } else {
+      target.responsive = target.responsive || {};
+      const override = target.responsive[viewport] || {};
+      if (source.frame) override.frame = deepClone(source.frame);
+      if (source.style) override.style = deepClone(source.style);
+      if (source.styleBindings) override.styleBindings = deepClone(source.styleBindings);
+      target.responsive[viewport] = override;
+    }
+    finishResponsiveMutation();
   }
 
   function wireInspectorEvents(panel) {

@@ -15,6 +15,9 @@ from .style_dna import (
     extract_from_signals,
     enrich_ir,
 )
+from .normalize import preview as preview_normalization
+from .tailwind_projection import project as project_tailwind
+from .responsive import viewport_for_width, clamp_width, materialize as materialize_responsive
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
@@ -37,4 +40,9 @@ __all__ = [
     "apply_tokens",
     "extract_from_signals",
     "enrich_ir",
+    "preview_normalization",
+    "project_tailwind",
+    "viewport_for_width",
+    "clamp_width",
+    "materialize_responsive",
 ]

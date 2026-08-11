@@ -1,5 +1,24 @@
 # Roadmap
 
+## CTO implementation milestones
+
+Completed:
+
+- Stage 0: Design IR 1.1, migration, validation, stable `sourceKey`, content
+  hash, provenance and feature flags;
+- Stage 1: measured Style DNA primitives, semantic tokens, recursive
+  `styleBindings`, visual inspector and responsive token application;
+- Stage 2: opt-in Normalize preview/apply and deterministic Exact/Normalized
+  Tailwind projection;
+- Stage 3: arbitrary 320-2560 px canvas widths, automatic mobile/tablet/desktop
+  resolution, property-source indicators and reset/apply/copy override controls.
+
+Next vertical slice: Stage 4 Interaction Recorder with local privacy cleanup and
+replayable DOM state patches. The
+Interaction IR, Motion IR and responsive modules currently present in `app/ir`
+include real responsive behavior now, but recorder, Motion Editor and video render must not be marked
+implemented until their end-to-end acceptance scenarios pass.
+
 ## Phase 0 — Clean product foundation
 
 Goal: remove confusion and align code/docs around controlled AI.

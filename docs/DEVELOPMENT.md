@@ -106,7 +106,23 @@ Editor tests:
 .venv\Scripts\python.exe -u app\ui_p1_insp_test.py
 .venv\Scripts\python.exe -u app\ui_p1_layers_test.py
 .venv\Scripts\python.exe -u app\ui_fill_drag_test.py
+.venv\Scripts\python.exe -u app\style_projection_test.py
+.venv\Scripts\python.exe -u app\ui_style_projection_test.py
+.venv\Scripts\python.exe -u app\ui_fluid_responsive_test.py
 ```
+
+Style-system API:
+
+```text
+POST /api/style-dna/extract
+POST /api/style-dna/apply
+POST /api/style/normalize/preview
+POST /api/export/tailwind
+```
+
+Normalize returns a candidate IR and never persists it. The DNA Editor owns the
+explicit apply step. Tailwind responses are derived artifacts and must not be
+written back into Design IR.
 
 Sanity:
 

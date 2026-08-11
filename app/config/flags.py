@@ -11,9 +11,9 @@ DEFAULT_FLAGS = {
     # Stage 0: IR 1.1 foundation.
     "irV11": True,
     # Stage 2: Tailwind projection.
-    "tailwindProjection": False,
+    "tailwindProjection": True,
     # Stage 3: fluid responsive editor.
-    "fluidResponsive": False,
+    "fluidResponsive": True,
     # Stage 4: interaction recorder.
     "interactionRecorder": False,
     # Stage 5: motion editor.

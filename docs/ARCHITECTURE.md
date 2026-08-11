@@ -38,6 +38,29 @@ quality operations should operate on IR. The backend migrates legacy 1.0
 documents to 1.1 automatically on load or ingestion, so old projects open
 without manual migration.
 
+### Style normalization and Tailwind
+
+Source Import remains exact by default. `/api/style/normalize/preview` returns
+a normalized IR candidate plus a property-level patch and risk summary; the
+editor applies it only after explicit confirmation. Normalization snaps design
+rhythm properties such as gap, padding, font size and radius, while arbitrary
+geometry remains exact.
+
+`/api/export/tailwind` deterministically projects Design IR into theme variables
+and per-viewport utility classes. Exact mode emits arbitrary utilities;
+normalized mode uses semantic Style DNA utilities where bindings exist. The
+projection carries the IR content hash and can be regenerated at any time, so
+Tailwind never competes with Design IR as a second source of truth.
+
+### Fluid responsive editing
+
+The canonical anchors remain 390, 768 and 1440 px. DNA Editor also accepts any
+preview width from 320 to 2560 px and resolves mobile below 640, tablet from 640
+through 1023, and desktop from 1024. Within a range, `fill`, `hug`, min/max,
+auto-layout and wrap continue to control fluid geometry. Inspector badges show
+whether frame/style comes from shared data or the active device override, with
+explicit Reset override, Apply to all and Copy to breakpoint operations.
+
 ## Graph
 
 The graph is a procedural design workflow.

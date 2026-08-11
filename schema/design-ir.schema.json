@@ -152,6 +152,7 @@
         "importedFrom": { "type": "string" },
         "migratedFrom": { "type": "string" },
         "migratedAt": { "type": "string" },
+        "normalizedFrom": { "type": "string" },
         "createdAt": { "type": "string" },
         "generator": { "type": "string" }
       }
@@ -296,7 +297,8 @@
       "properties": {
         "visible": { "type": "boolean" },
         "frame": { "$ref": "#/$defs/frame" },
-        "style": { "$ref": "#/$defs/elementStyle" }
+        "style": { "$ref": "#/$defs/elementStyle" },
+        "styleBindings": { "$ref": "#/$defs/styleBindings" }
       }
     },
     "frameSize": {

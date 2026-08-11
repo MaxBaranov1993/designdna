@@ -85,6 +85,21 @@ export type ProjectSaveResp = { ok?: boolean; bytes?: number; updated_at?: strin
 export type ConfigResp = { schemaVersion?: string; flags?: Record<string, boolean> };
 export type StyleDnaExtractResp = { tokens?: IRObject };
 export type StyleDnaApplyResp = { ir?: IRObject };
+export type NormalizePreviewResp = {
+  normalizedIr?: IRObject;
+  patch?: Array<{ path: string; before: unknown; after: unknown; origin: string; token?: string }>;
+  tokenChanges?: string[];
+  visualDelta?: { changedProperties?: number; risk?: string; requiresVisualReview?: boolean };
+};
+export type TailwindProjectionResp = {
+  version?: string;
+  irHash?: string;
+  mode?: "exact" | "normalized";
+  breakpoints?: Record<string, number>;
+  theme?: Record<string, unknown>;
+  nodes?: Array<{ sourceKey: string; path: string; type: string; classes: Record<string, string[]> }>;
+  diagnostics?: Array<{ level?: string; sourceKey?: string; message?: string }>;
+};
 
 export async function getConfig(): Promise<ConfigResp> {
   return apiGet<ConfigResp>("/api/config");
@@ -96,4 +111,12 @@ export async function extractStyleDna(ir: IRObject): Promise<StyleDnaExtractResp
 
 export async function applyStyleDna(ir: IRObject, tokens: IRObject): Promise<StyleDnaApplyResp> {
   return api<StyleDnaApplyResp>("/api/style-dna/apply", { ir, tokens });
+}
+
+export async function previewStyleNormalization(ir: IRObject, tolerance = 0.12): Promise<NormalizePreviewResp> {
+  return api<NormalizePreviewResp>("/api/style/normalize/preview", { ir, tolerance });
+}
+
+export async function exportTailwind(ir: IRObject, mode: "exact" | "normalized" = "exact"): Promise<TailwindProjectionResp> {
+  return api<TailwindProjectionResp>("/api/export/tailwind", { ir, mode });
 }

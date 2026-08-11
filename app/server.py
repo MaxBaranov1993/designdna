@@ -166,6 +166,16 @@ class StyleDnaApplyReq(BaseModel):
     tokens: dict
 
 
+class StyleNormalizeReq(BaseModel):
+    ir: dict
+    tolerance: float = 0.12
+
+
+class TailwindProjectionReq(BaseModel):
+    ir: dict
+    mode: str = "exact"
+
+
 class ScrapeReq(BaseModel):
     url: str = ""
     use_playwright: bool = True
@@ -837,6 +847,35 @@ def style_dna_apply(req: StyleDnaApplyReq):
     bound = ir.bind_element_styles(req.ir, req.tokens)
     updated = ir.apply_tokens(bound, req.tokens)
     return {"ir": updated}
+
+
+@app.post("/api/style/normalize/preview")
+def style_normalize_preview(req: StyleNormalizeReq):
+    """Build an opt-in normalization patch without mutating the input IR."""
+    current = ensure_current_ir(req.ir)
+    schema_errors = validate_ir(current)
+    if schema_errors:
+        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
+    result = ir.preview_normalization(current, tolerance=req.tolerance)
+    normalized_errors = validate_ir(result["normalizedIr"])
+    if normalized_errors:
+        return err(500, "Normalize создал невалидный IR: " + "; ".join(normalized_errors[:5]))
+    return result
+
+
+@app.post("/api/export/tailwind")
+def export_tailwind(req: TailwindProjectionReq):
+    """Return a deterministic Tailwind projection derived from Design IR."""
+    if not FEATURE_FLAGS.is_enabled("tailwindProjection"):
+        return err(404, "Tailwind projection отключён feature flag.")
+    current = ensure_current_ir(req.ir)
+    schema_errors = validate_ir(current)
+    if schema_errors:
+        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
+    try:
+        return ir.project_tailwind(current, mode=req.mode)
+    except ValueError as exc:
+        return err(422, str(exc))
 
 
 @app.get("/nodes")
