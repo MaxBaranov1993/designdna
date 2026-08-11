@@ -19,11 +19,9 @@ from bs4 import BeautifulSoup
 
 import llm_client as llm
 import cache_store
+import ir
+from ir import ensure_current as ensure_current_ir
 from scraper import fetch_html, detect_blocks, rendered_html, capture_block_irs
-
-import jsonschema
-
-ROOT = Path(__file__).resolve().parent.parent
 
 MAX_WORKERS = 4            # как EXECUTOR в server.py
 FRAGMENT_LIMIT = 12000     # HTML блока в промпте, символов
@@ -31,9 +29,6 @@ STYLES_LIMIT = 6000        # CSS страницы в промпте, симво�
 DEFAULT_PROVIDER = "openrouter"  # роль clone/repair выбирает модель из ROUTING
 
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
-
-_SCHEMA = json.loads((ROOT / "schema" / "design-ir.schema.json").read_text(encoding="utf-8"))
-_VALIDATOR = jsonschema.Draft7Validator(_SCHEMA)
 
 _SEMANTIC_ROLES = {
     "header", "footer", "carousel", "categories", "product-grid", "services-grid",
@@ -44,13 +39,9 @@ _SEMANTIC_ROLES = {
 SOURCE_COMPILER_VERSION = "dom-v21"
 
 
-def _validate(ir: dict) -> list:
+def _validate(doc: dict) -> list[str]:
     """Список ошибок валидации IR по схеме (пустой = ок)."""
-    return sorted(
-        (f"{'/'.join(str(p) for p in e.absolute_path) or '(root)'}: {e.message}"
-         for e in _VALIDATOR.iter_errors(ir)),
-        key=str,
-    )
+    return ir.format_errors(ir.validate_ir(doc))
 
 
 def _block_cache_key(url: str, name: str, selector: str) -> str:
@@ -204,6 +195,7 @@ def parse_blocks(url: str, blocks: list | None = None,
         if errors:
             results.append({**head, "error": "внутренняя ошибка DOM-импорта: " + "; ".join(errors[:3])})
             continue
+        ir = ensure_current_ir(ir, source=f"source-import:{url}")
         cache_store.put("clone_block", _block_cache_key(url, b["name"], b["selector"]), {"ir": ir})
         results.append({**head, "ir": ir, "cached": False, "source": "dom",
                         "layers": item.get("layer_count", 0), "size": {

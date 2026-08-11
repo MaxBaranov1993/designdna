@@ -988,23 +988,26 @@ def _merge_responsive_irs(variants: dict[str, dict], viewport_meta: dict[str, di
             if responsive == {}:
                 target.pop("responsive", None)
 
-    # Viewport-only ветки копируются в общее дерево целиком, и их вложенные
-    # ключи могут совпасть с уже существующими (index_subtree молча перезаписывал
-    # base_map). sourceKey — адрес узла для merge-back/редактора, поэтому после
-    # слияния гарантируем уникальность: первое вхождение сохраняет ключ, повторы
-    # получают суффикс "#N" — контент не теряем, переименовываем только ключ.
-    # (Удалять «дубль» нельзя: это не byte-копия, а ветка другого viewport.)
+    # Viewport-only branches are copied into the shared tree whole, and their
+    # nested keys may collide with keys already present. sourceKey is the stable
+    # element address for merge-back/editor selection, so after merge we enforce
+    # uniqueness deterministically: the first occurrence keeps the key, repeats
+    # get a zero-padded suffix (#001, #002, ...). Content is preserved; only the
+    # identity key is renamed.
     seen_keys: set[str] = set()
     for node, _parent in _walk_source_nodes([base_sec]):
         key = str(node.get("sourceKey") or "")
         if not key:
             continue
-        unique, n = key, 1
+        if key not in seen_keys:
+            seen_keys.add(key)
+            continue
+        n = 1
+        unique = f"{key}#{n:03d}"
         while unique in seen_keys:
             n += 1
-            unique = f"{key}#{n}"
-        if unique != key:
-            node["sourceKey"] = unique
+            unique = f"{key}#{n:03d}"
+        node["sourceKey"] = unique
         seen_keys.add(unique)
     return merged
 

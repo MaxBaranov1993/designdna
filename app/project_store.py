@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import ir
+
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "data" / "projects.db"
 DEFAULT_USER_ID = "local-user"
@@ -230,9 +232,11 @@ def load_project(user_id: str = DEFAULT_USER_ID, project_id: str = DEFAULT_PROJE
     if not row:
         return None
     try:
-        return {"payload": json.loads(row[0]), "updated_at": row[1]}
+        payload = json.loads(row[0])
     except (TypeError, ValueError):
         return None
+    payload = ir.migrate_project_payload(payload)
+    return {"payload": payload, "updated_at": row[1]}
 
 
 def load_taste_profile(user_id: str = DEFAULT_USER_ID, project_id: str = DEFAULT_PROJECT_ID) -> dict[str, Any]:

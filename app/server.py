@@ -44,10 +44,9 @@ import project_store
 import typography
 import designkb
 
-import jsonschema
-
-SCHEMA = json.loads((ROOT / "schema" / "design-ir.schema.json").read_text(encoding="utf-8"))
-VALIDATOR = jsonschema.Draft7Validator(SCHEMA)
+import ir
+from ir import ensure_current as ensure_current_ir
+from config import FEATURE_FLAGS
 
 EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
@@ -69,13 +68,9 @@ PRODUCT_PROVIDER = "openrouter"
 
 # ---------- helpers ----------
 
-def validate_ir(ir: dict) -> list:
+def validate_ir(doc: dict) -> list[str]:
     """Список ошибок валидации IR по схеме (пустой = ок)."""
-    return sorted(
-        (f"{'/'.join(str(p) for p in e.absolute_path) or '(root)'}: {e.message}"
-         for e in VALIDATOR.iter_errors(ir)),
-        key=str,
-    )
+    return ir.format_errors(ir.validate_ir(doc))
 
 
 def parse_ir_response(raw: str):
@@ -279,6 +274,7 @@ def generate(req: GenerateReq):
             ir, fixlog = qualitygate.autofix(ir)
             qa = {"index": n, "fixed": len(fixlog),
                   "violations": [v["rule"] for v in qualitygate.check(ir)]}
+            ir = ensure_current_ir(ir, source="generate")
         return ir, error, qa
 
     futures = [EXECUTOR.submit(gen_one, i + 1) for i in range(count)]
@@ -324,7 +320,7 @@ def mix(req: MixReq):
     if "name" in meta:
         meta["name"] = f"{meta['name']} (mix)"
     meta["mixOf"] = [{"index": i, "weight": weights[i]} for i in range(len(irs))]
-    return {"ir": result}
+    return {"ir": ensure_current_ir(result, source="mix")}
 
 
 @app.post("/api/clone")
@@ -407,7 +403,7 @@ def clone(req: CloneReq):
         except Exception:
             pass
     cache_store.put("clone_url", cache_store.key_url(url), {"ir": ir})
-    return {"ir": ir, "cached": False}
+    return {"ir": ensure_current_ir(ir, source="clone"), "cached": False}
 
 
 # ---------- Source Import / Reskin (см. docs/ARCHITECTURE.md и docs/NODES.md) ----------
@@ -511,7 +507,7 @@ def reskin(req: ReskinReq):
             pass
     if errors:
         return err(502, "reskin не прошёл валидацию после repair: " + "; ".join(errors[:5]))
-    return {"ir": merged, "log": journal}
+    return {"ir": ensure_current_ir(merged, source="reskin"), "log": journal}
 
 
 # ---------- Quality Gate / Constraints (решение владельца 12.2, бэклог §8) ----------
@@ -767,7 +763,7 @@ def reproduce(req: ReproduceReq):
         "contents_count": len(result.get("contents", [])),
         "html": result.get("html", ""),
         "diff": result.get("diff", {}),
-        "ir": result.get("ir", {}),
+        "ir": ensure_current_ir(result.get("ir", {}), source="reproduce"),
         "repro_png": f"data:image/png;base64,{result['repro_png_b64']}" if result.get("repro_png_b64") else "",
         "provider_used": provider,
     }
@@ -799,6 +795,15 @@ def project_load(req: ProjectLoadReq):
 @app.get("/api/project/taste")
 def project_taste():
     return project_store.load_taste_profile()
+
+
+@app.get("/api/config")
+def app_config():
+    """Runtime configuration and feature flags for the frontend."""
+    return {
+        "schemaVersion": ir.CURRENT_SCHEMA_VERSION,
+        "flags": FEATURE_FLAGS.all(),
+    }
 
 
 @app.get("/nodes")
