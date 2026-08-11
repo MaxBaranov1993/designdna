@@ -177,7 +177,7 @@ def main() -> None:
           len(dup_keys) == len(set(dup_keys)), str(dup_keys))
     check("merge renames duplicate instead of dropping content",
           any(node.get("text") == "bleed" for node, _p in scraper._walk_source_nodes(dup_merged["tree"]))
-          and any(key.endswith("#2") for key in dup_keys),
+          and any(key.endswith("#001") for key in dup_keys),
           str(dup_keys))
 
     # Маппинг сырых сигналов страницы в закрытый enum-контракт токенов схемы.
