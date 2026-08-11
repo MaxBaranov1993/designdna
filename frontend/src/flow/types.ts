@@ -22,6 +22,15 @@ export type NodeType =
 
 export type IRObject = Record<string, unknown>;
 export type SourceViewport = "desktop" | "tablet" | "mobile";
+export type FeatureFlags = {
+  irV11?: boolean;
+  tailwindProjection?: boolean;
+  fluidResponsive?: boolean;
+  interactionRecorder?: boolean;
+  motionEditor?: boolean;
+  videoRender?: boolean;
+  aiDirector?: boolean;
+};
 
 export type PromptNodeData = { text: string };
 export type ReferenceNodeData = {

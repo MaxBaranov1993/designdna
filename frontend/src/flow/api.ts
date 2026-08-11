@@ -82,3 +82,8 @@ export type QualityPassResp = {
 };
 export type ProjectLoadResp = { project?: unknown | null; updated_at?: string | null };
 export type ProjectSaveResp = { ok?: boolean; bytes?: number; updated_at?: string; taste?: Record<string, unknown> };
+export type ConfigResp = { schemaVersion?: string; flags?: Record<string, boolean> };
+
+export async function getConfig(): Promise<ConfigResp> {
+  return apiGet<ConfigResp>("/api/config");
+}

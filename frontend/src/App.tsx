@@ -19,6 +19,7 @@ import { useFlowStore } from "./flow/store";
 import { installGraphDev, setReactFlowInstance } from "./flow/graphdev";
 import { toast, ToastViewport } from "./flow/toast";
 import { reachable } from "./flow/dataflow";
+import { getConfig } from "./flow/api";
 import { EditNode } from "./nodes/EditNode";
 import { GeneratorNode } from "./nodes/GeneratorNode";
 import { MixNode } from "./nodes/MixNode";
@@ -415,6 +416,8 @@ export default function App() {
   useEffect(() => {
     installGraphDev();
     void useFlowStore.getState().loadPersistedProject();
+    // Load runtime config/feature flags once on boot. Failures are non-fatal.
+    void getConfig().catch(() => ({ flags: {} }));
   }, []);
   return (
     <div className="flex h-full flex-col">

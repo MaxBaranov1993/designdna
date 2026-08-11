@@ -177,6 +177,16 @@ function walk(node: IRNode, fn: (n: IRNode) => void): void {
   }
 }
 
+function safeBlockName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "") || "block";
+}
+
+function prefixSourceKey(blockName: string, key: string): string {
+  const name = safeBlockName(blockName);
+  if (key.startsWith(`${name}/`)) return key;
+  return `${name}/${key}`;
+}
+
 export function composePage(
   blocks: { name: string; ir: IRObject }[],
   tokensOverride: IRObject | null,
@@ -199,13 +209,19 @@ export function composePage(
       s.id = id;
       walk(s, (n) => {
         if (typeof n.sourceKey === "string" && n.sourceKey) {
-          let key = n.sourceKey;
+          let key = prefixSourceKey(name, n.sourceKey);
           if (usedKeys.has(key)) {
-            key = `${key}#${name}`;
+            // Extremely rare: identical keys inside the same block after prefixing.
+            // Append a deterministic numeric suffix.
             let i = 2;
-            while (usedKeys.has(key)) key = `${n.sourceKey}#${name}-${i++}`;
-            n.sourceKey = key;
+            let candidate = `${key}#${i.toString().padStart(3, "0")}`;
+            while (usedKeys.has(candidate)) {
+              i += 1;
+              candidate = `${key}#${i.toString().padStart(3, "0")}`;
+            }
+            key = candidate;
           }
+          n.sourceKey = key;
           usedKeys.add(key);
         }
       });
@@ -221,7 +237,7 @@ export function composePage(
   }
   const first = blocks[0]?.ir;
   return {
-    version: "1.0",
+    version: "1.1",
     meta: {
       name: "Страница",
       description: blocks.map((b) => b.name).join(" + "),
