@@ -61,6 +61,19 @@ auto-layout and wrap continue to control fluid geometry. Inspector badges show
 whether frame/style comes from shared data or the active device override, with
 explicit Reset override, Apply to all and Copy to breakpoint operations.
 
+### Interaction IR
+
+Interaction IR is a versioned, derived workflow artifact. It references an
+immutable Design IR content hash and stores events plus replayable JSON patches
+for named scenes. Patch roots are restricted to renderable Design IR fields;
+the backend validates scene references before replay.
+
+The graph Recorder captures actions from a rendered Design IR preview. Typed
+values are cleaned in the browser before they enter graph persistence, then the
+backend performs a second recursive cleanup for emails, phones, credentials and
+tokens. External live-page capture is a separate Chromium adapter and is not
+part of this trust boundary yet.
+
 ## Graph
 
 The graph is a procedural design workflow.
@@ -69,7 +82,8 @@ Current wire kinds:
 
 - `text` — prompts, summaries, instructions;
 - `ir` — full editable Design IR;
-- `tokens` — Style DNA without the full tree.
+- `tokens` — Style DNA without the full tree;
+- `interaction` — sanitized events and replayable Design IR scenes.
 
 Rules:
 

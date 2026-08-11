@@ -90,10 +90,10 @@ def main():
         pg.wait_for_selector(".react-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
-        # ---------- ctx-Р СР ВµР Р…РЎР‹: 12 РЎвЂљР С‘Р С—Р С•Р Р†, Р ВµРЎРѓРЎвЂљРЎРЉ Page ----------
+        # ---------- ctx-Р СР ВµР Р…РЎР‹: 13 РЎвЂљР С‘Р С—Р С•Р Р†, Р ВµРЎРѓРЎвЂљРЎРЉ Page ----------
         pg.click(".react-flow__pane", button="right")
-        check("Р Р† Р СР ВµР Р…РЎР‹ 12 РЎвЂљР С‘Р С—Р С•Р Р† Р Р…Р С•Р Т‘",
-              pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 12"))
+        check("Р Р† Р СР ВµР Р…РЎР‹ 13 РЎвЂљР С‘Р С—Р С•Р Р† Р Р…Р С•Р Т‘",
+              pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 13"))
         check("Р Р† Р СР ВµР Р…РЎР‹ Р ВµРЎРѓРЎвЂљРЎРЉ Р РЋРЎвЂљРЎР‚Р В°Р Р…Р С‘РЎвЂ Р В°",
               pg.evaluate("!!document.querySelector('#ctx-menu .ctx-item[data-type=\"page\"]')"))
         pg.click("#ctx-menu .ctx-item[data-type='page']")

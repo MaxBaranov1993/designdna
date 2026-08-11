@@ -5,7 +5,7 @@
 БЕЗ реальных LLM-вызовов: POST /api/block-parse и /api/reskin перехватываются
 через page.route и возвращают маленькие валидные IR.
 
-Проверяет: создание обеих нод из контекстного меню (в меню 12 типов); BlockParse —
+Проверяет: создание обеих нод из контекстного меню (в меню 13 типов); BlockParse —
 без галки «мой сайт» запуск заблокирован, payload {url}, список блоков с превью,
 порты только у зажжённых, блок с ошибкой показан с ошибкой, бейдж «из кэша»;
 провода: зажжённый блок → Reskin.ir, tokens → Reskin.tokens, несовместимый
@@ -140,12 +140,12 @@ def main():
         pg.wait_for_selector(".react-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
-        # ---------- создание нод из контекстного меню (12 типов, с Page Bridge) ----------
+        # ---------- создание нод из контекстного меню (13 типов, с Recorder и Page Bridge) ----------
         pg.click(".react-flow__pane", button="right", position={"x": 300, "y": 120})
         pg.wait_for_selector("#ctx-menu")
         check(
-            "контекстное меню: 12 типов нод",
-            pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 12"),
+            "контекстное меню: 13 типов нод",
+            pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 13"),
         )
         pg.click("#ctx-menu .ctx-item[data-type='sourceimport']")
         pg.wait_for_selector(".n-sourceimport")

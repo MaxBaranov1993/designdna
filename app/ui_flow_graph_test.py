@@ -88,8 +88,8 @@ def main():
         # правый клик по канвасу — контекстное меню создания ноды
         pg.click(".react-flow__pane", button="right", position={"x": 320, "y": 300})
         check("контекстное меню открыто", pg.is_visible("#ctx-menu"))
-        # 12 типов: текущие AI-ноды + Page Bridge для передачи компонентов между страницами.
-        check("в меню 12 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 12"))
+        # 13 типов: текущие AI-ноды + Interaction Recorder + Page Bridge.
+        check("в меню 13 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 13"))
         check("в меню есть Page Bridge", pg.evaluate("!!document.querySelector('#ctx-menu .ctx-item[data-type=\"pagebridge\"]')"))
 
         # создать Промпт

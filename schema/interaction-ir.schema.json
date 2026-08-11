@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://designai.dev/interaction-ir/1.0",
+  "title": "InteractionIR",
+  "type": "object",
+  "required": ["version", "source", "scenes", "events", "variables", "privacyReport"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "1.0" },
+    "source": {
+      "type": "object",
+      "required": ["kind", "url", "capturedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["design-ir", "url", "hybrid"] },
+        "url": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "capturedAt": { "type": "string" }
+      }
+    },
+    "scenes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "baseDesignIrHash", "patch", "viewport"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "baseDesignIrHash": { "type": "string", "minLength": 16 },
+          "viewport": { "enum": ["desktop", "tablet", "mobile"] },
+          "patch": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["op", "path"],
+              "additionalProperties": false,
+              "properties": {
+                "op": { "enum": ["add", "replace", "remove"] },
+                "path": { "type": "string", "pattern": "^/(tree|tokens|frame|responsive|meta)(/.*)?$" },
+                "value": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "time", "type", "targetSourceKey", "payload", "resultingSceneId"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "time": { "type": "integer", "minimum": 0 },
+          "type": { "enum": ["click", "type", "scroll", "navigate", "focus", "blur", "submit"] },
+          "targetSourceKey": { "type": "string" },
+          "payload": { "type": "object" },
+          "resultingSceneId": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "variables": { "type": "object" },
+    "privacyReport": {
+      "type": "object",
+      "required": ["sanitizedCount", "sanitized", "warnings", "safeForAi"],
+      "additionalProperties": false,
+      "properties": {
+        "sanitizedCount": { "type": "integer", "minimum": 0 },
+        "sanitized": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "kind"],
+            "additionalProperties": false,
+            "properties": { "path": { "type": "string" }, "kind": { "type": "string" } }
+          }
+        },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "safeForAi": { "type": "boolean" }
+      }
+    }
+  }
+}

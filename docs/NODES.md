@@ -254,6 +254,27 @@ Should become the main trust layer:
 - repair log;
 - before/after diff.
 
+### Interaction Recorder
+
+Records a product flow against the rendered Design IR preview and produces a
+sanitized Interaction IR artifact.
+
+Input: `ir`.
+Output: `interaction`.
+
+Current controls:
+
+- click an element to select its stable `sourceKey`;
+- Record/Pause click capture;
+- add typed values and scroll positions;
+- build versioned scenes with deterministic JSON patches;
+- reset the local draft.
+
+Typed emails, phone numbers and token-like values are replaced before they are
+stored in graph state. The backend runs a second sanitizer and validates all
+scene references and patch roots. This stage records the local Design IR
+preview; live external-site capture is the next adapter.
+
 ## Proposed killer nodes
 
 ### Project DNA

@@ -15,6 +15,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   derive: { title: "Derive", icon: "↳", w: 330 },
   reskin: { title: "Reskin", icon: "✦", w: 340 },
   qualitypass: { title: "Quality Pass", icon: "✓", w: 350 },
+  recorder: { title: "Interaction Recorder", icon: "REC", w: 390 },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300 },
 };
 
@@ -69,6 +70,10 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   qualitypass: {
     in: [{ name: "ir", label: "IR", kind: "ir" }],
     out: [{ name: "ir", label: "проверенный IR", kind: "ir" }],
+  },
+  recorder: {
+    in: [{ name: "ir", label: "Design IR", kind: "ir" }],
+    out: [{ name: "interaction", label: "Interaction IR", kind: "interaction" }],
   },
   pagebridge: {
     in: [{ name: "ir", label: "component", kind: "ir" }],
@@ -145,6 +150,8 @@ export function defaultData(type: NodeType): AnyNodeData {
       };
     case "qualitypass":
       return { brief: "", minScore: 85, repair: true, ir: null, result: null };
+    case "recorder":
+      return { ir: null, interaction: null, recording: false, selectedTarget: "", selectedPath: "", draftEvents: [], draftScenes: [{ id: "scene-0", viewport: "desktop", patch: [] }] };
     case "pagebridge":
       return { channel: "shared-component", mode: "send", ir: null };
   }
@@ -163,5 +170,6 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "page", note: "страница из блоков" },
   { type: "reskin", note: "вариант с локом структуры" },
   { type: "qualitypass", note: "judge + repair + scorecard" },
+  { type: "recorder", note: "IR actions -> Interaction IR" },
   { type: "pagebridge", note: "передать компонент между страницами" },
 ];

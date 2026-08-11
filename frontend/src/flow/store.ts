@@ -45,6 +45,7 @@ import type {
   DeriveNodeData,
   QualityPassNodeData,
   PageBridgeNodeData,
+  RecorderNodeData,
 } from "./types";
 
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
@@ -85,6 +86,7 @@ export interface FlowStoreState {
   runDerive: (id: number) => Promise<void>;
   runReskin: (id: number) => Promise<void>;
   runQualityPass: (id: number) => Promise<void>;
+  runRecorder: (id: number) => Promise<void>;
   runPageBridge: (id: number) => void;
   sendToNode: (id: number, targetType: "edit" | "reference") => void;
   addMixInput: (id: number) => void;
@@ -367,6 +369,12 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
           get().setNodeData(consId, { ir: deepClone(ir), result: null });
           get().setStatus(consId, "IR получен — запустите Quality Pass");
         }
+      } else if (cons.type === "recorder") {
+        const ir = pullInput(nodes, edges, cons, "ir");
+        if (ir) {
+          get().setNodeData(consId, { ir: deepClone(ir), interaction: null, draftEvents: [], draftScenes: [{ id: "scene-0", viewport: "desktop", patch: [] }] });
+          get().setStatus(consId, "Design IR ready for interaction recording", "ok");
+        }
       } else if (cons.type === "pagebridge") {
         get().runPageBridge(consId);
         get().propagate(consId, visited);
@@ -386,6 +394,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     else if (n.type === "derive") void get().runDerive(id);
     else if (n.type === "reskin") void get().runReskin(id);
     else if (n.type === "qualitypass") void get().runQualityPass(id);
+    else if (n.type === "recorder") void get().runRecorder(id);
     else if (n.type === "pagebridge") get().runPageBridge(id);
   },
 
@@ -694,6 +703,40 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       const msg = e instanceof Error ? e.message : String(e);
       get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Quality Pass: " + msg, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  runRecorder: async (id) => {
+    const st = get();
+    const n = st.nodes.find((node) => Number(node.id) === id);
+    if (!n || n.type !== "recorder" || st.busy[id]) return;
+    const data = n.data as RecorderNodeData;
+    const baseIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
+    if (!baseIr) {
+      get().setStatus(id, "Connect Design IR before recording", "err");
+      return;
+    }
+    get().setBusy(id, true);
+    get().setStatus(id, "Sanitizing Interaction IR...");
+    try {
+      const response = await api<{ interaction?: IRObject }>("/api/interaction/build", {
+        base_ir: baseIr,
+        source: { kind: "design-ir", url: "" },
+        scenes: data.draftScenes,
+        events: data.draftEvents,
+        variables: {},
+      });
+      const interaction = response.interaction || null;
+      get().setNodeData(id, { ir: deepClone(baseIr), interaction, recording: false });
+      const report = interaction?.privacyReport as Record<string, unknown> | undefined;
+      get().setStatus(id, `Interaction IR ready · ${data.draftEvents.length} events · ${Number(report?.sanitizedCount || 0)} redactions`, "ok");
+      get().propagate(id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      get().setStatus(id, "Recorder: " + message, "err");
+      toast("Recorder: " + message, "error");
     } finally {
       get().setBusy(id, false);
     }

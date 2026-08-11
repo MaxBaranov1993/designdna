@@ -18,6 +18,15 @@ from .style_dna import (
 from .normalize import preview as preview_normalization
 from .tailwind_projection import project as project_tailwind
 from .responsive import viewport_for_width, clamp_width, materialize as materialize_responsive
+from .interaction import (
+    INTERACTION_VERSION,
+    build as build_interaction,
+    validate as validate_interaction,
+    replay as replay_interaction,
+    sanitize_value as sanitize_interaction_value,
+    diff as diff_interaction_scene,
+    apply_patch as apply_interaction_patch,
+)
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
@@ -45,4 +54,11 @@ __all__ = [
     "viewport_for_width",
     "clamp_width",
     "materialize_responsive",
+    "INTERACTION_VERSION",
+    "build_interaction",
+    "validate_interaction",
+    "replay_interaction",
+    "sanitize_interaction_value",
+    "diff_interaction_scene",
+    "apply_interaction_patch",
 ]

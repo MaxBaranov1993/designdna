@@ -100,6 +100,9 @@ export type TailwindProjectionResp = {
   nodes?: Array<{ sourceKey: string; path: string; type: string; classes: Record<string, string[]> }>;
   diagnostics?: Array<{ level?: string; sourceKey?: string; message?: string }>;
 };
+export type InteractionBuildResp = { interaction?: IRObject };
+export type InteractionValidateResp = { valid?: boolean; errors?: string[] };
+export type InteractionReplayResp = { ir?: IRObject };
 
 export async function getConfig(): Promise<ConfigResp> {
   return apiGet<ConfigResp>("/api/config");
@@ -119,4 +122,21 @@ export async function previewStyleNormalization(ir: IRObject, tolerance = 0.12):
 
 export async function exportTailwind(ir: IRObject, mode: "exact" | "normalized" = "exact"): Promise<TailwindProjectionResp> {
   return api<TailwindProjectionResp>("/api/export/tailwind", { ir, mode });
+}
+
+export async function buildInteraction(
+  baseIr: IRObject,
+  scenes: Array<Record<string, unknown>>,
+  events: Array<Record<string, unknown>>,
+  source: Record<string, unknown> = { kind: "design-ir", url: "" },
+): Promise<InteractionBuildResp> {
+  return api<InteractionBuildResp>("/api/interaction/build", { base_ir: baseIr, source, scenes, events, variables: {} });
+}
+
+export async function validateInteraction(interaction: IRObject): Promise<InteractionValidateResp> {
+  return api<InteractionValidateResp>("/api/interaction/validate", { interaction });
+}
+
+export async function replayInteraction(baseIr: IRObject, interaction: IRObject, sceneId: string): Promise<InteractionReplayResp> {
+  return api<InteractionReplayResp>("/api/interaction/replay", { base_ir: baseIr, interaction, scene_id: sceneId });
 }

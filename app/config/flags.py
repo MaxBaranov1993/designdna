@@ -15,7 +15,7 @@ DEFAULT_FLAGS = {
     # Stage 3: fluid responsive editor.
     "fluidResponsive": True,
     # Stage 4: interaction recorder.
-    "interactionRecorder": False,
+    "interactionRecorder": True,
     # Stage 5: motion editor.
     "motionEditor": False,
     # Stage 6: deterministic video render.

@@ -7,6 +7,7 @@ import { cn } from "../lib/utils";
 function kindClass(kind: string) {
   if (kind === "ir") return "port-ir";
   if (kind === "tokens") return "port-tokens";
+  if (kind === "interaction") return "port-interaction";
   return "";
 }
 

@@ -109,6 +109,8 @@ Editor tests:
 .venv\Scripts\python.exe -u app\style_projection_test.py
 .venv\Scripts\python.exe -u app\ui_style_projection_test.py
 .venv\Scripts\python.exe -u app\ui_fluid_responsive_test.py
+.venv\Scripts\python.exe -u app\interaction_ir_test.py
+.venv\Scripts\python.exe -u app\ui_interaction_recorder_test.py
 ```
 
 Style-system API:
@@ -123,6 +125,17 @@ POST /api/export/tailwind
 Normalize returns a candidate IR and never persists it. The DNA Editor owns the
 explicit apply step. Tailwind responses are derived artifacts and must not be
 written back into Design IR.
+
+Interaction API:
+
+```text
+POST /api/interaction/build
+POST /api/interaction/validate
+POST /api/interaction/replay
+```
+
+The browser Recorder must redact typed PII before updating Zustand. The backend
+sanitizer is a second boundary, not a replacement for local cleanup.
 
 Sanity:
 

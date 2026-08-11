@@ -4,7 +4,7 @@ import type { Edge, Node } from "@xyflow/react";
  * Runtime-поля legacy (el/geo/history) в React Flow state не переносятся. */
 
 /* kind tokens: design-токены из Source Import/Style DNA в Reskin/Derive. */
-export type PortKind = "text" | "ir" | "tokens";
+export type PortKind = "text" | "ir" | "tokens" | "interaction";
 
 export type NodeType =
   | "prompt"
@@ -18,6 +18,7 @@ export type NodeType =
   | "derive"
   | "reskin"
   | "qualitypass"
+  | "recorder"
   | "pagebridge";
 
 export type IRObject = Record<string, unknown>;
@@ -127,6 +128,29 @@ export type PageBridgeNodeData = {
   mode: "send" | "receive";
   ir: IRObject | null;
 };
+export type InteractionObject = Record<string, unknown>;
+export type InteractionDraftEvent = {
+  id: string;
+  time: number;
+  type: "click" | "type" | "scroll" | "navigate" | "focus" | "blur" | "submit";
+  targetSourceKey: string;
+  payload: Record<string, unknown>;
+  resultingSceneId: string;
+};
+export type InteractionDraftScene = {
+  id: string;
+  viewport: SourceViewport;
+  patch: Array<{ op: "add" | "replace" | "remove"; path: string; value?: unknown }>;
+};
+export type RecorderNodeData = {
+  ir: IRObject | null;
+  interaction: InteractionObject | null;
+  recording: boolean;
+  selectedTarget: string;
+  selectedPath: string;
+  draftEvents: InteractionDraftEvent[];
+  draftScenes: InteractionDraftScene[];
+};
 
 export type AnyNodeData =
   | PromptNodeData
@@ -140,6 +164,7 @@ export type AnyNodeData =
   | DeriveNodeData
   | ReskinNodeData
   | QualityPassNodeData
+  | RecorderNodeData
   | PageBridgeNodeData;
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
@@ -153,6 +178,7 @@ export type StyleDnaFlowNode = Node<StyleDnaNodeData, "styledna">;
 export type DeriveFlowNode = Node<DeriveNodeData, "derive">;
 export type ReskinFlowNode = Node<ReskinNodeData, "reskin">;
 export type QualityPassFlowNode = Node<QualityPassNodeData, "qualitypass">;
+export type RecorderFlowNode = Node<RecorderNodeData, "recorder">;
 export type PageBridgeFlowNode = Node<PageBridgeNodeData, "pagebridge">;
 
 export type FlowNode =
@@ -167,6 +193,7 @@ export type FlowNode =
   | DeriveFlowNode
   | ReskinFlowNode
   | QualityPassFlowNode
+  | RecorderFlowNode
   | PageBridgeFlowNode;
 
 /* Ребро RF: id строится по формату из спеки — e<from.node>:<from.port>-<to.node>:<to.port> */

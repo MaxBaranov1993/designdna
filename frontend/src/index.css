@@ -202,6 +202,9 @@
 .port-dot.port-tokens.react-flow__handle {
   border-color: var(--flow-wire-tokens);
 }
+.port-dot.port-interaction.react-flow__handle {
+  border-color: #2fbf9f;
+}
 
 /* контролы внутри нод — зеркало .node textarea/select/input (nodes.html) */
 .fnode textarea,
@@ -476,6 +479,88 @@
   left: 0;
   right: 0;
   pointer-events: none;
+}
+.ir-preview-interactive .ir-preview-inner {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.recorder-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.recorder-preview .ir-preview {
+  border: 1px solid var(--flow-border);
+}
+.recorder-preview-bar,
+.recorder-summary,
+.recorder-input-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.recorder-preview-bar {
+  justify-content: space-between;
+  min-width: 0;
+  color: var(--flow-muted);
+  font-size: 11px;
+}
+.recorder-preview-bar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn-node.recording {
+  color: #ffb5b5;
+  border-color: #d65b5b;
+  background: rgba(214, 91, 91, 0.14);
+}
+.recorder-tools {
+  display: grid;
+  gap: 7px;
+}
+.recorder-input-row input {
+  min-width: 0;
+  flex: 1;
+}
+.recorder-input-row input[type="number"] {
+  width: 100%;
+  background: var(--flow-panel-2);
+  border: 1px solid var(--flow-border);
+  color: var(--flow-text);
+  border-radius: 9px;
+  padding: 7px 9px;
+  font: 500 12px "Inter", sans-serif;
+}
+.recorder-summary {
+  color: var(--flow-muted);
+  font-size: 10.5px;
+}
+.recorder-summary span + span::before {
+  content: "·";
+  margin-right: 7px;
+}
+.recorder-events {
+  display: grid;
+  gap: 4px;
+  max-height: 94px;
+  overflow: auto;
+}
+.recorder-events div {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 7px;
+  color: var(--flow-muted);
+  font-size: 10.5px;
+}
+.recorder-events strong {
+  color: var(--flow-text);
+}
+.recorder-events span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ir-preview-empty {
   position: absolute;

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { MouseEventHandler } from "react";
 import { deepClone } from "../flow/dataflow";
 import type { IRObject, SourceViewport } from "../flow/types";
 import { cn } from "../lib/utils";
@@ -21,6 +22,8 @@ export function IrPreview({
   viewport,
   fitHeight = false,
   minHeight = 32,
+  interactive = false,
+  onClickCapture,
 }: {
   ir: IRObject | null;
   height?: number;
@@ -29,6 +32,8 @@ export function IrPreview({
   viewport?: SourceViewport;
   fitHeight?: boolean;
   minHeight?: number;
+  interactive?: boolean;
+  onClickCapture?: MouseEventHandler<HTMLDivElement>;
 }) {
   const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -77,8 +82,9 @@ export function IrPreview({
   return (
     <div
       ref={outerRef}
-      className={cn("ir-preview", className)}
+      className={cn("ir-preview", interactive && "ir-preview-interactive", className)}
       style={{ height: fitHeight && ir && measuredHeight !== null ? measuredHeight : height }}
+      onClickCapture={onClickCapture}
     >
       <div ref={innerRef} className="ir-preview-inner" />
       {!ir && empty ? <div className="ir-preview-empty">{empty}</div> : null}

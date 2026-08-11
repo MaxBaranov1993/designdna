@@ -26,7 +26,7 @@ mimetypes.add_type("font/woff", ".woff")
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -174,6 +174,24 @@ class StyleNormalizeReq(BaseModel):
 class TailwindProjectionReq(BaseModel):
     ir: dict
     mode: str = "exact"
+
+
+class InteractionBuildReq(BaseModel):
+    base_ir: dict
+    source: dict = Field(default_factory=dict)
+    scenes: list[dict] = Field(default_factory=list)
+    events: list[dict] = Field(default_factory=list)
+    variables: dict = Field(default_factory=dict)
+
+
+class InteractionValidateReq(BaseModel):
+    interaction: dict
+
+
+class InteractionReplayReq(BaseModel):
+    base_ir: dict
+    interaction: dict
+    scene_id: str
 
 
 class ScrapeReq(BaseModel):
@@ -876,6 +894,44 @@ def export_tailwind(req: TailwindProjectionReq):
         return ir.project_tailwind(current, mode=req.mode)
     except ValueError as exc:
         return err(422, str(exc))
+
+
+@app.post("/api/interaction/build")
+def interaction_build(req: InteractionBuildReq):
+    """Build sanitized Interaction IR from event payloads and scene snapshots."""
+    if not FEATURE_FLAGS.is_enabled("interactionRecorder"):
+        return err(404, "Interaction Recorder отключён feature flag.")
+    base_ir = ensure_current_ir(req.base_ir)
+    schema_errors = validate_ir(base_ir)
+    if schema_errors:
+        return err(422, "Base IR не проходит schema: " + "; ".join(schema_errors[:5]))
+    try:
+        interaction = ir.build_interaction(base_ir, req.source, req.scenes, req.events, req.variables)
+    except ValueError as exc:
+        return err(422, str(exc))
+    return {"interaction": interaction}
+
+
+@app.post("/api/interaction/validate")
+def interaction_validate(req: InteractionValidateReq):
+    errors = ir.validate_interaction(req.interaction)
+    return {"valid": not errors, "errors": errors}
+
+
+@app.post("/api/interaction/replay")
+def interaction_replay(req: InteractionReplayReq):
+    base_ir = ensure_current_ir(req.base_ir)
+    schema_errors = validate_ir(base_ir)
+    if schema_errors:
+        return err(422, "Base IR не проходит schema: " + "; ".join(schema_errors[:5]))
+    try:
+        scene_ir = ir.replay_interaction(base_ir, req.interaction, req.scene_id)
+    except ValueError as exc:
+        return err(422, str(exc))
+    replay_errors = validate_ir(scene_ir)
+    if replay_errors:
+        return err(422, "Scene patch создаёт невалидный IR: " + "; ".join(replay_errors[:5]))
+    return {"ir": ensure_current_ir(scene_ir)}
 
 
 @app.get("/nodes")

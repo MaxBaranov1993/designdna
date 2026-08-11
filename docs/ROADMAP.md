@@ -11,13 +11,14 @@ Completed:
 - Stage 2: opt-in Normalize preview/apply and deterministic Exact/Normalized
   Tailwind projection;
 - Stage 3: arbitrary 320-2560 px canvas widths, automatic mobile/tablet/desktop
-  resolution, property-source indicators and reset/apply/copy override controls.
+  resolution, property-source indicators and reset/apply/copy override controls;
+- Stage 4A: Design IR preview recorder, local PII/secret cleanup, versioned
+  Interaction IR, safe scene patches, validation and deterministic replay.
 
-Next vertical slice: Stage 4 Interaction Recorder with local privacy cleanup and
-replayable DOM state patches. The
-Interaction IR, Motion IR and responsive modules currently present in `app/ir`
-include real responsive behavior now, but recorder, Motion Editor and video render must not be marked
-implemented until their end-to-end acceptance scenarios pass.
+Next vertical slice: Stage 4B hybrid Chromium capture for real external-page
+navigation and form flows. Motion Editor and video render remain future stages
+and must not be marked implemented until their end-to-end acceptance scenarios
+pass.
 
 ## Phase 0 — Clean product foundation
 

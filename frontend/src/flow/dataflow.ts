@@ -7,6 +7,7 @@ export const WIRE_COLORS: Record<PortKind, string> = {
   text: "#7a7a8c",
   ir: "#5b5bd6",
   tokens: "#d6a13b",
+  interaction: "#2fbf9f",
 };
 
 /* Глубокое копирование значения между нодами. */
@@ -77,6 +78,8 @@ export function outValue(n: FlowNode, port?: string): unknown {
       return n.data.ir || null;
     case "qualitypass":
       return n.data.ir || null;
+    case "recorder":
+      return n.data.interaction || null;
     case "pagebridge":
       return n.data.ir || null;
   }
