@@ -82,7 +82,15 @@ export type QualityPassResp = {
 };
 export type ProjectLoadResp = { project?: unknown | null; updated_at?: string | null };
 export type ProjectSaveResp = { ok?: boolean; bytes?: number; updated_at?: string; taste?: Record<string, unknown> };
-export type ConfigResp = { schemaVersion?: string; flags?: Record<string, boolean> };
+export type ConfigResp = {
+  schemaVersion?: string;
+  flags?: Record<string, boolean>;
+  models?: {
+    generator?: string;
+    motionDirector?: string;
+    video?: Record<string, string>;
+  };
+};
 export type StyleDnaExtractResp = { tokens?: IRObject };
 export type StyleDnaApplyResp = { ir?: IRObject };
 export type NormalizePreviewResp = {

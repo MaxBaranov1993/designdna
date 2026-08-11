@@ -33,10 +33,12 @@ export function GeneratorNode({ id, data, selected }: NodeProps<GeneratorFlowNod
         value={data.ownPrompt}
         onChange={(e) => setNodeData(Number(id), { ownPrompt: e.target.value })}
       />
-      <div className="ctl-row">
-        <span className="f-provider" title="Модель выбирается OpenRouter по роли generator">
-          OpenRouter
+      <div className="generator-model-row">
+        <span className="f-provider" title="Primary: anthropic/claude-opus-5 through OpenRouter; fallbacks are automatic">
+          Opus 5 · OpenRouter
         </span>
+      </div>
+      <div className="ctl-row">
         <select
           className="f-count nodrag"
           value={String(data.count)}

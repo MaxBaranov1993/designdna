@@ -194,6 +194,7 @@ def main():
         for sel in (".n-prompt", ".n-sourceimport", ".n-styledna", ".n-derive", ".n-edit", ".n-mix", ".n-qualitypass"):
             pg.wait_for_selector(sel)
         check("created 8 nodes", pg.evaluate("window.GraphDev.state().nodes.length === 8"))
+        check("Generator shows Opus 5 OpenRouter route", pg.locator(".n-generator .generator-model-row").inner_text().strip() == "Opus 5 · OpenRouter")
 
         old_add_rejected = pg.evaluate("""(() => {
             const before = window.GraphDev.state().nodes.length;

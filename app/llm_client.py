@@ -58,6 +58,7 @@ ROUTING = {
     # канонические роли владельца (конфиг от 2026-08-05)
     "prompt_enhancer": ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
     "planner":    ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+    "motion_director": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
     "generator":  ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol"],
     "reskin":     ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol"],
     "repair":     ["qwen/qwen3-coder-plus", "anthropic/claude-sonnet-5"],

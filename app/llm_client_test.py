@@ -96,6 +96,7 @@ def main():
     check(
         "routing_models: роли нод закреплены за OpenRouter-моделями",
         llm_client.routing_models("generator")[0] == "anthropic/claude-opus-5"
+        and llm_client.routing_models("motion_director")[0] == "anthropic/claude-opus-5"
         and llm_client.routing_models("clone")[0] == "anthropic/claude-sonnet-5"
         and llm_client.routing_models("blockparse")[0] == "anthropic/claude-sonnet-5"
         and llm_client.routing_models("source_semantics")[0] == "anthropic/claude-sonnet-5"

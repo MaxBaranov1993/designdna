@@ -28,6 +28,8 @@ Output: `text`.
 Prompt → multiple Design IR variants through OpenRouter.
 
 Default model route: `generator` → Claude Opus 5 → Claude Sonnet 5 → GPT-5.6 Sol.
+The compact node shows `Opus 5 · OpenRouter`; raw provider/model selection stays
+out of the user workflow and fallback remains automatic.
 
 Inputs:
 
@@ -299,6 +301,9 @@ Export settings are part of Motion IR: MP4 maps to H.264, WebM maps to VP9, and
 quality can be Draft, High or Lossless. Export runs as a background job with
 visible progress. The completed video is downloaded from a guarded artifact
 route; only the render settings and source hashes remain in the graph.
+
+Generative B-roll is a separate OpenRouter Videos operation. Its Studio tier
+uses Seedance 2.0 and must not replace the deterministic renderer for UI scenes.
 
 ## Proposed killer nodes
 

@@ -47,6 +47,7 @@ import qualitygate
 import project_store
 import typography
 import designkb
+import video_client
 
 import ir
 from ir import ensure_current as ensure_current_ir
@@ -228,6 +229,18 @@ class MotionRenderReq(BaseModel):
     base_ir: dict
     interaction: dict
     motion: dict
+
+
+class AiVideoGenerateReq(BaseModel):
+    prompt: str
+    tier: str = "studio"
+    duration: int = 5
+    aspect_ratio: str = "16:9"
+    resolution: str = "720p"
+    generate_audio: bool = False
+    references: list[str] = Field(default_factory=list)
+    seed: int | None = None
+    confirmed: bool = False
 
 
 class ScrapeReq(BaseModel):
@@ -876,6 +889,11 @@ def app_config():
     return {
         "schemaVersion": ir.CURRENT_SCHEMA_VERSION,
         "flags": FEATURE_FLAGS.all(),
+        "models": {
+            "generator": llm.routing_models("generator")[0],
+            "motionDirector": llm.routing_models("motion_director")[0],
+            "video": video_client.public_models(),
+        },
     }
 
 
@@ -1124,6 +1142,51 @@ def motion_render_download(render_id: str):
         return err(404, "Rendered artifact not found.")
     media_type = "video/mp4" if output.suffix == ".mp4" else "video/webm"
     return FileResponse(output, media_type=media_type, filename=filename)
+
+
+@app.post("/api/ai-video/generate")
+def ai_video_generate(req: AiVideoGenerateReq):
+    """Submit an explicitly confirmed generative B-roll job to OpenRouter."""
+    if not FEATURE_FLAGS.is_enabled("generativeVideo"):
+        return err(404, "Generative video is disabled by feature flag.")
+    if not req.confirmed:
+        return err(409, "Confirm the paid OpenRouter video generation before submitting.")
+    if len(req.references) > 4:
+        return err(422, "At most four video reference images are allowed.")
+    safe_references = []
+    try:
+        for reference in req.references:
+            safe = validate_public_url(reference)
+            if not safe.startswith("https://"):
+                raise ValueError("Video reference images must use HTTPS.")
+            safe_references.append(safe)
+        return video_client.submit(
+            req.prompt,
+            tier=req.tier,
+            duration=req.duration,
+            aspect_ratio=req.aspect_ratio,
+            resolution=req.resolution,
+            generate_audio=req.generate_audio,
+            references=safe_references,
+            seed=req.seed,
+        )
+    except ValueError as exc:
+        return err(422, str(exc))
+    except RuntimeError as exc:
+        return err(502, str(exc))
+
+
+@app.get("/api/ai-video/{job_id}")
+def ai_video_status(job_id: str):
+    """Poll one OpenRouter video job without accepting arbitrary polling URLs."""
+    if not FEATURE_FLAGS.is_enabled("generativeVideo"):
+        return err(404, "Generative video is disabled by feature flag.")
+    try:
+        return video_client.status(job_id)
+    except ValueError as exc:
+        return err(422, str(exc))
+    except RuntimeError as exc:
+        return err(502, str(exc))
 
 
 @app.get("/nodes")

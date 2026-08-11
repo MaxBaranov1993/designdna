@@ -147,11 +147,20 @@ The user buys product operations, not raw models.
 Default model strategy is quality-first:
 
 - Claude Opus 5 is the primary model for design generation, reskin, edit, style analysis and design judging.
+- Claude Opus 5 is reserved for the future Motion Director role that will emit
+  validated Motion IR patches; enabling the route does not mark AI Director complete.
 - Claude Sonnet 5 is the fallback/default for faster structured design operations such as block parsing.
 - Claude Opus 5 is also the default Quality Pass judge; avoid ultra-expensive judge models in the default subscription path.
 - Gemini 3.6 Flash is a vision fallback for screenshot/reference parsing.
 - Qwen3 Coder Plus is reserved for IR/JSON/schema repair and mechanical optimization.
 - Kimi is not a default route; it can be tested through `OPENROUTER_MODELS_<ROLE>` if needed, but should not drive product quality by default.
+
+OpenRouter Videos is a separate asynchronous gateway for optional generative
+assets. Product tiers map to `Seedance 2.0 Fast` (Draft), `Seedance 2.0`
+(Studio) and `Veo 3.1` (Cinematic). These models are for B-roll and visual
+inserts. UI walkthroughs continue to use deterministic Motion IR rendering so
+text, controls and layout do not drift between frames. Paid submissions require
+an explicit confirmation at the API boundary.
 
 The default routing lives in `app/llm_client.py`. Keep it invisible to end users; later the product can expose quality tiers such as Draft, Studio and Max without exposing raw providers.
 

@@ -65,6 +65,7 @@ Backend:
 - `app/mergeback.py` — protected-field merge-back.
 - `app/qualitygate.py` — deterministic quality checks.
 - `app/motion_render.py` — frame-exact Chromium compositor and FFmpeg encoder.
+- `app/video_client.py` — confirmed asynchronous OpenRouter Videos gateway.
 
 Editor runtime:
 
@@ -116,6 +117,8 @@ Editor tests:
 .venv\Scripts\python.exe -u app\motion_ir_test.py
 .venv\Scripts\python.exe -u app\motion_render_test.py
 .venv\Scripts\python.exe -u app\ui_motion_editor_test.py
+.venv\Scripts\python.exe -u app\video_client_test.py
+.venv\Scripts\python.exe -u app\video_routing_test.py
 ```
 
 Style-system API:
@@ -160,6 +163,17 @@ returns materialized Design IR scenes only as preview data.
 Video render revalidates the complete hash chain, queues a single local encoder
 job and never accepts a client filesystem path. `imageio-ffmpeg` supplies the
 pinned FFmpeg binary on every supported development machine.
+
+Generative video API:
+
+```text
+POST /api/ai-video/generate
+GET  /api/ai-video/{job_id}
+```
+
+This gateway uses OpenRouter's asynchronous Videos API. `confirmed=true` is
+required because submission spends credits. Reference images are transient,
+limited to public HTTPS URLs and are not stored in project state.
 
 Sanity:
 
