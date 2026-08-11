@@ -37,6 +37,14 @@ def main():
             print("server not ready")
             sys.exit(2)
 
+        ownership = page.request.post(BASE + "/api/interaction/capture", data={
+            "base_ir": fixture,
+            "url": "https://example.com/signup",
+            "mine": False,
+            "actions": [],
+        })
+        check("Live capture requires ownership confirmation", ownership.status == 403, ownership.text())
+
         page.evaluate("localStorage.clear()")
         page.reload()
         page.wait_for_selector(".react-flow__pane")
@@ -73,6 +81,35 @@ def main():
         validation = page.request.post(BASE + "/api/interaction/validate", data={"interaction": interaction}).json()
         check("Built Interaction IR validates", validation.get("valid") is True, str(validation))
         check("Interaction output port is active", page.locator('.n-recorder .port-row.out[data-port="interaction"]').count() == 1)
+
+        captured_request = {}
+
+        def capture_route(route):
+            captured_request.update(route.request.post_data_json)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"interaction":{"version":"1.0","events":[],"scenes":[],"privacyReport":{"sanitizedCount":1}}}',
+            )
+
+        page.route("**/api/interaction/capture", capture_route)
+        page.locator(".n-recorder .recorder-mode button").nth(1).click()
+        page.fill('.n-recorder input[placeholder^="https://"]', "https://example.com/signup")
+        page.check(".n-recorder .recorder-live-meta input[type=checkbox]")
+        page.select_option(".n-recorder .recorder-live-builder select", "type")
+        page.fill('.n-recorder input[placeholder="sourceKey"]', "signup.email")
+        page.fill('.n-recorder input[placeholder="CSS selector"]', "#email")
+        page.fill('.n-recorder input[placeholder="Transient value"]', "private@example.com")
+        page.click(".n-recorder .recorder-live-builder button")
+        persisted_before = str(page.evaluate("id => window.GraphDev.node(id).data", recorder_id))
+        check("Transient live value is absent from graph state", "private@example.com" not in persisted_before, persisted_before)
+        check("Live action appears in local ordered list", page.locator(".n-recorder .recorder-live-steps div").count() == 1)
+        page.click(".n-recorder .ctl-row .primary")
+        page.wait_for_function("id => Boolean(window.GraphDev.node(id).data.interaction)", arg=recorder_id)
+        check("Live capture sends transient value only to runner", captured_request.get("actions", [{}])[0].get("value") == "private@example.com", str(captured_request))
+        persisted_after = str(page.evaluate("id => window.GraphDev.node(id).data", recorder_id))
+        check("Transient value remains absent after capture", "private@example.com" not in persisted_after, persisted_after)
+        check("Successful capture clears transient steps", page.locator(".n-recorder .recorder-live-steps div").count() == 0)
         browser.close()
 
     if FAILS:

@@ -490,6 +490,94 @@
   flex-direction: column;
   gap: 7px;
 }
+.recorder-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border: 1px solid var(--flow-border);
+  border-radius: 8px;
+  background: var(--flow-panel-2);
+}
+.recorder-mode button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--flow-muted);
+  background: transparent;
+  font: 700 11px "Inter", sans-serif;
+  cursor: pointer;
+}
+.recorder-mode button.active {
+  color: var(--flow-text);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.recorder-live,
+.recorder-live-builder {
+  display: grid;
+  gap: 7px;
+}
+.recorder-live-meta {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.recorder-live-meta label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--flow-muted);
+  font-size: 10.5px;
+}
+.recorder-live-builder {
+  grid-template-columns: 92px minmax(0, 1fr) minmax(0, 1.2fr);
+  padding-top: 8px;
+  border-top: 1px solid var(--flow-border);
+}
+.recorder-live-builder > input:nth-of-type(3),
+.recorder-live-builder > button {
+  grid-column: 1 / -1;
+}
+.recorder-live-steps {
+  display: grid;
+  gap: 4px;
+  max-height: 116px;
+  overflow: auto;
+}
+.recorder-live-steps div {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 5px 4px 8px;
+  border: 1px solid var(--flow-border);
+  border-radius: 6px;
+  color: var(--flow-muted);
+  font-size: 10.5px;
+}
+.recorder-live-steps strong {
+  color: var(--flow-text);
+}
+.recorder-live-steps span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recorder-live-steps button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--flow-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.recorder-live-steps button:hover {
+  color: var(--flow-err);
+  background: rgba(255, 255, 255, 0.06);
+}
 .recorder-preview .ir-preview {
   border: 1px solid var(--flow-border);
 }

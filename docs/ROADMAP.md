@@ -13,12 +13,13 @@ Completed:
 - Stage 3: arbitrary 320-2560 px canvas widths, automatic mobile/tablet/desktop
   resolution, property-source indicators and reset/apply/copy override controls;
 - Stage 4A: Design IR preview recorder, local PII/secret cleanup, versioned
-  Interaction IR, safe scene patches, validation and deterministic replay.
+  Interaction IR, safe scene patches, validation and deterministic replay;
+- Stage 4B: owned-site Chromium runner, same-origin navigation guard, transient
+  action scripts and sanitized live form-state capture.
 
-Next vertical slice: Stage 4B hybrid Chromium capture for real external-page
-navigation and form flows. Motion Editor and video render remain future stages
-and must not be marked implemented until their end-to-end acceptance scenarios
-pass.
+Next vertical slice: Stage 5 Motion Editor over Interaction IR scenes. Video
+render and AI Director remain future stages and must not be marked implemented
+until their end-to-end acceptance scenarios pass.
 
 ## Phase 0 — Clean product foundation
 

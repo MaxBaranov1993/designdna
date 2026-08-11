@@ -15,7 +15,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   derive: { title: "Derive", icon: "↳", w: 330 },
   reskin: { title: "Reskin", icon: "✦", w: 340 },
   qualitypass: { title: "Quality Pass", icon: "✓", w: 350 },
-  recorder: { title: "Interaction Recorder", icon: "REC", w: 390 },
+  recorder: { title: "Interaction Recorder", icon: "REC", w: 420 },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300 },
 };
 
@@ -151,7 +151,11 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "qualitypass":
       return { brief: "", minScore: 85, repair: true, ir: null, result: null };
     case "recorder":
-      return { ir: null, interaction: null, recording: false, selectedTarget: "", selectedPath: "", draftEvents: [], draftScenes: [{ id: "scene-0", viewport: "desktop", patch: [] }] };
+      return {
+        ir: null, interaction: null, recording: false, selectedTarget: "", selectedPath: "",
+        draftEvents: [], draftScenes: [{ id: "scene-0", viewport: "desktop", patch: [] }],
+        mode: "preview", liveUrl: "", mine: false, liveViewport: "desktop",
+      };
     case "pagebridge":
       return { channel: "shared-component", mode: "send", ir: null };
   }

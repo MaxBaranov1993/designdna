@@ -142,6 +142,14 @@ export type InteractionDraftScene = {
   viewport: SourceViewport;
   patch: Array<{ op: "add" | "replace" | "remove"; path: string; value?: unknown }>;
 };
+export type InteractionLiveAction = {
+  type: "click" | "type" | "scroll" | "navigate" | "focus" | "submit";
+  targetSourceKey: string;
+  selector: string;
+  value?: string;
+  y?: number;
+  url?: string;
+};
 export type RecorderNodeData = {
   ir: IRObject | null;
   interaction: InteractionObject | null;
@@ -150,6 +158,10 @@ export type RecorderNodeData = {
   selectedPath: string;
   draftEvents: InteractionDraftEvent[];
   draftScenes: InteractionDraftScene[];
+  mode: "preview" | "live";
+  liveUrl: string;
+  mine: boolean;
+  liveViewport: SourceViewport;
 };
 
 export type AnyNodeData =

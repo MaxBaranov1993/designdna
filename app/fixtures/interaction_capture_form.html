@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Capture form</title>
+</head>
+<body>
+  <main>
+    <form id="signup">
+      <label>Email <input id="email" name="email" type="email"></label>
+      <button id="submit" type="submit">Register</button>
+    </form>
+    <p id="success" hidden>Registered</p>
+  </main>
+  <script>
+    document.getElementById("signup").addEventListener("submit", (event) => {
+      event.preventDefault();
+      document.getElementById("success").hidden = false;
+    });
+  </script>
+</body>
+</html>

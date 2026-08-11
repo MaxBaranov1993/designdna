@@ -268,12 +268,15 @@ Current controls:
 - Record/Pause click capture;
 - add typed values and scroll positions;
 - build versioned scenes with deterministic JSON patches;
+- replay ordered click/type/focus/submit/scroll/navigation steps on an owned URL;
+- choose desktop, tablet or mobile for the Chromium run;
 - reset the local draft.
 
 Typed emails, phone numbers and token-like values are replaced before they are
 stored in graph state. The backend runs a second sanitizer and validates all
-scene references and patch roots. This stage records the local Design IR
-preview; live external-site capture is the next adapter.
+scene references and patch roots. Live runs are restricted to the approved
+origin, and CSS selectors are discarded after execution. Raw typed values stay
+outside Zustand and SQLite and are cleared after a successful run.
 
 ## Proposed killer nodes
 

@@ -373,7 +373,7 @@
           const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
           return `<div class="source-input"${path}${css ? ` style="${css}"` : ""}>${kids}</div>`;
         }
-        return `<input class="input" placeholder="${esc(el.placeholder || el.label || "")}">`;
+        return `<input class="input" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value || "")}">`;
       case "card": {
         const free = el.frame && el.frame.layout === "free";
         const inner = (el.children || []).map(c => renderElement(c, uid, free, el.frame)).join("");

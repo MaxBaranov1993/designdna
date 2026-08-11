@@ -221,12 +221,19 @@ def build(base_ir: dict, source: dict | None, scenes: list[dict] | None, events:
         resulting = str(raw.get("resultingSceneId") or safe_scenes[min(index + 1, len(safe_scenes) - 1)]["id"])
         if resulting not in scene_ids:
             raise ValueError(f"event points to unknown scene: {resulting}")
+        payload = sanitize_value(raw.get("payload") or {}, f"/events/{index}/payload", redactions)
+        if event_type == "navigate" and isinstance(payload, dict) and "url" in payload:
+            payload["url"] = _safe_url(payload["url"])
         safe_events.append({
             "id": str(raw.get("id") or f"event-{index}"),
             "time": max(0, int(raw.get("time") or 0)),
             "type": event_type,
-            "targetSourceKey": str(raw.get("targetSourceKey") or ""),
-            "payload": sanitize_value(raw.get("payload") or {}, f"/events/{index}/payload", redactions),
+            "targetSourceKey": sanitize_value(
+                str(raw.get("targetSourceKey") or ""),
+                f"/events/{index}/targetSourceKey",
+                redactions,
+            ),
+            "payload": payload,
             "resultingSceneId": resulting,
         })
     safe_events.sort(key=lambda item: (item["time"], item["id"]))

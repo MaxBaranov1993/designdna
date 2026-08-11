@@ -103,6 +103,7 @@ export type TailwindProjectionResp = {
 export type InteractionBuildResp = { interaction?: IRObject };
 export type InteractionValidateResp = { valid?: boolean; errors?: string[] };
 export type InteractionReplayResp = { ir?: IRObject };
+export type InteractionCaptureResp = { interaction?: IRObject };
 
 export async function getConfig(): Promise<ConfigResp> {
   return apiGet<ConfigResp>("/api/config");

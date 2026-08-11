@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from interaction_capture import capture_live_flow
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -192,6 +193,14 @@ class InteractionReplayReq(BaseModel):
     base_ir: dict
     interaction: dict
     scene_id: str
+
+
+class InteractionCaptureReq(BaseModel):
+    base_ir: dict
+    url: str
+    mine: bool = False
+    viewport: str = "desktop"
+    actions: list[dict] = Field(default_factory=list)
 
 
 class ScrapeReq(BaseModel):
@@ -932,6 +941,26 @@ def interaction_replay(req: InteractionReplayReq):
     if replay_errors:
         return err(422, "Scene patch создаёт невалидный IR: " + "; ".join(replay_errors[:5]))
     return {"ir": ensure_current_ir(scene_ir)}
+
+
+@app.post("/api/interaction/capture")
+def interaction_capture(req: InteractionCaptureReq):
+    """Replay a transient, same-origin action script against an owned site."""
+    if not FEATURE_FLAGS.is_enabled("interactionRecorder"):
+        return err(404, "Interaction Recorder отключён feature flag.")
+    if not req.mine:
+        return err(403, "Подтвердите, что сайт принадлежит вам или у вас есть разрешение на запись.")
+    base_ir = ensure_current_ir(req.base_ir)
+    schema_errors = validate_ir(base_ir)
+    if schema_errors:
+        return err(422, "Base IR не проходит schema: " + "; ".join(schema_errors[:5]))
+    try:
+        interaction = capture_live_flow(base_ir, req.url, req.actions, req.viewport)
+    except ValueError as exc:
+        return err(422, str(exc))
+    except Exception as exc:
+        return err(502, f"Hybrid capture failed: {exc}")
+    return {"interaction": interaction}
 
 
 @app.get("/nodes")

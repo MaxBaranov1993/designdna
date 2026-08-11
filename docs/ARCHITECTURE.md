@@ -68,11 +68,13 @@ immutable Design IR content hash and stores events plus replayable JSON patches
 for named scenes. Patch roots are restricted to renderable Design IR fields;
 the backend validates scene references before replay.
 
-The graph Recorder captures actions from a rendered Design IR preview. Typed
-values are cleaned in the browser before they enter graph persistence, then the
-backend performs a second recursive cleanup for emails, phones, credentials and
-tokens. External live-page capture is a separate Chromium adapter and is not
-part of this trust boundary yet.
+The graph Recorder captures actions from a rendered Design IR preview or replays
+a transient script against an owned live URL in Chromium. Live capture is
+same-origin, guarded by the public-URL validator and requires explicit ownership
+confirmation. Typed values stay in component memory for one request and never
+enter graph persistence; the backend then performs a second recursive cleanup
+for emails, phones, credentials and tokens. CSS selectors are execution-only
+and are not included in Interaction IR.
 
 ## Graph
 

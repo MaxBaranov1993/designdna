@@ -110,6 +110,7 @@ Editor tests:
 .venv\Scripts\python.exe -u app\ui_style_projection_test.py
 .venv\Scripts\python.exe -u app\ui_fluid_responsive_test.py
 .venv\Scripts\python.exe -u app\interaction_ir_test.py
+.venv\Scripts\python.exe -u app\interaction_capture_test.py
 .venv\Scripts\python.exe -u app\ui_interaction_recorder_test.py
 ```
 
@@ -132,10 +133,13 @@ Interaction API:
 POST /api/interaction/build
 POST /api/interaction/validate
 POST /api/interaction/replay
+POST /api/interaction/capture
 ```
 
 The browser Recorder must redact typed PII before updating Zustand. The backend
 sanitizer is a second boundary, not a replacement for local cleanup.
+Hybrid capture additionally requires `mine=true`, validates every document
+navigation, rejects cross-origin transitions and caps scripts at 50 actions.
 
 Sanity:
 

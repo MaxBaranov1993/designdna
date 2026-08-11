@@ -6,8 +6,10 @@ import { useFlowStore } from "../flow/store";
 import type {
   InteractionDraftEvent,
   InteractionDraftScene,
+  InteractionLiveAction,
   IRObject,
   RecorderFlowNode,
+  SourceViewport,
 } from "../flow/types";
 import { NodeShell, NodeStatus } from "./NodeShell";
 import { InPorts, OutPorts } from "./PortHandles";
@@ -89,9 +91,15 @@ export function RecorderNode({ id, data, selected }: NodeProps<RecorderFlowNode>
   const nodeId = Number(id);
   const setNodeData = useFlowStore((state) => state.setNodeData);
   const runNode = useFlowStore((state) => state.runNode);
+  const runLiveRecorder = useFlowStore((state) => state.runLiveRecorder);
   const busy = useFlowStore((state) => Boolean(state.busy[nodeId]));
   const [typedValue, setTypedValue] = useState("");
   const [scrollY, setScrollY] = useState("640");
+  const [liveActions, setLiveActions] = useState<InteractionLiveAction[]>([]);
+  const [liveType, setLiveType] = useState<InteractionLiveAction["type"]>("click");
+  const [liveSourceKey, setLiveSourceKey] = useState("");
+  const [liveSelector, setLiveSelector] = useState("");
+  const [liveValue, setLiveValue] = useState("");
   const currentSceneId = data.draftScenes.at(-1)?.id || "scene-0";
 
   const appendEvent = (event: Omit<InteractionDraftEvent, "id" | "time">) => {
@@ -173,11 +181,38 @@ export function RecorderNode({ id, data, selected }: NodeProps<RecorderFlowNode>
     });
   };
 
+  const addLiveAction = () => {
+    const targetSourceKey = liveSourceKey.trim() || liveSelector.trim() || "document-root";
+    if (!["scroll", "navigate"].includes(liveType) && !liveSelector.trim()) return;
+    const action: InteractionLiveAction = {
+      type: liveType,
+      targetSourceKey,
+      selector: liveSelector.trim(),
+    };
+    if (liveType === "type") action.value = liveValue;
+    if (liveType === "scroll") action.y = Number(liveValue) || 0;
+    if (liveType === "navigate") action.url = liveValue.trim();
+    setLiveActions((current) => [...current, action]);
+    setLiveValue("");
+  };
+
+  const captureLive = async () => {
+    const complete = await runLiveRecorder(nodeId, liveActions);
+    if (complete) {
+      setLiveActions([]);
+      setLiveValue("");
+    }
+  };
+
   const privacyReport = data.interaction?.privacyReport as Record<string, unknown> | undefined;
   return (
     <NodeShell id={id} type="recorder" selected={selected}>
       <InPorts type="recorder" />
-      <div className="recorder-preview nodrag">
+      <div className="recorder-mode nodrag" role="tablist" aria-label="Recorder source">
+        <button className={data.mode !== "live" ? "active" : ""} onClick={() => setNodeData(nodeId, { mode: "preview" })}>Preview</button>
+        <button className={data.mode === "live" ? "active" : ""} onClick={() => setNodeData(nodeId, { mode: "live" })}>Live URL</button>
+      </div>
+      {data.mode !== "live" ? <div className="recorder-preview nodrag">
         <IrPreview
           ir={data.ir}
           height={210}
@@ -196,8 +231,56 @@ export function RecorderNode({ id, data, selected }: NodeProps<RecorderFlowNode>
             {data.recording ? "Pause" : "Record"}
           </button>
         </div>
-      </div>
-      <div className="recorder-tools nodrag">
+      </div> : <div className="recorder-live nodrag">
+        <input
+          type="text"
+          value={data.liveUrl || ""}
+          placeholder="https://your-site.com/signup"
+          onChange={(event) => setNodeData(nodeId, { liveUrl: event.target.value, interaction: null })}
+        />
+        <div className="recorder-live-meta">
+          <select
+            value={data.liveViewport || "desktop"}
+            onChange={(event) => setNodeData(nodeId, { liveViewport: event.target.value as SourceViewport })}
+          >
+            <option value="desktop">Desktop</option>
+            <option value="tablet">Tablet</option>
+            <option value="mobile">Mobile</option>
+          </select>
+          <label><input type="checkbox" checked={Boolean(data.mine)} onChange={(event) => setNodeData(nodeId, { mine: event.target.checked })} /> My site / permission</label>
+        </div>
+        <div className="recorder-live-builder">
+          <select value={liveType} onChange={(event) => setLiveType(event.target.value as InteractionLiveAction["type"])}>
+            <option value="click">Click</option>
+            <option value="type">Type</option>
+            <option value="focus">Focus</option>
+            <option value="submit">Submit</option>
+            <option value="scroll">Scroll</option>
+            <option value="navigate">Navigate</option>
+          </select>
+          <input type="text" value={liveSourceKey} placeholder="sourceKey" onChange={(event) => setLiveSourceKey(event.target.value)} />
+          <input type="text" value={liveSelector} placeholder="CSS selector" onChange={(event) => setLiveSelector(event.target.value)} />
+          {(liveType === "type" || liveType === "scroll" || liveType === "navigate") ? (
+            <input
+              type={liveType === "scroll" ? "number" : "text"}
+              value={liveValue}
+              placeholder={liveType === "type" ? "Transient value" : liveType === "scroll" ? "Scroll Y" : "/next-path"}
+              onChange={(event) => setLiveValue(event.target.value)}
+            />
+          ) : null}
+          <button className="btn-node small" onClick={addLiveAction}>Add step</button>
+        </div>
+        {liveActions.length ? <div className="recorder-live-steps">
+          {liveActions.map((action, index) => (
+            <div key={`${index}-${action.type}`}>
+              <strong>{index + 1}. {action.type}</strong>
+              <span>{action.targetSourceKey}</span>
+              <button title="Remove step" onClick={() => setLiveActions((current) => current.filter((_, item) => item !== index))}>x</button>
+            </div>
+          ))}
+        </div> : <div className="bp-hint">Add selectors in the order Chromium should replay them.</div>}
+      </div>}
+      {data.mode !== "live" ? <div className="recorder-tools nodrag">
         <div className="recorder-input-row">
           <input
             type="text"
@@ -211,13 +294,13 @@ export function RecorderNode({ id, data, selected }: NodeProps<RecorderFlowNode>
           <input type="number" value={scrollY} onChange={(event) => setScrollY(event.target.value)} aria-label="Scroll Y" />
           <button className="btn-node small" onClick={addScrollEvent}>Scroll</button>
         </div>
-      </div>
+      </div> : null}
       <div className="recorder-summary">
-        <span>{data.draftEvents.length} events</span>
-        <span>{data.draftScenes.length} scenes</span>
+        <span>{data.mode === "live" ? liveActions.length : data.draftEvents.length} {data.mode === "live" ? "steps" : "events"}</span>
+        {data.mode !== "live" ? <span>{data.draftScenes.length} scenes</span> : null}
         {privacyReport ? <span>{Number(privacyReport.sanitizedCount || 0)} redacted</span> : null}
       </div>
-      {data.draftEvents.length ? (
+      {data.mode !== "live" && data.draftEvents.length ? (
         <div className="recorder-events nodrag">
           {data.draftEvents.slice(-4).map((event) => (
             <div key={event.id}><strong>{event.type}</strong><span>{event.targetSourceKey}</span></div>
@@ -225,10 +308,14 @@ export function RecorderNode({ id, data, selected }: NodeProps<RecorderFlowNode>
         </div>
       ) : null}
       <div className="ctl-row">
-        <button className="btn-node primary small nodrag" disabled={busy || !data.ir} onClick={() => runNode(nodeId)}>
-          {busy ? <span className="spinner" /> : null} Build Interaction IR
+        <button
+          className="btn-node primary small nodrag"
+          disabled={busy || !data.ir || (data.mode === "live" && (!data.mine || !data.liveUrl || !liveActions.length))}
+          onClick={() => data.mode === "live" ? void captureLive() : runNode(nodeId)}
+        >
+          {busy ? <span className="spinner" /> : null} {data.mode === "live" ? "Capture live flow" : "Build Interaction IR"}
         </button>
-        <button className="btn-node small nodrag" onClick={reset}>Reset</button>
+        <button className="btn-node small nodrag" onClick={() => data.mode === "live" ? setLiveActions([]) : reset()}>Reset</button>
       </div>
       <NodeStatus id={id} />
       <OutPorts type="recorder" data={data} />

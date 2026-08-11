@@ -46,6 +46,7 @@ import type {
   QualityPassNodeData,
   PageBridgeNodeData,
   RecorderNodeData,
+  InteractionLiveAction,
 } from "./types";
 
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
@@ -87,6 +88,7 @@ export interface FlowStoreState {
   runReskin: (id: number) => Promise<void>;
   runQualityPass: (id: number) => Promise<void>;
   runRecorder: (id: number) => Promise<void>;
+  runLiveRecorder: (id: number, actions: InteractionLiveAction[]) => Promise<boolean>;
   runPageBridge: (id: number) => void;
   sendToNode: (id: number, targetType: "edit" | "reference") => void;
   addMixInput: (id: number) => void;
@@ -737,6 +739,42 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       const message = error instanceof Error ? error.message : String(error);
       get().setStatus(id, "Recorder: " + message, "err");
       toast("Recorder: " + message, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  runLiveRecorder: async (id, actions) => {
+    const st = get();
+    const n = st.nodes.find((node) => Number(node.id) === id);
+    if (!n || n.type !== "recorder" || st.busy[id]) return false;
+    const data = n.data as RecorderNodeData;
+    const baseIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
+    if (!baseIr || !data.liveUrl.trim() || !data.mine || !actions.length) {
+      get().setStatus(id, "Live capture needs Design IR, URL, ownership confirmation and actions", "err");
+      return false;
+    }
+    get().setBusy(id, true);
+    get().setStatus(id, `Replaying ${actions.length} actions in Chromium...`);
+    try {
+      const response = await api<{ interaction?: IRObject }>("/api/interaction/capture", {
+        base_ir: baseIr,
+        url: data.liveUrl.trim(),
+        mine: data.mine,
+        viewport: data.liveViewport || "desktop",
+        actions,
+      });
+      const interaction = response.interaction || null;
+      get().setNodeData(id, { ir: deepClone(baseIr), interaction, recording: false });
+      const report = interaction?.privacyReport as Record<string, unknown> | undefined;
+      get().setStatus(id, `Live Interaction IR ready · ${actions.length} actions · ${Number(report?.sanitizedCount || 0)} redactions`, "ok");
+      get().propagate(id);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      get().setStatus(id, "Live capture: " + message, "err");
+      toast("Live capture: " + message, "error");
+      return false;
     } finally {
       get().setBusy(id, false);
     }
