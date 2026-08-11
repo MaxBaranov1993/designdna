@@ -499,7 +499,7 @@ def main():
              "; ".join(schema_errors(BASE_IR)))
     check_ok("эталон: BASE_IR проходит все правила v1", check(BASE_IR) == [],
              "; ".join(f"{v['rule']}:{v['path']}" for v in check(BASE_IR)))
-    check_ok("реестр: 8 правил v1", len(qualitygate.RULES) == 8,
+    check_ok("реестр: 10 правил", len(qualitygate.RULES) == 10,
              str([r["id"] for r in qualitygate.RULES]))
     for t in TESTS:
         try:

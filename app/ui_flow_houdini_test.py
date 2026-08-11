@@ -1,11 +1,11 @@
-"""Playwright-тест UI-нод BlockParse и Reskin (бриф W11, NODES-HOUDINI.md §7).
+"""Playwright-тест UI-нод Source Import и Reskin (см. docs/NODES.md).
 Нужен запущенный сервер: .venv/Scripts/python app/server.py (порт 8420)
 Запуск: .venv/Scripts/python app/ui_flow_houdini_test.py
 
 БЕЗ реальных LLM-вызовов: POST /api/block-parse и /api/reskin перехватываются
 через page.route и возвращают маленькие валидные IR.
 
-Проверяет: создание обеих нод из контекстного меню (в меню 9 типов); BlockParse —
+Проверяет: создание обеих нод из контекстного меню (в меню 12 типов); BlockParse —
 без галки «мой сайт» запуск заблокирован, payload {url}, список блоков с превью,
 порты только у зажжённых, блок с ошибкой показан с ошибкой, бейдж «из кэша»;
 провода: зажжённый блок → Reskin.ir, tokens → Reskin.tokens, несовместимый
@@ -15,6 +15,10 @@
 """
 import json
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import time
 
 from playwright.sync_api import sync_playwright
@@ -136,17 +140,17 @@ def main():
         pg.wait_for_selector(".react-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
-        # ---------- создание нод из контекстного меню (теперь 9 типов) ----------
+        # ---------- создание нод из контекстного меню (12 типов, с Page Bridge) ----------
         pg.click(".react-flow__pane", button="right", position={"x": 300, "y": 120})
         pg.wait_for_selector("#ctx-menu")
         check(
-            "контекстное меню: 9 типов нод",
-            pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 9"),
+            "контекстное меню: 12 типов нод",
+            pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 12"),
         )
-        pg.click("#ctx-menu .ctx-item[data-type='blockparse']")
-        pg.wait_for_selector(".n-blockparse")
+        pg.click("#ctx-menu .ctx-item[data-type='sourceimport']")
+        pg.wait_for_selector(".n-sourceimport")
         check("BlockParse создан из меню",
-              pg.evaluate("window.GraphDev.state().nodes.some(n => n.type === 'blockparse')"))
+              pg.evaluate("window.GraphDev.state().nodes.some(n => n.type === 'sourceimport')"))
 
         pg.click(".react-flow__pane", button="right", position={"x": 900, "y": 120})
         pg.click("#ctx-menu .ctx-item[data-type='reskin']")
@@ -156,76 +160,80 @@ def main():
 
         # ---------- BlockParse: юридика и запуск ----------
         check("BlockParse: без галки «мой сайт» запуск заблокирован",
-              pg.evaluate("document.querySelector('.n-blockparse .f-run').disabled === true"))
+              pg.evaluate("document.querySelector('.n-sourceimport .f-run').disabled === true"))
         check("BlockParse: подсказка про «мой сайт» видна",
-              bool(pg.locator(".n-blockparse .bp-hint").count()))
+              bool(pg.locator(".n-sourceimport .bp-hint").count()))
 
-        pg.fill(".n-blockparse .f-url", BP_URL)
-        pg.check(".n-blockparse .f-mine")
+        pg.fill(".n-sourceimport .f-url", BP_URL)
+        pg.check(".n-sourceimport .f-mine")
         check("BlockParse: с галкой запуск разрешён",
-              pg.evaluate("document.querySelector('.n-blockparse .f-run').disabled === false"))
+              pg.evaluate("document.querySelector('.n-sourceimport .f-run').disabled === false"))
 
-        pg.click(".n-blockparse .f-run")
-        pg.wait_for_selector(".n-blockparse .bp-block", timeout=8000)
+        pg.click(".n-sourceimport .f-run")
+        pg.wait_for_selector(".n-sourceimport .bp-block", timeout=8000)
         check("BlockParse: список блоков получен (3 шт.)",
-              pg.evaluate("document.querySelectorAll('.n-blockparse .bp-block').length === 3"))
+              pg.evaluate("document.querySelectorAll('.n-sourceimport .bp-block').length === 3"))
         check(
             "BlockParse: payload {url} без поля blocks (v1 парсит всё)",
             len(CAPTURED.get("block_parse", [])) == 1
-            and CAPTURED["block_parse"][0] == {"url": BP_URL},
+            and CAPTURED["block_parse"][0].get("url") == BP_URL
+            and "blocks" not in CAPTURED["block_parse"][0],
         )
         check(
             "BlockParse: статус «N блоков (M ошибок)»",
-            "3 блоков" in pg.inner_text(".n-blockparse .n-status")
-            and "1 ошибок" in pg.inner_text(".n-blockparse .n-status"),
+            "3 блоков" in pg.inner_text(".n-sourceimport .n-status")
+            and "1 ошибок" in pg.inner_text(".n-sourceimport .n-status"),
         )
 
-        # превью у блоков с IR; блок с ошибкой — текст ошибки, чекбокс недоступен
+        # превью у блоков с IR; блок с ошибкой — текст ошибки, чекбокс недоступен.
+        # В SourceImport-ноде превью по умолчанию — «Reference» (скриншот, у моков его нет);
+        # миниатюра IR рендерится в режиме «IR» — переключаем.
+        pg.click(".n-sourceimport .bp-block[data-block='hero'] .source-preview-mode button:text-is('IR')")
         pg.wait_for_selector(
-            ".n-blockparse .bp-block[data-block='hero'] .bp-preview .ir-preview-inner div[class^='ir-']",
+            ".n-sourceimport .bp-block[data-block='hero'] .bp-preview .ir-preview-inner div[class^='ir-']",
             timeout=5000,
         )
         check("BlockParse: миниатюра IR у блока hero", True)
         check(
             "BlockParse: блок broken показан с ошибкой",
-            "блок не найден" in pg.inner_text(".n-blockparse .bp-block[data-block='broken'] .bp-error"),
+            "блок не найден" in pg.inner_text(".n-sourceimport .bp-block[data-block='broken'] .bp-error"),
         )
         check("BlockParse: у блока с ошибкой чекбокс недоступен",
               pg.evaluate("document.querySelector(\".bp-block[data-block='broken'] .f-lit\").disabled === true"))
         check("BlockParse: бейдж «из кэша» у блока cta",
-              bool(pg.locator(".n-blockparse .bp-block[data-block='cta'] .bp-cached").count()))
+              bool(pg.locator(".n-sourceimport .bp-block[data-block='cta'] .bp-cached").count()))
 
         # ---------- порты: только у зажжённых + постоянный tokens ----------
         check("BlockParse: до зажжения только порт tokens",
               pg.evaluate(
-                  "(() => { const rows = document.querySelectorAll('.n-blockparse .port-row.out');"
+                  "(() => { const rows = document.querySelectorAll('.n-sourceimport .port-row.out');"
                   " return rows.length === 1 && rows[0].dataset.port === 'tokens' && rows[0].dataset.kind === 'tokens'; })()"
               ))
 
-        pg.check(".n-blockparse .bp-block[data-block='hero'] .f-lit")
-        pg.check(".n-blockparse .bp-block[data-block='cta'] .f-lit")
+        pg.check(".n-sourceimport .bp-block[data-block='hero'] .f-lit")
+        pg.check(".n-sourceimport .bp-block[data-block='cta'] .f-lit")
         pg.wait_for_timeout(200)
         check("BlockParse: у зажжённых блоков появились порты (hero+cta+tokens = 3)",
-              pg.evaluate("document.querySelectorAll('.n-blockparse .port-row.out').length === 3"))
+              pg.evaluate("document.querySelectorAll('.n-sourceimport .port-row.out').length === 3"))
         check("BlockParse: handle id = имя блока",
-              bool(pg.locator(".n-blockparse .pp-out-hero").count()))
+              bool(pg.locator(".n-sourceimport .pp-out-hero").count()))
 
         # ---------- провода ----------
-        drag_wire(pg, ".n-blockparse .pp-out-hero", ".n-reskin .pp-in-ir")
+        drag_wire(pg, ".n-sourceimport .pp-out-hero", ".n-reskin .pp-in-ir")
         check("провод: hero → Reskin.ir",
               pg.evaluate(
                   "(() => { const st = window.GraphDev.state();"
-                  " const bp = st.nodes.find(n => n.type === 'blockparse');"
+                  " const bp = st.nodes.find(n => n.type === 'sourceimport');"
                   " const rs = st.nodes.find(n => n.type === 'reskin');"
                   " return st.edges.some(e => e.from.node === bp.id && e.from.port === 'hero'"
                   " && e.to.node === rs.id && e.to.port === 'ir'); })()"
               ))
 
-        drag_wire(pg, ".n-blockparse .pp-out-tokens", ".n-reskin .pp-in-tokens")
+        drag_wire(pg, ".n-sourceimport .pp-out-tokens", ".n-reskin .pp-in-tokens")
         check("провод: tokens → Reskin.tokens",
               pg.evaluate(
                   "(() => { const st = window.GraphDev.state();"
-                  " const bp = st.nodes.find(n => n.type === 'blockparse');"
+                  " const bp = st.nodes.find(n => n.type === 'sourceimport');"
                   " const rs = st.nodes.find(n => n.type === 'reskin');"
                   " return st.edges.some(e => e.from.node === bp.id && e.from.port === 'tokens'"
                   " && e.to.node === rs.id && e.to.port === 'tokens'); })()"
@@ -238,7 +246,7 @@ def main():
               ))
 
         # несовместимый провод: ir → tokens отклоняется
-        drag_wire(pg, ".n-blockparse .pp-out-hero", ".n-reskin .pp-in-tokens")
+        drag_wire(pg, ".n-sourceimport .pp-out-hero", ".n-reskin .pp-in-tokens")
         check("несовместимый провод (ir → tokens) отклонён",
               pg.evaluate("window.GraphDev.state().edges.length === 2"))
 
@@ -299,7 +307,7 @@ def main():
         pg.reload()
         pg.wait_for_selector(".react-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
-        pg.wait_for_selector(".n-blockparse")
+        pg.wait_for_selector(".n-sourceimport")
         pg.wait_for_selector(".n-reskin")
         check("после перезагрузки: 2 ноды",
               pg.evaluate("window.GraphDev.state().nodes.length === 2"))
@@ -309,7 +317,7 @@ def main():
             "после перезагрузки: провода hero→ir и tokens→tokens на месте",
             pg.evaluate(
                 "(() => { const st = window.GraphDev.state();"
-                " const bp = st.nodes.find(n => n.type === 'blockparse');"
+                " const bp = st.nodes.find(n => n.type === 'sourceimport');"
                 " const rs = st.nodes.find(n => n.type === 'reskin');"
                 " const has = (fp, tp) => st.edges.some(e => e.from.node === bp.id"
                 " && e.from.port === fp && e.to.node === rs.id && e.to.port === tp);"
@@ -319,7 +327,7 @@ def main():
         check(
             "после перезагрузки: зажжённые блоки сохранены (hero, cta)",
             pg.evaluate(
-                "(() => { const bp = window.GraphDev.state().nodes.find(n => n.type === 'blockparse');"
+                "(() => { const bp = window.GraphDev.state().nodes.find(n => n.type === 'sourceimport');"
                 " const d = window.GraphDev.node(bp.id).data;"
                 " const by = (n) => d.blocks.find(b => b.name === n);"
                 " return by('hero').lit === true && by('cta').lit === true"
@@ -327,7 +335,7 @@ def main():
             ),
         )
         check("после перезагрузки: порты только у зажжённых (3 шт.)",
-              pg.evaluate("document.querySelectorAll('.n-blockparse .port-row.out').length === 3"))
+              pg.evaluate("document.querySelectorAll('.n-sourceimport .port-row.out').length === 3"))
         check(
             "после перезагрузки: маска сохранена (texts вкл, colors/images выкл)",
             pg.evaluate(

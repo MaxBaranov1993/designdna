@@ -1,11 +1,15 @@
 """Скриншоты ключевых сценариев для сводного демо спринта.
-Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /.
+Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /flow.
 Нужен запущенный сервер: .venv/Scripts/python app/server.py
 Запуск: .venv/Scripts/python app/ui_demo_shots.py
 """
 import json
 import pathlib
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import time
 
 from playwright.sync_api import sync_playwright
@@ -22,7 +26,7 @@ def main():
         pg = browser.new_page(viewport={"width": 1700, "height": 1000})
         for _ in range(30):
             try:
-                pg.goto(BASE + "/", timeout=2000)
+                pg.goto(BASE + "/flow", timeout=2000)
                 break
             except Exception:
                 time.sleep(1)

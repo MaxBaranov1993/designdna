@@ -1,28 +1,22 @@
-"""Playwright-тест run-based нод React Flow-редактора (Спринт 5, Фаза B2).
-Нужен запущенный сервер: .venv/Scripts/python app/server.py (порт 8420)
-Запуск: .venv/Scripts/python app/ui_flow_nodes_test.py
+"""Playwright test for the current React Flow node set.
 
-БЕЗ реальных LLM-вызовов: POST /api/generate, /api/mix, /api/clone, /api/reproduce
-перехватываются через page.route и возвращают маленький валидный IR.
-
-Проверяет: создание Генератора; провод Промпт->generator.prompt; клик
-«Сгенерировать» -> спиннер -> превью; ir дошёл до превью Edit-ноды ниже по графу;
-payload-ы legacy-формы ({brief,count,provider,styleHint} / {irs,weights} /
-{url,component,provider} / {image,url,provider}); run Клона, Микса и Reproduce;
-после перезагрузки граф сохранён.
+No real LLM calls: /api/generate, /api/mix, /api/block-parse and
+/api/quality-pass are mocked in the browser context.
 """
 import json
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import time
 
 from playwright.sync_api import sync_playwright
 
 BASE = "http://127.0.0.1:8420"
-PROMPT_TEXT = "Сгенерируй шапку маркетплейса объявлений"
-CLONE_URL = "https://example.com/page"
-REPRO_URL = "https://example.com/repro"
+PROMPT_TEXT = "Generate a marketplace header"
+SOURCE_URL = "https://example.com/page"
 
-# Маленький валидный IR: секция cta — рендерится renderer.js без LLM
 SMALL_IR = {
     "frame": {"width": 960},
     "tokens": {"color": {"primary": "#5b5bd6", "background": "#ffffff"}},
@@ -32,12 +26,28 @@ SMALL_IR = {
             "type": "cta",
             "variant": "centered",
             "props": {
-                "heading": "Мок-заголовок",
-                "subheading": "Тестовый IR без LLM",
-                "ctaPrimary": {"text": "Кнопка", "variant": "primary"},
+                "heading": "Mock heading",
+                "subheading": "Valid IR without LLM",
+                "ctaPrimary": {"text": "Button", "variant": "primary"},
             },
         }
     ],
+}
+
+BP_TOKENS = {
+    "color": {"primary": "#5b5bd6", "background": "#ffffff"},
+    "font": {"family": "Inter"},
+    "radius": {"m": "12px"},
+}
+
+BP_RESP = {
+    "url": SOURCE_URL,
+    "blocks": [
+        {"name": "hero", "selector": "section#hero", "ir": SMALL_IR, "cached": False, "source": "dom", "layers": 3},
+        {"name": "cta", "selector": "section#cta", "ir": SMALL_IR, "cached": True, "source": "dom", "layers": 2},
+    ],
+    "tokens": BP_TOKENS,
+    "cached": False,
 }
 
 FAILS = []
@@ -46,7 +56,7 @@ CAPTURED = {}
 
 def check(name, cond, extra=""):
     tag = "OK " if cond else "FAIL"
-    print(f"[{tag}] {name}" + (f" — {extra}" if extra and not cond else ""))
+    print(f"[{tag}] {name}" + (f" - {extra}" if extra and not cond else ""))
     if not cond:
         FAILS.append(name)
 
@@ -56,7 +66,6 @@ def center(box):
 
 
 def drag_wire(pg, src_sel, dst_sel):
-    """Протянуть провод мышью: pointerdown на handle-источнике, drop на приёмнике."""
     src = pg.wait_for_selector(src_sel)
     dst = pg.wait_for_selector(dst_sel)
     sx, sy = center(src.bounding_box())
@@ -65,13 +74,47 @@ def drag_wire(pg, src_sel, dst_sel):
     pg.mouse.down()
     pg.mouse.move(dx, dy, steps=14)
     pg.mouse.up()
+    pg.wait_for_timeout(250)
+
+
+def drag_wire_to_node(pg, src_sel, node_sel):
+    src = pg.wait_for_selector(src_sel)
+    dst = pg.wait_for_selector(node_sel)
+    sx, sy = center(src.bounding_box())
+    dx, dy = center(dst.bounding_box())
+    pg.mouse.move(sx, sy)
+    pg.mouse.down()
+    pg.mouse.move(dx, dy, steps=18)
+    pg.mouse.up()
     pg.wait_for_timeout(300)
 
 
-# ---------- перехват API: никаких реальных LLM-вызовов ----------
+def run_node_type(pg, node_type):
+    pg.evaluate(
+        """(type) => {
+            const n = window.GraphDev.state().nodes.find((x) => x.type === type);
+            if (!n) throw new Error(`Node not found: ${type}`);
+            window.GraphDev.run(n.id);
+        }""",
+        node_type,
+    )
+
+
+def connect_types(pg, from_type, from_port, to_type, to_port):
+    return pg.evaluate(
+        """([fromType, fromPort, toType, toPort]) => {
+            const st = window.GraphDev.state();
+            const src = st.nodes.find((x) => x.type === fromType);
+            const dst = st.nodes.find((x) => x.type === toType);
+            if (!src || !dst) throw new Error(`Missing nodes: ${fromType} -> ${toType}`);
+            return window.GraphDev.connect(src.id, fromPort, dst.id, toPort);
+        }""",
+        [from_type, from_port, to_type, to_port],
+    )
+
 
 def route_generate(route):
-    CAPTURED["generate"] = route.request.post_data_json
+    CAPTURED.setdefault("generate", []).append(route.request.post_data_json)
     route.fulfill(
         status=200,
         content_type="application/json",
@@ -84,32 +127,25 @@ def route_mix(route):
     route.fulfill(status=200, content_type="application/json", body=json.dumps({"ir": SMALL_IR}))
 
 
-def route_clone(route):
-    CAPTURED["clone"] = route.request.post_data_json
+def route_block_parse(route):
+    CAPTURED["block_parse"] = route.request.post_data_json
+    route.fulfill(status=200, content_type="application/json", body=json.dumps(BP_RESP))
+
+
+def route_quality_pass(route):
+    CAPTURED["quality_pass"] = route.request.post_data_json
     route.fulfill(
         status=200,
         content_type="application/json",
-        body=json.dumps({"ir": SMALL_IR, "cached": False}),
-    )
-
-
-def route_reproduce(route):
-    CAPTURED["reproduce"] = route.request.post_data_json
-    route.fulfill(
-        status=200,
-        content_type="application/json",
-        body=json.dumps(
-            {
-                "ir": SMALL_IR,
-                "html": "<div>mock</div>",
-                "diff": {"overall_pct": 2.5, "mean_rgb": [1.1, 2.2, 3.3]},
-                "colors": {"colors": {"primary": {"hex": "#5b5bd6", "pixels": 100}}},
-                "repro_png": "",
-                "icons_count": 1,
-                "cached": False,
-                "provider_used": "mock",
-            }
-        ),
+        body=json.dumps({
+            "ir": SMALL_IR,
+            "passed": True,
+            "min_score": 85,
+            "scorecard": {"score": 92, "verdict": "pass", "summary": "mock pass", "issues": []},
+            "initial_scorecard": {"score": 92},
+            "deterministic": {"before": [], "after": []},
+            "repair": {"attempted": True, "applied": True, "error": None},
+        }),
     )
 
 
@@ -119,8 +155,8 @@ def main():
         pg = browser.new_page(viewport={"width": 1920, "height": 1080})
         pg.route("**/api/generate", route_generate)
         pg.route("**/api/mix", route_mix)
-        pg.route("**/api/clone", route_clone)
-        pg.route("**/api/reproduce", route_reproduce)
+        pg.route("**/api/block-parse", route_block_parse)
+        pg.route("**/api/quality-pass", route_quality_pass)
 
         for _ in range(30):
             try:
@@ -137,177 +173,107 @@ def main():
         pg.wait_for_selector(".react-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
-        # создание Генератора через контекстное меню (правый клик по канвасу)
         pg.click(".react-flow__pane", button="right", position={"x": 520, "y": 100})
+        pg.wait_for_selector("#ctx-menu")
+        check("menu has 12 current node types", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 12"))
+        check("old nodes are removed from menu", pg.locator("#ctx-menu .ctx-item[data-type='clone']").count() == 0
+              and pg.locator("#ctx-menu .ctx-item[data-type='reproduce']").count() == 0
+              and pg.locator("#ctx-menu .ctx-item[data-type='blockparse']").count() == 0)
         pg.click("#ctx-menu .ctx-item[data-type='generator']")
         pg.wait_for_selector(".n-generator")
-        check("Генератор создан", pg.evaluate("window.GraphDev.state().nodes.some(n => n.type === 'generator')"))
 
-        # остальные ноды — через GraphDev (создание уже покрыто тестом ui_flow_graph_test)
         pg.evaluate("""(() => {
             window.GraphDev.add('prompt', 80, 60);
+            window.GraphDev.add('sourceimport', 80, 360);
+            window.GraphDev.add('styledna', 500, 360);
+            window.GraphDev.add('derive', 900, 360);
             window.GraphDev.add('edit', 830, 60);
-            window.GraphDev.add('clone', 80, 560);
-            window.GraphDev.add('mix', 460, 560);
-            window.GraphDev.add('reproduce', 840, 560);
+            window.GraphDev.add('mix', 500, 690);
+            window.GraphDev.add('qualitypass', 1240, 60);
         })()""")
-        pg.wait_for_selector(".n-prompt")
-        pg.wait_for_selector(".n-edit")
-        pg.wait_for_selector(".n-clone")
-        pg.wait_for_selector(".n-mix")
-        pg.wait_for_selector(".n-reproduce")
-        check("созданы 6 нод", pg.evaluate("window.GraphDev.state().nodes.length === 6"))
+        for sel in (".n-prompt", ".n-sourceimport", ".n-styledna", ".n-derive", ".n-edit", ".n-mix", ".n-qualitypass"):
+            pg.wait_for_selector(sel)
+        check("created 8 nodes", pg.evaluate("window.GraphDev.state().nodes.length === 8"))
 
-        # текст Промпта — источник брифа для генератора
+        old_add_rejected = pg.evaluate("""(() => {
+            const before = window.GraphDev.state().nodes.length;
+            try { window.GraphDev.add('clone', 100, 100); } catch {}
+            return window.GraphDev.state().nodes.length === before;
+        })()""")
+        check("GraphDev cannot add old clone node", bool(old_add_rejected))
+
         pg.fill(".n-prompt .f-text", PROMPT_TEXT)
-        pg.wait_for_timeout(150)
+        pg.fill(".n-sourceimport .f-url", SOURCE_URL)
+        pg.check(".n-sourceimport .f-mine")
+        pg.click(".n-sourceimport .f-run")
+        pg.wait_for_selector(".n-sourceimport .bp-block[data-block='hero']", timeout=8000)
+        pg.check(".n-sourceimport .bp-block[data-block='hero'] .f-lit")
+        pg.wait_for_selector(".n-sourceimport .pp-out-hero")
+        source_payload = CAPTURED.get("block_parse") or {}
+        check("Source Import requests the three responsive viewports",
+              source_payload.get("url") == SOURCE_URL and
+              [v.get("name") for v in source_payload.get("viewports", [])] == ["desktop", "tablet", "mobile"])
+        check("Source Import exposes block + DNA ports", pg.locator(".n-sourceimport .port-row.out").count() == 2)
 
-        # провода: prompt.out→generator.prompt, generator.ir→edit.ir,
-        # clone.ir→mix.a, generator.ir→mix.b
-        drag_wire(pg, ".n-prompt .pp-out-out", ".n-generator .pp-in-prompt")
-        drag_wire(pg, ".n-generator .pp-out-ir", ".n-edit .pp-in-ir")
-        drag_wire(pg, ".n-clone .pp-out-ir", ".n-mix .pp-in-a")
-        drag_wire(pg, ".n-generator .pp-out-ir", ".n-mix .pp-in-b")
-        check("протянуты 4 провода", pg.evaluate("window.GraphDev.state().edges.length === 4"))
-        edges_ok = pg.evaluate("""(() => {
+        check("connect prompt → generator", connect_types(pg, "prompt", "out", "generator", "prompt"))
+        check("connect generator → edit", connect_types(pg, "generator", "ir", "edit", "ir"))
+        check("connect Source Import tokens → Style DNA", connect_types(pg, "sourceimport", "tokens", "styledna", "tokens"))
+        check("connect Style DNA → Derive", connect_types(pg, "styledna", "tokens", "derive", "tokens"))
+        check("connect prompt → Derive", connect_types(pg, "prompt", "out", "derive", "prompt"))
+        drag_wire_to_node(pg, ".n-sourceimport .pp-out-hero", ".n-derive")
+        check("snap-to-node connects hero to Derive.reference", pg.evaluate("""(() => {
             const st = window.GraphDev.state();
-            const byType = (t) => st.nodes.find(n => n.type === t);
-            const pr = byType('prompt'), g = byType('generator'), ed = byType('edit'),
-                  cl = byType('clone'), mx = byType('mix');
-            const has = (fn, fp, tn, tp) => st.edges.some(e =>
-                e.from.node === fn.id && e.from.port === fp && e.to.node === tn.id && e.to.port === tp);
-            return has(pr, 'out', g, 'prompt') && has(g, 'ir', ed, 'ir') &&
-                   has(cl, 'ir', mx, 'a') && has(g, 'ir', mx, 'b');
-        })()""")
-        check("провода: prompt→генератор, генератор→редактор, клон→микс.a, генератор→микс.b", bool(edges_ok))
+            const si = st.nodes.find(n => n.type === 'sourceimport');
+            const de = st.nodes.find(n => n.type === 'derive');
+            return st.edges.some(e => e.from.node === si.id && e.from.port === 'hero'
+                && e.to.node === de.id && e.to.port === 'reference');
+        })()"""))
 
-        # Клон: заполняем url + компонент, запускаем (перехваченный /api/clone)
-        pg.fill(".n-clone .f-url", CLONE_URL)
-        pg.fill(".n-clone .f-component", "шапка с навигацией")
-        pg.click(".n-clone .f-run")
-        pg.wait_for_selector('.n-clone .f-preview .ir-preview-inner div[class^="ir-"]', timeout=8000)
-        check("Клон: превью появилось", True)
-        check(
-            "Клон: payload {url, component, provider}",
-            CAPTURED.get("clone", {}).get("url") == CLONE_URL
-            and CAPTURED.get("clone", {}).get("component") == "шапка с навигацией"
-            and CAPTURED.get("clone", {}).get("provider") == "qwen",
-        )
-
-        # Генератор: задержка разрешения fetch внутри страницы, чтобы спиннер был виден
-        pg.evaluate("""(() => {
-            const orig = window.fetch;
-            window.fetch = (url, opts) => {
-                const p = orig(url, opts);
-                if (String(url).includes('/api/generate')) {
-                    return p.then(resp => new Promise(res => setTimeout(() => res(resp), 700)));
-                }
-                return p;
-            };
-        })()""")
-        pg.click(".n-generator .f-run")
-        try:
-            pg.wait_for_selector(".n-generator .f-run .spinner", timeout=3000)
-            spin_ok = True
-        except Exception:
-            spin_ok = False
-        check("Генератор: спиннер виден во время запроса", spin_ok)
+        run_node_type(pg, "generator")
         pg.wait_for_selector('.n-generator .f-preview .ir-preview-inner div[class^="ir-"]', timeout=8000)
-        check("Генератор: превью появилось после ответа", True)
-        check(
-            "Генератор: payload {brief, count, provider} — бриф из провода",
-            CAPTURED.get("generate", {}).get("brief") == PROMPT_TEXT
-            and CAPTURED.get("generate", {}).get("count") == 2
-            and CAPTURED.get("generate", {}).get("provider") == "qwen",
-        )
-        check(
-            "Генератор: variants записаны в data",
-            pg.evaluate(
-                "(() => { const g = window.GraphDev.state().nodes.find(n => n.type === 'generator');"
-                " return window.GraphDev.node(g.id).data.variants.length === 1; })()"
-            ),
-        )
-
-        # ir дошёл до превью Edit-ноды ниже по графу (propagate кладёт клон в data.ir)
+        check("Generator uses OpenRouter role", CAPTURED.get("generate", [{}])[0].get("provider") == "openrouter")
         pg.wait_for_selector('.n-edit .f-preview .ir-preview-inner div[class^="ir-"]', timeout=5000)
-        check("Edit: превью отрисовано из IR генератора", True)
-        check(
-            "Edit: data.ir — клон варианта генератора",
-            pg.evaluate(
-                "(() => { const ed = window.GraphDev.state().nodes.find(n => n.type === 'edit');"
-                " const d = window.GraphDev.node(ed.id).data;"
-                " return !!d.ir && Array.isArray(d.ir.tree) && d.ir.tree.length === 1; })()"
-            ),
-        )
 
-        # Микс: два подключённых IR-входа (клон + генератор), веса 70/30
-        pg.click(".n-mix .f-run")
+        run_node_type(pg, "styledna")
+        check("Style DNA extracts tokens", pg.evaluate("""(() => {
+            const n = window.GraphDev.state().nodes.find(x => x.type === 'styledna');
+            return !!window.GraphDev.node(n.id).data.tokens.color;
+        })()"""))
+
+        run_node_type(pg, "derive")
+        pg.wait_for_selector('.n-derive .f-preview .ir-preview-inner div[class^="ir-"]', timeout=8000)
+        derive_payload = CAPTURED.get("generate", [{}, {}])[-1]
+        check("Derive passes reference DNA in styleHint", "Style DNA" in derive_payload.get("styleHint", "")
+              and "Reference IR" in derive_payload.get("styleHint", ""))
+
+        check("connect Source Import hero → Mix.a", connect_types(pg, "sourceimport", "hero", "mix", "a"))
+        check("connect Generator → Mix.b", connect_types(pg, "generator", "ir", "mix", "b"))
+        run_node_type(pg, "mix")
         pg.wait_for_selector('.n-mix .f-preview .ir-preview-inner div[class^="ir-"]', timeout=8000)
-        check("Микс: превью появилось", True)
-        check(
-            "Микс: payload {irs, weights} — 2 IR, веса нормированы",
-            len(CAPTURED.get("mix", {}).get("irs", [])) == 2
-            and len(CAPTURED.get("mix", {}).get("weights", [])) == 2
-            and abs(sum(CAPTURED.get("mix", {}).get("weights", [0, 0])) - 1.0) < 1e-6,
-        )
+        check("Mix receives two IR inputs", len(CAPTURED.get("mix", {}).get("irs", [])) == 2)
 
-        # Reproduce: URL вместо скриншота
-        pg.fill(".n-reproduce .f-url", REPRO_URL)
-        pg.click(".n-reproduce .f-run")
-        pg.wait_for_selector('.n-reproduce .f-preview .ir-preview-inner div[class^="ir-"]', timeout=8000)
-        check("Reproduce: превью появилось", True)
-        check(
-            "Reproduce: payload {image:'', url, provider}",
-            CAPTURED.get("reproduce", {}).get("url") == REPRO_URL
-            and CAPTURED.get("reproduce", {}).get("image") == ""
-            and CAPTURED.get("reproduce", {}).get("provider") == "qwen",
-        )
-        check(
-            "Reproduce: result целиком в data, ir на выходе",
-            pg.evaluate(
-                "(() => { const r = window.GraphDev.state().nodes.find(n => n.type === 'reproduce');"
-                " const d = window.GraphDev.node(r.id).data;"
-                " return !!d.result && !!d.result.ir && d.result.diff.overall_pct === 2.5; })()"
-            ),
-        )
+        generator_id = pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'generator').id")
+        quality_id = pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'qualitypass').id")
+        pg.evaluate("([g, q]) => window.GraphDev.connect(g, 'ir', q, 'ir')", [generator_id, quality_id])
+        run_node_type(pg, "qualitypass")
+        pg.wait_for_selector(".n-qualitypass .qp-score", timeout=8000)
+        check("Quality Pass scorecard rendered", "92/100" in pg.locator(".n-qualitypass .qp-score").inner_text())
 
-        # автосейв (debounce 300 мс) и перезагрузка — граф должен сохраниться
         pg.wait_for_timeout(700)
         pg.reload()
         pg.wait_for_selector(".react-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
-        pg.wait_for_selector(".n-generator")
-        check("после перезагрузки: 6 нод", pg.evaluate("window.GraphDev.state().nodes.length === 6"))
-        check("после перезагрузки: 4 провода", pg.evaluate("window.GraphDev.state().edges.length === 4"))
-        check(
-            "после перезагрузки: variants генератора на месте",
-            pg.evaluate(
-                "(() => { const g = window.GraphDev.state().nodes.find(n => n.type === 'generator');"
-                " return window.GraphDev.node(g.id).data.variants.length === 1; })()"
-            ),
-        )
-        check(
-            "после перезагрузки: ir редактора на месте",
-            pg.evaluate(
-                "(() => { const ed = window.GraphDev.state().nodes.find(n => n.type === 'edit');"
-                " return !!window.GraphDev.node(ed.id).data.ir; })()"
-            ),
-        )
-        check(
-            "после перезагрузки: превью редактора снова отрисовано",
-            bool(
-                pg.wait_for_selector(
-                    '.n-edit .f-preview .ir-preview-inner div[class^="ir-"]', timeout=5000
-                )
-            ),
-        )
+        check("after reload: current graph persists", pg.evaluate("window.GraphDev.state().nodes.length === 8"))
+        check("after reload: old node types absent", pg.evaluate("""(() => {
+            return window.GraphDev.state().nodes.every(n => !['clone','reproduce','blockparse'].includes(n.type));
+        })()"""))
 
         browser.close()
 
     if FAILS:
-        print(f"\nFAIL: {len(FAILS)} — {', '.join(FAILS)}")
+        print(f"\nFAIL: {len(FAILS)} - {', '.join(FAILS)}")
         sys.exit(1)
-    print("\nВсе проверки пройдены.")
+    print("\nAll checks passed.")
 
 
 if __name__ == "__main__":

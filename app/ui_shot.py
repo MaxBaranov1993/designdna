@@ -1,9 +1,14 @@
 """Скриншот ноды «Редактор» со свежим IR и выделением (для визуальной проверки).
-Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /."""
+Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /flow."""
 import json
 import pathlib
 
 from playwright.sync_api import sync_playwright
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 BASE = "http://127.0.0.1:8420"
 IR_PATH = pathlib.Path(__file__).resolve().parent.parent / "docs" / "frame-example.json"
@@ -15,7 +20,7 @@ def main():
     with sync_playwright() as p:
         b = p.chromium.launch(headless=True)
         pg = b.new_page(viewport={"width": 1700, "height": 1000})
-        pg.goto(BASE + "/")
+        pg.goto(BASE + "/flow")
         pg.evaluate("localStorage.clear()")
         pg.reload()
         pg.wait_for_selector(".react-flow__pane")

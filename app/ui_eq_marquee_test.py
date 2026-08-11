@@ -1,11 +1,15 @@
 """UI-тест задачи 5: фиолетовые equal-spacing метки при drag + marquee для
 вложенных (children любой глубины) и props-элементов.
-Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /.
+Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /flow.
 Нужен запущенный сервер: .venv/Scripts/python app/server.py
 Запуск: .venv/Scripts/python app/ui_eq_marquee_test.py
 """
 import pathlib
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import time
 
 from playwright.sync_api import sync_playwright
@@ -70,7 +74,7 @@ def check(name, cond, extra=""):
 
 def chips(pg):
     return pg.evaluate(
-        "Array.from(document.querySelectorAll('.n-edit .geo-box.selected .geo-chip'))"
+        "Array.from(document.querySelectorAll('.dna-editor .geo-box.selected .geo-chip'))"
         ".map(c => c.textContent)")
 
 
@@ -92,7 +96,7 @@ def main():
         pg = browser.new_page(viewport={"width": 1700, "height": 1000})
         for _ in range(30):
             try:
-                pg.goto(BASE + "/", timeout=2000)
+                pg.goto(BASE + "/flow", timeout=2000)
                 break
             except Exception:
                 time.sleep(1)
@@ -136,29 +140,36 @@ def main():
                 pg.wait_for_timeout(interval)
             return False
 
-        wait_ir_ready('.n-edit .edit-inner [class^="ir-"]')
+        wait_ir_ready('.n-edit .ir-preview-inner [class^="ir-"]')
+
+        # GeoEdit живёт только в полноэкранном DNA-редакторе (thin Edit-нода — read-only
+        # превью) — открываем редактор и работаем в нём
+        pg.click('.n-edit .f-open-editor')
+        pg.wait_for_selector('.dna-editor .fe-canvas-inner [class^="ir-"]')
+        pg.click('.dna-editor [data-act="zoom-fit"]')
+        wait_ir_ready('.dna-editor .fe-canvas-inner [class^="ir-"]')
 
         # экранный масштаб превью (screen px / canvas px)
         scale = pg.evaluate(
-            "(() => { const el = document.querySelector('.n-edit [data-ir-sec=\"1\"]');"
+            "(() => { const el = document.querySelector('.dna-editor [data-ir-sec=\"1\"]');"
             " return el.getBoundingClientRect().width / el.offsetWidth; })()")
 
         # ---------- 1) equal spacing: drag третьей карточки до равных gap ----------
-        card3 = pg.query_selector('.n-edit [data-ir-sec="1"] [data-ir-path="children.2"]')
+        card3 = pg.query_selector('.dna-editor [data-ir-sec="1"] [data-ir-path="children.2"]')
         cb = card3.bounding_box()
         cx, cy = cb["x"] + cb["width"] / 2, cb["y"] + cb["height"] / 2
         pg.mouse.click(cx, cy)
         pg.wait_for_timeout(250)
         check("card3 выделена", pg.evaluate(
-            "document.querySelectorAll('.n-edit .geo-box.selected').length === 1"))
+            "document.querySelectorAll('.dna-editor .geo-box.selected').length === 1"))
 
         pg.mouse.move(cx, cy)
         pg.mouse.down()
         pg.mouse.move(cx + 20 * scale, cy, steps=12)
         pg.wait_for_timeout(300)
-        eqn = pg.evaluate("document.querySelectorAll('.n-edit .geo-eq').length")
+        eqn = pg.evaluate("document.querySelectorAll('.dna-editor .geo-eq').length")
         labels = pg.evaluate(
-            "Array.from(document.querySelectorAll('.n-edit .geo-eq-label')).map(e => e.textContent)")
+            "Array.from(document.querySelectorAll('.dna-editor .geo-eq-label')).map(e => e.textContent)")
         check("eq-метки появились при равных зазорах", eqn >= 2, f"n={eqn}")
         check("eq-метка показывает величину зазора (40px)",
               any("40" in t for t in labels), str(labels))
@@ -167,16 +178,16 @@ def main():
         pg.mouse.up()
         pg.wait_for_timeout(350)
         check("eq-метки убраны после drop",
-              pg.evaluate("document.querySelectorAll('.n-edit .geo-eq').length === 0"))
+              pg.evaluate("document.querySelectorAll('.dna-editor .geo-eq').length === 0"))
         fx = pg.evaluate("window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id))"
                          ".data.ir.tree[1].children[2].frame.x")
         check("drag записал frame.x ≈ 500", isinstance(fx, (int, float)) and 497 <= fx <= 503,
               str(fx))
 
         # ---------- 2) marquee: вложенный элемент (children.children) ----------
-        nested = pg.query_selector('.n-edit [data-ir-path="children.0.children.0"]')
+        nested = pg.query_selector('.dna-editor [data-ir-path="children.0.children.0"]')
         nb = nested.bounding_box()
-        art = pg.query_selector('.n-edit [class^="ir-"]').bounding_box()
+        art = pg.query_selector('.dna-editor .fe-canvas-inner [class^="ir-"]').bounding_box()
         band_y = art["y"] + art["height"] - 6 * scale  # пустая зона под секциями
         marquee(pg, nb["x"] + nb["width"] + 3, band_y, nb["x"] - 3, nb["y"] - 3)
         cs = chips(pg)
@@ -188,7 +199,7 @@ def main():
         pg.screenshot(path=str(SHOT_DIR / "ui_marquee_nested.png"), full_page=False)
 
         # ---------- 3) marquee: props-элементы секции ----------
-        head = pg.query_selector('.n-edit [data-ir-path="props.heading"]').bounding_box()
+        head = pg.query_selector('.dna-editor [data-ir-path="props.heading"]').bounding_box()
         marquee(pg, head["x"] + head["width"] + 4, band_y, head["x"] - 4, head["y"] - 4)
         cs = chips(pg)
         check("marquee выделил props.heading", any(c.startswith("heading ·") for c in cs), str(cs))
@@ -221,7 +232,7 @@ def main():
               len(cs) == 1 and cs[0].startswith("rect ·"), str(cs))
 
         # ---------- 6) Shift+marquee добирает к существующему выделению ----------
-        c2 = pg.query_selector('.n-edit [data-ir-sec="1"] [data-ir-path="children.1"]').bounding_box()
+        c2 = pg.query_selector('.dna-editor [data-ir-sec="1"] [data-ir-path="children.1"]').bounding_box()
         # старт в пустой зоне слева-снизу, конец справа-сверху — рамка накрывает card2
         marquee(pg, c2["x"] - 12, band_y, c2["x"] + c2["width"] + 12, c2["y"] - 4,
                 modifier="Shift")

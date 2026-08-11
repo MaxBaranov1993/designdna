@@ -2,13 +2,17 @@
 Нужен запущенный сервер: .venv/Scripts/python app/server.py (порт 8420)
 Запуск: .venv/Scripts/python app/ui_flow_graph_test.py
 
-Проверяет: маршруты /flow, /, /nodes; правый клик по канвасу — контекстное меню;
+Проверяет: маршрут /flow; правый клик по канвасу — контекстное меню;
 создание нод Промпт/Референс/Генератор; ввод текста в Промпт; провода мышью
 prompt.out -> generator.prompt и reference.out -> generator.style (оба text->text,
 валидны по правилам legacy connect); после перезагрузки граф сохранён.
 Провод prompt.out -> reference.ir отклоняется (правило совпадения kind).
 """
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import time
 
 from playwright.sync_api import sync_playwright
@@ -47,7 +51,7 @@ def main():
     with sync_playwright() as p:
         # доступность маршрутов страниц
         api = p.request.new_context()
-        for path in ("/flow", "/", "/nodes"):
+        for path in ("/flow",):
             try:
                 r = api.get(BASE + path)
                 check(f"GET {path} -> 200", r.status == 200, str(r.status))
@@ -57,6 +61,15 @@ def main():
 
         browser = p.chromium.launch(headless=True)
         pg = browser.new_page(viewport={"width": 1600, "height": 950})
+        pg.route(
+            "**/api/project/load",
+            lambda route: route.fulfill(status=200, content_type="application/json",
+                                        body='{"project":null,"updated_at":null}'),
+        )
+        pg.route(
+            "**/api/project/save",
+            lambda route: route.fulfill(status=200, content_type="application/json", body='{"ok":true}'),
+        )
         for _ in range(30):
             try:
                 pg.goto(BASE + "/flow", timeout=2000)
@@ -75,8 +88,9 @@ def main():
         # правый клик по канвасу — контекстное меню создания ноды
         pg.click(".react-flow__pane", button="right", position={"x": 320, "y": 300})
         check("контекстное меню открыто", pg.is_visible("#ctx-menu"))
-        # 9 типов: 7 базовых + BlockParse и Reskin (бриф W11)
-        check("в меню 9 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 9"))
+        # 12 типов: текущие AI-ноды + Page Bridge для передачи компонентов между страницами.
+        check("в меню 12 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 12"))
+        check("в меню есть Page Bridge", pg.evaluate("!!document.querySelector('#ctx-menu .ctx-item[data-type=\"pagebridge\"]')"))
 
         # создать Промпт
         pg.click("#ctx-menu .ctx-item[data-type='prompt']")
@@ -115,7 +129,7 @@ def main():
                 e.from.node === fn.id && e.from.port === fp && e.to.node === tn.id && e.to.port === tp);
             return has(pr, 'out', g, 'prompt') && has(ref, 'out', g, 'style');
         })()""")
-        check("провода: prompt.out→generator.prompt и reference.out→generator.style", bool(edges_ok))
+        check("провода: prompt.out->generator.prompt и reference.out->generator.style", bool(edges_ok))
 
         # правило 3 (совпадение kind, nodes.js:1055-1058): text->ir отклоняется
         rejected = pg.evaluate("""(() => {
@@ -124,7 +138,7 @@ def main():
             const ref = st.nodes.find(n => n.type === 'reference');
             return window.GraphDev.connect(pr.id, 'out', ref.id, 'ir') === false;
         })()""")
-        check("правило kind: провод prompt.out→reference.ir отклонён", bool(rejected))
+        check("правило kind: провод prompt.out->reference.ir отклонён", bool(rejected))
         check("лишний провод не создан", pg.evaluate("window.GraphDev.state().edges.length === 2"))
 
         # автосейв (debounce 300 мс) и перезагрузка — граф должен сохраниться
@@ -145,6 +159,50 @@ def main():
             pg.evaluate(
                 "localStorage.getItem('designai-flow-v1') !== null && "
                 "localStorage.getItem('designai-graph-v1') === null"
+            ),
+        )
+
+        # Страницы: у каждой своё полотно, старый граф становится первой страницей.
+        first_page = pg.evaluate("window.GraphDev.state().activePageId")
+        pg.evaluate("window.GraphDev.createPage('Landing variants')")
+        second_page = pg.evaluate("window.GraphDev.state().activePageId")
+        check("создана вторая страница", pg.evaluate("window.GraphDev.pages().length === 2"))
+        check("новая страница имеет пустое полотно", pg.evaluate("window.GraphDev.state().nodes.length === 0"))
+        pg.evaluate("(id) => window.GraphDev.switchPage(id)", first_page)
+        pg.wait_for_selector(".n-prompt")
+        check("первая страница сохранила свои 3 ноды", pg.evaluate("window.GraphDev.state().nodes.length === 3"))
+        pg.evaluate("(id) => window.GraphDev.switchPage(id)", second_page)
+        check("вторая страница всё ещё пустая", pg.evaluate("window.GraphDev.state().nodes.length === 0"))
+
+        # Page Bridge: send на одной странице, receive на другой с тем же каналом.
+        pg.evaluate("(id) => window.GraphDev.switchPage(id)", first_page)
+        edit_id = pg.evaluate("window.GraphDev.add('edit', 80, 420).id")
+        send_id = pg.evaluate("window.GraphDev.add('pagebridge', 560, 420).id")
+        check("создан Page Bridge send", pg.evaluate("window.GraphDev.state().nodes.some(n => n.type === 'pagebridge')"))
+        pg.evaluate(
+            """([editId, bridgeId]) => {
+                window.GraphDev.setIR(editId, {tree:[{id:'hero', type:'section', props:{title:'Shared hero'}}]});
+                window.GraphDev.patchData(bridgeId, {mode:'send', channel:'hero-share'});
+                window.GraphDev.connect(editId, 'ir', bridgeId, 'ir');
+                window.GraphDev.run(bridgeId);
+            }""",
+            [edit_id, send_id],
+        )
+        check("bridge записал канал", pg.evaluate("window.GraphDev.state().channels.includes('hero-share')"))
+        pg.evaluate("(id) => window.GraphDev.switchPage(id)", second_page)
+        receive_id = pg.evaluate("window.GraphDev.add('pagebridge', 120, 180).id")
+        pg.evaluate(
+            """(bridgeId) => {
+                window.GraphDev.patchData(bridgeId, {mode:'receive', channel:'hero-share'});
+                window.GraphDev.run(bridgeId);
+            }""",
+            receive_id,
+        )
+        check(
+            "receive получил компонент с другой страницы",
+            pg.evaluate(
+                "(id) => window.GraphDev.node(id).data.ir.tree[0].props.title === 'Shared hero'",
+                receive_id,
             ),
         )
 

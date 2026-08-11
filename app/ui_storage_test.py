@@ -1,14 +1,18 @@
-"""localStorage: quota-fallback (сохранение без скриншотов) + beforeunload-флаш.
-Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /,
-сейв идёт в ключ designai-flow-v1 (serialize.ts); поведение stripHeavy/флаш — parity
-с legacy nodes.js (serialize.ts: stripHeavy зеркалит nodes.js, beforeunload блокирует
-закрытие при lastSaveOk=false).
-Нужен запущенный сервер: .venv/Scripts/python app/server.py
-Запуск: .venv/Scripts/python app/ui_storage_test.py
+"""localStorage: quota-fallback (СЃРѕС…СЂР°РЅРµРЅРёРµ Р±РµР· СЃРєСЂРёРЅС€РѕС‚РѕРІ) + SQLite-primary save.
+Р РµС‚Р°СЂРіРµС‚РёРЅРі РїРѕСЃР»Рµ СЃРЅСЏС‚РёСЏ legacy /nodes: edit-РЅРѕРґР° Р¶РёРІС‘С‚ РІ РЅРѕРІРѕРј React Flow UI РЅР° /flow,
+СЃРµР№РІ РёРґС‘С‚ РІ РєР»СЋС‡ designai-flow-v1 (serialize.ts); РїРѕРІРµРґРµРЅРёРµ stripHeavy/С„Р»Р°С€ вЂ” parity
+СЃ legacy nodes.js (serialize.ts: stripHeavy Р·РµСЂРєР°Р»РёС‚ nodes.js). РџРѕР»РЅР°СЏ РєРІРѕС‚Р°
+localStorage Р±РѕР»СЊС€Рµ РЅРµ Р±Р»РѕРєРёСЂСѓРµС‚ Р·Р°РєСЂС‹С‚РёРµ, РїРѕС‚РѕРјСѓ С‡С‚Рѕ pages-РїСЂРѕРµРєС‚ СЃРѕС…СЂР°РЅСЏРµС‚СЃСЏ РІ SQLite.
+РќСѓР¶РµРЅ Р·Р°РїСѓС‰РµРЅРЅС‹Р№ СЃРµСЂРІРµСЂ: .venv/Scripts/python app/server.py
+Р—Р°РїСѓСЃРє: .venv/Scripts/python app/ui_storage_test.py
 """
 import json
 import pathlib
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import time
 
 from playwright.sync_api import sync_playwright
@@ -20,7 +24,7 @@ FAILS = []
 
 def check(name, cond, extra=""):
     tag = "OK " if cond else "FAIL"
-    print(f"[{tag}] {name}" + (f" — {extra}" if extra and not cond else ""))
+    print(f"[{tag}] {name}" + (f" вЂ” {extra}" if extra and not cond else ""))
     if not cond:
         FAILS.append(name)
 
@@ -32,7 +36,7 @@ def main():
         pg = browser.new_page(viewport={"width": 1700, "height": 1000})
         for _ in range(30):
             try:
-                pg.goto(BASE + "/", timeout=2000)
+                pg.goto(BASE + "/flow", timeout=2000)
                 break
             except Exception:
                 time.sleep(1)
@@ -48,10 +52,10 @@ def main():
         pg.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, ir)
         pg.wait_for_timeout(500)
 
-        # тяжёлый base64 в данных ноды (как скриншот Reproduce)
+        # С‚СЏР¶С‘Р»С‹Р№ base64 РІ РґР°РЅРЅС‹С… РЅРѕРґС‹ (РєР°Рє СЃРєСЂРёРЅС€РѕС‚ Reproduce)
         pg.evaluate("window.GraphDev.node(%d).data.shot = 'data:image/png;base64,' + 'A'.repeat(300000)" % nid)
 
-        # ---------- сценарий 1: квота → retry без скриншотов ----------
+        # ---------- СЃС†РµРЅР°СЂРёР№ 1: РєРІРѕС‚Р° в†’ retry Р±РµР· СЃРєСЂРёРЅС€РѕС‚РѕРІ ----------
         pg.evaluate("""(() => {
             const orig = Storage.prototype.setItem;
             window.__quotaHits = 0;
@@ -63,27 +67,28 @@ def main():
                 return orig.call(this, k, v);
             };
         })()""")
-        pg.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, ir)  # триггерит save()
+        pg.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, ir)  # С‚СЂРёРіРіРµСЂРёС‚ save()
         pg.wait_for_timeout(700)
         toast1 = pg.evaluate("Array.from(document.querySelectorAll('#toasts .toast')).map(t => t.textContent).join('|')")
-        check("квота: тост о сохранении без скриншотов", "без скриншотов" in toast1, toast1)
+        check("РєРІРѕС‚Р°: С‚РѕСЃС‚ Рѕ СЃРѕС…СЂР°РЅРµРЅРёРё Р±РµР· СЃРєСЂРёРЅС€РѕС‚РѕРІ", "Р±РµР· СЃРєСЂРёРЅС€РѕС‚РѕРІ" in toast1, toast1)
         saved = pg.evaluate("localStorage.getItem('designai-flow-v1') || ''")
-        check("квота: граф сохранён", len(saved) > 100, str(len(saved)))
-        check("квота: base64 вырезан из сейва", "data:image" not in saved)
-        check("квота: IR на месте", '"tree"' in saved)
+        check("РєРІРѕС‚Р°: РіСЂР°С„ СЃРѕС…СЂР°РЅС‘РЅ", len(saved) > 100, str(len(saved)))
+        check("РєРІРѕС‚Р°: base64 РІС‹СЂРµР·Р°РЅ РёР· СЃРµР№РІР°", "data:image" not in saved)
+        check("РєРІРѕС‚Р°: IR РЅР° РјРµСЃС‚Рµ", '"tree"' in saved)
 
-        # ---------- сценарий 2: квота всегда → тост + beforeunload ----------
+        # ---------- СЃС†РµРЅР°СЂРёР№ 2: РєРІРѕС‚Р° РІСЃРµРіРґР° в†’ SQLite РѕСЃС‚Р°С‘С‚СЃСЏ РѕСЃРЅРѕРІРЅС‹Рј СЃРµР№РІРѕРј ----------
         pg.evaluate("""(() => {
             Storage.prototype.setItem = function (k, v) {
-                if (k === 'designai-flow-v1') throw new DOMException('quota exceeded', 'QuotaExceededError');
+                if (k === 'designai-flow-v1' || k === 'designai-flow-pages-v1') throw new DOMException('quota exceeded', 'QuotaExceededError');
             };
         })()""")
         pg.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, ir)
         pg.wait_for_timeout(700)
         toast2 = pg.evaluate("Array.from(document.querySelectorAll('#toasts .toast')).map(t => t.textContent).join('|')")
-        check("полная квота: тост с призывом экспортировать", "Не удалось сохранить" in toast2, toast2)
+        check("РїРѕР»РЅР°СЏ РєРІРѕС‚Р°: Р±РµР· РїСѓРіР°СЋС‰РµРіРѕ РїСЂРёР·С‹РІР° СЌРєСЃРїРѕСЂС‚РёСЂРѕРІР°С‚СЊ", "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ" not in toast2, toast2)
+        check("РїРѕР»РЅР°СЏ РєРІРѕС‚Р°: РїРѕРєР°Р·Р°РЅ SQLite fallback", "SQLite" in toast2, toast2)
         prevented = pg.evaluate("(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; })()")
-        check("полная квота: beforeunload блокируется", prevented is True, str(prevented))
+        check("РїРѕР»РЅР°СЏ РєРІРѕС‚Р°: beforeunload РЅРµ Р±Р»РѕРєРёСЂСѓРµС‚СЃСЏ", prevented is False, str(prevented))
 
         browser.close()
 

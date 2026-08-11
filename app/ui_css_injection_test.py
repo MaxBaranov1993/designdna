@@ -1,9 +1,13 @@
 """CSS-инъекции из IR: токены/шрифты/align санятся (контент от LLM недоверенный).
-Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /.
+Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /flow.
 Нужен запущенный сервер: .venv/Scripts/python app/server.py
 Запуск: .venv/Scripts/python app/ui_css_injection_test.py
 """
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import time
 
 from playwright.sync_api import sync_playwright
@@ -58,7 +62,7 @@ def main():
         pg = browser.new_page(viewport={"width": 1700, "height": 1000})
         for _ in range(30):
             try:
-                pg.goto(BASE + "/", timeout=2000)
+                pg.goto(BASE + "/flow", timeout=2000)
                 break
             except Exception:
                 time.sleep(1)
@@ -84,7 +88,7 @@ def main():
 
         # 2) битый цвет отброшен к дефолту, валидные работают
         varz = pg.evaluate("""(() => {
-            const el = document.querySelector(".n-edit [class^='ir-']");
+            const el = document.querySelector(".n-edit .ir-preview-inner div[class^='ir-']");
             const cs = getComputedStyle(el);
             return { primary: cs.getPropertyValue("--c-primary").trim(),
                      muted: cs.getPropertyValue("--c-muted").trim() };
@@ -94,7 +98,7 @@ def main():
 
         # 3) шрифт: кавычки/инъекции вырезаны из CSS и из URL Google Fonts
         font = pg.evaluate("""(() => {
-            const el = document.querySelector(".n-edit [class^='ir-']");
+            const el = document.querySelector(".n-edit .ir-preview-inner div[class^='ir-']");
             const fam = getComputedStyle(el).getPropertyValue("--font-display").trim();
             const link = document.getElementById("ir-fonts");
             return { fam, href: link ? link.href : "" };

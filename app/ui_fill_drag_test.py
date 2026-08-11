@@ -1,11 +1,15 @@
 """Регрессия бага «при перетаскивании всё ломается»: child с width:fill после
 конверсии родителя в free не должен растягиваться на весь padding-box —
 размер фиксируется измеренным на момент конверсии.
-Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /.
+Ретаргетинг после снятия legacy /nodes: edit-нода живёт в новом React Flow UI на /flow.
 Нужен запущенный сервер: .venv/Scripts/python app/server.py
 Запуск: .venv/Scripts/python app/ui_fill_drag_test.py
 """
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import time
 
 from playwright.sync_api import sync_playwright
@@ -61,9 +65,13 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         pg = browser.new_page(viewport={"width": 1700, "height": 1000})
+        pg.route("**/api/project/load", lambda route: route.fulfill(
+            status=200, content_type="application/json", body='{"project":null,"updated_at":null}'))
+        pg.route("**/api/project/save", lambda route: route.fulfill(
+            status=200, content_type="application/json", body='{"ok":true}'))
         for _ in range(30):
             try:
-                pg.goto(BASE + "/", timeout=2000)
+                pg.goto(BASE + "/flow", timeout=2000)
                 break
             except Exception:
                 time.sleep(1)
@@ -117,9 +125,12 @@ def main():
         check("fill-ребёнок растянут по родителю до drag", w_before > 300, str(fb))
 
         pg.mouse.move(fb["x"] + fb["width"] / 2, fb["y"] + fb["height"] / 2)
+        # Component-first selection: Ctrl-drag drills into the nested fill child.
+        pg.keyboard.down("Control")
         pg.mouse.down()
         pg.mouse.move(fb["x"] + fb["width"] / 2 + 30, fb["y"] + fb["height"] / 2 + 20, steps=8)
         pg.mouse.up()
+        pg.keyboard.up("Control")
         pg.wait_for_timeout(500)
 
         ab = pg.query_selector('.fe-canvas [data-ir-path="children.0.children.1"]').bounding_box()
