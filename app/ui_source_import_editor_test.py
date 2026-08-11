@@ -112,13 +112,17 @@ def main() -> None:
           underlays: document.querySelectorAll('.dna-editor .source-underlay').length,
           viewportVisible: !document.querySelector('.dna-editor .fe-viewports').hidden,
           buttonChildren: document.querySelector('.fe-canvas-inner [data-ir-path="children.2"]').querySelectorAll('[data-ir-path]').length,
-          sectionLayout: getComputedStyle(document.querySelector('[data-ir-sec="0"]')).display,
-        })""")
+          sectionLayout: getComputedStyle(document.querySelector('.dna-editor [data-ir-sec="0"]')).display,
+          canonicalLayout: window.GraphDev.node(%d).data.ir.tree[0].frame.layout,
+          activeLayout: window.Editor.getIR().tree[0].frame.layout,
+        })""" % node_id)
         check("desktop artboard uses source viewport", desktop["art"] == [800, 72], json.dumps(desktop))
         check("source screenshot is not an editor underlay", desktop["underlays"] == 0, json.dumps(desktop))
         check("responsive viewport control is visible", desktop["viewportVisible"], json.dumps(desktop))
         check("button renders its real nested text layer", desktop["buttonChildren"] == 1, json.dumps(desktop))
-        check("source section renders as auto-layout", desktop["sectionLayout"] == "flex", json.dumps(desktop))
+        check("source section renders as auto-layout",
+              desktop["sectionLayout"] == "flex" and desktop["canonicalLayout"] == "auto" and desktop["activeLayout"] == "auto",
+              json.dumps(desktop))
 
         page.click('.dna-editor [data-viewport="mobile"]')
         page.wait_for_timeout(150)
@@ -131,6 +135,23 @@ def main() -> None:
         }""")
         check("mobile switches the same artboard to 390x180", mobile["art"] == [390, 180], json.dumps(mobile))
         check("mobile frame override is applied", mobile["buttonWidth"] == 120 and mobile["active"], json.dumps(mobile))
+
+        page.click('.dna-editor [data-viewport="tablet"]')
+        page.wait_for_timeout(150)
+        tablet = page.evaluate("""() => {
+          const art = document.querySelector('.dna-editor .fe-canvas-inner div[class^="ir-"]');
+          const section = document.querySelector('.dna-editor [data-ir-sec="0"]');
+          return {art:[art.offsetWidth,art.offsetHeight], display:getComputedStyle(section).display,
+                  direction:getComputedStyle(section).flexDirection,
+                  activeLayout:window.Editor.getIR().tree[0].frame.layout};
+        }""")
+        check("tablet keeps imported auto-layout",
+              tablet["art"] == [768, 72] and tablet["display"] == "flex" and
+              tablet["direction"] == "row" and tablet["activeLayout"] == "auto",
+              json.dumps(tablet))
+
+        page.click('.dna-editor [data-viewport="mobile"]')
+        page.wait_for_timeout(120)
 
         point = page.evaluate("""() => {
           const el=document.querySelector('.fe-canvas-inner [data-ir-path="children.2.children.0"]'); const r=el.getBoundingClientRect();

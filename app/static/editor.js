@@ -377,7 +377,6 @@
   function open(node, onSave, onClose) {
     ensureOverlay();
     upgradeSourceNesting(node.data.ir);
-    forceSourceFreeLayout(node.data.ir);
     state = {
       ir: node.data.ir,
       node,
@@ -416,28 +415,6 @@
     attachCanvasEvents();
     setTool("select");
     requestAnimationFrame(zoomFit);
-  }
-
-  function forceSourceFreeLayout(ir) {
-    if (!ir || !Array.isArray(ir.tree)) return;
-    ir.tree.forEach(sec => {
-      if (!sec || !(sec.type === "source-block" || sec.variant === "dom-capture")) return;
-      function freeNode(n) {
-        if (!n || typeof n !== "object") return;
-        if (n.frame && typeof n.frame === "object") {
-          n.frame.layout = "free";
-          n.frame.clip = true;
-        }
-        (n.children || []).forEach(child => {
-          if (child && child.frame && typeof child.frame === "object" &&
-              ("x" in child.frame || "y" in child.frame)) {
-            child.frame.absolute = true;
-          }
-          freeNode(child);
-        });
-      }
-      freeNode(sec);
-    });
   }
 
   function upgradeSourceNesting(ir) {

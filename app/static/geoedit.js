@@ -339,6 +339,11 @@
     }
 
     function nearestSelectableContainer(ref, hitKeys) {
+      const hitNode = irNodeAt(ref);
+      // Controls are already meaningful selectable containers. When the DOM
+      // hit lands on the control wrapper itself, do not hoist it to an
+      // auto-layout form/card parent.
+      if (hitNode && ["button", "input"].includes(hitNode.type)) return ref;
       let parent = parentRef(ref);
       while (parent) {
         const node = irNodeAt(parent);
