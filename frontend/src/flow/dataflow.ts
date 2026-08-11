@@ -1,5 +1,5 @@
 import { portsOfNode } from "./ports";
-import type { FlowEdge, FlowNode, PortKind } from "./types";
+import type { FlowEdge, FlowNode, PortKind, SourceViewport } from "./types";
 
 /* Цвета проводов — зеркало #wires path в nodes.html: text серый, ir акцентный;
  * tokens — янтарный (решение владельца 9) */
@@ -9,13 +9,37 @@ export const WIRE_COLORS: Record<PortKind, string> = {
   tokens: "#d6a13b",
 };
 
-/* Зеркало clone() (nodes.js:74) */
+/* Глубокое копирование значения между нодами. */
 export function deepClone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
 }
 
+function withSourcePreview(ir: unknown, preview?: string, viewport?: SourceViewport): unknown {
+  if (!ir || typeof ir !== "object" || Array.isArray(ir)) return ir;
+  const root = ir as Record<string, unknown>;
+  const tree = Array.isArray(root.tree) ? root.tree : [];
+  const first = tree[0];
+  if (!first || typeof first !== "object" || Array.isArray(first)) return ir;
+  const sec = first as Record<string, unknown>;
+  if (sec.type !== "source-block" && sec.variant !== "dom-capture") return ir;
+
+  const meta = root.meta && typeof root.meta === "object" && !Array.isArray(root.meta)
+    ? root.meta as Record<string, unknown>
+    : {};
+  const nextRoot = viewport ? { ...root, meta: { ...meta, activeViewport: viewport } } : root;
+  if (!preview) return nextRoot;
+
+  const props = sec.props && typeof sec.props === "object" && !Array.isArray(sec.props)
+    ? (sec.props as Record<string, unknown>)
+    : {};
+  if (root.sourcePreview || sec.preview || props.sourcePreview) return nextRoot;
+
+  const nextSec = { ...sec, props: { ...props, sourcePreview: preview }, preview };
+  return { ...nextRoot, sourcePreview: preview, tree: [nextSec, ...tree.slice(1)] };
+}
+
 /* Зеркало outValue (nodes.js:923-932) — значение выходного порта ноды.
- * port нужен blockparse: у него выходы динамические, по именам зажжённых блоков. */
+ * port нужен Source Import: у него выходы динамические, по именам зажжённых блоков. */
 export function outValue(n: FlowNode, port?: string): unknown {
   switch (n.type) {
     case "prompt":
@@ -28,14 +52,32 @@ export function outValue(n: FlowNode, port?: string): unknown {
       return n.data.ir || null;
     case "mix":
       return n.data.ir || null;
-    case "clone":
-      return n.data.ir || null;
-    case "reproduce":
-      return n.data.result ? n.data.result.ir || null : null;
-    case "blockparse":
+    case "page": {
+      const ir = n.data.ir;
+      if (!ir) return null;
+      // активный вьюпорт едет вниз по графу: edit/preview материализуют тот же
+      const meta = ir.meta && typeof ir.meta === "object" && !Array.isArray(ir.meta)
+        ? (ir.meta as Record<string, unknown>)
+        : {};
+      return { ...ir, meta: { ...meta, activeViewport: n.data.activeViewport } };
+    }
+    case "sourceimport":
       if (port === "tokens") return n.data.tokens || null;
-      return n.data.blocks.find((b) => b.name === port && b.lit)?.ir || null;
+      {
+        const block = n.data.blocks.find((b) => b.name === port && b.lit);
+        const preview = block?.previews?.[n.data.activeViewport] || block?.preview;
+        return block ? withSourcePreview(block.ir || null, preview, n.data.activeViewport) : null;
+      }
+    case "styledna":
+      if (port === "summary") return n.data.summary || "";
+      return n.data.tokens || null;
+    case "derive":
+      return n.data.variants.length ? n.data.variants[n.data.active] || null : null;
     case "reskin":
+      return n.data.ir || null;
+    case "qualitypass":
+      return n.data.ir || null;
+    case "pagebridge":
       return n.data.ir || null;
   }
 }

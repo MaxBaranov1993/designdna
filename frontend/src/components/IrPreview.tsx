@@ -1,62 +1,85 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { deepClone } from "../flow/dataflow";
-import type { IRObject } from "../flow/types";
+import type { IRObject, SourceViewport } from "../flow/types";
 import { cn } from "../lib/utils";
 
 declare global {
   interface Window {
-    /* Legacy-рендерер (app/static/renderer.js), подключается в index.html.
-     * renderIR(container, ir) — рендерит IR и в rAF вызывает fitPreview. */
     IRRenderer?: {
-      renderIR: (container: HTMLElement, ir: IRObject) => void;
+      renderIR: (container: HTMLElement, ir: IRObject, options?: { viewport?: SourceViewport }) => void;
       fitPreview: (container: HTMLElement, inner?: HTMLElement | null) => void;
       DESIGN_WIDTH: number;
     };
   }
 }
 
-/* Превью IR через legacy renderer.js — прямое монтирование в ref-managed div
- * (FLOW-MIGRATION.md §6.3, вариант A): React не управляет children контейнера,
- * GeoEdit/Inspector смогут работать с тем же DOM в Фазе B3.
- * Фиксированная высота + overflow hidden: нода не растягивается на весь IR,
- * fitPreview масштабирует дизайн под ширину контейнера. */
 export function IrPreview({
   ir,
   height = 180,
   empty = "IR появится после запуска",
   className,
+  viewport,
+  fitHeight = false,
+  minHeight = 32,
 }: {
   ir: IRObject | null;
   height?: number;
   empty?: string;
   className?: string;
+  viewport?: SourceViewport;
+  fitHeight?: boolean;
+  minHeight?: number;
 }) {
+  const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
+  const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
+
+  const syncPreviewSize = () => {
+    const el = innerRef.current;
+    if (!el || !window.IRRenderer) return;
+    window.IRRenderer.fitPreview(el);
+    if (!fitHeight || !ir) return;
+    const renderedHeight = Number.parseFloat(el.style.height) || el.getBoundingClientRect().height;
+    const nextHeight = Math.max(minHeight, Math.min(height, Math.ceil(renderedHeight)));
+    setMeasuredHeight((current) => current === nextHeight ? current : nextHeight);
+  };
 
   useEffect(() => {
     const el = innerRef.current;
     if (!el) return;
     if (!ir || !window.IRRenderer) {
       el.innerHTML = "";
+      setMeasuredHeight(null);
       return;
     }
-    // renderIR мутирует ir (tokens, __path) — рендерим глубокую копию (§6.2A)
-    window.IRRenderer.renderIR(el, deepClone(ir));
-  }, [ir]);
 
-  // ширина контейнера может измениться — повторяем fit (rAF renderIR — только на первый рендер)
+    const meta = ir.meta && typeof ir.meta === "object" && !Array.isArray(ir.meta)
+      ? ir.meta as Record<string, unknown>
+      : {};
+    const activeViewport = viewport || (
+      meta.activeViewport === "desktop" || meta.activeViewport === "tablet" || meta.activeViewport === "mobile"
+        ? meta.activeViewport
+        : undefined
+    );
+    window.IRRenderer.renderIR(el, deepClone(ir), activeViewport ? { viewport: activeViewport } : undefined);
+    const frame = requestAnimationFrame(syncPreviewSize);
+    return () => cancelAnimationFrame(frame);
+  }, [ir, viewport, fitHeight, height, minHeight]);
+
   useEffect(() => {
-    const el = innerRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {
-      if (window.IRRenderer) window.IRRenderer.fitPreview(el);
-    });
-    ro.observe(el);
+    const outer = outerRef.current;
+    if (!outer || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(syncPreviewSize);
+    ro.observe(outer);
     return () => ro.disconnect();
-  }, []);
+  }, [ir, fitHeight, height, minHeight]);
 
   return (
-    <div className={cn("ir-preview", className)} style={{ height }}>
+    <div
+      ref={outerRef}
+      className={cn("ir-preview", className)}
+      style={{ height: fitHeight && ir && measuredHeight !== null ? measuredHeight : height }}
+    >
       <div ref={innerRef} className="ir-preview-inner" />
       {!ir && empty ? <div className="ir-preview-empty">{empty}</div> : null}
     </div>

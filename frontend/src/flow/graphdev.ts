@@ -1,5 +1,6 @@
 import type { ReactFlowInstance } from "@xyflow/react";
 import { deepClone } from "./dataflow";
+import { NODE_DEFS } from "./ports";
 import { useFlowStore } from "./store";
 import type { FlowEdge, NodeType } from "./types";
 
@@ -16,10 +17,16 @@ export interface GraphDevApi {
   connect: (fromId: number, fromPort: string, toId: number, toPort: string) => boolean;
   setIR: (nodeId: number, ir: unknown) => boolean;
   setText: (nodeId: number, text: string) => boolean;
+  patchData: (nodeId: number, patch: Record<string, unknown>) => boolean;
   run: (nodeId: number) => void;
+  createPage: (name?: string) => void;
+  switchPage: (id: string) => void;
+  pages: () => { id: string; name: string; active: boolean; nodes: number }[];
   state: () => {
     nodes: { id: number; type: string; x: number; y: number }[];
     edges: { from: { node: number; port: string }; to: { node: number; port: string } }[];
+    activePageId: string;
+    channels: string[];
   };
   node: (id: number) =>
     | { id: number; type: string; x: number; y: number; data: unknown }
@@ -49,7 +56,10 @@ function legacyEdges(edges: FlowEdge[]) {
 export function installGraphDev() {
   if (window.GraphDev) return;
   window.GraphDev = {
-    add: (type, x, y) => useFlowStore.getState().addNode(type, x ?? 100, y ?? 100),
+    add: (type, x, y) => {
+      if (!(type in NODE_DEFS)) throw new Error(`Unknown node type: ${String(type)}`);
+      return useFlowStore.getState().addNode(type, x ?? 100, y ?? 100);
+    },
     connect: (fromId, fromPort, toId, toPort) =>
       useFlowStore
         .getState()
@@ -73,8 +83,30 @@ export function installGraphDev() {
       st.propagate(Number(nodeId));
       return true;
     },
+    patchData: (nodeId, patch) => {
+      const st = useFlowStore.getState();
+      const n = st.nodes.find((x) => Number(x.id) === Number(nodeId));
+      if (!n) return false;
+      st.setNodeData(Number(nodeId), patch);
+      return true;
+    },
     run: (nodeId) => {
       useFlowStore.getState().runNode(Number(nodeId));
+    },
+    createPage: (name) => {
+      useFlowStore.getState().createPage(name);
+    },
+    switchPage: (id) => {
+      useFlowStore.getState().switchPage(id);
+    },
+    pages: () => {
+      const st = useFlowStore.getState();
+      return st.pages.map((page) => ({
+        id: page.id,
+        name: page.name,
+        active: page.id === st.activePageId,
+        nodes: page.id === st.activePageId ? st.nodes.length : page.nodes.length,
+      }));
     },
     state: () => {
       const st = useFlowStore.getState();
@@ -86,6 +118,8 @@ export function installGraphDev() {
           y: n.position.y,
         })),
         edges: legacyEdges(st.edges),
+        activePageId: st.activePageId,
+        channels: Object.keys(st.channels).filter((key) => st.channels[key]),
       };
     },
     node: (id) => {

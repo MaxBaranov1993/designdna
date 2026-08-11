@@ -9,6 +9,14 @@ import { InPorts, OutPorts } from "./PortHandles";
  * fallback ownPrompt), POST /api/generate (payload — зеркало runGenerator,
  * nodes.js:498-518). Варианты — миниатюрами, активный — в IrPreview и на
  * выход ir (outValue) для нод ниже по графу. */
+const PRESETS: { id: string; label: string }[] = [
+  { id: "minimal", label: "Minimal" },
+  { id: "bento", label: "Bento" },
+  { id: "editorial", label: "Editorial" },
+  { id: "brutal", label: "Brutal" },
+  { id: "glass", label: "Glass" },
+];
+
 export function GeneratorNode({ id, data, selected }: NodeProps<GeneratorFlowNode>) {
   const setNodeData = useFlowStore((s) => s.setNodeData);
   const propagate = useFlowStore((s) => s.propagate);
@@ -26,15 +34,9 @@ export function GeneratorNode({ id, data, selected }: NodeProps<GeneratorFlowNod
         onChange={(e) => setNodeData(Number(id), { ownPrompt: e.target.value })}
       />
       <div className="ctl-row">
-        <select
-          className="f-provider nodrag"
-          value={data.provider}
-          onChange={(e) => setNodeData(Number(id), { provider: e.target.value })}
-        >
-          <option value="qwen">qwen3.7-max</option>
-          <option value="kimi">kimi k3</option>
-          <option value="openrouter">openrouter (auto)</option>
-        </select>
+        <span className="f-provider" title="Модель выбирается OpenRouter по роли generator">
+          OpenRouter
+        </span>
         <select
           className="f-count nodrag"
           value={String(data.count)}
@@ -43,6 +45,8 @@ export function GeneratorNode({ id, data, selected }: NodeProps<GeneratorFlowNod
           <option value="1">1</option>
           <option value="2">2</option>
           <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
         </select>
         <button
           className="btn-node primary small f-run nodrag"
@@ -51,6 +55,18 @@ export function GeneratorNode({ id, data, selected }: NodeProps<GeneratorFlowNod
         >
           {busy ? <span className="spinner" /> : <span>▶</span>} Сгенерировать
         </button>
+      </div>
+      <div className="f-presets nodrag">
+        {PRESETS.map((p) => (
+          <button
+            key={p.id}
+            className={"f-preset" + (data.preset === p.id ? " on" : "")}
+            title={"Стилевое направление: " + p.label}
+            onClick={() => setNodeData(Number(id), { preset: data.preset === p.id ? "" : p.id })}
+          >
+            {p.label}
+          </button>
+        ))}
       </div>
       {data.variants.length ? (
         <div className="thumbs">

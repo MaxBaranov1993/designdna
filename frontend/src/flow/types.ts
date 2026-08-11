@@ -1,11 +1,9 @@
 import type { Edge, Node } from "@xyflow/react";
 
-/* Типы данных нод — зеркало defaultData() из legacy nodes.js:266-275
- * (provider у клона объявлен явно, см. FLOW-MIGRATION.md §1.6).
- * Runtime-поля legacy (el/geo/history) в новый UI не переносятся. */
+/* Типы данных актуальных нод графа (см. docs/NODES.md).
+ * Runtime-поля legacy (el/geo/history) в React Flow state не переносятся. */
 
-/* kind tokens — аддитивное расширение набора портов (решение владельца 9,
- * docs/NODES-HOUDINI.md §7.5): design-токены из BlockParse в Reskin */
+/* kind tokens: design-токены из Source Import/Style DNA в Reskin/Derive. */
 export type PortKind = "text" | "ir" | "tokens";
 
 export type NodeType =
@@ -14,12 +12,16 @@ export type NodeType =
   | "generator"
   | "edit"
   | "mix"
-  | "clone"
-  | "reproduce"
-  | "blockparse"
-  | "reskin";
+  | "page"
+  | "sourceimport"
+  | "styledna"
+  | "derive"
+  | "reskin"
+  | "qualitypass"
+  | "pagebridge";
 
 export type IRObject = Record<string, unknown>;
+export type SourceViewport = "desktop" | "tablet" | "mobile";
 
 export type PromptNodeData = { text: string };
 export type ReferenceNodeData = {
@@ -34,44 +36,59 @@ export type GeneratorNodeData = {
   provider: string;
   count: number;
   ownPrompt: string;
+  preset: string;
   variants: IRObject[];
   active: number;
 };
 export type EditNodeData = { ir: IRObject | null };
+export type PageNodeData = { inputs: string[]; ir: IRObject | null; activeViewport: SourceViewport };
 export type MixNodeData = {
   inputs: string[];
   weights: Record<string, number>;
   ir: IRObject | null;
 };
-export type CloneNodeData = {
-  url: string;
-  component: string;
-  provider: string;
-  ir: IRObject | null;
-};
-export type ReproduceNodeData = {
-  image: string | null;
-  fileName: string;
-  url: string;
-  provider: string;
-  result: Record<string, unknown> | null;
-};
-
-/* BlockParse (решение владельца 11, NODES-HOUDINI.md §7): разбор сайта на блоки.
- * lit — «зажжён» ли выходной порт блока (порты только у зажжённых, §7.5-2). */
+/* Блок Source Import: lit — «зажжён» ли выходной порт блока. */
 export type BlockParseBlock = {
   name: string;
+  label?: string;
+  kind?: string;
   selector: string;
   ir?: IRObject;
   error?: string;
   cached?: boolean;
+  source?: "dom" | "llm" | "vision";
+  layers?: number;
+  size?: { width?: number; height?: number };
+  preview?: string;
+  previews?: Partial<Record<SourceViewport, string>>;
+  sizes?: Partial<Record<SourceViewport, { width?: number; height?: number }>>;
+  layersByViewport?: Partial<Record<SourceViewport, number>>;
+  coverage?: Partial<Record<SourceViewport, number>>;
+  fidelity?: Partial<Record<SourceViewport, number>>;
+  warnings?: string[];
+  repeat?: { count?: number; kind?: string } | null;
   lit: boolean;
 };
-export type BlockParseNodeData = {
+export type SourceImportNodeData = {
+  mode: "url" | "screenshot";
   url: string;
+  image: string | null;
+  fileName: string;
   mine: boolean;
+  activeViewport: SourceViewport;
+  previewMode: "reference" | "ir" | "compare";
   blocks: BlockParseBlock[];
   tokens: Record<string, unknown> | null;
+};
+export type StyleDnaNodeData = {
+  tokens: Record<string, unknown> | null;
+  summary: string;
+};
+export type DeriveNodeData = {
+  prompt: string;
+  count: number;
+  variants: IRObject[];
+  active: number;
 };
 
 /* Reskin: маска — что модели разрешено менять (merge-back лочит остальное) */
@@ -89,6 +106,18 @@ export type ReskinNodeData = {
   ir: IRObject | null;
   log: string[];
 };
+export type QualityPassNodeData = {
+  brief: string;
+  minScore: number;
+  repair: boolean;
+  ir: IRObject | null;
+  result: Record<string, unknown> | null;
+};
+export type PageBridgeNodeData = {
+  channel: string;
+  mode: "send" | "receive";
+  ir: IRObject | null;
+};
 
 export type AnyNodeData =
   | PromptNodeData
@@ -96,20 +125,26 @@ export type AnyNodeData =
   | GeneratorNodeData
   | EditNodeData
   | MixNodeData
-  | CloneNodeData
-  | ReproduceNodeData
-  | BlockParseNodeData
-  | ReskinNodeData;
+  | PageNodeData
+  | SourceImportNodeData
+  | StyleDnaNodeData
+  | DeriveNodeData
+  | ReskinNodeData
+  | QualityPassNodeData
+  | PageBridgeNodeData;
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
 export type ReferenceFlowNode = Node<ReferenceNodeData, "reference">;
 export type GeneratorFlowNode = Node<GeneratorNodeData, "generator">;
 export type EditFlowNode = Node<EditNodeData, "edit">;
 export type MixFlowNode = Node<MixNodeData, "mix">;
-export type CloneFlowNode = Node<CloneNodeData, "clone">;
-export type ReproduceFlowNode = Node<ReproduceNodeData, "reproduce">;
-export type BlockParseFlowNode = Node<BlockParseNodeData, "blockparse">;
+export type PageFlowNode = Node<PageNodeData, "page">;
+export type SourceImportFlowNode = Node<SourceImportNodeData, "sourceimport">;
+export type StyleDnaFlowNode = Node<StyleDnaNodeData, "styledna">;
+export type DeriveFlowNode = Node<DeriveNodeData, "derive">;
 export type ReskinFlowNode = Node<ReskinNodeData, "reskin">;
+export type QualityPassFlowNode = Node<QualityPassNodeData, "qualitypass">;
+export type PageBridgeFlowNode = Node<PageBridgeNodeData, "pagebridge">;
 
 export type FlowNode =
   | PromptFlowNode
@@ -117,10 +152,13 @@ export type FlowNode =
   | GeneratorFlowNode
   | EditFlowNode
   | MixFlowNode
-  | CloneFlowNode
-  | ReproduceFlowNode
-  | BlockParseFlowNode
-  | ReskinFlowNode;
+  | PageFlowNode
+  | SourceImportFlowNode
+  | StyleDnaFlowNode
+  | DeriveFlowNode
+  | ReskinFlowNode
+  | QualityPassFlowNode
+  | PageBridgeFlowNode;
 
 /* Ребро RF: id строится по формату из спеки — e<from.node>:<from.port>-<to.node>:<to.port> */
 export type FlowEdge = Edge;
@@ -145,4 +183,13 @@ export type LegacyGraphPayload = {
   edges: LegacyEdgePayload[];
   view: LegacyView;
   nextId?: number;
+};
+
+export type FlowPage = {
+  id: string;
+  name: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  view: LegacyView;
+  nextId: number;
 };

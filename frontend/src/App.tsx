@@ -19,15 +19,18 @@ import { useFlowStore } from "./flow/store";
 import { installGraphDev, setReactFlowInstance } from "./flow/graphdev";
 import { toast, ToastViewport } from "./flow/toast";
 import { reachable } from "./flow/dataflow";
-import { CloneNode } from "./nodes/CloneNode";
 import { EditNode } from "./nodes/EditNode";
 import { GeneratorNode } from "./nodes/GeneratorNode";
 import { MixNode } from "./nodes/MixNode";
+import { PageNode } from "./nodes/PageNode";
 import { PromptNode } from "./nodes/PromptNode";
 import { ReferenceNode } from "./nodes/ReferenceNode";
-import { ReproduceNode } from "./nodes/ReproduceNode";
-import { BlockParseNode } from "./nodes/BlockParseNode";
 import { ReskinNode } from "./nodes/ReskinNode";
+import { QualityPassNode } from "./nodes/QualityPassNode";
+import { SourceImportNode } from "./nodes/SourceImportNode";
+import { StyleDnaNode } from "./nodes/StyleDnaNode";
+import { DeriveNode } from "./nodes/DeriveNode";
+import { PageBridgeNode } from "./nodes/PageBridgeNode";
 
 /* Реестр кастомных нод — вне компонента, ключи = legacy type (конвертация данных не нужна) */
 const nodeTypes = {
@@ -36,10 +39,13 @@ const nodeTypes = {
   generator: GeneratorNode,
   edit: EditNode,
   mix: MixNode,
-  clone: CloneNode,
-  reproduce: ReproduceNode,
-  blockparse: BlockParseNode,
+  page: PageNode,
+  sourceimport: SourceImportNode,
+  styledna: StyleDnaNode,
+  derive: DeriveNode,
   reskin: ReskinNode,
+  qualitypass: QualityPassNode,
+  pagebridge: PageBridgeNode,
 } satisfies NodeTypes;
 
 type CtxMenuState = { x: number; y: number; flowX: number; flowY: number };
@@ -88,23 +94,74 @@ function FlowCanvas() {
   const edges = useFlowStore((s) => s.edges);
   const onNodesChange = useFlowStore((s) => s.onNodesChange);
   const onEdgesChange = useFlowStore((s) => s.onEdgesChange);
+  const activePageId = useFlowStore((s) => s.activePageId);
   const [menu, setMenu] = useState<CtxMenuState | null>(null);
+  const [pendingConnection, setPendingConnection] = useState<{ nodeId: string; handleId: string } | null>(null);
   // сейвовый вьюпорт читаем один раз; дальше RF управляет пан/зумом сам
   const [initialViewport] = useState(() => useFlowStore.getState().view);
   const rf = useReactFlow();
+  const snapNodeRef = useRef<string | null>(null);
+  const didConnectRef = useRef(false);
 
   useEffect(() => {
     setReactFlowInstance(rf);
     return () => setReactFlowInstance(null);
   }, [rf]);
 
+  useEffect(() => {
+    const view = useFlowStore.getState().view;
+    void rf.setViewport(view);
+  }, [activePageId, rf]);
+
+  const clearSnapTarget = useCallback(() => {
+    if (!snapNodeRef.current) return;
+    document
+      .querySelector(`.fnode[data-id="${snapNodeRef.current}"]`)
+      ?.classList.remove("snap-target");
+    snapNodeRef.current = null;
+  }, []);
+
   const onConnect = useCallback((c: Connection) => {
     if (!c.source || !c.target || !c.sourceHandle || !c.targetHandle) return;
+    didConnectRef.current = true;
     useFlowStore.getState().connect(
       { node: Number(c.source), port: c.sourceHandle },
       { node: Number(c.target), port: c.targetHandle },
     );
+    setPendingConnection(null);
+    clearSnapTarget();
+  }, [clearSnapTarget]);
+
+  const compatibleInput = useCallback((sourceId: string, sourceHandle: string, targetId: string) => {
+    const st = useFlowStore.getState();
+    if (sourceId === targetId) return null;
+    const src = st.nodes.find((n) => n.id === sourceId);
+    const dst = st.nodes.find((n) => n.id === targetId);
+    if (!src || !dst || reachable(Number(targetId), Number(sourceId), st.edges)) return null;
+    const outP = portsOfNode(src).out.find((p) => p.name === sourceHandle);
+    if (!outP) return null;
+    return portsOfNode(dst).in.find((p) => p.kind === outP.kind) || null;
   }, []);
+
+  const updateSnapTarget = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!pendingConnection) return;
+      const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+      const nodeEl = el?.closest(".fnode") as HTMLElement | null;
+      const targetId = nodeEl?.dataset.id || null;
+      const canSnap = targetId
+        ? compatibleInput(pendingConnection.nodeId, pendingConnection.handleId, targetId)
+        : null;
+      const nextId = canSnap ? targetId : null;
+      if (snapNodeRef.current === nextId) return;
+      clearSnapTarget();
+      if (nextId) {
+        nodeEl?.classList.add("snap-target");
+        snapNodeRef.current = nextId;
+      }
+    },
+    [clearSnapTarget, compatibleInput, pendingConnection],
+  );
 
   /* Правила 1–4 из legacy connect() (nodes.js:1049-1062); правило 5 (замена ребра)
    * живёт в store.connect, т.к. isValidConnection может только разрешить/запретить */
@@ -121,7 +178,11 @@ function FlowCanvas() {
   }, []);
 
   return (
-    <div className="h-full w-full">
+    <div
+      className="h-full w-full"
+      onMouseMove={(e) => updateSnapTarget(e.clientX, e.clientY)}
+      onMouseLeave={clearSnapTarget}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -130,6 +191,42 @@ function FlowCanvas() {
         onConnect={onConnect}
         isValidConnection={isValidConnection}
         nodeTypes={nodeTypes}
+        onConnectStart={(_, params) => {
+          if (params.handleType === "source" && params.nodeId && params.handleId) {
+            didConnectRef.current = false;
+            setPendingConnection({ nodeId: params.nodeId, handleId: params.handleId });
+          }
+        }}
+        onConnectEnd={(event) => {
+          if (!pendingConnection) return;
+          if (didConnectRef.current) {
+            didConnectRef.current = false;
+            setPendingConnection(null);
+            clearSnapTarget();
+            return;
+          }
+          const point =
+            "changedTouches" in event && event.changedTouches.length
+              ? event.changedTouches[0]
+              : event instanceof MouseEvent
+                ? event
+                : null;
+          if (point) {
+            const el = document.elementFromPoint(point.clientX, point.clientY) as HTMLElement | null;
+            const targetId = (el?.closest(".fnode") as HTMLElement | null)?.dataset.id;
+            const input = targetId
+              ? compatibleInput(pendingConnection.nodeId, pendingConnection.handleId, targetId)
+              : null;
+            if (targetId && input) {
+              useFlowStore.getState().connect(
+                { node: Number(pendingConnection.nodeId), port: pendingConnection.handleId },
+                { node: Number(targetId), port: input.name },
+              );
+            }
+          }
+          setPendingConnection(null);
+          clearSnapTarget();
+        }}
         defaultViewport={initialViewport}
         onMoveEnd={(_, vp) => useFlowStore.getState().setView(vp)}
         onPaneClick={() => setMenu(null)}
@@ -140,10 +237,9 @@ function FlowCanvas() {
         }}
         /* RF сам гасит клавиши в полях ввода (isInputDOMNode) — зеркало гарда nodes.js:1147-1151 */
         deleteKeyCode={["Delete", "Backspace"]}
-        /* Shift+drag внутри edit-ноды — это marquee GeoEdit, а не рамка выделения RF.
-         * RF по умолчанию слушает Shift для своей рамки и перехватывает жест даже
-         * внутри ноды (d3-zoom висит на обёртке), поэтому selectionKeyCode гасим —
-         * в legacy рамочного выделения нод графа не было. */
+        /* Shift+drag оставляем свободным для внутренних/оверлейных редакторских жестов.
+         * RF по умолчанию слушает Shift для своей рамки и может перехватывать drag
+         * поверх кастомных поверхностей, поэтому selectionKeyCode гасим. */
         selectionKeyCode={null}
         connectionLineStyle={{ stroke: "#9d9de8", strokeWidth: 2, strokeDasharray: "5 4" }}
       >
@@ -218,7 +314,7 @@ function TopBar() {
       <span
         id="cache-stat"
         className="max-w-64 truncate text-xs text-muted-foreground"
-        title="Повторные запросы reproduce/clone отданы из кэша — токены не тратились"
+        title="Повторные запросы Source Import отданы из кэша — токены не тратились"
       >
         {cacheStat}
       </span>
@@ -242,19 +338,91 @@ function TopBar() {
   );
 }
 
+function PagesPanel() {
+  const pages = useFlowStore((s) => s.pages);
+  const activePageId = useFlowStore((s) => s.activePageId);
+  const nodes = useFlowStore((s) => s.nodes);
+  const channels = useFlowStore((s) => s.channels);
+  const createPage = useFlowStore((s) => s.createPage);
+  const switchPage = useFlowStore((s) => s.switchPage);
+  const renamePage = useFlowStore((s) => s.renamePage);
+  const deletePage = useFlowStore((s) => s.deletePage);
+
+  const countNodes = (pageId: string) => {
+    if (pageId === activePageId) return nodes.length;
+    return pages.find((page) => page.id === pageId)?.nodes.length || 0;
+  };
+  const channelNames = Object.keys(channels).filter((key) => channels[key]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle>Страницы</CardTitle>
+          <Button variant="outline" size="sm" onClick={() => createPage()}>
+            + Page
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="page-list">
+          {pages.map((page) => (
+            <div key={page.id} className={page.id === activePageId ? "page-row active" : "page-row"}>
+              <button className="page-switch" onClick={() => switchPage(page.id)}>
+                <span>{page.name}</span>
+                <small>{countNodes(page.id)} nodes</small>
+              </button>
+              <input
+                className="page-name"
+                value={page.name}
+                onChange={(e) => renamePage(page.id, e.target.value)}
+                aria-label="Page name"
+              />
+              <button
+                className="page-delete"
+                disabled={pages.length <= 1}
+                onClick={() => {
+                  if (window.confirm(`Удалить страницу "${page.name}"?`)) deletePage(page.id);
+                }}
+                title="Удалить страницу"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="page-channels">
+          <div className="panel-label">Bridge channels</div>
+          {channelNames.length ? (
+            channelNames.map((name) => (
+              <div key={name} className="channel-row">
+                <span>{name}</span>
+                <small>IR</small>
+              </div>
+            ))
+          ) : (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Создайте Page Bridge: Send на одной странице и Receive на другой с тем же channel.
+            </p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function App() {
   useEffect(() => {
     installGraphDev();
+    void useFlowStore.getState().loadPersistedProject();
   }, []);
   return (
     <div className="flex h-full flex-col">
       <ReactFlowProvider>
         <TopBar />
         <div className="flex min-h-0 flex-1">
-          <main className="min-w-0 flex-1">
-            <FlowCanvas />
-          </main>
-          <aside className="w-72 shrink-0 overflow-y-auto border-l p-4">
+          <aside className="w-72 shrink-0 space-y-4 overflow-y-auto border-r p-4">
+            <PagesPanel />
             <Card>
               <CardHeader>
                 <CardTitle>Инспектор</CardTitle>
@@ -267,6 +435,9 @@ export default function App() {
               </CardContent>
             </Card>
           </aside>
+          <main className="min-w-0 flex-1">
+            <FlowCanvas />
+          </main>
         </div>
       </ReactFlowProvider>
       <ToastViewport />

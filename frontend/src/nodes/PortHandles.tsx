@@ -11,9 +11,10 @@ function kindClass(kind: string) {
 }
 
 /* Входные порты — строки слева (зеркало .port-row.in). У mix входы динамические
- * и рендерятся прямо в MixNode вместе со слайдерами весов. */
+ * и рендерятся прямо в MixNode вместе со слайдерами весов; у page —
+ * тоже динамические, с drag-порядком прямо в PageNode. */
 export function InPorts({ type, data }: { type: NodeType; data?: AnyNodeData }) {
-  if (type === "mix") return null;
+  if (type === "mix" || type === "page") return null;
   return (
     <>
       {portsOfNode({ type, data }).in.map((p) => (

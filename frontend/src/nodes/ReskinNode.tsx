@@ -16,7 +16,7 @@ const MASK_FIELDS: { key: keyof ReskinMask; label: string }[] = [
   { key: "images", label: "изображения" },
 ];
 
-/* «Reskin» — run-based (решение владельца 11, NODES-HOUDINI.md §7): вход ir
+/* «Reskin» — controlled AI-нода (см. docs/NODES.md): вход ir
  * (обязателен) и tokens (опционально) приходят проводами (pull-модель),
  * POST /api/reskin {ir, prompt, tokens?, mask}. Пустая маска запуск блокирует.
  * Результат: превью IR + свёрнутый журнал merge-back со счётчиком записей. */

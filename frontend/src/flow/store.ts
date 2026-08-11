@@ -5,27 +5,31 @@ import type { EdgeChange, NodeChange } from "@xyflow/react";
 import { api } from "./api";
 import type {
   BlockParseResp,
-  CloneResp,
   GenerateResp,
   MixResp,
   ReproduceResp,
   ReskinResp,
+  QualityPassResp,
 } from "./api";
 import { NODE_DEFS, defaultData, portsOfNode } from "./ports";
+import { composePage } from "./compose";
 import { deepClone, outValue, pullInput, reachable } from "./dataflow";
 import {
   DEFAULT_VIEW,
+  buildPagesProjectPayload,
   buildSavePayload,
+  loadPagesProjectFromDb,
+  loadPagesProjectFromStorage,
   loadFromStorage,
   makeRfEdge,
   payloadToRf,
+  scheduleProjectSave,
   scheduleSave,
 } from "./serialize";
 import { toast } from "./toast";
 import type {
   AnyNodeData,
-  BlockParseNodeData,
-  CloneNodeData,
+  FlowPage,
   FlowEdge,
   FlowNode,
   GeneratorNodeData,
@@ -34,9 +38,13 @@ import type {
   LegacyGraphPayload,
   LegacyView,
   MixNodeData,
+  PageNodeData,
   NodeType,
-  ReproduceNodeData,
   ReskinNodeData,
+  SourceImportNodeData,
+  DeriveNodeData,
+  QualityPassNodeData,
+  PageBridgeNodeData,
 } from "./types";
 
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
@@ -48,6 +56,9 @@ export interface FlowStoreState {
   edges: FlowEdge[];
   view: LegacyView;
   nextId: number;
+  pages: FlowPage[];
+  activePageId: string;
+  channels: Record<string, IRObject | null>;
   statuses: Record<number, NodeStatus>;
   /* run-based ноды в полёте запроса (спиннер на ноде); runtime-поле, в сейв не попадает */
   busy: Record<number, boolean>;
@@ -68,28 +79,149 @@ export interface FlowStoreState {
   runNode: (id: number) => void;
   runGenerator: (id: number) => Promise<void>;
   runMix: (id: number) => Promise<void>;
-  runClone: (id: number) => Promise<void>;
-  runReproduce: (id: number) => Promise<void>;
-  runBlockParse: (id: number) => Promise<void>;
+  runPage: (id: number) => void;
+  runSourceImport: (id: number) => Promise<void>;
+  runStyleDna: (id: number) => Promise<void>;
+  runDerive: (id: number) => Promise<void>;
   runReskin: (id: number) => Promise<void>;
+  runQualityPass: (id: number) => Promise<void>;
+  runPageBridge: (id: number) => void;
   sendToNode: (id: number, targetType: "edit" | "reference") => void;
   addMixInput: (id: number) => void;
   removeMixInput: (id: number, name: string) => void;
+  addPageInput: (id: number) => void;
+  removePageInput: (id: number, name: string) => void;
+  reorderPageInputs: (id: number, from: number, to: number) => void;
   onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
   loadGraph: (payload: LegacyGraphPayload) => void;
   clearGraph: () => void;
   setView: (v: LegacyView) => void;
+  createPage: (name?: string) => void;
+  switchPage: (id: string) => void;
+  renamePage: (id: string, name: string) => void;
+  deletePage: (id: string) => void;
+  loadPersistedProject: () => Promise<void>;
 }
 
 /* Стартовое состояние — из сейва designai-flow-v1 (битый сейв → пустой граф) */
-const saved = loadFromStorage();
-const initial = saved
-  ? payloadToRf(saved)
-  : { nodes: [] as FlowNode[], edges: [] as FlowEdge[], view: { ...DEFAULT_VIEW }, nextId: 1 };
+const emptyGraph = { nodes: [] as FlowNode[], edges: [] as FlowEdge[], view: { ...DEFAULT_VIEW }, nextId: 1 };
+const projectSaved = loadPagesProjectFromStorage();
+const saved = projectSaved ? null : loadFromStorage();
+const initialSingle = saved ? payloadToRf(saved) : emptyGraph;
+const initialPages: FlowPage[] = projectSaved?.pages || [
+  {
+    id: "page-1",
+    name: "Page 1",
+    ...initialSingle,
+  },
+];
+const initialActivePageId = projectSaved?.activePageId || initialPages[0].id;
+const initialActiveGraph = initialPages.find((page) => page.id === initialActivePageId) || initialPages[0];
+const initialChannels = projectSaved?.channels || {};
+
+function pageId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `page-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function currentPageSnapshot(st: {
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  view: LegacyView;
+  nextId: number;
+}): Pick<FlowPage, "nodes" | "edges" | "view" | "nextId"> {
+  return {
+    nodes: st.nodes,
+    edges: st.edges,
+    view: st.view,
+    nextId: st.nextId,
+  };
+}
+
+function withCurrentPageSaved(st: FlowStoreState): FlowPage[] {
+  const snapshot = currentPageSnapshot(st);
+  return st.pages.map((page) => (page.id === st.activePageId ? { ...page, ...snapshot } : page));
+}
+
+function hydratePageBridgeNodes(nodes: FlowNode[], channels: Record<string, IRObject | null>): FlowNode[] {
+  return nodes.map((node) => {
+    if (node.type !== "pagebridge" || node.data.mode !== "receive") return node;
+    const ir = channels[node.data.channel] || null;
+    return { ...node, data: { ...node.data, ir: ir ? deepClone(ir) : null } } as FlowNode;
+  });
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function uniqueValues(values: unknown[], limit = 12): string[] {
+  const out: string[] = [];
+  for (const v of values) {
+    const s = typeof v === "string" || typeof v === "number" ? String(v).trim() : "";
+    if (s && !out.includes(s)) out.push(s);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function extractStyleDna(irRaw: unknown, tokensRaw: unknown): { tokens: Record<string, unknown>; summary: string } {
+  const ir = asRecord(irRaw);
+  const explicit = asRecord(tokensRaw) || asRecord(ir?.tokens);
+  if (explicit) {
+    return { tokens: deepClone(explicit), summary: summarizeStyleDna(explicit) };
+  }
+  const colors: unknown[] = [];
+  const fonts: unknown[] = [];
+  const radii: unknown[] = [];
+  const spacing: unknown[] = [];
+  const walk = (node: unknown) => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    const r = asRecord(node);
+    if (!r) return;
+    const style = asRecord(r.style) || {};
+    colors.push(style.color, style.background, style.borderColor);
+    fonts.push(style.fontFamily);
+    radii.push(style.borderRadius, asRecord(r.props)?.radius);
+    const frame = asRecord(r.frame);
+    spacing.push(frame?.x, frame?.y, frame?.w, frame?.h);
+    walk(r.children);
+  };
+  walk(ir?.tree);
+  const tokens: Record<string, unknown> = {
+    color: { sampled: uniqueValues(colors) },
+    font: { sampled: uniqueValues(fonts, 6) },
+    radius: { sampled: uniqueValues(radii, 6) },
+    spacing: { measured: uniqueValues(spacing, 10) },
+  };
+  return { tokens, summary: summarizeStyleDna(tokens) };
+}
+
+function summarizeStyleDna(tokens: Record<string, unknown>): string {
+  const color = asRecord(tokens.color);
+  const font = asRecord(tokens.font);
+  const radius = asRecord(tokens.radius);
+  const spacing = asRecord(tokens.spacing);
+  const parts = [
+    color ? `colors=${JSON.stringify(color).slice(0, 180)}` : "",
+    font ? `fonts=${JSON.stringify(font).slice(0, 140)}` : "",
+    radius ? `radius=${JSON.stringify(radius).slice(0, 100)}` : "",
+    spacing ? `spacing=${JSON.stringify(spacing).slice(0, 120)}` : "",
+  ].filter(Boolean);
+  return parts.join("\n");
+}
+
+let localDirtySinceInit = false;
 
 export const useFlowStore = create<FlowStoreState>()((set, get) => ({
-  ...initial,
+  nodes: hydratePageBridgeNodes(initialActiveGraph.nodes, initialChannels),
+  edges: initialActiveGraph.edges,
+  view: initialActiveGraph.view,
+  nextId: initialActiveGraph.nextId,
+  pages: initialPages,
+  activePageId: initialActivePageId,
+  channels: initialChannels,
   statuses: {},
   busy: {},
 
@@ -118,7 +250,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     });
   },
 
-  /* Правила проводов — зеркало connect() (nodes.js:1049-1070), см. FLOW-MIGRATION.md §3.2 */
+  /* Правила проводов — зеркало connect() (nodes.js:1049-1070), см. docs/ARCHITECTURE.md */
   connect: (from, to) => {
     const state = get();
     const fromNode = Number(from.node);
@@ -218,6 +350,26 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
         }
       } else if (cons.type === "mix") {
         get().setStatus(consId, "Входы обновлены — нажмите «Смешать»");
+      } else if (cons.type === "styledna") {
+        const ir = pullInput(nodes, edges, cons, "ir");
+        const tokensRaw = pullInput(nodes, edges, cons, "tokens");
+        if (ir || tokensRaw) {
+          const dna = extractStyleDna(ir, tokensRaw);
+          get().setNodeData(consId, { tokens: dna.tokens, summary: dna.summary });
+          get().setStatus(consId, "Style DNA обновлён", "ok");
+          get().propagate(consId, visited);
+        }
+      } else if (cons.type === "derive") {
+        get().setStatus(consId, "Входы обновлены — нажмите Derive");
+      } else if (cons.type === "qualitypass") {
+        const ir = pullInput(nodes, edges, cons, "ir");
+        if (ir) {
+          get().setNodeData(consId, { ir: deepClone(ir), result: null });
+          get().setStatus(consId, "IR получен — запустите Quality Pass");
+        }
+      } else if (cons.type === "pagebridge") {
+        get().runPageBridge(consId);
+        get().propagate(consId, visited);
       }
     }
   },
@@ -228,15 +380,18 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     if (!n) return;
     if (n.type === "generator") void get().runGenerator(id);
     else if (n.type === "mix") void get().runMix(id);
-    else if (n.type === "clone") void get().runClone(id);
-    else if (n.type === "reproduce") void get().runReproduce(id);
-    else if (n.type === "blockparse") void get().runBlockParse(id);
+    else if (n.type === "page") get().runPage(id);
+    else if (n.type === "sourceimport") void get().runSourceImport(id);
+    else if (n.type === "styledna") void get().runStyleDna(id);
+    else if (n.type === "derive") void get().runDerive(id);
     else if (n.type === "reskin") void get().runReskin(id);
+    else if (n.type === "qualitypass") void get().runQualityPass(id);
+    else if (n.type === "pagebridge") get().runPageBridge(id);
   },
 
   /* Зеркало runGenerator (nodes.js:498-518): бриф тянем из входа prompt (pull-based)
-   * с fallback на ownPrompt, styleHint — из входа style; payload {brief, count,
-   * provider, styleHint} (FLOW-MIGRATION.md §4, №1). Результат — variants + active=0,
+   * с fallback на ownPrompt, styleHint — из входа style, tokens — из входа style DNA; payload {brief, count,
+   * provider, styleHint, tokens?}. Результат — variants + active=0,
    * propagate проталкивает clones[active] в edit/reference ниже по графу. */
   runGenerator: async (id) => {
     const st = get();
@@ -252,19 +407,26 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     }
     const styleRaw = pullInput(st.nodes, st.edges, n, "style");
     const styleHint = styleRaw ? String(styleRaw) : undefined;
-    get().setStatus(id, `Генерация (${data.provider}, ${data.count})… 20–120 сек`);
+    const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
+    const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as Record<string, unknown>) : undefined;
+    get().setStatus(id, `Генерация (OpenRouter, ${data.count})… 20–120 сек`);
     get().setBusy(id, true);
     try {
       const res = await api<GenerateResp>("/api/generate", {
         brief,
         count: data.count,
-        provider: data.provider,
+        provider: "openrouter",
         styleHint,
+        tokens,
+        preset: data.preset || undefined,
       });
       const variants = Array.isArray(res.variants) ? res.variants : [];
       get().setNodeData(id, { variants, active: 0 });
       const errNote = res.errors && res.errors.length ? `, ошибок: ${res.errors.length}` : "";
-      get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}`, "ok");
+      const fixedCount = (res.qa || []).reduce((s, q) => s + (q.fixed || 0), 0);
+      const qaNote = fixedCount ? `, автофиксов QA: ${fixedCount}` : "";
+      const designNote = res.design?.label ? `, тип: ${res.design.label}` : "";
+      get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote}`, "ok");
       get().propagate(id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -276,7 +438,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
   },
 
   /* Зеркало runMix (nodes.js:815-836): IR тянем из подключённых входов (pull),
-   * веса нормируются 0..1; payload {irs, weights} (FLOW-MIGRATION.md §4, №4). */
+   * веса нормируются 0..1; payload {irs, weights}. */
   runMix: async (id) => {
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
@@ -313,138 +475,151 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     }
   },
 
-  /* Зеркало runClone (nodes.js:838-857): payload {url, component, provider}
-   * (FLOW-MIGRATION.md §4, №5); res.cached — в статус. */
-  runClone: async (id) => {
+
+  /* Page: сборка страницы из подключённых блоков — детерминированно, без LLM.
+   * Порядок inputs = порядок секций; tokens — style DNA с провода > первый блок. */
+  runPage: (id) => {
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
-    if (!n || n.type !== "clone" || st.busy[id]) return;
-    const data = n.data as CloneNodeData;
-    const url = (data.url || "").trim();
-    const component = (data.component || "").trim();
-    if (!url) {
-      get().setStatus(id, "Введите URL сайта", "err");
+    if (!n || n.type !== "page") return;
+    const data = n.data as PageNodeData;
+    const blocks: { name: string; ir: IRObject }[] = [];
+    for (const name of data.inputs) {
+      const ir = pullInput(st.nodes, st.edges, n, name);
+      if (ir && typeof ir === "object") blocks.push({ name, ir: ir as IRObject });
+    }
+    if (!blocks.length) {
+      get().setStatus(id, "Подключите хотя бы один IR-вход", "err");
       return;
     }
-    if (!component) {
-      get().setStatus(id, "Опишите, какой компонент клонировать", "err");
-      return;
-    }
-    get().setStatus(id, `Загрузка ${url.slice(0, 30)}…`);
+    const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
+    const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as IRObject) : null;
+    const ir = composePage(blocks, tokens, data.activeViewport || "desktop");
+    get().setNodeData(id, { ir });
+    get().setStatus(id, `Собрана: блоков ${blocks.length}`, "ok");
+    get().propagate(id);
+  },
+  runSourceImport: async (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "sourceimport" || st.busy[id]) return;
+    const data = n.data as SourceImportNodeData;
     get().setBusy(id, true);
     try {
-      const res = await api<CloneResp>("/api/clone", {
-        url,
-        component,
-        provider: data.provider || "qwen",
+      if (data.mode === "screenshot") {
+        if (!data.image) {
+          get().setStatus(id, "Загрузите скриншот элемента", "err");
+          return;
+        }
+        get().setStatus(id, "Скриншот → pixel capture через OpenRouter…");
+        const res = await api<ReproduceResp>("/api/reproduce", {
+          image: data.image,
+          url: "",
+          provider: "openrouter",
+        });
+        const ir = res.ir || null;
+        const dna = extractStyleDna(ir, null);
+        const blocks = ir
+          ? [{ name: "capture", selector: "screenshot", ir, source: "vision" as const, lit: true }]
+          : [];
+        get().setNodeData(id, { blocks, tokens: dna.tokens });
+        get().setStatus(id, ir ? "Готово: capture + Style DNA" : "Не удалось получить IR из скриншота", ir ? "ok" : "err");
+      } else {
+        const url = (data.url || "").trim();
+        if (!url) {
+          get().setStatus(id, "Введите URL сайта", "err");
+          return;
+        }
+        if (!data.mine) {
+          get().setStatus(id, "Отметьте «это мой сайт/есть право»", "err");
+          return;
+        }
+        get().setStatus(id, `Импортирую ${url.slice(0, 30)}…`);
+        const res = await api<BlockParseResp>("/api/block-parse", {
+          url,
+          viewports: [
+            { name: "desktop", width: 1440, height: 900 },
+            { name: "tablet", width: 768, height: 1024 },
+            { name: "mobile", width: 390, height: 844 },
+          ],
+        });
+        const litBefore = new Set(data.blocks.filter((b) => b.lit).map((b) => b.name));
+        const blocks = (res.blocks || []).map((b) => ({ ...b, lit: litBefore.has(b.name) }));
+        get().setNodeData(id, { blocks, tokens: res.tokens || null });
+        const sid = String(id);
+        const alive = new Set<string>(["tokens", ...blocks.map((b) => b.name)]);
+        set((state) => ({
+          edges: state.edges.filter((e) => e.source !== sid || alive.has(e.sourceHandle ?? "")),
+        }));
+        const errCount = blocks.filter((b) => b.error).length;
+        get().setStatus(id, `${blocks.length} блоков (${errCount} ошибок) · Source Import`, errCount ? "err" : "ok");
+      }
+      get().propagate(id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      get().setStatus(id, "Ошибка: " + msg, "err");
+      toast("Source Import: " + msg, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  runStyleDna: async (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "styledna") return;
+    const ir = pullInput(st.nodes, st.edges, n, "ir");
+    const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
+    if (!ir && !tokensRaw) {
+      get().setStatus(id, "Подключите IR или tokens", "err");
+      return;
+    }
+    const dna = extractStyleDna(ir, tokensRaw);
+    get().setNodeData(id, { tokens: dna.tokens, summary: dna.summary });
+    get().setStatus(id, "Style DNA собран", "ok");
+    get().propagate(id);
+  },
+
+  runDerive: async (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "derive" || st.busy[id]) return;
+    const data = n.data as DeriveNodeData;
+    const prompt = String(pullInput(st.nodes, st.edges, n, "prompt") || data.prompt || "").trim();
+    const reference = pullInput(st.nodes, st.edges, n, "reference");
+    const tokens = pullInput(st.nodes, st.edges, n, "tokens");
+    if (!prompt) {
+      get().setStatus(id, "Опишите, какой компонент получить", "err");
+      return;
+    }
+    const styleHint = [
+      tokens ? "Style DNA:\n" + JSON.stringify(tokens) : "",
+      reference ? "Reference IR:\n" + JSON.stringify(reference).slice(0, 9000) : "",
+    ].filter(Boolean).join("\n\n");
+    get().setStatus(id, `Derive: ${data.count} вариант(а) через OpenRouter…`);
+    get().setBusy(id, true);
+    try {
+      const res = await api<GenerateResp>("/api/generate", {
+        brief: prompt,
+        count: data.count,
+        provider: "openrouter",
+        styleHint: styleHint || undefined,
+        tokens: tokens && typeof tokens === "object" ? tokens : undefined,
       });
-      get().setNodeData(id, { ir: res.ir || null });
-      get().setStatus(
-        id,
-        res.cached ? "Клон готов (из кэша — токены не тратились)" : "Клон готов",
-        "ok",
-      );
+      const variants = Array.isArray(res.variants) ? res.variants : [];
+      get().setNodeData(id, { variants, active: 0 });
+      get().setStatus(id, `Готово: вариантов ${variants.length}`, "ok");
       get().propagate(id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       get().setStatus(id, "Ошибка: " + msg, "err");
-      toast("Клон: " + msg, "error");
+      toast("Derive: " + msg, "error");
     } finally {
       get().setBusy(id, false);
     }
   },
 
-  /* Зеркало runReproduce (nodes.js:861-886): payload {image|«», url, provider}
-   * (FLOW-MIGRATION.md §4, №6); результат целиком в data.result, на выходе ir. */
-  runReproduce: async (id) => {
-    const st = get();
-    const n = st.nodes.find((x) => Number(x.id) === id);
-    if (!n || n.type !== "reproduce" || st.busy[id]) return;
-    const data = n.data as ReproduceNodeData;
-    const url = (data.url || "").trim();
-    if (!data.image && !url) {
-      get().setStatus(id, "Загрузите скриншот или укажите URL сайта", "err");
-      return;
-    }
-    get().setStatus(
-      id,
-      url
-        ? `Reproduce ${url.slice(0, 30)}… (кэш проверяется первым)`
-        : `Reproduce (${data.provider}): VLM → пиксели → HTML → diff… 30–120 сек`,
-    );
-    get().setBusy(id, true);
-    try {
-      const res = await api<ReproduceResp>("/api/reproduce", {
-        image: data.image || "",
-        url,
-        provider: data.provider || "qwen",
-      });
-      get().setNodeData(id, { result: res });
-      const diffPct = res.diff && res.diff.overall_pct != null ? res.diff.overall_pct : "?";
-      const colorsCount = res.colors && res.colors.colors ? Object.keys(res.colors.colors).length : 0;
-      const cached = res.cached ? " · из кэша, токены не тратились" : "";
-      get().setStatus(
-        id,
-        `Готово: diff ${diffPct}%, цветов ${colorsCount}, иконок ${res.icons_count ?? 0}${cached}`,
-        "ok",
-      );
-      get().propagate(id);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      get().setStatus(id, "Ошибка: " + msg, "err");
-      toast("Reproduce: " + msg, "error");
-    } finally {
-      get().setBusy(id, false);
-    }
-  },
-
-  /* BlockParse (решение владельца 11, NODES-HOUDINI.md §7): payload {url} —
-   * в v1 парсим все блоки (поле blocks не используем, повторы экономит кэш).
-   * Ответ: список блоков (ошибка блока — в его записи) + design-токены.
-   * lit сохраняется по имени блока при повторном разборе; провода с портов,
-   * которых больше нет, снимаются (аналог removeMixInput). */
-  runBlockParse: async (id) => {
-    const st = get();
-    const n = st.nodes.find((x) => Number(x.id) === id);
-    if (!n || n.type !== "blockparse" || st.busy[id]) return;
-    const data = n.data as BlockParseNodeData;
-    const url = (data.url || "").trim();
-    if (!url) {
-      get().setStatus(id, "Введите URL сайта", "err");
-      return;
-    }
-    if (!data.mine) {
-      get().setStatus(id, "Отметьте «Это мой сайт» — разбирать можно только свои страницы", "err");
-      return;
-    }
-    get().setStatus(id, `Разбираю ${url.slice(0, 30)}…`);
-    get().setBusy(id, true);
-    try {
-      const res = await api<BlockParseResp>("/api/block-parse", { url });
-      const litBefore = new Set(data.blocks.filter((b) => b.lit).map((b) => b.name));
-      const blocks = (res.blocks || []).map((b) => ({ ...b, lit: litBefore.has(b.name) }));
-      get().setNodeData(id, { blocks, tokens: res.tokens || null });
-      const sid = String(id);
-      const alive = new Set<string>(["tokens", ...blocks.map((b) => b.name)]);
-      set((state) => ({
-        edges: state.edges.filter(
-          (e) => e.source !== sid || alive.has(e.sourceHandle ?? ""),
-        ),
-      }));
-      const errCount = blocks.filter((b) => b.error).length;
-      const cachedNote = res.cached ? " · из кэша" : "";
-      get().setStatus(id, `${blocks.length} блоков (${errCount} ошибок)${cachedNote}`, "ok");
-      get().propagate(id);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      get().setStatus(id, "Ошибка: " + msg, "err");
-      toast("BlockParse: " + msg, "error");
-    } finally {
-      get().setBusy(id, false);
-    }
-  },
-
-  /* Reskin (решение владельца 11, NODES-HOUDINI.md §7): входы ir/tokens тянутся
+  /* Reskin: входы ir/tokens тянутся
    * проводами (pull-модель); payload {ir, prompt, tokens?, mask}; пустая маска
    * не запускается (бэкенд вернул бы IR без изменений). Ответ: {ir, log} —
    * log (журнал merge-back) показывается свёрнутым блоком в ноде. */
@@ -459,7 +634,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     }
     const ir = pullInput(st.nodes, st.edges, n, "ir") as IRObject | null;
     if (!ir) {
-      get().setStatus(id, "Подключите IR ко входу (например, из BlockParse)", "err");
+      get().setStatus(id, "Подключите IR ко входу (например, из Source Import)", "err");
       return;
     }
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
@@ -486,6 +661,79 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     }
   },
 
+  /* Quality Pass: независимый judge оценивает IR, затем при необходимости
+   * запускает адресный repair и повторную оценку. Все LLM-вызовы внутри
+   * endpoint идут только через OpenRouter; UI получает объяснимый scorecard. */
+  runQualityPass: async (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "qualitypass" || st.busy[id]) return;
+    const data = n.data as QualityPassNodeData;
+    const ir = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
+    if (!ir) {
+      get().setStatus(id, "Подключите IR ко входу", "err");
+      return;
+    }
+    get().setStatus(id, "Quality Pass: judge + проверка правил… 30–120 сек");
+    get().setBusy(id, true);
+    try {
+      const res = await api<QualityPassResp>("/api/quality-pass", {
+        ir,
+        brief: data.brief,
+        min_score: data.minScore,
+        repair: data.repair,
+        rejudge: data.repair,
+      });
+      const score = Number(res.scorecard?.score ?? 0);
+      const passed = Boolean(res.passed);
+      const repairNote = res.repair?.applied ? " · repair применён" : "";
+      get().setNodeData(id, { ir: res.ir || ir, result: res });
+      get().setStatus(id, `${passed ? "Готово" : "Нужна проверка"}: ${score}/100${repairNote}`, passed ? "ok" : "err");
+      get().propagate(id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      get().setStatus(id, "Ошибка: " + msg, "err");
+      toast("Quality Pass: " + msg, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  runPageBridge: (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "pagebridge") return;
+    const data = n.data as PageBridgeNodeData;
+    const channel = (data.channel || "shared-component").trim() || "shared-component";
+    if (data.mode === "send") {
+      const ir = pullInput(st.nodes, st.edges, n, "ir") as IRObject | null;
+      if (!ir) {
+        get().setStatus(id, "Подключите компонент к входу", "err");
+        return;
+      }
+      const cloned = deepClone(ir);
+      set((state) => ({
+        channels: { ...state.channels, [channel]: cloned },
+        nodes: state.nodes.map((node) =>
+          node.id === String(id)
+            ? ({ ...node, data: { ...node.data, channel, ir: cloned } } as FlowNode)
+            : node,
+        ),
+      }));
+      get().setStatus(id, `Передано в канал: ${channel}`, "ok");
+      return;
+    }
+    const ir = st.channels[channel] || null;
+    if (!ir) {
+      get().setNodeData(id, { channel, ir: null });
+      get().setStatus(id, `Канал пустой: ${channel}`, "err");
+      return;
+    }
+    get().setNodeData(id, { channel, ir: deepClone(ir) });
+    get().setStatus(id, `Получено из канала: ${channel}`, "ok");
+    get().propagate(id);
+  },
+
   /* Зеркало sendToNode (nodes.js:522-545): создать ноду target справа от источника,
    * положить клон IR и соединить проводом ir->ir. */
   sendToNode: (id, targetType) => {
@@ -494,7 +742,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     if (!n) return;
     const ir = outValue(n) as IRObject | null;
     if (!ir) {
-      toast("Сначала запустите ноду (▶ / ◎ Reproduce)", "error");
+      toast("Сначала запустите ноду и получите IR на выходе", "error");
       return;
     }
     const def = NODE_DEFS[n.type as NodeType];
@@ -551,6 +799,58 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     });
   },
 
+
+  /* «+ вход» у Page: до 8 блоков, имена a..h (паттерн addMixInput) */
+  addPageInput: (id) => {
+    const sid = String(id);
+    const n = get().nodes.find((x) => x.id === sid);
+    if (!n || n.type !== "page") return;
+    const inputs = (n.data as PageNodeData).inputs;
+    if (inputs.length >= 8) {
+      toast("Максимум 8 блоков", "error");
+      return;
+    }
+    const name = ["a", "b", "c", "d", "e", "f", "g", "h"].find((c) => !inputs.includes(c));
+    if (!name) return;
+    set((state) => ({
+      nodes: state.nodes.map((x) =>
+        x.id === sid && x.type === "page"
+          ? ({ ...x, data: { ...x.data, inputs: [...x.data.inputs, name] } } as FlowNode)
+          : x,
+      ),
+    }));
+  },
+
+  /* «✕» у входа Page: снять вход и его провода (паттерн removeMixInput) */
+  removePageInput: (id, name) => {
+    const sid = String(id);
+    set((state) => {
+      const nodes = state.nodes.map((x) => {
+        if (x.id !== sid || x.type !== "page") return x;
+        return {
+          ...x,
+          data: { ...x.data, inputs: x.data.inputs.filter((i) => i !== name) },
+        } as FlowNode;
+      });
+      const edges = state.edges.filter((e) => !(e.target === sid && e.targetHandle === name));
+      return { nodes, edges };
+    });
+  },
+
+  /* drag-порядок блоков Page = порядок секций на странице */
+  reorderPageInputs: (id, from, to) => {
+    const sid = String(id);
+    set((state) => ({
+      nodes: state.nodes.map((x) => {
+        if (x.id !== sid || x.type !== "page") return x;
+        const inputs = [...x.data.inputs];
+        if (from < 0 || from >= inputs.length || to < 0 || to >= inputs.length || from === to) return x;
+        const [moved] = inputs.splice(from, 1);
+        inputs.splice(to, 0, moved);
+        return { ...x, data: { ...x.data, inputs } } as FlowNode;
+      }),
+    }));
+  },
   onNodesChange: (changes) => {
     // удаление ноды ведём сами, чтобы гарантированно снять рёбра (аналог removeNode)
     for (const ch of changes) {
@@ -577,7 +877,14 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
 
   /* Зеркало load() (nodes.js:1202-1219): полная замена графа из payload */
   loadGraph: (payload) => {
-    set({ ...payloadToRf(payload), statuses: {} });
+    const graph = payloadToRf(payload);
+    set((state) => ({
+      ...graph,
+      pages: state.pages.map((page) =>
+        page.id === state.activePageId ? { ...page, ...graph } : page,
+      ),
+      statuses: {},
+    }));
   },
 
   clearGraph: () => {
@@ -587,17 +894,116 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
   setView: (v) => {
     set({ view: v });
   },
+
+  createPage: (name) => {
+    const st = get();
+    const id = pageId();
+    const nextIndex = st.pages.length + 1;
+    const page: FlowPage = {
+      id,
+      name: (name || `Page ${nextIndex}`).trim() || `Page ${nextIndex}`,
+      nodes: [],
+      edges: [],
+      view: { ...DEFAULT_VIEW },
+      nextId: 1,
+    };
+    set((state) => ({
+      pages: [...withCurrentPageSaved(state), page],
+      activePageId: id,
+      nodes: page.nodes,
+      edges: page.edges,
+      view: page.view,
+      nextId: page.nextId,
+      statuses: {},
+      busy: {},
+    }));
+  },
+
+  switchPage: (id) => {
+    const st = get();
+    if (id === st.activePageId) return;
+    const pages = withCurrentPageSaved(st);
+    const page = pages.find((p) => p.id === id);
+    if (!page) return;
+    set({
+      pages,
+      activePageId: id,
+      nodes: hydratePageBridgeNodes(page.nodes, st.channels),
+      edges: page.edges,
+      view: page.view,
+      nextId: page.nextId,
+      statuses: {},
+      busy: {},
+    });
+  },
+
+  renamePage: (id, name) => {
+    const nextName = name.trim();
+    if (!nextName) return;
+    set((state) => ({
+      pages: withCurrentPageSaved(state).map((page) =>
+        page.id === id ? { ...page, name: nextName } : page,
+      ),
+    }));
+  },
+
+  deletePage: (id) => {
+    const st = get();
+    if (st.pages.length <= 1) return;
+    const pages = withCurrentPageSaved(st).filter((page) => page.id !== id);
+    const next = pages.find((page) => page.id === st.activePageId) || pages[0];
+    set({
+      pages,
+      activePageId: next.id,
+      nodes: hydratePageBridgeNodes(next.nodes, st.channels),
+      edges: next.edges,
+      view: next.view,
+      nextId: next.nextId,
+      statuses: {},
+      busy: {},
+    });
+  },
+
+  loadPersistedProject: async () => {
+    const project = await loadPagesProjectFromDb();
+    if (!project) return;
+    // Гонка гидратации: пока шёл fetch, локальный граф мог измениться (пользователь
+    // или GraphDev.add в тестах уже добавил ноды) — применять загруженный проект
+    // поверх нельзя, он затёр бы локальные правки пустым/устаревшим состоянием.
+    if (localDirtySinceInit) return;
+    const current = get();
+    const dbNodeCount = project.pages.reduce((sum, page) => sum + page.nodes.length, 0);
+    if (dbNodeCount === 0 && (current.nodes.length > 0 || current.edges.length > 0)) return;
+    const activePage = project.pages.find((page) => page.id === project.activePageId) || project.pages[0];
+    if (!activePage) return;
+    set({
+      pages: project.pages,
+      activePageId: activePage.id,
+      nodes: hydratePageBridgeNodes(activePage.nodes, project.channels),
+      edges: activePage.edges,
+      view: activePage.view,
+      nextId: activePage.nextId,
+      channels: project.channels,
+      statuses: {},
+      busy: {},
+    });
+  },
 }));
 
 /* Автосейв: одна подписка на изменения nodes/edges/view/nextId с дебаунсом 300 мс
- * (зеркало save() nodes.js:1175-1176, FLOW-MIGRATION.md §5.3) */
+ * (зеркало save() nodes.js:1175-1176) */
 useFlowStore.subscribe((state, prev) => {
   if (
     state.nodes === prev.nodes &&
     state.edges === prev.edges &&
     state.view === prev.view &&
-    state.nextId === prev.nextId
+    state.nextId === prev.nextId &&
+    state.pages === prev.pages &&
+    state.activePageId === prev.activePageId &&
+    state.channels === prev.channels
   )
     return;
+  localDirtySinceInit = true;
   scheduleSave(() => buildSavePayload(useFlowStore.getState()));
+  scheduleProjectSave(() => buildPagesProjectPayload(useFlowStore.getState()));
 });
