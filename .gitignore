@@ -11,3 +11,5 @@ start.bat
 .worker-brief-*.txt
 app/static/flow/
 frontend/node_modules/
+artifacts/
+design-qa.md
