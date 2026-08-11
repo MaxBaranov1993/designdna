@@ -121,6 +121,40 @@ def main() -> None:
         assert "data-style-range=\"opacity\"" in insp_html, "missing opacity slider"
         assert "transparent" in insp_html.lower(), "missing transparent placeholder/label"
         print("OK inspector has transparent buttons and opacity slider")
+
+        # Проверяем, что button без children и generic CTA имеют data-ir-path на кликабельном элементе
+        sel_ir = {
+            "version": "1.0",
+            "frame": {"width": 960, "height": 200, "layout": "free", "clip": True},
+            "tokens": IR["tokens"],
+            "tree": [
+                {
+                    "id": "navbar",
+                    "type": "navbar",
+                    "variant": "default",
+                    "frame": {"width": 960, "height": 80},
+                    "props": {"cta": {"text": "Разместить", "variant": "primary"}},
+                    "children": [
+                        {"type": "button", "text": "Войти", "variant": "secondary",
+                         "frame": {"absolute": True, "x": 700, "y": 20, "width": 100, "height": 40}}
+                    ]
+                }
+            ]
+        }
+        page.evaluate("""(ir) => {
+            const div = document.createElement('div');
+            div.style.width = '960px';
+            document.body.appendChild(div);
+            window.IRRenderer.renderIR(div, ir, {fit: false});
+        }""", sel_ir)
+        page.wait_for_timeout(300)
+        cta_a = page.locator("a.btn:has-text('Разместить')")
+        login_a = page.locator("a.btn:has-text('Войти')")
+        assert cta_a.count() == 1, "CTA not rendered"
+        assert login_a.count() == 1, "login button not rendered"
+        assert cta_a.get_attribute("data-ir-path") == "props.cta", f"CTA path mismatch: {cta_a.get_attribute('data-ir-path')}"
+        assert login_a.get_attribute("data-ir-path") == "children.0", f"login button path mismatch: {login_a.get_attribute('data-ir-path')}"
+        print("OK buttons are selectable (have data-ir-path)")
         browser.close()
 
 

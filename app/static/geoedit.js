@@ -102,6 +102,17 @@
     if (target != null) target[last] = value;
   }
 
+  /** Для props-текстовых объектов (cta, heading и т.п.) редактируем поле .text,
+   *  а не заменяем весь объект строкой. */
+  function editableTextPath(path) {
+    if (!path || !path.startsWith("props.")) return path;
+    const base = path.replace(/\.text$/, "");
+    const textProps = ["cta", "ctaPrimary", "ctaSecondary", "badge", "heading", "subheading", "text", "logoText"];
+    const key = base.slice("props.".length);
+    if (textProps.includes(key)) return base + ".text";
+    return path;
+  }
+
   /** Guard для координат из внешнего IR: строки/NaN не должны попадать в арифметику. */
   function finiteNum(v) {
     const n = typeof v === "number" ? v : parseFloat(v);
@@ -2064,7 +2075,7 @@
             else if (n.title !== undefined) n.title = newText;
           }
         } else if (path.startsWith("props.")) {
-          setByPath(sec, path, newText);
+          setByPath(sec, editableTextPath(path), newText);
         }
         onMutated();
       };

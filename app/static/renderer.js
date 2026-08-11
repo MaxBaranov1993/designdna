@@ -332,7 +332,8 @@
           return `<button type="button" class="source-control"${path}${css ? ` style="${css}"` : ""}>${kids}</button>`;
         }
         const textCss = visualTextCss(el.style);
-        return `<a class="btn btn-${el.variant || "primary"}"${styleAttr(el.style)}><span${textCss ? ` style="${textCss}"` : ""}>${esc(el.text || "")}</span></a>`;
+        const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
+        return `<a class="btn btn-${el.variant || "primary"}"${path}${styleAttr(el.style)}><span${textCss ? ` style="${textCss}"` : ""}>${esc(el.text || "")}</span></a>`;
       }
       case "badge":
         return `<span class="badge${el.tone && el.tone !== "default" ? " tone-" + el.tone : ""}">${esc(el.text || el.label || "")}</span>`;
@@ -413,8 +414,8 @@
 
   function btnHtml(btn, defVariant, path) {
     if (!btn) return "";
-    const p = path ? ` data-ir-path="${esc(path)}"` : "";
-    return `<a class="btn btn-${btn.variant || defVariant}"><span${p}>${esc(btn.text || "")}</span></a>`;
+    const btnPath = path ? ` data-ir-path="${esc(path.replace(/\.text$/, ""))}"` : "";
+    return `<a class="btn btn-${btn.variant || defVariant}"${btnPath}><span>${esc(btn.text || "")}</span></a>`;
   }
 
   function renderSection(sec, uid, parentFree) {

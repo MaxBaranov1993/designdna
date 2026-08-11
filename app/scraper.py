@@ -1237,6 +1237,13 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                           }});
                         }
                       }
+                      if(type==='button' && node.text && !rawChildren.length){
+                        const linePx=Math.max(1,Math.round(num(cs.lineHeight)||num(cs.fontSize)*1.2));
+                        rawChildren.push({type:'text',text:node.text,sourceKey:key+'::text',style:cleanTextStyle(styleOf(cs,warnings)),frame:{
+                          width:Math.max(1,Math.round(r.width)),height:Math.min(Math.max(1,Math.round(r.height)),linePx),
+                          absolute:true,x:0,y:Math.max(0,Math.round((r.height-linePx)/2))
+                        }});
+                      }
                       if(type==='image'){
                         if(tag==='IMG') node.src=el.currentSrc||el.src||'';
                         else if(tag==='SVG') node.src=svgDataUri(el);
