@@ -1083,6 +1083,12 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                     };
                     return Object.fromEntries(Object.entries(style).filter(([,v])=>v!==null && v!==''));
                   };
+                  const cleanTextStyle = (s) => {
+                    const out = Object.assign({}, s);
+                    delete out.background; delete out.borderColor; delete out.borderWidth;
+                    delete out.borderRadius; delete out.boxShadow;
+                    return out;
+                  };
                   const pathOf = (el,root) => {
                     if(el===root) return 'root'; const parts=[]; let cur=el;
                     while(cur && cur!==root){ const p=cur.parentElement; if(!p) break;
@@ -1167,7 +1173,7 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                           const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect(); if(tr.width<1||tr.height<1) return;
                           const textFrame={width:Math.round(tr.width),height:Math.round(tr.height)};
                           if(!childParentAuto){ textFrame.absolute=true; textFrame.x=Math.round(tr.left-r.left); textFrame.y=Math.round(tr.top-r.top); }
-                          rawChildren.push({type:'text',text:text.slice(0,1000),sourceKey:key+'::text'+idx,style:styleOf(cs,warnings),frame:textFrame}); layerCount++; candidateCount++;
+                          rawChildren.push({type:'text',text:text.slice(0,1000),sourceKey:key+'::text'+idx,style:cleanTextStyle(styleOf(cs,warnings)),frame:textFrame}); layerCount++; candidateCount++;
                         } else if(child.nodeType===Node.ELEMENT_NODE){
                           const compiled=compile(child,r,childParentAuto,rootEl); if(compiled) rawChildren.push(compiled);
                         }
@@ -1206,7 +1212,7 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                           if(ctx) ctx.font=String(cs.fontWeight)+' '+String(cs.fontSize)+' '+String(cs.fontFamily);
                           const linePx=Math.max(1,Math.round(num(cs.lineHeight)||num(cs.fontSize)*1.2));
                           const implicit={type:'text',text:missing.slice(0,120),sourceKey:key+(atStart?'::implicit-prefix':'::implicit-suffix'),
-                            style:styleOf(cs,warnings),frame:{width:Math.max(1,Math.ceil(ctx ? ctx.measureText(missing).width : num(cs.fontSize))),height:linePx}};
+                            style:cleanTextStyle(styleOf(cs,warnings)),frame:{width:Math.max(1,Math.ceil(ctx ? ctx.measureText(missing).width : num(cs.fontSize))),height:linePx}};
                           if(atStart) rawChildren.unshift(implicit); else rawChildren.push(implicit);
                           layerCount++; candidateCount++;
                         }
@@ -1221,7 +1227,7 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                         const value=node.placeholder;
                         if(value && !rawChildren.length){
                           const pad=paddingOf(cs), linePx=Math.max(1,Math.round(num(cs.lineHeight)||num(cs.fontSize)*1.2));
-                          const textStyle=Object.assign({},style,{whiteSpace:'nowrap',overflow:'hidden'});
+                          const textStyle=cleanTextStyle(Object.assign({},style,{whiteSpace:'nowrap',overflow:'hidden'}));
                           rawChildren.push({type:'text',text:value,sourceKey:key+'::value',style:textStyle,frame:{
                             width:Math.max(1,Math.round(r.width)-pad[1]-pad[3]),height:Math.min(Math.max(1,Math.round(r.height)),linePx),
                             absolute:true,x:pad[3],y:Math.max(0,Math.round((r.height-linePx)/2))
@@ -1267,7 +1273,7 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                           const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect();
                           const textFrame={width:Math.round(tr.width),height:Math.round(tr.height)};
                           if(!rootAuto){ textFrame.absolute=true; textFrame.x=Math.round(tr.left-rr.left); textFrame.y=Math.round(tr.top-rr.top); }
-                          rootChildren.push({type:'text',text:text.slice(0,1000),sourceKey:'root::text'+idx,style:styleOf(rcs,warnings),frame:textFrame});
+                          rootChildren.push({type:'text',text:text.slice(0,1000),sourceKey:'root::text'+idx,style:cleanTextStyle(styleOf(rcs,warnings)),frame:textFrame});
                           layerCount++; candidateCount++;
                         }
                       }
