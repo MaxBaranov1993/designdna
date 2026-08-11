@@ -157,6 +157,15 @@ class ConstraintsCheckReq(BaseModel):
     constraints: list  # [{path, lock?, min?, max?, enum?, max_len?}]
 
 
+class StyleDnaReq(BaseModel):
+    ir: dict
+
+
+class StyleDnaApplyReq(BaseModel):
+    ir: dict
+    tokens: dict
+
+
 class ScrapeReq(BaseModel):
     url: str = ""
     use_playwright: bool = True
@@ -804,6 +813,30 @@ def app_config():
         "schemaVersion": ir.CURRENT_SCHEMA_VERSION,
         "flags": FEATURE_FLAGS.all(),
     }
+
+
+@app.post("/api/style-dna/extract")
+def style_dna_extract(req: StyleDnaReq):
+    """Extract primitives + semantic Style DNA from an IR document."""
+    schema_errors = validate_ir(req.ir)
+    if schema_errors:
+        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
+    return {"tokens": ir.build_style_dna(req.ir)}
+
+
+@app.post("/api/style-dna/apply")
+def style_dna_apply(req: StyleDnaApplyReq):
+    """Apply a Style DNA token set to an IR document, updating bound styles.
+
+    First re-binds element styles to the new token set so semantic changes
+    propagate even to documents that did not yet carry styleBindings.
+    """
+    schema_errors = validate_ir(req.ir)
+    if schema_errors:
+        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
+    bound = ir.bind_element_styles(req.ir, req.tokens)
+    updated = ir.apply_tokens(bound, req.tokens)
+    return {"ir": updated}
 
 
 @app.get("/nodes")

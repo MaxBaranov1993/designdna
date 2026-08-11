@@ -83,7 +83,17 @@ export type QualityPassResp = {
 export type ProjectLoadResp = { project?: unknown | null; updated_at?: string | null };
 export type ProjectSaveResp = { ok?: boolean; bytes?: number; updated_at?: string; taste?: Record<string, unknown> };
 export type ConfigResp = { schemaVersion?: string; flags?: Record<string, boolean> };
+export type StyleDnaExtractResp = { tokens?: IRObject };
+export type StyleDnaApplyResp = { ir?: IRObject };
 
 export async function getConfig(): Promise<ConfigResp> {
   return apiGet<ConfigResp>("/api/config");
+}
+
+export async function extractStyleDna(ir: IRObject): Promise<StyleDnaExtractResp> {
+  return api<StyleDnaExtractResp>("/api/style-dna/extract", { ir });
+}
+
+export async function applyStyleDna(ir: IRObject, tokens: IRObject): Promise<StyleDnaApplyResp> {
+  return api<StyleDnaApplyResp>("/api/style-dna/apply", { ir, tokens });
 }

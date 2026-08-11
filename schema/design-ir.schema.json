@@ -73,6 +73,8 @@
       "properties": {
         "provenance": { "$ref": "#/$defs/documentProvenance" },
         "mode": { "enum": ["light", "dark"] },
+        "primitives": { "$ref": "#/$defs/tokenPrimitives" },
+        "semantic": { "$ref": "#/$defs/tokenSemantic" },
         "color": {
           "type": "object",
           "required": ["primary", "background", "surface", "text", "textMuted", "border"],
@@ -152,6 +154,44 @@
         "migratedAt": { "type": "string" },
         "createdAt": { "type": "string" },
         "generator": { "type": "string" }
+      }
+    },
+
+    "tokenPrimitives": {
+      "type": "object",
+      "description": "Measured exact values extracted from the source. Used as the raw material for semantic tokens and style bindings.",
+      "additionalProperties": false,
+      "properties": {
+        "colors": { "type": "array", "items": { "type": "string" } },
+        "fonts": { "type": "array", "items": { "$ref": "#/$defs/fontFace" } },
+        "fontSizes": { "type": "array", "items": { "type": "number", "minimum": 1, "maximum": 512 } },
+        "radii": { "type": "array", "items": { "type": "number", "minimum": 0, "maximum": 1000 } },
+        "spacings": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+        "borderWidths": { "type": "array", "items": { "type": "number", "minimum": 0, "maximum": 64 } },
+        "shadows": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "tokenSemantic": {
+      "type": "object",
+      "description": "Semantic design tokens mapped from primitives. Changing a semantic token updates all bound element styles.",
+      "additionalProperties": false,
+      "properties": {
+        "primary": { "type": "string" },
+        "secondary": { "type": "string" },
+        "accent": { "type": "string" },
+        "background": { "type": "string" },
+        "surface": { "type": "string" },
+        "text": { "type": "string" },
+        "textMuted": { "type": "string" },
+        "border": { "type": "string" },
+        "buttonRadius": { "type": "number", "minimum": 0, "maximum": 1000 },
+        "cardRadius": { "type": "number", "minimum": 0, "maximum": 1000 },
+        "inputRadius": { "type": "number", "minimum": 0, "maximum": 1000 },
+        "sectionGap": { "type": "number", "minimum": 0 },
+        "containerWidth": { "type": "number", "minimum": 0 },
+        "displayFont": { "$ref": "#/$defs/fontFace" },
+        "bodyFont": { "$ref": "#/$defs/fontFace" }
       }
     },
 

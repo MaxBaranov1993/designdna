@@ -8,6 +8,7 @@
 
   let overlay = null;
   let state = null; // { ir, node, onSave, onClose, geo, history (IRHistory), sel, zoom, panX, panY, tool }
+  let dnaPanelState = null; // { tokens, originalTokens }
 
   function getByPath(obj, path) {
     return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
@@ -135,6 +136,38 @@
     border-radius:5px; padding:5px 7px; font-size:12px; outline:none; resize:vertical; min-height:48px; }
   .fe-inspector textarea:focus { border-color:#cba6f7; }
   .fe-node-type { font-size:11px; color:#cba6f7; font-weight:700; margin-bottom:8px; }
+
+  /* Style DNA Inspector overlay panel */
+  .fe-dna-panel { position:fixed; top:42px; right:0; bottom:0; width:320px; background:#181825;
+    border-left:1px solid #313244; z-index:10000; display:flex; flex-direction:column;
+    box-shadow:-4px 0 24px rgba(0,0,0,.35); transform:translateX(100%); transition:transform .18s ease; }
+  .fe-dna-panel.open { transform:translateX(0); }
+  .fe-dna-head { display:flex; align-items:center; gap:8px; padding:10px 12px;
+    border-bottom:1px solid #313244; background:#1e1e2e; }
+  .fe-dna-head h3 { flex:1; font-size:13px; font-weight:700; color:#cba6f7; margin:0; }
+  .fe-dna-body { flex:1; overflow-y:auto; padding:12px; }
+  .fe-dna-section { margin-bottom:16px; }
+  .fe-dna-section > .fe-dna-label { font-size:10px; font-weight:700; text-transform:uppercase;
+    letter-spacing:.08em; color:#6c7086; margin-bottom:8px; }
+  .fe-dna-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .fe-dna-row label { flex:1; font-size:11px; color:#a6adc8; }
+  .fe-dna-row input[type="color"] { width:26px; height:22px; border:1px solid #45475a; border-radius:4px;
+    background:none; padding:1px; cursor:pointer; flex:none; }
+  .fe-dna-row input[type="text"], .fe-dna-row input[type="number"] {
+    width:70px; background:#313244; border:1px solid #45475a; color:#cdd6f4; border-radius:5px;
+    padding:4px 6px; font-size:11px; outline:none; font-variant-numeric:tabular-nums; }
+  .fe-dna-row input:focus { border-color:#cba6f7; }
+  .fe-dna-row input[type="range"] { flex:1; }
+  .fe-dna-meta { font-size:10px; color:#6c7086; margin-top:2px; }
+  .fe-dna-actions { display:flex; gap:8px; padding:12px; border-top:1px solid #313244; background:#1e1e2e; }
+  .fe-dna-actions .fe-btn { flex:1; }
+  .fe-dna-tag { font-size:9px; color:#6c7086; background:#313244; padding:1px 5px; border-radius:4px; }
+  .fe-dna-primitive { font-size:11px; color:#bac2de; margin-bottom:4px; word-break:break-all; }
+  .fe-dna-empty { color:#6c7086; font-size:11px; font-style:italic; }
+  .fe-dna-highlight { border:1px solid #cba6f7; color:#cba6f7; background:transparent; border-radius:5px;
+    padding:2px 6px; font-size:10px; cursor:pointer; }
+  .fe-dna-highlight:hover { background:rgba(203,166,247,.12); }
+  .fe-dna-foot { font-size:10px; color:#6c7086; padding:8px 12px; border-top:1px solid #313244; }
   `;
 
   /* ---------- DOM ---------- */
@@ -181,6 +214,7 @@
         <button class="fe-tbtn" data-act="ungroup" title="Разгруппировать (Ctrl+Shift+G)">⧠</button>
         <button class="fe-tbtn" data-act="undo" title="Отменить (Ctrl+Z)">↩</button>
         <button class="fe-tbtn" data-act="redo" title="Повторить (Ctrl+Shift+Z)">↪</button>
+        <button class="fe-tbtn" data-act="style-dna" title="Style DNA">🧬</button>
         <span class="fe-spacer"></span>
         <button class="fe-btn danger" data-act="close">Закрыть</button>
         <button class="fe-btn primary" data-act="save">💾 Сохранить</button>
@@ -201,9 +235,30 @@
           <div class="fe-canvas-inner"></div>
         </div>
         <div class="fe-inspector"><div class="fe-insp-empty">Выделите элемент на канвасе или в слоях</div></div>
+      </div>
+      <div class="fe-dna-panel" id="feDnaPanel">
+        <div class="fe-dna-head">
+          <h3>🧬 Style DNA</h3>
+          <span class="fe-dna-tag" id="feDnaMode">light</span>
+          <button class="fe-tbtn" data-act="close-style-dna" title="Закрыть">✕</button>
+        </div>
+        <div class="fe-dna-body" id="feDnaBody">
+          <div class="fe-dna-empty">Загрузка токенов…</div>
+        </div>
+        <div class="fe-dna-foot" id="feDnaFoot"></div>
+        <div class="fe-dna-actions">
+          <button class="fe-btn" data-act="reset-style-dna">Сбросить</button>
+          <button class="fe-btn primary" data-act="apply-style-dna">Применить</button>
+        </div>
       </div>`;
     document.body.appendChild(overlay);
     wireToolbar();
+    overlay.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-act]");
+      if (!btn) return;
+      const act = btn.dataset.act;
+      if (["close-style-dna", "reset-style-dna", "apply-style-dna"].includes(act)) handleAct(act);
+    });
     overlay.querySelector(".fe-rail").addEventListener("click", (e) => {
       const b = e.target.closest("[data-tool]");
       if (b) setTool(b.dataset.tool);
@@ -259,6 +314,10 @@
     else if (act === "close") close();
     else if (act === "undo") undo();
     else if (act === "redo") redo();
+    else if (act === "style-dna") openStyleDnaInspector();
+    else if (act === "close-style-dna") closeStyleDnaInspector();
+    else if (act === "reset-style-dna") resetStyleDnaInspector();
+    else if (act === "apply-style-dna") applyStyleDnaFromInspector();
     else if (act === "zoom-in") zoomBy(1.2);
     else if (act === "zoom-out") zoomBy(1 / 1.2);
     else if (act === "zoom-fit") zoomFit();
@@ -283,6 +342,7 @@
   function open(node, onSave, onClose) {
     ensureOverlay();
     upgradeSourceNesting(node.data.ir);
+    forceSourceFreeLayout(node.data.ir);
     state = {
       ir: node.data.ir,
       node,
@@ -316,6 +376,28 @@
     attachCanvasEvents();
     setTool("select");
     requestAnimationFrame(zoomFit);
+  }
+
+  function forceSourceFreeLayout(ir) {
+    if (!ir || !Array.isArray(ir.tree)) return;
+    ir.tree.forEach(sec => {
+      if (!sec || !(sec.type === "source-block" || sec.variant === "dom-capture")) return;
+      function freeNode(n) {
+        if (!n || typeof n !== "object") return;
+        if (n.frame && typeof n.frame === "object") {
+          n.frame.layout = "free";
+          n.frame.clip = true;
+        }
+        (n.children || []).forEach(child => {
+          if (child && child.frame && typeof child.frame === "object" &&
+              ("x" in child.frame || "y" in child.frame)) {
+            child.frame.absolute = true;
+          }
+          freeNode(child);
+        });
+      }
+      freeNode(sec);
+    });
   }
 
   function upgradeSourceNesting(ir) {
@@ -391,6 +473,13 @@
           child.frame = Object.assign({}, child.frame || {});
           child.frame.x = Math.round((Number(child.frame.x || 0) - Number(f.x || 0)) * 1000) / 1000;
           child.frame.y = Math.round((Number(child.frame.y || 0) - Number(f.y || 0)) * 1000) / 1000;
+          // text/heading children must not carry box visual styles — those belong to the container
+          if (child.type === "text" || child.type === "heading") {
+            const s = child.style || {};
+            delete s.background; delete s.borderColor; delete s.borderWidth;
+            delete s.borderRadius; delete s.boxShadow;
+            child.style = s;
+          }
           group.children.push(child);
         });
         next.push(group);
@@ -400,6 +489,344 @@
     });
     return changed;
   }
+
+  /* ---------- Style DNA Inspector ---------- */
+
+  function openStyleDnaInspector() {
+    if (!state) return;
+    ensureDnaPanel();
+    const panel = document.getElementById("feDnaPanel");
+    if (!panel) return;
+    panel.classList.add("open");
+    const body = document.getElementById("feDnaBody");
+    body.innerHTML = '<div class="fe-dna-empty">Загрузка токенов…</div>';
+    const existing = state.ir && state.ir.tokens;
+    if (existing && existing.semantic && existing.primitives) {
+      dnaPanelState = { tokens: deepClone(existing), originalTokens: deepClone(existing) };
+      renderStyleDnaPanel();
+    } else {
+      extractStyleDnaFromServer();
+    }
+  }
+
+  function closeStyleDnaInspector() {
+    const panel = document.getElementById("feDnaPanel");
+    if (panel) panel.classList.remove("open");
+    dnaPanelState = null;
+  }
+
+  function resetStyleDnaInspector() {
+    if (!dnaPanelState) return;
+    dnaPanelState.tokens = deepClone(dnaPanelState.originalTokens);
+    renderStyleDnaPanel();
+  }
+
+  async function extractStyleDnaFromServer() {
+    if (!state) return;
+    try {
+      const resp = await fetch("/api/style-dna/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ir: state.ir }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "HTTP " + resp.status);
+      const tokens = data.tokens || {};
+      dnaPanelState = { tokens: deepClone(tokens), originalTokens: deepClone(tokens) };
+      renderStyleDnaPanel();
+    } catch (e) {
+      const body = document.getElementById("feDnaBody");
+      if (body) body.innerHTML = `<div class="fe-dna-empty" style="color:#f38ba8">Ошибка загрузки: ${esc(e.message)}</div>`;
+    }
+  }
+
+  async function applyStyleDnaFromInspector() {
+    if (!state || !dnaPanelState) return;
+    const panel = document.getElementById("feDnaPanel");
+    const body = document.getElementById("feDnaBody");
+    const foot = document.getElementById("feDnaFoot");
+    if (foot) foot.textContent = "Применение…";
+    try {
+      const resp = await fetch("/api/style-dna/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ir: state.ir, tokens: dnaPanelState.tokens }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "HTTP " + resp.status);
+      pushHistory();
+      state.ir = data.ir || state.ir;
+      state.node.data.ir = state.ir;
+      dnaPanelState.originalTokens = deepClone(dnaPanelState.tokens);
+      rerenderEditorCanvas();
+      if (foot) foot.textContent = "Токены применены";
+      setTimeout(() => { if (foot) foot.textContent = ""; }, 2000);
+    } catch (e) {
+      if (foot) foot.textContent = "Ошибка: " + e.message;
+    }
+  }
+
+  function ensureDnaPanel() {
+    if (document.getElementById("feDnaPanel")) return;
+    const panel = document.createElement("div");
+    panel.className = "fe-dna-panel";
+    panel.id = "feDnaPanel";
+    panel.innerHTML = `
+      <div class="fe-dna-head">
+        <h3>🧬 Style DNA</h3>
+        <span class="fe-dna-tag" id="feDnaMode">light</span>
+        <button class="fe-tbtn" data-act="close-style-dna" title="Закрыть">✕</button>
+      </div>
+      <div class="fe-dna-body" id="feDnaBody"><div class="fe-dna-empty">Загрузка токенов…</div></div>
+      <div class="fe-dna-foot" id="feDnaFoot"></div>
+      <div class="fe-dna-actions">
+        <button class="fe-btn" data-act="reset-style-dna">Сбросить</button>
+        <button class="fe-btn primary" data-act="apply-style-dna">Применить</button>
+      </div>`;
+    overlay.appendChild(panel);
+  }
+
+  function renderStyleDnaPanel() {
+    const body = document.getElementById("feDnaBody");
+    const foot = document.getElementById("feDnaFoot");
+    const modeTag = document.getElementById("feDnaMode");
+    if (!body || !dnaPanelState) return;
+    const tokens = dnaPanelState.tokens;
+    const semantic = tokens.semantic || {};
+    const primitives = tokens.primitives || {};
+    if (modeTag) modeTag.textContent = tokens.mode || semantic.mode || "light";
+
+    const bindings = collectBindings(state.ir);
+    const counts = {};
+    for (const b of bindings) {
+      const key = b.token;
+      counts[key] = (counts[key] || 0) + 1;
+    }
+
+    const colorKeys = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"];
+    let html = '';
+
+    // Semantic colors
+    html += `<div class="fe-dna-section"><div class="fe-dna-label">Semantic colors</div>`;
+    for (const key of colorKeys) {
+      const val = semantic[key] || "";
+      const hex = colorHex(val);
+      const alpha = colorAlpha(val);
+      const count = (counts["semantic." + key] || 0);
+      html += `<div class="fe-dna-row" data-token="semantic.${key}">
+        <label>${esc(key)}</label>
+        <input type="color" value="${hex}" data-key="${key}" data-kind="color">
+        <input type="text" value="${esc(val)}" data-key="${key}" data-kind="color-text" title="hex / rgba">
+        <button class="fe-dna-highlight" data-highlight="semantic.${key}" title="Подсветить связанные">${count}</button>
+      </div>
+      <div class="fe-dna-row" data-token="semantic.${key}-alpha">
+        <label style="width:60px">α ${Math.round(alpha*100)}%</label>
+        <input type="range" min="0" max="100" value="${Math.round(alpha*100)}" data-key="${key}" data-kind="color-alpha">
+      </div>`;
+    }
+    html += `</div>`;
+
+    // Radii / spacing / fonts
+    html += `<div class="fe-dna-section"><div class="fe-dna-label">Layout & type</div>`;
+    html += dnaNumberRow("buttonRadius", semantic.buttonRadius, "semantic.buttonRadius", counts);
+    html += dnaNumberRow("cardRadius", semantic.cardRadius, "semantic.cardRadius", counts);
+    html += dnaNumberRow("inputRadius", semantic.inputRadius, "semantic.inputRadius", counts);
+    html += dnaNumberRow("sectionGap", semantic.sectionGap, "semantic.sectionGap", counts);
+    html += dnaNumberRow("containerWidth", semantic.containerWidth, "semantic.containerWidth", counts);
+    html += `</div>`;
+
+    html += `<div class="fe-dna-section"><div class="fe-dna-label">Fonts</div>`;
+    html += dnaFontRow("display", semantic.displayFont, counts);
+    html += dnaFontRow("body", semantic.bodyFont, counts);
+    html += `</div>`;
+
+    // Primitives
+    html += `<div class="fe-dna-section"><div class="fe-dna-label">Primitives</div>`;
+    if ((primitives.colors || []).length) {
+      html += `<div class="fe-dna-meta">Colors (${primitives.colors.length})</div>`;
+      for (const c of primitives.colors.slice(0, 24)) {
+        html += `<div class="fe-dna-row"><span class="fe-dna-primitive" style="color:${esc(c)}">■</span><span class="fe-dna-primitive">${esc(c)}</span></div>`;
+      }
+    }
+    if ((primitives.fonts || []).length) {
+      html += `<div class="fe-dna-meta" style="margin-top:8px">Fonts (${primitives.fonts.length})</div>`;
+      for (const f of primitives.fonts) {
+        html += `<div class="fe-dna-primitive">${esc(f.family)} ${esc(f.weight)}</div>`;
+      }
+    }
+    if ((primitives.radii || []).length) {
+      html += `<div class="fe-dna-meta" style="margin-top:8px">Radii</div>`;
+      html += `<div class="fe-dna-primitive">${primitives.radii.join(", ")}</div>`;
+    }
+    if ((primitives.spacings || []).length) {
+      html += `<div class="fe-dna-meta" style="margin-top:8px">Spacings</div>`;
+      html += `<div class="fe-dna-primitive">${primitives.spacings.join(", ")}</div>`;
+    }
+    html += `</div>`;
+
+    body.innerHTML = html;
+    if (foot) foot.textContent = `${bindings.length} bindings · ${Object.keys(counts).length} tokens`;
+    wireStyleDnaEvents(body, bindings);
+  }
+
+  function dnaNumberRow(label, value, token, counts) {
+    const count = counts[token] || 0;
+    return `<div class="fe-dna-row" data-token="${esc(token)}">
+      <label>${esc(label)}</label>
+      <input type="number" value="${value == null ? "" : value}" data-kind="number" data-token="${esc(token)}">
+      <button class="fe-dna-highlight" data-highlight="${esc(token)}" title="Подсветить связанные">${count}</button>
+    </div>`;
+  }
+
+  function dnaFontRow(label, font, counts) {
+    const f = font || { family: "Inter", weight: 400 };
+    const token = `semantic.${label}Font`;
+    const count = counts[token] || 0;
+    return `<div class="fe-dna-row" data-token="${esc(token)}">
+      <label>${esc(label)}</label>
+      <select data-kind="font-family" data-token="${esc(token)}" style="flex:1;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:5px;padding:4px 6px;font-size:11px">${fontOptionsHtml(f.family)}</select>
+      <input type="number" value="${f.weight}" data-kind="font-weight" data-token="${esc(token)}" style="width:55px">
+      <button class="fe-dna-highlight" data-highlight="${esc(token)}" title="Подсветить связанные">${count}</button>
+    </div>`;
+  }
+
+  function wireStyleDnaEvents(body, bindings) {
+    // color pickers
+    body.querySelectorAll("input[data-kind='color']").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const key = inp.dataset.key;
+        const text = body.querySelector(`input[data-kind='color-text'][data-key='${key}']`);
+        const alphaInp = body.querySelector(`input[data-kind='color-alpha'][data-key='${key}']`);
+        const alpha = alphaInp ? parseInt(alphaInp.value, 10) / 100 : 1;
+        const val = withAlpha(inp.value, alpha);
+        if (text) text.value = val;
+        setSemanticToken(key, val);
+      });
+    });
+    body.querySelectorAll("input[data-kind='color-text']").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const key = inp.dataset.key;
+        const picker = body.querySelector(`input[data-kind='color'][data-key='${key}']`);
+        const alphaInp = body.querySelector(`input[data-kind='color-alpha'][data-key='${key}']`);
+        const val = inp.value.trim();
+        const hex = colorHex(val);
+        const alpha = colorAlpha(val);
+        if (picker && hex) picker.value = hex;
+        if (alphaInp) alphaInp.value = Math.round(alpha * 100);
+        setSemanticToken(key, val);
+      });
+    });
+    body.querySelectorAll("input[data-kind='color-alpha']").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const key = inp.dataset.key;
+        const picker = body.querySelector(`input[data-kind='color'][data-key='${key}']`);
+        const text = body.querySelector(`input[data-kind='color-text'][data-key='${key}']`);
+        const alpha = parseInt(inp.value, 10) / 100;
+        const val = withAlpha(picker ? picker.value : (text ? text.value : "#000000"), alpha);
+        if (text) text.value = val;
+        setSemanticToken(key, val);
+      });
+    });
+    // numbers
+    body.querySelectorAll("input[data-kind='number']").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const token = inp.dataset.token;
+        const key = token.replace("semantic.", "");
+        const val = parseFloat(inp.value);
+        if (Number.isFinite(val)) setSemanticToken(key, val);
+      });
+    });
+    // fonts
+    body.querySelectorAll("select[data-kind='font-family']").forEach(sel => {
+      sel.addEventListener("change", () => {
+        const token = sel.dataset.token;
+        const key = token.replace("semantic.", "");
+        const obj = dnaPanelState.tokens.semantic[key];
+        if (obj) obj.family = sel.value;
+      });
+    });
+    body.querySelectorAll("input[data-kind='font-weight']").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const token = inp.dataset.token;
+        const key = token.replace("semantic.", "");
+        const val = parseInt(inp.value, 10);
+        if (Number.isFinite(val)) dnaPanelState.tokens.semantic[key].weight = val;
+      });
+    });
+    // highlight
+    body.querySelectorAll("button[data-highlight]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const token = btn.dataset.highlight;
+        const refs = bindings.filter(b => b.token === token).map(b => b.ref);
+        if (state.geo && refs.length) state.geo.selectMulti(refs);
+      });
+    });
+  }
+
+  function setSemanticToken(key, value) {
+    if (!dnaPanelState) return;
+    dnaPanelState.tokens.semantic[key] = value;
+    // keep legacy color map in sync
+    const colorKeys = new Set(["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"]);
+    if (colorKeys.has(key) && dnaPanelState.tokens.color) {
+      dnaPanelState.tokens.color[key] = value;
+    }
+  }
+
+  function collectBindings(ir) {
+    const out = [];
+    function visit(node, ref) {
+      if (!node || typeof node !== "object") return;
+      const bindings = node.styleBindings || {};
+      for (const [prop, binding] of Object.entries(bindings)) {
+        if (binding && binding.token) out.push({ ref, token: binding.token, property: prop });
+      }
+      const responsive = node.responsive || {};
+      for (const [vp, override] of Object.entries(responsive)) {
+        if (!override || !override.styleBindings) continue;
+        for (const [prop, binding] of Object.entries(override.styleBindings)) {
+          if (binding && binding.token) out.push({ ref, token: binding.token, property: prop, viewport: vp });
+        }
+      }
+      (node.children || []).forEach((child, i) => visit(child, { ...ref, path: (ref.path ? ref.path + "." : "") + "children." + i }));
+    }
+    (ir.tree || []).forEach((sec, i) => visit(sec, { secIdx: i, path: null }));
+    return out;
+  }
+
+  function colorHex(value) {
+    const s = String(value || "").trim().toLowerCase();
+    if (/^#[0-9a-f]{3}$/.test(s)) return "#" + s[1] + s[1] + s[2] + s[2] + s[3] + s[3];
+    if (/^#[0-9a-f]{6}$/.test(s)) return s;
+    if (/^#[0-9a-f]{8}$/.test(s)) return s.slice(0, 7);
+    if (/^rgba?\(/.test(s)) {
+      const m = s.match(/\d+\.?\d*/g);
+      if (m && m.length >= 3) {
+        const toHex = (n) => { const x = Math.max(0, Math.min(255, Math.round(Number(n)))); return x.toString(16).padStart(2, "0"); };
+        return "#" + toHex(m[0]) + toHex(m[1]) + toHex(m[2]);
+      }
+    }
+    return "#888888";
+  }
+
+  function colorAlpha(value) {
+    const s = String(value || "").trim().toLowerCase();
+    if (/^#[0-9a-f]{8}$/.test(s)) return parseInt(s.slice(7, 9), 16) / 255;
+    if (/^rgba?\(/.test(s)) {
+      const m = s.match(/\d+\.?\d*/g);
+      if (m && m.length >= 4) return Math.max(0, Math.min(1, Number(m[3])));
+    }
+    return 1;
+  }
+
+  function withAlpha(hex, alpha) {
+    const base = colorHex(hex);
+    if (alpha >= 0.999) return base;
+    const a = Math.max(0, Math.min(255, Math.round(alpha * 255))).toString(16).padStart(2, "0");
+    return base + a;
+  }
+
+  function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
 
   function save() {
     syncActiveIR();

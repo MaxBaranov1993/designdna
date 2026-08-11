@@ -22,6 +22,7 @@ import cache_store
 import ir
 from ir import ensure_current as ensure_current_ir
 from scraper import fetch_html, detect_blocks, rendered_html, capture_block_irs
+from ir.style_dna import enrich_ir, extract_from_signals
 
 MAX_WORKERS = 4            # как EXECUTOR в server.py
 FRAGMENT_LIMIT = 12000     # HTML блока в промпте, символов
@@ -42,6 +43,25 @@ SOURCE_COMPILER_VERSION = "dom-v21"
 def _validate(doc: dict) -> list[str]:
     """Список ошибок валидации IR по схеме (пустой = ок)."""
     return ir.format_errors(ir.validate_ir(doc))
+
+
+def _clean_text_nodes(node: dict) -> None:
+    """Text and heading nodes must never carry visual box styles.
+
+    Those properties belong to the parent card/button/input. This keeps the
+    imported DOM pixel-accurate while preventing text blocks from looking like
+    coloured rectangles in the editor.
+    """
+    if not isinstance(node, dict):
+        return
+    if node.get("type") in ("text", "heading"):
+        style = node.get("style")
+        if isinstance(style, dict):
+            for k in ("background", "borderColor", "borderWidth", "borderRadius", "boxShadow"):
+                style.pop(k, None)
+            node["style"] = style
+    for child in node.get("children") or []:
+        _clean_text_nodes(child)
 
 
 def _block_cache_key(url: str, name: str, selector: str) -> str:
@@ -171,12 +191,12 @@ def parse_blocks(url: str, blocks: list | None = None,
     # LLM о том, к какому из 19 шаблонов отнести произвольный компонент.
     try:
         captured, rendered_tokens = capture_block_irs(url, wanted, return_tokens=True, viewports=viewports)
-        if rendered_tokens:
-            tokens = rendered_tokens
+        tokens = extract_from_signals(rendered_tokens, source=url)
     except Exception as e:
         traceback.print_exc()
         captured = {b["selector"]: {"error": f"не удалось снять DOM-слепок: {e}"}
                     for b in wanted}
+        tokens = None
 
     results = []
     for b in wanted:  # порядок детекции остаётся порядком выходных портов
@@ -195,6 +215,8 @@ def parse_blocks(url: str, blocks: list | None = None,
         if errors:
             results.append({**head, "error": "внутренняя ошибка DOM-импорта: " + "; ".join(errors[:3])})
             continue
+        _clean_text_nodes(ir)
+        ir = enrich_ir(ir, source=url)
         ir = ensure_current_ir(ir, source=f"source-import:{url}")
         cache_store.put("clone_block", _block_cache_key(url, b["name"], b["selector"]), {"ir": ir})
         results.append({**head, "ir": ir, "cached": False, "source": "dom",
@@ -207,7 +229,14 @@ def parse_blocks(url: str, blocks: list | None = None,
                         "fidelity": item.get("fidelity"),
                         "warnings": item.get("warnings", []), "repeat": item.get("repeat")})
 
-    payload = {"url": url, "blocks": results, "tokens": tokens}
+    payload_tokens = tokens
+    if payload_tokens is None:
+        for block in results:
+            if isinstance(block, dict) and block.get("ir"):
+                payload_tokens = block["ir"].get("tokens")
+                if payload_tokens:
+                    break
+    payload = {"url": url, "blocks": results, "tokens": payload_tokens}
     # Сохраняем только полностью успешный разбор. Отдельные удачные блоки уже
     # имеют свой clone_block-кэш; неудачные должны иметь шанс на повтор.
     if blocks is None and not any(block.get("error") for block in results if isinstance(block, dict)):

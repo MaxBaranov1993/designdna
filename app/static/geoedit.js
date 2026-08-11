@@ -27,7 +27,7 @@
   const GEO_CSS = `
   /* Оверлей живёт ВНУТРИ трансформированного контейнера (canvas-координаты).
      --geo-inv = 1/zoom: ручки, чипы и линии держат постоянный экранный размер. */
-  .geo-overlay { position:absolute; inset:0; pointer-events:auto; z-index:50; overflow:visible; cursor:default; }
+  .geo-overlay { position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:auto; z-index:50; overflow:visible; cursor:default; }
   .geo-overlay[data-tool="rect"], .geo-overlay[data-tool="frame"], .geo-overlay[data-tool="text"] { cursor:crosshair; }
   .geo-overlay[data-tool="hand"] { cursor:grab; }
   .geo-overlay.geo-handling { cursor:grabbing; }
@@ -276,12 +276,13 @@
 
     /* --- геометрический hit-testing (модель tldraw/Excalidraw) --- */
 
-    /** Конвертирует экранные координаты в координаты превью (учитывая scale и скролл). */
+    /** Конвертирует экранные координаты в координаты превью (учитывая scale и pan/scroll).
+     *  getBoundingClientRect уже включает transform и scroll, дополнительный offset не нужен. */
     function screenToCanvas(clientX, clientY) {
       const base = previewEl.getBoundingClientRect();
       const s = scale();
-      return { x: (clientX - base.left + previewEl.scrollLeft) / s,
-               y: (clientY - base.top + previewEl.scrollTop) / s };
+      return { x: (clientX - base.left) / s,
+               y: (clientY - base.top) / s };
     }
 
     /** Собирает ВСЕ элементы с data-ir-path из IR в плоский список {ref, x, y, w, h}.
@@ -303,8 +304,8 @@
         targets.push({
           ref: { secIdx: si, path: null },
           depth: 0,
-          x: (sr.left - base.left + previewEl.scrollLeft) / s,
-          y: (sr.top - base.top + previewEl.scrollTop) / s,
+          x: (sr.left - base.left ) / s,
+          y: (sr.top - base.top ) / s,
           w: sr.width / s,
           h: sr.height / s,
         });
@@ -319,8 +320,8 @@
           targets.push({
             ref: { secIdx: si, path: normalizePropsPath(rawPath) },
             depth: rawPath.startsWith("children.") ? rawPath.split(".children.").length : 1,
-            x: (r.left - base.left + previewEl.scrollLeft) / s,
-            y: (r.top - base.top + previewEl.scrollTop) / s,
+            x: (r.left - base.left ) / s,
+            y: (r.top - base.top ) / s,
             w: r.width / s,
             h: r.height / s,
           });
@@ -342,7 +343,12 @@
       while (parent) {
         const node = irNodeAt(parent);
         if (parent.path && node && node.children && node.children.length && hitKeys.has(refKey(parent)) && !skipLocked(parent)) {
-          return parent;
+          // Text/heading children inside buttons or inputs belong to the control.
+          if (["button", "input"].includes(node.type)) return parent;
+          // Free-layout containers (source-block reproduction, absolute groups)
+          // keep their children individually selectable; do not hoist to parent.
+          const layout = node && node.frame && node.frame.layout;
+          if (layout !== "free") return parent;
         }
         parent = parentRef(parent);
       }
@@ -397,8 +403,8 @@
       const s = scale();
       const r = el.getBoundingClientRect();
       const base = previewEl.getBoundingClientRect();
-      const hx = (r.left - base.left + previewEl.scrollLeft) / s;
-      const hy = (r.top - base.top + previewEl.scrollTop) / s;
+      const hx = (r.left - base.left ) / s;
+      const hy = (r.top - base.top ) / s;
       const hw = r.width / s;
       const hh = r.height / s;
       const pt = screenToCanvas(clientX, clientY);
@@ -713,6 +719,11 @@
         ov.innerHTML = '<div class="geo-box hover" hidden></div><div class="geo-sel-container"></div>';
         previewEl.appendChild(ov);
       }
+      // Cover the full content size so zoomed/panned source blocks are still
+      // interactable even when the transformed bounding box is smaller than
+      // the viewport.
+      ov.style.width = Math.max(previewEl.scrollWidth, previewEl.offsetWidth) + "px";
+      ov.style.height = Math.max(previewEl.scrollHeight, previewEl.offsetHeight) + "px";
       ov.dataset.tool = tool;
       syncZoom(ov);
       return ov;
@@ -1002,14 +1013,14 @@
       const base = previewEl.getBoundingClientRect();
       const s = scale();
       const br = board.getBoundingClientRect();
-      const bx = (br.left - base.left + previewEl.scrollLeft) / s;
-      const by = (br.top - base.top + previewEl.scrollTop) / s;
+      const bx = (br.left - base.left ) / s;
+      const by = (br.top - base.top ) / s;
       if (!(pt.x >= bx && pt.x <= bx + br.width / s && pt.y >= by && pt.y <= by + br.height / s)) return null;
       const r = secEl.getBoundingClientRect();
       return {
         ref: { secIdx: 0, path: null },
-        x: (r.left - base.left + previewEl.scrollLeft) / s,
-        y: (r.top - base.top + previewEl.scrollTop) / s,
+        x: (r.left - base.left ) / s,
+        y: (r.top - base.top ) / s,
         w: r.width / s,
         h: r.height / s,
       };
