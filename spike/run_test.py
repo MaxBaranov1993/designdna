@@ -2,9 +2,9 @@
 """CLI-обёртка LLM-клиента. Сам клиент — app/llm_client.py (продакшен-модуль).
 
 Использование:
-    set DASHSCOPE_API_KEY=sk-...       # или другой ключ провайдера
-    python spike/run_test.py --provider qwen --brief "Лендинг для кофейни..."
-    python spike/run_test.py --provider qwen --repair broken.json --out fixed.json
+    set OPENROUTER_API_KEY=sk-...
+    python spike/run_test.py --provider openrouter --brief "Лендинг для кофейни..."
+    python spike/run_test.py --provider openrouter --repair broken.json --out fixed.json
 """
 import sys
 from pathlib import Path

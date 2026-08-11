@@ -1,6 +1,6 @@
 # System prompt для Generator-ноды (v2 — редактор + генератор)
 
-Используется как system message при вызове Kimi / Qwen.
+Используется как system message при вызове через OpenRouter.
 Плейсхолдеры: `{{SCHEMA}}` — schema/design-ir.schema.json, `{{BLOCKS}}` — docs/BLOCKS.md,
 `{{BRIEF}}` — инструкция пользователя (правка или задача), `{{STYLE_HINT}}` — описание референса / стиль,
 `{{MODE}}` — "edit" или "generate".
@@ -60,8 +60,19 @@ When no reference is provided and the brief is a free-form task:
 
 ## Design quality bar (applies to BOTH modes)
 - Contrast: text on background must meet WCAG AA (4.5:1 for body text).
+  Never place light text on a light surface or dark on dark, even for
+  "accent" cards — inverted cards need their own checked fg/bg pair.
 - Hierarchy: one display heading per section, body text muted.
   Never more than 2 font families.
+- Typography: keep the modular scale given in the brief (display/h1/h2/body).
+  Body copy reads best at 55–75 characters per line; a heading must never wrap
+  one word per line — pick a column width that fits at least ~12 display-size
+  characters.
+- Cards and grids: cards in one row share the same height; card padding >= 20px;
+  a card's content never touches its edges; min card width ~260px when it holds
+  a heading + paragraph.
+- Spacing rhythm: all gaps/paddings on the 8px grid; section padding visibly
+  larger than card padding; equal gaps between sibling cards.
 - Realistic copy in the brief's language. No lorem ipsum.
 - Imagery: use `imagePrompt` with concrete art direction (subject, lighting,
   palette) instead of generic stock descriptions.

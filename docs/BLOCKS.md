@@ -1,90 +1,269 @@
-# Каталог блоков Design IR v1.0
+# Blocks
 
-Закрытая библиотека секций. Модель **выбирает type + variant и заполняет props**, не изобретая новых блоков. Это главный механизм консистентности.
+This file is used by `app/llm_client.py` inside the generation system prompt. Keep it concise, current and model-friendly.
 
-Легенда вариантов: вариант определяет раскладку, токены — стиль.
+The model must generate valid Design IR using known semantic blocks. It may combine blocks, but should not invent unknown top-level block types unless the schema and renderer support them.
 
-## Навигация
-| type | variants | props (обязательные) |
-|---|---|---|
-| `navbar` | `classic` (лого слева), `centered` (лого по центру), `minimal` (без cta) | logoText, links[], cta, sticky, transparent |
+## Top-level sections
 
-## Hero
-| type | variants | props |
-|---|---|---|
-| `hero` | `centered`, `split` (текст+медиа), `split-reverse`, `media-bg` (фон-картинка), `gradient` | heading, subheading, ctaPrimary, ctaSecondary, media, badge, align |
+### `source-block`
 
-## Социальное доказательство
-| type | variants | props |
-|---|---|---|
-| `logo-cloud` | `row`, `grid`, `marquee` | heading, children: image/heading элементы |
-| `testimonials` | `grid-2`, `grid-3`, `carousel`, `single-featured` | children: card (avatar + rating + text + name/role) |
-| `stats` | `row`, `grid`, `with-heading` | heading, items[{value,label}] |
+Rendered Source Import section. It keeps a compact semantic DOM tree and carries `semantic` metadata (`role`, `label`, `selector`, optional repeat count/kind). Flex and grid containers compile to nested auto-layout frames; only real overlays, positioned elements, or a child explicitly detached by the user use absolute positioning. Stable `sourceKey` values connect desktop, tablet and mobile overrides without duplicating the tree.
 
-## Контент
-| type | variants | props |
-|---|---|---|
-| `feature-grid` | `grid-2`, `grid-3`, `grid-4`, `bento` | heading, subheading, children: card(icon, title, text) |
-| `feature-alternating` | `2-rows`, `3-rows` | children: чередующиеся image + heading/text/button |
-| `steps` | `horizontal`, `vertical`, `numbered` | heading, children: card (шаги) |
-| `gallery` | `masonry`, `grid-uniform`, `carousel` | children: image |
-| `team` | `grid-3`, `grid-4`, `list` | heading, children: card(avatar, name, role) |
-| `blog-grid` | `grid-3`, `featured+list` | heading, children: card(image, badge, title, text) |
+### navbar
 
-## Коммерция
-| type | variants | props |
-|---|---|---|
-| `pricing` | `cards`, `table`, `toggle-monthly-yearly` | heading, tiers[{name, price, features[], cta, highlighted}] |
-| `comparison` | `table`, `vs` | children: list / rows |
-| `cta` | `centered`, `split`, `banner-bold` | heading, subheading, ctaPrimary, ctaSecondary |
-| `banner` | `info`, `promo`, `cookie` | text, cta |
+Use for site navigation.
 
-## Вовлечение
-| type | variants | props |
-|---|---|---|
-| `faq` | `accordion`, `two-column`, `with-sidebar` | heading, items[{question, answer}] |
-| `contact-form` | `centered`, `split-info` (форма+контакты), `map` | heading, fields[{label, inputType, placeholder, required}], submitText |
-| `newsletter` | `inline`, `boxed`, `minimal` | heading, subheading, placeholder, submitText |
+Common props:
 
-## Подвал
-| type | variants | props |
-|---|---|---|
-| `footer` | `simple` (1 строка), `columns`, `mega` (колонки + подпись + соцсети) | logoText, tagline, columns[{title, links[]}], copyright |
+- `logoText`
+- `links: [{label, href}]`
+- `cta: {text, variant, href?, icon?}`
+- `sticky`
+- `transparent`
 
-## Элементы (children внутри секций)
-`heading` (level 1–4, size), `text` (size, align), `button` (variant: primary/secondary/outline/ghost, icon), `image` (src или imagePrompt, aspect), `badge` (tone), `card` (icon, title, text, children), `icon` (lucide name), `divider`, `avatar` (name, role), `rating` (value 0–5), `input`, `stat` (value, label), `list` (items[])
+Variants:
 
-## Правила композиции страницы (для генератора)
-1. Страница начинается с `navbar`, заканчивается `footer`.
-2. После navbar — `hero`. Ровно один.
-3. Типичный порядок лендинга: navbar → hero → logo-cloud → feature-grid → feature-alternating → testimonials → pricing → faq → cta → footer.
-4. 7–12 секций на страницу; не повторять один type подряд.
-5. Все цвета/шрифты/радиусы — только из `tokens`, никаких произвольных значений в props.
-6. Тексты — на языке брифа, реалистичные (не lorem ipsum), heading ≤ 12 слов.
+- `classic`
+- `centered`
+- `split`
 
-## Геометрия: `frame` (модель Figma)
+### hero
 
-Каждый узел (корень IR, секция, элемент) может иметь опциональный объект `frame`. **Нет frame — узел в потоке** с раскладкой по умолчанию (поведение до появления геометрии). Добавляй frame, только когда бриф требует явных размеров/позиций (отдельный компонент: карточка, шапка, модалка) или когда нужно зафиксировать раскладку точнее, чем variant.
+Use for the primary first screen.
 
-```json
-"frame": {
-  "width": 360,                 // число (px) | "fill" (растянуть до родителя) | "hug" (по содержимому)
-  "height": "hug",
-  "x": 24, "y": 16,             // позиция внутри родителя — работают ТОЛЬКО при layout:"free" у родителя
-  "layout": "auto",             // "auto" (children в потоке, flex) | "free" (children по x/y, абсолютно)
-  "direction": "column",        // ось auto-layout: "row" | "column"
-  "gap": 12,                    // px между children
-  "padding": [16, 24, 16, 24],  // px: число или [top, right, bottom, left]
-  "justify": "start",           // по главной оси: start | center | end | space-between | space-around
-  "align": "stretch",           // по поперечной: start | center | end | stretch | baseline
-  "wrap": false                 // перенос children (для direction:"row")
-}
-```
+Common props:
 
-Правила:
-1. **Корневой `frame`** — артборд: `width` = ширина холста (1440 — десктоп, 960 — превью, 390 — мобильный), `height` обычно `"hug"`. Не задавай — рендерер возьмёт 960.
-2. Секции внутри страницы почти всегда `width: "fill"` (или без frame). Фиксированная ширина секции — исключение.
-3. `x`/`y` имеют смысл только у детей родителя с `layout: "free"`; в потоке они игнорируются. Не смешивай: free-родитель — координаты у всех детей, auto-родитель — координат нет.
-4. `layout: "free"` требует от родителя явной высоты (`height` числом), иначе контейнер схлопнется.
-5. Числа — целые px, без единиц и строк. Отрицательные x/y допустимы (элемент вылезает за край родителя).
-6. Геометрия не отменяет токены: цвета/шрифты/радиусы по-прежнему только из `tokens`.
+- `badge`
+- `heading`
+- `subheading`
+- `ctaPrimary`
+- `ctaSecondary`
+- `media`
+- `align`
+
+Variants:
+
+- `split`
+- `centered`
+- `media-bg`
+
+### feature-grid
+
+Use for feature cards.
+
+Common props:
+
+- `heading`
+- `subheading`
+
+Children:
+
+- `card`
+- `heading`
+- `text`
+
+Variants:
+
+- `grid-3`
+- `grid-4`
+- `bento`
+
+### feature-alternating
+
+Use for alternating image/text rows.
+
+Variants:
+
+- `2-rows`
+- `image-left`
+- `image-right`
+
+### stats
+
+Use for metrics.
+
+Common props:
+
+- `heading`
+- `items: [{value, label}]`
+
+Variants:
+
+- `grid`
+- `with-heading`
+
+### gallery
+
+Use for screenshots, work samples, visual grids.
+
+Variants:
+
+- `grid-uniform`
+- `masonry`
+- `carousel`
+
+### logo-cloud
+
+Use for client/platform logos.
+
+Variants:
+
+- `row`
+- `grid`
+
+### testimonials
+
+Use for quotes/reviews.
+
+Variants:
+
+- `grid-2`
+- `grid-3`
+- `carousel`
+
+### pricing
+
+Use for pricing plans.
+
+Common props:
+
+- `heading`
+- `subheading`
+- `tiers`
+
+Variants:
+
+- `cards`
+- `comparison`
+
+### faq
+
+Use for questions and answers.
+
+Common props:
+
+- `heading`
+- `items: [{question, answer}]`
+
+Variants:
+
+- `accordion`
+- `grid`
+
+### steps
+
+Use for “how it works”.
+
+Variants:
+
+- `horizontal`
+- `vertical`
+
+### team
+
+Use for people/team sections.
+
+Variants:
+
+- `grid-4`
+- `cards`
+
+### newsletter
+
+Use for email capture.
+
+Common props:
+
+- `heading`
+- `subheading`
+- `placeholder`
+- `submitText`
+
+Variants:
+
+- `boxed`
+- `inline`
+
+### cta
+
+Use for conversion sections.
+
+Common props:
+
+- `heading`
+- `subheading`
+- `ctaPrimary`
+- `ctaSecondary`
+
+Variants:
+
+- `centered`
+- `split`
+
+### footer
+
+Use for footer navigation.
+
+Common props:
+
+- `logoText`
+- `tagline`
+- `columns`
+- `copyright`
+
+Variants:
+
+- `columns`
+- `minimal`
+
+## Child elements
+
+Allowed child elements:
+
+- `heading`
+- `text`
+- `button`
+- `image`
+- `card`
+- `avatar`
+- `rating`
+- `rect`
+- `frame`
+
+## Token guidance
+
+Always include useful tokens:
+
+- `color.primary`
+- `color.secondary`
+- `color.accent`
+- `color.background`
+- `color.surface`
+- `color.text`
+- `color.textMuted`
+- `color.border`
+- `font.display`
+- `font.body`
+- `radius`
+- `spacing`
+- `shadow`
+
+## Controlled generation rules
+
+When reference IR or Style DNA is provided:
+
+- preserve structure unless asked otherwise;
+- preserve layout if lock/layout language is present;
+- use tokens from Style DNA;
+- avoid adding random sections;
+- keep copy realistic and concise;
+- return only valid JSON IR.
+
+When asked to derive a related component:
+
+- reuse visual rhythm;
+- reuse typography scale;
+- reuse radius and spacing logic;
+- create the requested block type only;
+- do not recreate the entire page unless asked.

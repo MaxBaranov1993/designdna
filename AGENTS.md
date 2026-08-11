@@ -1,90 +1,92 @@
-# AGENTS.md — оркестрация и правила работы над DesignAI Web
+# AGENTS.md
 
-## Роли
+This repository is DesignAI Web: a controlled AI web-design editor.
 
-**Product Lead и оркестратор — Qwen Code CLI (Qwen), с 2026-08-05** (передача от Kimi Code CLI). Принимает продуктовые и архитектурные решения, декомпозирует задачи, раздаёт их воркерам, проверяет результат (код-ревью, тесты, скриншоты UI), мержит итог. Решения оркестратора финальны; спорные вопросы выносятся владельцу продукта (пользователю) только когда они меняют продукт, стек или бюджет.
+Read first:
 
-**Воркеры — агенты Qwen (Qwen Code CLI).** Запускаются оркестратором через **Orca CLI** в отдельных worktree/терминалах. Получают узкую задачу с контекстом (файлы, критерии приёмки), не принимают продуктовых решений, отчитываются оркестратору.
+1. `docs/PRODUCT.md`
+2. `docs/ARCHITECTURE.md`
+3. `docs/NODES.md`
+4. `docs/DEVELOPMENT.md`
 
-**Владелец продукта — пользователь.** Задаёт цели, утверждает пivot-решения (смена стека, приоритетов, моделей).
+## Product direction
 
-## Как оркестратор запускает воркеров
+The product is **Figma + controlled AI** with a ComfyUI/Houdini/Substance-style graph.
 
-Orca CLI (`orca`, установлен, app 1.4.162+). Типовой паттерн:
+Primary users:
 
-```bash
-# отдельный worktree под задачу + агент qwen в первом терминале
-orca worktree create --repo id:<repoId> --name <task-name> --agent qwen --prompt "<бриф>" --json
-# либо qwen в текущем checkout без нового worktree
-orca terminal create --worktree active --command "qwen" --json
-orca terminal wait --terminal <handle> --for tui-idle --timeout-ms 120000 --json
-orca terminal send --terminal <handle> --text "<бриф>" --enter --json
+- vibe coders / AI builders;
+- freelance web designers.
+
+Core promise:
+
+- AI proposes, the user controls;
+- Design IR is the source of truth;
+- structure, layout, tokens and style can be locked;
+- project style memory should emerge from selected references, generated blocks and manual edits;
+- graph workflows should be reusable like Houdini Digital Assets.
+
+## Current frontend contract
+
+- React + TypeScript app lives in `frontend/src`.
+- Built app is emitted into `app/static/flow`.
+- Graph UI uses React Flow + Zustand.
+- Legacy rendering/editor runtime is vanilla JS in `app/static`:
+  - `renderer.js`
+  - `geoedit.js`
+  - `inspector.js`
+  - `irhistory.js`
+  - `editor.js`
+- Do not rewrite the editor runtime unless the task explicitly requires it.
+- Edit node is a thin node: preview only + open fullscreen DNA Editor.
+- All AI UI nodes must route through OpenRouter, not direct provider selection.
+
+## Current nodes
+
+Prompt, Reference, Generator, Source Import, Style DNA, Derive, Edit, Mix, Page, Reskin, Quality Pass, Page Bridge.
+
+Old UI nodes `Clone`, `Reproduce`, `BlockParse` are removed. Backend operations may remain as internal engines for Source Import/cache.
+
+## Development rules
+
+- Use PowerShell commands on Windows.
+- Use `rg` for search.
+- Use `apply_patch` for edits.
+- Keep docs aligned with product direction.
+- Do not commit or push unless the user explicitly asks.
+- Avoid broad rewrites unless the user asks for architecture cleanup.
+- Preserve user changes in the dirty worktree.
+
+## Verification
+
+Frontend:
+
+```powershell
+cd frontend
+npm run build
 ```
 
-Правила:
+Core UI tests:
 
-- Один воркер — одна задача — один worktree. Параллельные задачи не должны редактировать одни файлы.
-- Бриф воркеру: цель, конкретные файлы/строки, критерии приёмки, что НЕ трогать. Воркер не должен «исследовать проект» — контекст даёт оркестратор.
-- Контроль: `orca terminal read`, статус-комментарии `orca worktree set --comment`, по завершении — ревью диффа оркестратором.
-- Воркер не делает `git commit/push` без явной команды оркестратора.
-- Для многошаговой координации (очереди задач, блокирующие вопросы) — `orca orchestration` (см. skill `orchestration`).
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+.venv\Scripts\python.exe -u app\ui_flow_graph_test.py
+.venv\Scripts\python.exe -u app\ui_flow_nodes_test.py
+.venv\Scripts\python.exe -u app\ui_flow_page_test.py
+.venv\Scripts\python.exe -u app\ui_flow_edit_test.py
+.venv\Scripts\python.exe -u app\ui_editor_test.py
+```
 
-## Решения владельца (2026-08-04)
+Editor quality tests:
 
-1. **Первый спринт — нода «Редактор» до уровня Figma/pen.dev** (не техдолг, не новые ноды).
-2. **Первый платящий пользователь — дизайнеры/студии.** Редактор, варианты, микс, дизайн-док — первичны; экспорт кода вторичен.
-3. **OpenRouter — единый LLM-gateway.** Модели по нодам — таблица в отчёте от 2026-08-04 (черновики/механика: DeepSeek V4 Flash, Qwen3 Coder Plus, Gemini 3.6 Flash; «вкус»/критика: Kimi K3, GPT-5.6, Grok 4.5). Прямые API — опциональный fallback.
-4. **Воркеры: один qwen-агент, задачи последовательно**, ревью каждого шага оркестратором.
+```powershell
+.venv\Scripts\python.exe -u app\ui_p1_insp_test.py
+.venv\Scripts\python.exe -u app\ui_p1_layers_test.py
+.venv\Scripts\python.exe -u app\ui_fill_drag_test.py
+```
 
-## Решения владельца (2026-08-05)
+Final sanity:
 
-5. **Оркестрация передана Qwen Code CLI** (Kimi больше не оркестратор). Пул воркеров — агенты Qwen и GLM, количество — по потребности; параллельный запуск разрешён, если задачи не пересекаются по файлам (отменяет п. 4 для непересекающихся задач).
-6. **Дизайн нодового редактора — миграция на React Flow + shadcn/ui** (PLAN.md, Фаза 2: граф на React Flow). Legacy-ядро (`renderer.js`, `geoedit.js`, `editor.js`, `inspector.js`) сохраняется и встраивается в новый UI как движок превью/Figma-правки; с нуля не переписывается.
-7. **Для разработки и ревью — только API qwencloud** (провайдер `qwen`, Bailian/DashScope). **OpenRouter — только LLM-вызовы внутри продукта (работа нод)**. Прочие прямые API (gemini/xai/groq) — только как fallback внутри нод.
-8. **GLM-агенты/vision** подключаются при появлении `GLM_API_KEY`; до этого vision-задачи закрывает qwen.
-9. **Нодовая система — по каталогу `docs/NODES-HOUDINI.md`**: классификация нод на D (детерминированные, без LLM) и AI; расширение типов портов `tokens`/`attrs`/`selection` сверх текущих `text`/`ir`; bypass-флаг и цветовые категории нод. Заложить в контракт данных при Фазе B миграции React Flow, чтобы не переделывать.
-10. **Пайплайн «понравился сайт» утверждён**: нода **BlockParse** (динамический порт на каждый блок сайта + порт tokens) → нода **Reskin** (AI-рестайл с локом структуры; название утверждено). Механизм контроля — детерминированный merge-back: после ответа модели залоченные поля (топология дерева, frame, props-разметка) принудительно возвращаются из входного IR — дрейф структуры невозможен конструктивно.
-11. **Тайминг пайплайна**: бэкенд — сейчас, UI-ноды — после миграции. Состав бэкенда: детекция границ блоков в `scraper.py`, параллельный clone блоков поверх `/api/clone`, merge-back utility с unit-тестами, эндпоинты `POST /api/block-parse` и `POST /api/reskin`. Полный состав и спеки — `docs/NODES-HOUDINI.md` §7.5. Юридика: только «свои» сайты (решение 6 из B2B-оценки, `B2B-ASSESSMENT.md`).
-12. **Бэклог фич следующего уровня утверждён** (`docs/NODES-HOUDINI.md` §8): все пять — Constraints, Wedge, Quality Gate, Timeline, Taste Memory. Порядок: после бэкенда пайплайна первым идёт **механизм правил Quality Gate + Constraints** (общая инфраструктура правил поверх IR), затем Wedge, Timeline, Taste Memory.
-13. **Ограничения утверждённых фич**: Taste Memory — только **opt-in + локальный режим** (профиль вкуса по умолчанию не покидает машину; зафиксировать в ToS/onboarding); Wedge в v1 — **до 3×3 = 9 генераций** с обязательным лимитом кредитов на свип и видимостью стоимости до запуска.
-14. **Headless / Design API утверждён** (`docs/NODES-HOUDINI.md` §9): публикация ассетов как эндпоинтов — после SaaS-обвязки (auth/биллинг). На сейчас: в формат ассета (§2 HDA) заложить поле `api: {published, params}` и не ломать его при эволюции формата. **Рынок ассетов** (§10) — долгосрочное видение платформы; формат ассета проектировать с учётом публикации (метаданные автора/версии/лицензии).
-15. **Библиотека блоков расширяется через LLM-конвейер + валидацию** (`docs/NODES-HOUDINI.md` §11): генерация кандидатов блоков моделью → схема → рендер-проверка (Quality Gate) → ревью → включение в `docs/BLOCKS.md` и системный промпт. Потолок разнообразия (~19 типов) — осознанный риск, закрывается этим конвейером.
-16. **Принцип «один вход, мульти-модельное исполнение»** (`docs/COMPETITORS.md` §5.1): MCP-сервер и Headless API выставляют **продуктовые операции** (generate/reskin/mix/block-parse/validate/export + гайды), а не сырые модели; мульти-модельный роутинг по ролям живёт внутри операций и сохраняется полностью. Внешние агенты — оркестраторы, не авторы дизайна. Если агентам даётся сырая запись в IR — только через охранный слой (схема → Constraints → merge-back). Позиция продукта: мозг — наши пайплайны, в отличие от модели Pencil («ваш агент — мозг, мы — холст»).
-17. **Заимствования у конкурентов утверждены** (`docs/COMPETITORS.md` §7): от Pencil — Script-нода (`@input`-параметры, детерминированный JS в песочнице, seed), детерминированный seed во всех генерирующих нодах, approval-flow для AI-нод («принять/отклонить», bypass для потоковых), Design as Code (IR в git, diff/ревью — вместе с Timeline); от Paper — Data-нода (CSV/JSON/API в props, «goodbye lorem ipsum»), view-only ссылки для клиентских ревью, тариф «зрители бесплатны», narrative «anti-slop by construction». `@input`-типы (number/string/boolean/color/enum/ref) = спецификация параметров HDA-ассетов.
-18. **Позиционирование: независимый control plane** — конкурируем гарантированным контролем (лок структуры, правила, детерминированный слой), не количеством функций; комплементарный слой поверх чужих холстов не планируется. Конкурентный разбор — `docs/COMPETITORS.md`.
-
-## Продуктовый фокус (текущий)
-
-**Спринт 5 (2026-08-05 — 2026-08-06, закрыт): фронтенд нодового редактора на React Flow + shadcn/ui.** Фаза A — фундамент: скаффолд React/Vite/TS в `frontend/`, сборка в `app/static/flow/` (gitignored), маршрут `/flow`, тёмная shadcn-тема. Фаза B — перенос графа: 9 типов нод (Промпт/Референс/Генератор/Редактор/Микс/Клон/Reproduce/BlockParse/Reskin), валидация проводов (kind `text`/`ir`/`tokens`, циклы, один провод на вход), pull-based dataflow, автосейв в ключ `designai-flow-v1`, экспорт/импорт в legacy-совместимом формате. Фаза C — переключение `/` на новый UI. Финальный шаг — **снятие legacy `/nodes`**: `nodes.html`/`nodes.js` удалены, `/nodes` → 307-редирект на `/`, ключ `designai-graph-v1` выведен из обращения; 11 движковых тестовых сьютов ретаргетены на edit-ноду в новом UI (edit-нода — точка монтирования Figma-движка `renderer.js`/`geoedit.js`/`inspector.js`/`irhistory.js`/`editor.js`; движок не переписывался, селекторы тестов сохранены; `NodeShell` держит legacy-DOM-контракт `.node[data-id]`/`.node-head`/`.node-body`); quota-fallback и beforeunload-флаш — parity в `frontend/src/flow/serialize.ts`.
-
-Следующий фокус по решению владельца 12: механизм правил **Quality Gate + Constraints** (общая инфраструктура правил поверх IR; бэкенд пайплайна BlockParse/Reskin уже в main), затем Wedge, Timeline, Taste Memory.
-
-Спринты 1–4 (закрыты Kimi): Figma-ядро geoedit (drag/resize/guides/equal-spacing/marquee/deep-select/enter-container), undo в Edit-ноде (`irhistory.js`), Lock/Hide + search слоёв, Shift-constrain + Alt+drag, numeric math + drag-scrub, OpenRouter-gateway с ролями (только ноды), sqlite-кэш reproduce/clone, Z-order/Group/Ungroup/constraints, мульти-ревью пайплайн. Опорные документы: `README.md` (упоминания `/nodes` и `nodes.html` устарели — новый UI на `/` и `/flow`), `PLAN.md`, `SPEC.md`, `docs/FIGMA-MAP.md`.
-
-## Стандарты качества (для всех агентов)
-
-- Минимальный дифф: не рефакторить вокруг задачи, не трогать чужие файлы.
-- Стиль проекта: UI графа — React + TS в `frontend/src` (shadcn/ui, zustand-стор `flow/store.ts`); Figma-движок — vanilla JS (IIFE-модули, глобалы `IRRenderer`/`GeoEdit`/`Inspector`/`Editor`); Python stdlib + FastAPI на бэке; комментарии на русском, по делу.
-- Любая правка редактора проверяется Playwright-тестом (`app/ui_edit_test.py`, `app/ui_editor_test.py` — нужен запущенный сервер на 8420).
-- IR — единственный источник правды; рендерер не мутирует IR.
-- Контент от LLM — недоверенный: экранировать при вставке в DOM/CSS/URL.
-- Ключи API — только env или `.env` в корне (gitignored); `llm_client.load_dotenv()` подхватывает их при импорте. `start.bat` ключей не содержит (вынесены 2026-08-05).
-
-## Известный техдолг (сверка перед планированием)
-
-Полный код-ревью от 2026-08-04 (backend / frontend / editor) — приоритеты:
-
-1. SSRF в `/api/clone`, `/api/scrape` (нет валидации URL).
-2. LLM-клиент живёт в `spike/run_test.py` и импортируется в прод; `chat()` не поддерживает gemini (текстовые вызовы падают); таймауты 600с.
-3. Потеря данных: base64-скриншоты в localStorage переполняют квоту, `save()` молчит; нет флаша на `beforeunload`.
-4. `gallery.html` содержит застывшую копию `renderer.js` (~450 строк, рассинхрон).
-5. CSS-инъекции из IR (`el.align`, токены в `<style>`, `fontsUrl`, `editor.js:538`).
-
-## Оркестрационные ограничения (эмпирика 2026-08-05, product lead Qwen)
-
-- **Квота Token Plan общая** на все qwen-сессии (окно 5 ч). Параллельный запуск 4–6 воркеров выжигает её за ~3 ч: воркеры останавливаются на «Quota exhausted … Press Ctrl+Y to retry». Лечение: retry после сброса окна (Ctrl+Y; в Orca — управляющий символ 0x19 через `terminal send`). Планировать не более 2–3 тяжёлых воркеров одновременно.
-- **Порт 8420 захардкожен** в `server.py` и Playwright-тестах — воркеры с серверными проверками запускать последовательно.
-- **Хук `setup-worktree.cmd` не подхватывается Orca** (hookSettings репо пусты; CLI-команды настройки хуков нет) — запуск скрипта включать в бриф воркера.
-- **Встроенного агента `qwen` в Orca нет** — воркеры запускаются как `orca terminal create --command qwen` + `terminal send` с брифом.
-- **Часы воркеров/watchdog могут идти в UTC** — при triage зависаний сверять по курсору терминала, не по меткам времени.
-- **Факт-чек данных контракта (Фаза B1):** `kind` портов — строка; расширение набора `tokens`/`attrs`/`selection` (решение 9) аддитивно, переделки контракта не требует.
+```powershell
+git diff --check
+```
