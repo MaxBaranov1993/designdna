@@ -10,6 +10,9 @@ Done/target:
 - OpenRouter-only AI routing;
 - thin Edit node;
 - fullscreen DNA Editor as the only manual editing surface;
+- Design IR 1.1 foundation: versioning, migrator, validator, stable
+  `sourceKey`, content hash and feature flags (see
+  `docs/adr/ADR-0001-ir-first-foundation.md`);
 - new clean documentation;
 - current graph tests green.
 

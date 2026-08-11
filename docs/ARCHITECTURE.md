@@ -15,7 +15,10 @@ The graph controls process. Design IR controls design. The editor controls manua
 
 ## Design IR
 
-Design IR is the source of truth.
+Design IR is the source of truth. The current schema version is **1.1**; see
+`docs/adr/ADR-0001-ir-first-foundation.md` for the versioning, migration,
+`sourceKey`, Tailwind-projection and AI-contract decisions introduced in
+stage 0 of the long-term plan.
 
 It contains:
 
@@ -23,9 +26,17 @@ It contains:
 - `tree`: semantic page/component blocks;
 - `frame`: Figma-like layout geometry;
 - `_frames`: per-element overrides for manual edits;
-- `meta`: name, description, style tags and provenance.
+- `meta`: name, description, style tags and provenance;
+- `styleBindings` (1.1): maps style properties to Style DNA tokens without
+  replacing the exact measured value;
+- `constraints` (1.1): deterministic rules enforced before/after AI operations;
+- `provenance` (1.1): origin metadata (`imported`, `generated`, `normalized`,
+  `manual`).
 
-AI nodes should return or transform IR. Manual edits should mutate IR. Mix and quality operations should operate on IR.
+AI nodes should return or transform IR. Manual edits should mutate IR. Mix and
+quality operations should operate on IR. The backend migrates legacy 1.0
+documents to 1.1 automatically on load or ingestion, so old projects open
+without manual migration.
 
 ## Graph
 
