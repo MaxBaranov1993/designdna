@@ -47,9 +47,13 @@
 
   /* ---------- санация значений из IR (контент от LLM — недоверенный) ---------- */
 
-  /** Цвет — только #rgb/#rrggbb/#rrggbbaa, иначе null (CSS-инъекции через токены). */
+  /** Цвет — #rgb/#rrggbb/#rrggbbaa, rgba(...), hsla(...); иначе null. */
   function safeColor(v) {
-    return /^#[0-9a-fA-F]{3,8}$/.test(String(v == null ? "" : v).trim()) ? v.trim() : null;
+    const s = String(v == null ? "" : v).trim();
+    if (/^#[0-9a-fA-F]{3,8}$/.test(s)) return s;
+    if (/^rgba?\(\s*[\d.]+\s*,\s*[\d.]+%?\s*,\s*[\d.]+%?\s*(?:,\s*[\d.]+\s*)?\)$/.test(s)) return s;
+    if (/^hsla?\(\s*[\d.]+\s*,\s*[\d.]+%\s*,\s*[\d.]+%\s*(?:,\s*[\d.]+\s*)?\)$/.test(s)) return s;
+    return null;
   }
 
   /** Имя шрифта — буквы/цифры/пробелы/дефис; всё остальное вырезается
@@ -300,17 +304,23 @@
       case "heading": {
         const lvl = Math.min(4, Math.max(1, el.level || 2));
         const a = safeAlign(el.align);
-        const align = styleAttr(el.style, a ? `text-align:${a}` : "");
+        const textCss = visualTextCss(el.style);
+        const alignCss = a ? `text-align:${a}` : "";
+        const css = [textCss, alignCss].filter(Boolean).join(";");
+        const sa = css ? ` style="${css}"` : "";
         const childText = Array.isArray(el.children)
           ? el.children.map((c) => c && (c.text || c.title || "")).filter(Boolean).join(" ")
           : "";
-        return `<h${lvl}${align}>${esc(el.text || el.title || childText || "")}</h${lvl}>`;
+        return `<h${lvl}${sa}>${esc(el.text || el.title || childText || "")}</h${lvl}>`;
       }
       case "text": {
         const a = safeAlign(el.align);
-        const align = styleAttr(el.style, a ? `text-align:${a}` : "");
+        const textCss = visualTextCss(el.style);
+        const alignCss = a ? `text-align:${a}` : "";
+        const css = [textCss, alignCss].filter(Boolean).join(";");
+        const sa = css ? ` style="${css}"` : "";
         const cls = el.size === "sm" || el.size === "xs" ? ' class="muted"' : "";
-        return `<p${cls}${align}>${esc(el.text || "")}</p>`;
+        return `<p${cls}${sa}>${esc(el.text || "")}</p>`;
       }
       case "button": {
         const free = el.frame && el.frame.layout === "free";

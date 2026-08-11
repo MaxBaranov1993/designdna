@@ -30,7 +30,12 @@
     font-size:11.5px; outline:none; font-variant-numeric:tabular-nums; }
   .pi input[type=color] { width:28px; height:24px; flex:none; background:transparent;
     border:1px solid var(--border,#45475a); border-radius:6px; padding:1px; cursor:pointer; }
-  .pi-clear-color { width:24px; height:24px; flex:none; padding:0; font-size:14px; line-height:1; }
+  .pi input[type=color].pi-empty { opacity:.35; }
+  .pi-clear-color { width:24px; height:24px; flex:none; padding:0; font-size:14px; line-height:1;
+    background: conic-gradient(#777 25%, transparent 0 50%, #777 0 75%, transparent 0);
+    background-size: 8px 8px; border:1px solid var(--border,#45475a); color:var(--text,#cdd6f4); }
+  .pi-clear-color.pi-active { background:var(--accent,#cba6f7); background-image:none; color:#fff; border-color:var(--accent,#cba6f7); }
+  .pi .pi-opacity { width:54px; }
   .pi input:focus { border-color:var(--accent,#cba6f7); }
   .pi input:disabled { opacity:.4; }
   .pi select { width:100%; min-width:0; background:var(--panel,#313244); border:1px solid var(--border,#45475a);
@@ -247,15 +252,32 @@
       const fontSize = typeof st.fontSize === "number" ? st.fontSize : "";
       const fontWeight = typeof st.fontWeight === "number" ? st.fontWeight : "";
       const isText = node.type === "text" || node.type === "heading" || node.type === "button" || node.text != null || node.title != null;
+      const isTransparent = (v) => v == null || v === "" || String(v).toLowerCase() === "transparent";
+      const opacityVal = Math.round((Number(st.opacity) || 1) * 100);
       html += `<div class="pi-group"><span class="pi-glabel">Appearance</span>
         <div class="pi-row">
-          <div class="pi-field"><label>Fill</label><input type="color" data-style-color="background" value="${fill}"><input type="text" data-style-text="background" value="${esc(st.background || node.fill || "")}" placeholder="auto"><button class="pi-ibtn pi-clear-color" data-clear-style="background" title="Transparent">×</button></div>
+          <div class="pi-field"><label>Fill</label>
+            <input type="color" data-style-color="background" value="${fill}" class="${isTransparent(st.background || node.fill) ? 'pi-empty' : ''}">
+            <button class="pi-ibtn pi-clear-color ${isTransparent(st.background || node.fill) ? 'pi-active' : ''}" data-clear-style="background" title="Transparent">×</button>
+            <input type="text" data-style-text="background" value="${esc(st.background || node.fill || "")}" placeholder="transparent">
+          </div>
         </div>
         ${isText ? `<div class="pi-row">
-          <div class="pi-field"><label>Text</label><input type="color" data-style-color="color" value="${color}"><input type="text" data-style-text="color" value="${esc(st.color || "")}" placeholder="auto"><button class="pi-ibtn pi-clear-color" data-clear-style="color" title="Transparent">×</button></div>
+          <div class="pi-field"><label>Text</label>
+            <input type="color" data-style-color="color" value="${color}" class="${isTransparent(st.color) ? 'pi-empty' : ''}">
+            <button class="pi-ibtn pi-clear-color ${isTransparent(st.color) ? 'pi-active' : ''}" data-clear-style="color" title="Transparent">×</button>
+            <input type="text" data-style-text="color" value="${esc(st.color || "")}" placeholder="transparent">
+          </div>
         </div>` : ""}
         <div class="pi-row">
-          <div class="pi-field"><label>Line</label><input type="color" data-style-color="borderColor" value="${stroke}"><input type="text" data-style-text="borderColor" value="${esc(st.borderColor || "")}" placeholder="auto"><button class="pi-ibtn pi-clear-color" data-clear-style="borderColor" title="Transparent">×</button></div>
+          <div class="pi-field"><label>Line</label>
+            <input type="color" data-style-color="borderColor" value="${stroke}" class="${isTransparent(st.borderColor) ? 'pi-empty' : ''}">
+            <button class="pi-ibtn pi-clear-color ${isTransparent(st.borderColor) ? 'pi-active' : ''}" data-clear-style="borderColor" title="Transparent">×</button>
+            <input type="text" data-style-text="borderColor" value="${esc(st.borderColor || "")}" placeholder="transparent">
+          </div>
+        </div>
+        <div class="pi-row">
+          <div class="pi-field"><label>Opacity</label><input type="range" min="0" max="100" data-style-range="opacity" value="${opacityVal}"><span data-opacity-label>${opacityVal}%</span></div>
         </div>
         <div class="pi-row">
           <div class="pi-field"><label>R</label><input type="text" inputmode="decimal" data-style-num="borderRadius" value="${radius}" placeholder="0"></div>
@@ -446,6 +468,15 @@
         if (v === undefined) return;
         if (v !== null) inp.value = String(Math.max(0, v));
         geo.setNodeStyle({ [key]: v == null ? null : Math.max(0, v) });
+      });
+    });
+    container.querySelectorAll("[data-style-range]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const key = inp.dataset.styleRange;
+        const pct = Math.max(0, Math.min(100, Number(inp.value) || 0));
+        const label = inp.parentElement && inp.parentElement.querySelector("[data-opacity-label]");
+        if (label) label.textContent = pct + "%";
+        geo.setNodeStyle({ [key]: pct === 100 ? null : Math.round(pct) / 100 });
       });
     });
     container.querySelectorAll("[data-style-select]").forEach(sel => {

@@ -789,7 +789,7 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) ->
         for k in ("background", "borderColor", "borderWidth", "borderRadius", "boxShadow"):
             style.pop(k, None)
         return {"type": "text", "text": layer.get("text", ""),
-                "style": style, "frame": frame}
+                "style": style, "frame": frame}  # fill у text-нод не хранится
 
     def shift_to_parent(node: dict, parent: dict) -> None:
         nf = node.get("frame") or {}

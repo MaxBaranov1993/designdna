@@ -1839,6 +1839,11 @@
           if (v === null || v === "") delete style[k];
           else style[k] = v;
         }
+        // text-узлы не должны нести фон/рамку/тень — это всегда родительский контейнер
+        if (node.type === "text" || node.type === "heading") {
+          for (const k of ["background", "borderColor", "borderWidth", "borderRadius", "boxShadow"]) delete style[k];
+          delete node.fill;
+        }
         if (node.type === "rect") {
           if (partial.background !== undefined) {
             if (partial.background === null || partial.background === "") delete node.fill;
