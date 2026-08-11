@@ -17,7 +17,12 @@ from .style_dna import (
 )
 from .normalize import preview as preview_normalization
 from .tailwind_projection import project as project_tailwind
-from .responsive import viewport_for_width, clamp_width, materialize as materialize_responsive
+from .responsive import (
+    viewport_for_width,
+    clamp_width,
+    ensure_fluid_layout,
+    materialize as materialize_responsive,
+)
 from .interaction import (
     INTERACTION_VERSION,
     build as build_interaction,
@@ -58,6 +63,7 @@ __all__ = [
     "project_tailwind",
     "viewport_for_width",
     "clamp_width",
+    "ensure_fluid_layout",
     "materialize_responsive",
     "INTERACTION_VERSION",
     "build_interaction",

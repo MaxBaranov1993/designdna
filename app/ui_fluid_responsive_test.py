@@ -8,9 +8,28 @@ import time
 from playwright.sync_api import sync_playwright
 
 from ui_source_import_editor_test import SOURCE_IR
+import ir
 
 BASE = "http://127.0.0.1:8420"
 FAILS: list[str] = []
+
+CARD_ROW_IR = ir.ensure_current({
+    "version": "1.1",
+    "frame": {"width": 1440, "layout": "auto", "direction": "column"},
+    "tokens": copy.deepcopy(SOURCE_IR["tokens"]),
+    "tree": [{
+        "id": "cards", "type": "feature-grid", "variant": "cards", "props": {},
+        "frame": {"width": "fill", "layout": "auto", "direction": "column", "gap": 32, "padding": 24},
+        "children": [{
+            "type": "card", "role": "card-row",
+            "frame": {"width": "fill", "layout": "auto", "direction": "row", "gap": 24},
+            "children": [{
+                "type": "card", "title": f"Card {index + 1}",
+                "frame": {"width": "fill", "minWidth": 260, "height": 160},
+            } for index in range(3)],
+        }],
+    }],
+})
 
 
 def check(name: str, condition: bool, extra=""):
@@ -71,6 +90,38 @@ def main():
         page.click('[data-responsive-copy="tablet"]')
         tablet_frame = page.evaluate("id => window.GraphDev.node(id).data.ir.tree[0].children[2].responsive?.tablet?.frame || null", node_id)
         check("Copy to breakpoint writes explicit tablet frame", isinstance(tablet_frame, dict) and tablet_frame.get("width") == 100, str(tablet_frame))
+
+        page.click('.dna-editor [data-act="close"]')
+        page.evaluate("(args) => window.GraphDev.setIR(args.id, args.ir)", {"id": node_id, "ir": copy.deepcopy(CARD_ROW_IR)})
+        page.click(".n-edit .f-open-editor")
+        page.click('.dna-editor [data-viewport="tablet"]')
+        page.wait_for_timeout(200)
+        tablet_cards = page.evaluate("""() => {
+          const row = document.querySelector('.dna-editor [data-ir-path="children.0"]');
+          const cards = [...row.querySelectorAll(':scope > [data-ir-path]')];
+          const boxes = cards.map(card => card.getBoundingClientRect());
+          return {overflow:row.scrollWidth - row.clientWidth,
+                  rows:new Set(boxes.map(box => Math.round(box.top))).size,
+                  firstRow:boxes.filter(box => Math.abs(box.top - boxes[0].top) < 2).length};
+        }""")
+        check("tablet wraps generated cards into two columns",
+              tablet_cards["overflow"] <= 1 and tablet_cards["rows"] == 2 and tablet_cards["firstRow"] == 2,
+              str(tablet_cards))
+
+        page.click('.dna-editor [data-viewport="mobile"]')
+        page.wait_for_timeout(200)
+        mobile_cards = page.evaluate("""() => {
+          const row = document.querySelector('.dna-editor [data-ir-path="children.0"]');
+          const cards = [...row.querySelectorAll(':scope > [data-ir-path]')];
+          const boxes = cards.map(card => card.getBoundingClientRect());
+          return {overflow:row.scrollWidth - row.clientWidth,
+                  rows:new Set(boxes.map(box => Math.round(box.top))).size,
+                  widths:boxes.map(box => Math.round(box.width))};
+        }""")
+        check("mobile stacks generated cards without overflow",
+              mobile_cards["overflow"] <= 1 and mobile_cards["rows"] == 3 and
+              max(mobile_cards["widths"]) - min(mobile_cards["widths"]) <= 1,
+              str(mobile_cards))
         browser.close()
 
     if FAILS:

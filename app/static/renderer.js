@@ -227,9 +227,14 @@
     // поэтому в column-родителе fill-width не должен иметь flex-grow (и наоборот) —
     // иначе «fill» ломает геометрию и после drag-конверсии элементы разъезжаются
     const pDir = parentFrame && parentFrame.direction === "row" ? "row" : "column";
+    const wrappingFill = f.width === "fill" && pDir === "row" && parentFrame && parentFrame.wrap;
     if (typeof f.width === "number") s.push(`width:${f.width}px`);
     else if (f.width === "fill") {
       if (parentFree) s.push("width:100%");
+      else if (wrappingFill) {
+        const basis = typeof f.minWidth === "number" ? f.minWidth : 220;
+        s.push("width:auto", `flex:1 1 ${basis}px`, `min-width:min(100%,${basis}px)`);
+      }
       else if (pDir === "row") s.push("width:100%", "flex:1 1 auto", "min-width:0");
       else s.push("width:100%", "min-width:0");
     }
@@ -241,7 +246,7 @@
       else s.push("align-self:stretch", "min-height:0");
     }
     else if (f.height === "hug") s.push("height:fit-content");
-    if (typeof f.minWidth === "number") s.push(`min-width:${f.minWidth}px`);
+    if (typeof f.minWidth === "number" && !wrappingFill) s.push(`min-width:${f.minWidth}px`);
     if (typeof f.maxWidth === "number") s.push(`max-width:${f.maxWidth}px`);
     if (typeof f.minHeight === "number") s.push(`min-height:${f.minHeight}px`);
     if (typeof f.maxHeight === "number") s.push(`max-height:${f.maxHeight}px`);

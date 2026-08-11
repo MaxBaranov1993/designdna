@@ -81,6 +81,19 @@ def main():
     check("fluid width resolves tablet", fluid["meta"]["activeViewport"] == "tablet" and fluid["frame"]["width"] == 900, str(fluid.get("meta")))
     check("fluid materialization does not mutate IR", source == frozen)
 
+    card_row = {
+        "version": "1.1", "tokens": copy.deepcopy(source["tokens"]),
+        "tree": [{"id": "cards", "type": "feature-grid", "variant": "cards", "props": {},
+                  "frame": {"width": "fill", "layout": "auto", "direction": "column"},
+                  "children": [{"type": "card", "frame": {"width": "fill", "layout": "auto", "direction": "row", "gap": 24},
+                                "children": [{"type": "card", "frame": {"width": "fill", "minWidth": 260}} for _ in range(3)]}]}],
+    }
+    upgraded = ir.ensure_current(card_row)
+    row = upgraded["tree"][0]["children"][0]
+    check("generated card row gets tablet/mobile wrap",
+          row["responsive"]["tablet"]["frame"]["wrap"] is True and
+          row["responsive"]["mobile"]["frame"]["wrap"] is True, str(row.get("responsive")))
+
     if FAILS:
         print("FAILS:", FAILS)
         sys.exit(1)

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from .hash import content_hash
 from .schema import CURRENT_SCHEMA_VERSION
 from .source_key import deduplicate_source_keys
+from .responsive import ensure_fluid_layout
 
 
 def _now() -> str:
@@ -17,8 +18,8 @@ def migrate_ir(ir: dict, source: str | None = None) -> dict:
     """Return a migrated copy of `ir` to the current schema version.
 
     - If the document already reports the current version, it is still
-      canonicalized (contentHash, sourceKey deduplication) but its semantics
-      are unchanged.
+      canonicalized (contentHash, sourceKey deduplication and conservative
+      responsive fallbacks for generated card rows).
     - If the document is missing `version` or reports `1.0`, it is upgraded
       to 1.1 and provenance is recorded.
     - The original dict is never mutated.
@@ -48,6 +49,7 @@ def migrate_ir(ir: dict, source: str | None = None) -> dict:
 
     # Ensure a stable element identity graph.
     out = deduplicate_source_keys(out)
+    out = ensure_fluid_layout(out)
 
     # Recompute content hash excluding preview/runtime fields.
     out["contentHash"] = content_hash(out)
