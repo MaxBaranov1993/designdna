@@ -785,6 +785,9 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) ->
         elif layer["kind"] == "image":
             return {"type": "image", "src": layer.get("src", ""),
                     "alt": layer.get("alt", ""), "style": style, "frame": frame}
+        # text-узлы не должны нести фон/рамку/тень: это всегда родитель
+        for k in ("background", "borderColor", "borderWidth", "borderRadius", "boxShadow"):
+            style.pop(k, None)
         return {"type": "text", "text": layer.get("text", ""),
                 "style": style, "frame": frame}
 

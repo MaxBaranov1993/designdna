@@ -30,6 +30,7 @@
     font-size:11.5px; outline:none; font-variant-numeric:tabular-nums; }
   .pi input[type=color] { width:28px; height:24px; flex:none; background:transparent;
     border:1px solid var(--border,#45475a); border-radius:6px; padding:1px; cursor:pointer; }
+  .pi-clear-color { width:24px; height:24px; flex:none; padding:0; font-size:14px; line-height:1; }
   .pi input:focus { border-color:var(--accent,#cba6f7); }
   .pi input:disabled { opacity:.4; }
   .pi select { width:100%; min-width:0; background:var(--panel,#313244); border:1px solid var(--border,#45475a);
@@ -248,13 +249,13 @@
       const isText = node.type === "text" || node.type === "heading" || node.type === "button" || node.text != null || node.title != null;
       html += `<div class="pi-group"><span class="pi-glabel">Appearance</span>
         <div class="pi-row">
-          <div class="pi-field"><label>Fill</label><input type="color" data-style-color="background" value="${fill}"><input type="text" data-style-text="background" value="${esc(st.background || node.fill || "")}" placeholder="auto"></div>
+          <div class="pi-field"><label>Fill</label><input type="color" data-style-color="background" value="${fill}"><input type="text" data-style-text="background" value="${esc(st.background || node.fill || "")}" placeholder="auto"><button class="pi-ibtn pi-clear-color" data-clear-style="background" title="Transparent">×</button></div>
         </div>
         ${isText ? `<div class="pi-row">
-          <div class="pi-field"><label>Text</label><input type="color" data-style-color="color" value="${color}"><input type="text" data-style-text="color" value="${esc(st.color || "")}" placeholder="auto"></div>
+          <div class="pi-field"><label>Text</label><input type="color" data-style-color="color" value="${color}"><input type="text" data-style-text="color" value="${esc(st.color || "")}" placeholder="auto"><button class="pi-ibtn pi-clear-color" data-clear-style="color" title="Transparent">×</button></div>
         </div>` : ""}
         <div class="pi-row">
-          <div class="pi-field"><label>Line</label><input type="color" data-style-color="borderColor" value="${stroke}"><input type="text" data-style-text="borderColor" value="${esc(st.borderColor || "")}" placeholder="auto"></div>
+          <div class="pi-field"><label>Line</label><input type="color" data-style-color="borderColor" value="${stroke}"><input type="text" data-style-text="borderColor" value="${esc(st.borderColor || "")}" placeholder="auto"><button class="pi-ibtn pi-clear-color" data-clear-style="borderColor" title="Transparent">×</button></div>
         </div>
         <div class="pi-row">
           <div class="pi-field"><label>R</label><input type="text" inputmode="decimal" data-style-num="borderRadius" value="${radius}" placeholder="0"></div>
@@ -425,7 +426,17 @@
       inp.addEventListener("change", () => {
         const key = inp.dataset.styleText;
         const value = String(inp.value || "").trim();
-        geo.setNodeStyle({ [key]: value || null });
+        geo.setNodeStyle({ [key]: (!value || value.toLowerCase() === "transparent") ? null : value });
+      });
+    });
+    container.querySelectorAll("[data-clear-style]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.clearStyle;
+        const text = container.querySelector(`[data-style-text="${key}"]`);
+        const color = container.querySelector(`[data-style-color="${key}"]`);
+        if (text) { text.value = ""; text.dispatchEvent(new Event("change")); }
+        if (color) color.value = "#ffffff";
+        geo.setNodeStyle({ [key]: null });
       });
     });
     container.querySelectorAll("[data-style-num]").forEach(inp => {
