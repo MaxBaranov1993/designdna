@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import io
 import re
 from dataclasses import dataclass, field
@@ -738,6 +739,85 @@ def _page_tokens_from_signals(signals: dict | None) -> dict | None:
         return None
 
 
+# ---------- база шрифтов сайтов (Source Import, по мотивам html.to.design) ----------
+
+_FONTS_DIR = Path(__file__).resolve().parent.parent / "data" / "fonts"
+_FONT_MAGIC = ((b"wOF2", ".woff2"), (b"wOFF", ".woff"), (b"OTTO", ".otf"), (b"\x00\x01\x00\x00", ".ttf"))
+
+
+def _download_font(url: str, timeout: float = 15.0) -> Optional[bytes]:
+    """Скачивает файл шрифта с публичного URL (SSRF-гард + проверка magic bytes)."""
+    try:
+        validate_public_url(url)
+    except Exception:
+        return None
+    if not url.startswith(("http://", "https://")):
+        return None
+    try:
+        with httpx.Client(follow_redirects=True, timeout=timeout, headers=_HEADERS) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            data = resp.content
+    except Exception:
+        return None
+    if not data or len(data) > 3_000_000:
+        return None
+    if any(data[:4] == magic for magic, _ in _FONT_MAGIC):
+        return data
+    return None
+
+
+def _store_font(data: bytes) -> str:
+    """Дедуп-запись в data/fonts; возвращает имя файла."""
+    ext = next((e for m, e in _FONT_MAGIC if data[:4] == m), ".ttf")
+    name = hashlib.sha1(data).hexdigest()[:16] + ext
+    _FONTS_DIR.mkdir(parents=True, exist_ok=True)
+    target = _FONTS_DIR / name
+    if not target.exists():
+        target.write_bytes(data)
+    return name
+
+
+def _first_family(css_family: str) -> str:
+    return (css_family or "").split(",")[0].strip().strip("\"'").lower()
+
+
+def _collect_used_families(node, out: set) -> None:
+    if not isinstance(node, dict):
+        return
+    st = node.get("style") or {}
+    if isinstance(st, dict) and st.get("fontFamily"):
+        out.add(_first_family(str(st["fontFamily"])))
+    for ch in node.get("children") or []:
+        _collect_used_families(ch, out)
+
+
+def _resolve_font_faces(raw_faces: list, used: set) -> list:
+    """Из всех @font-face страницы оставляет только семьи, реально использованные
+    в IR блока, скачивает файлы и отдаёт ссылки на локальную базу /fonts."""
+    out: list = []
+    seen: set = set()
+    for face in raw_faces or []:
+        fam = str(face.get("family") or "").strip()
+        if not fam or fam.lower() not in used:
+            continue
+        key = (fam.lower(), str(face.get("weight")), str(face.get("style")))
+        if key in seen:
+            continue
+        for url in face.get("urls") or []:
+            data = _download_font(str(url))
+            if not data:
+                continue
+            seen.add(key)
+            out.append({"family": fam, "weight": str(face.get("weight") or "400"),
+                        "style": str(face.get("style") or "normal"),
+                        "url": "/fonts/" + _store_font(data)})
+            break
+        if len(out) >= 12:
+            break
+    return out
+
+
 def _qa_pixel_pass(nodes: list, root_frame: dict) -> list:
     """Детерминированный QA-пасс захвата: сверяет flow-арифметику auto-контейнеров
     с измеренным размером. Если сумма детей (+gap+padding) расходится с захваченной
@@ -783,7 +863,10 @@ def _qa_pixel_pass(nodes: list, root_frame: dict) -> list:
         if frame.get("layout") == "auto" and kids and not frame.get("wrap") \
                 and frame.get("justify") not in ("space-between", "space-around"):
             placed = [k for k in kids if not (k.get("frame") or {}).get("absolute")]
-            if placed and abs(drift(frame, placed)) > TOL:
+            # пинним только ПОЛОЖИТЕЛЬНЫЙ дрейф: контент не влезает в захваченный
+            # размер и в нашем рендерере полезет на соседей. Отрицательный дрейф —
+            # просто свободное место (row во всю ширину, фикс-высоты) — flow честен.
+            if placed and drift(frame, placed) > TOL:
                 pin(frame, placed, path)
         for i, k in enumerate(kids):
             if isinstance(k, dict):
@@ -904,11 +987,19 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) ->
     # дополнительный QA-контур парсера: дрейф flow → free + пиннинг по захваченным x/y
     qa_warnings = _qa_pixel_pass(children, root_frame)
 
+    # шрифты источника: только использованные в блоке семьи, файлы — в базе /fonts
+    used_families: set = set()
+    for ch in children:
+        _collect_used_families(ch, used_families)
+    _collect_used_families({"style": root_style}, used_families)
+    font_faces = _resolve_font_faces(capture.get("fontFaces") or [], used_families)
+
     return {
         "version": "1.0",
         "meta": {"name": f"Импорт: {semantic['label']}",
                  "description": f"Rendered DOM capture · {semantic['role']}",
-                 "qaWarnings": qa_warnings},
+                 "qaWarnings": qa_warnings,
+                 "fontFaces": font_faces},
         "sourcePreview": source_preview,
         # The browser measures this block as its own artboard. Keeping the same
         # root frame prevents Editor from falling back to the generic 960px
@@ -1203,8 +1294,27 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                     }
                     const sorted=[...childRects].sort((a,b)=>direction==='row' ? (a.left-b.left || a.top-b.top) : (a.top-b.top || a.left-b.left));
                     const hasOverlap=sorted.some((r,i)=>sorted.slice(i+1).some(o=>overlaps(r,o)));
-                    const auto=(explicitFlex||explicitGrid||childRects.length>0) && !positionedKids && !hasOverlap;
-                    return {layout:auto?'auto':'free',direction,wrap};
+                    // явный flex/grid с margin-ами на детях: CSS gap не учитывает
+                    // margins → flow не соберёт исходные позиции → free + пиннинг
+                    const marginedKids=(explicitFlex||explicitGrid) && [...el.children].some(c=>{
+                      const m=getComputedStyle(c);
+                      return parseFloat(m.marginTop)||parseFloat(m.marginRight)||parseFloat(m.marginBottom)||parseFloat(m.marginLeft);
+                    });
+                    let auto=(explicitFlex||explicitGrid||childRects.length>0) && !positionedKids && !hasOverlap && !marginedKids;
+                    // не-flex контейнеры: дети могут быть разведены MARGIN-ами (не gap).
+                    // Меряем фактические зазоры: равномерные → auto с measuredGap;
+                    // неравномерные → free с пиннингом детей (pixel-perfect).
+                    let measuredGap=0;
+                    if(auto && !explicitFlex && !explicitGrid && sorted.length>1){
+                      const gaps=[];
+                      for(let i=1;i<sorted.length;i++){
+                        const a=sorted[i-1], b=sorted[i];
+                        gaps.push(direction==='row' ? (b.left-(a.left+a.width)) : (b.top-(a.top+a.height)));
+                      }
+                      if(gaps.some(g=>Math.abs(g-gaps[0])>1.5)) auto=false;
+                      else measuredGap=Math.max(0,gaps[0]);
+                    }
+                    return {layout:auto?'auto':'free',direction,wrap,explicit:explicitFlex||explicitGrid,measuredGap};
                   };
                   const frameFor = (r,parentRect,cs,parentAuto,isContainer,layout) => {
                     // x/y снимаем ВСЕГДА (даже в auto-родителях): рендерер в auto их
@@ -1216,8 +1326,10 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                     if(positioned || !parentAuto){ frame.absolute=true; }
                     if(isContainer){
                       frame.layout=layout.layout; frame.direction=layout.direction;
-                      const rowGap=num(cs.rowGap), colGap=num(cs.columnGap);
-                      frame.gap=Math.round(layout.direction==='row'?colGap:rowGap);
+                      // gap: у flex/grid — CSS-значения; у блочных — измеренные зазоры
+                      frame.gap=layout.explicit
+                        ? Math.round(layout.direction==='row'?num(cs.columnGap):num(cs.rowGap))
+                        : Math.round(layout.measuredGap||0);
                       frame.padding=paddingOf(cs);
                       frame.justify=safeEnum(justify(cs.justifyContent),['start','center','end','space-between','space-around'],'start');
                       frame.align=safeEnum(align(cs.alignItems),['start','center','end','stretch','baseline'],'start');
@@ -1225,6 +1337,35 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                     }
                     if(cs.overflow==='hidden'||cs.overflow==='clip') frame.clip=true;
                     return frame;
+                  };
+                  const collectFontFaces = () => {
+                    // Шрифты страницы как в html.to.design: читаем @font-face из
+                    // доступных CSSOM-листов (same-origin и CORS-листы), абсолютизируем
+                    // url — сервер скачает файлы и положит в базу /fonts.
+                    const out = []; const seen = new Set();
+                    const abs = (u, base) => { try { return new URL(u, base || document.baseURI).href; } catch (_) { return u; } };
+                    const walk = (list, base) => {
+                      for (const r of Array.from(list || [])) {
+                        if (r.cssRules && r.cssRules.length) { try { walk(r.cssRules, base); } catch (_) {} continue; }
+                        const isFace = (typeof CSSFontFaceRule !== 'undefined' && r instanceof CSSFontFaceRule) ||
+                          (r.type === CSSRule.FONT_FACE_RULE);
+                        if (!isFace) continue;
+                        const fam = (r.style.getPropertyValue('font-family') || '').replace(/["']/g, '').trim();
+                        if (!fam) continue;
+                        const weight = (r.style.getPropertyValue('font-weight') || '400').trim();
+                        const fstyle = (r.style.getPropertyValue('font-style') || 'normal').trim();
+                        const src = r.style.getPropertyValue('src') || '';
+                        const urls = []; const re = /url\\((['"]?)([^'")]+)\\1\\)/g; let m;
+                        while ((m = re.exec(src))) urls.push(abs(m[2], base));
+                        const key = (fam + '|' + weight + '|' + fstyle).toLowerCase();
+                        if (urls.length && !seen.has(key)) { seen.add(key); out.push({ family: fam, weight, style: fstyle, urls: urls.slice(0, 4) }); }
+                      }
+                    };
+                    for (const sheet of Array.from(document.styleSheets)) {
+                      let rules = null; try { rules = sheet.cssRules; } catch (_) {}
+                      if (rules) walk(rules, sheet.href);
+                    }
+                    return out.slice(0, 24);
                   };
                   const compileBlock = (block) => {
                     const root=document.querySelector(block.selector); if(!root) return {selector:block.selector,error:'DOM element not found'};
@@ -1266,7 +1407,14 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                         return visible(c,cr,ccs);
                       });
                       const neutralTextTag=el.matches('span,strong,em,b,i,small,label,p');
-                      const textOnly=directText && !hasElementChildren && type==='card' && neutralTextTag &&
+                      // inline-flow collapse: абзац с <strong>/<a>/<em> внутри — ОДИН
+                      // text-узел с полным текстом, иначе рендерер сложит фрагменты
+                      // стеком блоков и получит лишние переносы/наезды
+                      const INLINE_TAGS=new Set(['strong','em','b','i','a','span','mark','code','small','br','sub','sup']);
+                      const inlineOnly=[...el.children].length>0 &&
+                        [...el.children].every(c=>INLINE_TAGS.has(String(c.tagName||'').toLowerCase()));
+                      const textOnly=directText && type==='card' && neutralTextTag &&
+                        (!hasElementChildren || inlineOnly) &&
                         !hex(cs.backgroundColor) && num(cs.borderTopWidth)===0 && (!cs.boxShadow || cs.boxShadow==='none');
                       if(textOnly) type='text';
                       if(type==='button' && childParentAuto && directText && rawChildren.length){
@@ -1362,7 +1510,7 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                       }
                       else if(child.nodeType===Node.ELEMENT_NODE){ const node=compile(child,rr,rootAuto,root); if(node) rootChildren.push(node); }
                     });
-                    return {selector:block.selector,sourceKey:'root',root:{width:Math.round(rr.width),height:Math.round(rr.height),style:styleOf(rcs,warnings)},nodes:rootChildren,layout:rootLayout.layout,direction:rootLayout.direction,gap:Math.round(rootLayout.direction==='row'?num(rcs.columnGap):num(rcs.rowGap)),padding:paddingOf(rcs),justify:safeEnum(justify(rcs.justifyContent),['start','center','end','space-between','space-around'],'start'),align:rootAlign,pixelPerfect:true,layerCount,candidateCount,warnings:[...warnings]};
+                    return {selector:block.selector,sourceKey:'root',root:{width:Math.round(rr.width),height:Math.round(rr.height),style:styleOf(rcs,warnings)},nodes:rootChildren,layout:rootLayout.layout,direction:rootLayout.direction,gap:Math.round(rootLayout.explicit?(rootLayout.direction==='row'?num(rcs.columnGap):num(rcs.rowGap)):(rootLayout.measuredGap||0)),padding:paddingOf(rcs),justify:safeEnum(justify(rcs.justifyContent),['start','center','end','space-between','space-around'],'start'),align:rootAlign,pixelPerfect:true,layerCount,candidateCount,warnings:[...warnings],fontFaces:collectFontFaces()};
                   };
                   return blocks.map(compileBlock);
                 }""", blocks)

@@ -59,6 +59,13 @@ def main():
     check("дрейф: захваченные x/y сохранены",
           nodes2[0]["frame"]["x"] == 20 and nodes2[1]["frame"]["y"] == 92)
 
+    # 2b. отрицательный дрейф (свободное место, row во всю ширину) → НЕ пинним
+    nodes2b = [kid(0, 0, 100, 40), kid(118, 0, 100, 40)]
+    frame2b = {"width": 1440, "height": 40, "layout": "auto", "direction": "row",
+               "gap": 18, "padding": 0}
+    w2b = scraper._qa_pixel_pass(nodes2b, frame2b)
+    check("отрицательный дрейф: auto сохранён", w2b == [] and frame2b["layout"] == "auto", str(w2b))
+
     # 3. space-between: большая «дыра» — это норма, не пинним
     nodes3 = [kid(0, 0, 100, 40), kid(240, 0, 100, 40)]
     frame3 = {"width": 340, "height": 40, "layout": "auto", "direction": "row",

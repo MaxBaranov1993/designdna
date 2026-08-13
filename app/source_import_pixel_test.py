@@ -103,6 +103,12 @@ def main() -> None:
                   };
                 }"""
             )
+            font_injected = render.evaluate(
+                "(() => { const el = document.getElementById('ir-fontfaces');"
+                " return el ? el.textContent : ''; })()")
+            font_family_used = render.evaluate(
+                "(() => { const els = Array.from(document.querySelectorAll('[data-ir-sec=\"0\"] *'));"
+                " return els.some(e => getComputedStyle(e).fontFamily.includes('Fixture Serif')); })()")
             browser.close()
     finally:
         server.shutdown()
@@ -113,8 +119,11 @@ def main() -> None:
               json.dumps({"expected": expected[key], "actual": actual[key]}, ensure_ascii=False))
 
     section_frame = ir["tree"][0]["frame"]
-    check("source-block keeps measured auto-layout",
-          section_frame.get("layout") == "auto" and section_frame.get("direction") == "row" and section_frame.get("align") == "center",
+    # корень фикстуры — explicit flex, но у promo есть margins: CSS gap их не
+    # учитывает, поэтому capture честно пиннит всё в free (pixel-perfect)
+    check("source-block: flex+margins детей → free с пиннингом",
+          section_frame.get("layout") == "free" and section_frame.get("direction") == "row"
+          and all((c.get("frame") or {}).get("absolute") for c in ir["tree"][0].get("children") or []),
           str(section_frame))
 
     # QA-контур парсера: предупреждения — только формата «flow drift -> free»,
@@ -122,7 +131,8 @@ def main() -> None:
     qa = ir["meta"].get("qaWarnings") or []
     check("qa-пасс: предупреждения только в контрактном формате",
           all(isinstance(w, str) and w.startswith("qa: flow drift") for w in qa), str(qa))
-    check("qa-пасс: корень фикстуры не запиннен", section_frame.get("layout") == "auto")
+    check("qa-пасс: корень фикстуры не запиннен", section_frame.get("layout") == "free"
+          and (ir["meta"].get("qaWarnings") or []) == [])
 
     # контракт захвата: у каждого узла сняты x/y (нужны QA-пассу для пиннинга)
     def all_frames(nodes):
@@ -133,6 +143,59 @@ def main() -> None:
     check("qa-контракт: все кадры несут числовые x/y",
           len(frames) > 0 and all(isinstance(f.get("x"), (int, float)) and isinstance(f.get("y"), (int, float)) for f in frames),
           f"кадров={len(frames)}")
+
+    # ---------- база шрифтов источника (html.to.design-подход) ----------
+    faces = ir["meta"].get("fontFaces") or []
+    ff = next((f for f in faces if str(f.get("family")) == "Fixture Serif"), None)
+    check("шрифты: кастомная @font-face семья захвачена", ff is not None, str(faces))
+    if ff:
+        check("шрифты: url ведёт в базу /fonts", str(ff.get("url", "")).startswith("/fonts/"), str(ff))
+        font_file = ROOT / "data" / "fonts" / str(ff.get("url", "")).rsplit("/", 1)[-1]
+        check("шрифты: файл скачан в data/fonts", font_file.exists() and font_file.stat().st_size > 1000,
+              str(font_file))
+    inj = font_injected
+    check("шрифты: @font-face инжектирован в рендерер", "Fixture Serif" in inj, inj[:120])
+    check("шрифты: текст рендерится кастомной семьёй", bool(font_family_used))
+
+    # ---------- inline-flow collapse и margin-aware layout ----------
+    def find_node(nodes, pred):
+        for n in nodes:
+            if not isinstance(n, dict):
+                continue
+            if pred(n):
+                return n
+            r = find_node(n.get("children") or [], pred)
+            if r:
+                return r
+        return None
+
+    kids = ir["tree"][0].get("children") or []
+    promo = find_node(kids, lambda n: n.get("type") == "text" and "sale" in (n.get("text") or ""))
+    check("inline-collapse: p+strong/em = один text-узел",
+          promo is not None and not promo.get("children"), str(promo)[:160])
+
+    def has_link_kids(n):
+        cs = n.get("children") or []
+        blob = json.dumps(cs, ensure_ascii=False)
+        return len(cs) == 3 and "Journal" in blob and "EN" in blob and "Map" in blob
+
+    links = find_node(kids, has_link_kids)
+    check("margin-контейнер: auto с измеренным gap=20",
+          links is not None and links["frame"].get("layout") == "auto"
+          and abs((links["frame"].get("gap") or 0) - 20) <= 1,
+          str(links["frame"] if links else None))
+
+    def node_text(n):
+        if n.get("text"):
+            return str(n["text"])
+        return " ".join(node_text(c) for c in (n.get("children") or []))
+
+    stack = find_node(kids, lambda n: len(n.get("children") or []) == 3 and
+                      sorted(node_text(c).strip() for c in n["children"]) == ["A", "B", "C"])
+    check("неравномерные margins: free + пиннинг детей",
+          stack is not None and stack["frame"].get("layout") == "free"
+          and all((c.get("frame") or {}).get("absolute") for c in stack["children"]),
+          str(stack["frame"] if stack else None))
 
     if FAILS:
         print("FAILURES:", len(FAILS), "-", ", ".join(FAILS))

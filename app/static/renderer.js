@@ -294,7 +294,11 @@
     const irPath = el.__path || null;
     const html = renderElementInner(el, uid, parentFree, parentFrame);
     if (el.type === "card" || ((el.type === "button" || el.type === "input") && el.children && el.children.length)) return html;
-    const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame);
+    // текст с захваченной высотой: страховка от визуального наезда на соседей,
+    // если метрики шрифта всё же разойдутся (клип вместо overflow поверх)
+    const clipText = (el.type === "text" || el.type === "heading") &&
+      el.frame && typeof el.frame.height === "number" ? "overflow:hidden" : "";
+    const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, clipText);
     // если frame пустой и withFrame не обернул — добавляем span-обёртку с path
     if (wrapped === html && irPath) {
       return `<span data-ir-path="${esc(irPath)}" style="display:inline-block">${html}</span>`;
@@ -729,6 +733,29 @@
     if (tokens.font) {
       const href = fontsUrl(tokens, ir);
       if (href) styleEl.href = href;
+    }
+
+    // кастомные шрифты источника (база /fonts из Source Import): инжект
+    // @font-face + preload, чтобы метрики текста совпали с исходным сайтом
+    const customFaces = (ir.meta && ir.meta.fontFaces) || [];
+    if (customFaces.length) {
+      let ffEl = document.getElementById("ir-fontfaces");
+      if (!ffEl) {
+        ffEl = document.createElement("style");
+        ffEl.id = "ir-fontfaces";
+        document.head.appendChild(ffEl);
+      }
+      ffEl.textContent = customFaces.map((f) =>
+        "@font-face{font-family:'" + String(f.family).replace(/['\\\\]/g, "") + "';" +
+        "font-style:" + (f.style || "normal") + ";font-weight:" + (f.weight || "400") + ";" +
+        "src:url('" + f.url + "') format('woff2'),url('" + f.url + "') format('truetype');" +
+        "font-display:swap;}").join("\n");
+      try {
+        customFaces.forEach((f) => {
+          const w = parseInt(String(f.weight), 10) || 400;
+          document.fonts.load(w + ' 16px "' + f.family + '"');
+        });
+      } catch (_) { /* preload — best effort */ }
     }
 
     // артборд: корневой frame задаёт ширину холста и (опционально) free-позиционирование секций

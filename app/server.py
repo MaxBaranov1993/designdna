@@ -1212,6 +1212,21 @@ def flow_page():
 
 app.mount("/static", StaticFiles(directory=Path(__file__).resolve().parent / "static"), name="static")
 
+# ---------- база захваченных шрифтов сайтов (Source Import) ----------
+FONTS_DIR = ROOT / "data" / "fonts"
+_FONT_NAME = re.compile(r"^[0-9a-f]{16}\.(woff2|woff|ttf|otf)$")
+
+
+@app.get("/fonts/{name}")
+def serve_font(name: str):
+    safe = Path(name).name
+    if not _FONT_NAME.match(safe):
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    p = FONTS_DIR / safe
+    if not p.exists():
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    return FileResponse(p, media_type=mimetypes.guess_type(safe)[0] or "font/woff2")
+
 
 @app.exception_handler(Exception)
 async def unhandled(request, exc):
