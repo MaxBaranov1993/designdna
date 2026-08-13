@@ -76,6 +76,25 @@
     font-family:'Inter',system-ui,sans-serif; font-weight:500; font-size:calc(11px * var(--geo-inv,1));
     padding:calc(5px * var(--geo-inv,1)) calc(10px * var(--geo-inv,1)); white-space:nowrap;
     pointer-events:none; z-index:70; }
+  /* контекстное меню канваса (правый клик; паттерн OpenPencil/Figma) */
+  /* .geo-overlay * гасит pointer-events — меню и пункты включают их явно */
+  .geo-ctx-menu, .geo-ctx-menu * { pointer-events:auto; }
+  .geo-ctx-menu { position:absolute; z-index:90; min-width:calc(190px * var(--geo-inv,1));
+    background:rgba(24,24,27,.97); border:1px solid #3f3f46; border-radius:calc(6px * var(--geo-inv,1));
+    padding:calc(4px * var(--geo-inv,1)); pointer-events:auto;
+    box-shadow:0 calc(8px * var(--geo-inv,1)) calc(24px * var(--geo-inv,1)) rgba(0,0,0,.45);
+    font-family:'Inter',system-ui,sans-serif; }
+  .geo-ctx-item { display:flex; justify-content:space-between; align-items:center;
+    gap:calc(18px * var(--geo-inv,1)); width:100%; background:none; border:none; color:#e4e4e7;
+    text-align:left; cursor:pointer; font-family:inherit;
+    font-size:calc(12px * var(--geo-inv,1)); line-height:1.2;
+    padding:calc(5px * var(--geo-inv,1)) calc(8px * var(--geo-inv,1));
+    border-radius:calc(4px * var(--geo-inv,1)); white-space:nowrap; }
+  .geo-ctx-item:hover:not(.disabled) { background:#0D99FF; color:#fff; }
+  .geo-ctx-item.disabled { opacity:.38; cursor:default; }
+  .geo-ctx-item kbd { color:#a1a1aa; font-family:inherit; font-size:calc(10px * var(--geo-inv,1)); }
+  .geo-ctx-item:hover:not(.disabled) kbd { color:rgba(255,255,255,.85); }
+  .geo-ctx-sep { height:1px; background:#3f3f46; margin:calc(4px * var(--geo-inv,1)) calc(4px * var(--geo-inv,1)); }
   .geo-content-block { pointer-events:none !important; }
   .geo-content-block * { pointer-events:none !important; }
   .geo-content-block [data-ir-path].editing,
@@ -1402,6 +1421,9 @@
     /* --- drag (плавный, через rAF) --- */
 
     function onPointerDown(e) {
+      // клики внутри контекстного меню — его own pointer-events: не гасим
+      // pointerdown (иначе suppress-ится совместимый click по пункту)
+      if (ctxMenuEl && e.target instanceof Node && ctxMenuEl.contains(e.target)) return;
       if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
@@ -2209,6 +2231,114 @@
       return newRefs.length;
     }
 
+    /* ---------- контекстное меню канваса (правый клик; паттерн OpenPencil/Figma) ---------- */
+
+    let ctxMenuEl = null;
+
+    function closeContextMenu() {
+      if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; }
+      document.removeEventListener("pointerdown", onDocDownCloseCtx, true);
+    }
+
+    function onDocDownCloseCtx(ev) {
+      // клик внутри самого меню не закрывает его: иначе DOM удалится на
+      // pointerdown и click по пункту не успеет сработать
+      if (ctxMenuEl && ev.target instanceof Node && ctxMenuEl.contains(ev.target)) return;
+      closeContextMenu();
+    }
+
+    /** items: [{label, hint?, disabled?, run?} | {sep:true}]. Позиция — в
+     *  координатах оверлея, кламп в пределы артборда. */
+    function openContextMenu(clientX, clientY, items) {
+      closeContextMenu();
+      const m = document.createElement("div");
+      m.className = "geo-ctx-menu";
+      items.forEach(it => {
+        if (it.sep) {
+          const s = document.createElement("div");
+          s.className = "geo-ctx-sep";
+          m.appendChild(s);
+          return;
+        }
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "geo-ctx-item" + (it.disabled ? " disabled" : "");
+        const lbl = document.createElement("span");
+        lbl.textContent = it.label;
+        b.appendChild(lbl);
+        if (it.hint) {
+          const k = document.createElement("kbd");
+          k.textContent = it.hint;
+          b.appendChild(k);
+        }
+        if (!it.disabled && it.run) {
+          b.addEventListener("click", (ev) => { ev.stopPropagation(); closeContextMenu(); it.run(); });
+        }
+        m.appendChild(b);
+      });
+      overlay().appendChild(m);
+      const pt = screenToCanvas(clientX, clientY);
+      const W = previewEl.clientWidth, H = previewEl.clientHeight;
+      m.style.left = Math.max(0, Math.min(Math.round(pt.x), Math.max(0, W - m.offsetWidth))) + "px";
+      m.style.top = Math.max(0, Math.min(Math.round(pt.y), Math.max(0, H - m.offsetHeight))) + "px";
+      ctxMenuEl = m;
+      // любой клик вне меню закрывает его (capture — раньше overlay-хендлеров)
+      document.addEventListener("pointerdown", onDocDownCloseCtx, true);
+    }
+
+    function buildCtxItems() {
+      const hasSel = selections.length > 0;
+      const multiSel = selections.length > 1;
+      const last = hasSel ? selections[selections.length - 1] : null;
+      const lastNode = last ? irNodeAt(last.ref) : null;
+      const canUngroup = hasSel && !multiSel && lastNode && Array.isArray(lastNode.children)
+        && lastNode.children.length > 0 && lastNode.frame && lastNode.frame.layout === "free";
+      const groupable = !selections.some(s => s.ref.secIdx != null && s.ref.path == null)
+        && selections.filter(s => s.ref.secIdx != null && s.ref.path != null
+          && s.ref.path.startsWith("children.")).length >= 2;
+      const items = [
+        { label: "Копировать", hint: "Ctrl+C", disabled: !hasSel, run: copySelection },
+        { label: "Вырезать", hint: "Ctrl+X", disabled: !hasSel, run: cutSelection },
+        { label: "Вставить", hint: "Ctrl+V", disabled: !geoClipboard.length, run: pasteClipboard },
+        { label: "Дублировать", hint: "Ctrl+D", disabled: !hasSel, run: duplicateSelection },
+        { sep: true },
+        { label: "Выше", hint: "]", disabled: !hasSel, run: bringForward },
+        { label: "Ниже", hint: "[", disabled: !hasSel, run: sendBackward },
+        { label: "Группа", hint: "Ctrl+G", disabled: !groupable, run: groupSelection },
+        { label: "Разгруппировать", hint: "Ctrl+Shift+G", disabled: !canUngroup, run: ungroupSelection },
+        { sep: true },
+        { label: "Удалить", hint: "Del", disabled: !hasSel, run: deleteSelections },
+      ];
+      if (hasSel && !multiSel && last) {
+        const pathLabel = last.ref.path == null
+          ? `tree[${last.ref.secIdx}]`
+          : `tree[${last.ref.secIdx}].${last.ref.path}`;
+        items.push({ sep: true });
+        items.push({
+          label: "Копировать IR-путь", hint: pathLabel,
+          run: () => {
+            if (navigator.clipboard) navigator.clipboard.writeText(pathLabel);
+            hint("IR-путь скопирован");
+          },
+        });
+      }
+      return items;
+    }
+
+    /** Правый клик: невыделенный элемент под курсором сначала выделяется
+     *  (поведение Figma), затем открывается меню. */
+    function onContextMenu(e) {
+      if (destroyed) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const ref = hitTest(e.clientX, e.clientY, false);
+      if (ref) {
+        const already = selections.some(s => refKey(s.ref) === refKey(ref));
+        if (!already) select(ref);
+      }
+      openContextMenu(e.clientX, e.clientY, buildCtxItems());
+    }
+
     /* --- клавиатура: nudge, escape, delete --- */
 
     /** Esc: выйти из контейнера или снять выделение.
@@ -2256,6 +2386,13 @@
       // Esc: выйти из контейнера или снять выделение.
       // При escapeViaHandle владелец сам явно зовёт consumeEscape() (editor.js)
       if (e.key === "Escape") {
+        // открытое контекстное меню закрывается первым, до сброса выделения
+        if (ctxMenuEl) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeContextMenu();
+          return;
+        }
         if (!escapeViaHandle) consumeEscape();
         return;
       }
@@ -2423,6 +2560,7 @@
     overlay().addEventListener("pointermove", onHover);
     overlay().addEventListener("pointerleave", hideHover);
     overlay().addEventListener("dblclick", onDblClick);
+    overlay().addEventListener("contextmenu", onContextMenu);
     // capture-фаза: граф (nodes.js) тоже слушает Delete на document и удаляет
     // ноду — перехватываем клавиши раньше него
     document.addEventListener("keydown", onKeydown, true);
@@ -2432,11 +2570,13 @@
       if (destroyed) return;
       destroyed = true;
       if (rafId) cancelAnimationFrame(rafId);
+      closeContextMenu();
       const ov = overlay();
       ov.removeEventListener("pointerdown", onPointerDown);
       ov.removeEventListener("pointermove", onHover);
       ov.removeEventListener("pointerleave", hideHover);
       ov.removeEventListener("dblclick", onDblClick);
+      ov.removeEventListener("contextmenu", onContextMenu);
       document.removeEventListener("keydown", onKeydown, true);
       window.removeEventListener("resize", onResizeWin);
       // разблокируем контент
