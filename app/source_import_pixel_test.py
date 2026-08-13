@@ -117,6 +117,23 @@ def main() -> None:
           section_frame.get("layout") == "auto" and section_frame.get("direction") == "row" and section_frame.get("align") == "center",
           str(section_frame))
 
+    # QA-контур парсера: предупреждения — только формата «flow drift -> free»,
+    # а корневая раскладка здоровой фикстуры остаётся auto (без ложного пиннинга корня)
+    qa = ir["meta"].get("qaWarnings") or []
+    check("qa-пасс: предупреждения только в контрактном формате",
+          all(isinstance(w, str) and w.startswith("qa: flow drift") for w in qa), str(qa))
+    check("qa-пасс: корень фикстуры не запиннен", section_frame.get("layout") == "auto")
+
+    # контракт захвата: у каждого узла сняты x/y (нужны QA-пассу для пиннинга)
+    def all_frames(nodes):
+        for n in nodes:
+            yield n.get("frame") or {}
+            yield from all_frames(n.get("children") or [])
+    frames = list(all_frames(ir["tree"][0].get("children") or []))
+    check("qa-контракт: все кадры несут числовые x/y",
+          len(frames) > 0 and all(isinstance(f.get("x"), (int, float)) and isinstance(f.get("y"), (int, float)) for f in frames),
+          f"кадров={len(frames)}")
+
     if FAILS:
         print("FAILURES:", len(FAILS), "-", ", ".join(FAILS))
         sys.exit(1)

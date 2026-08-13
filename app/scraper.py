@@ -738,6 +738,64 @@ def _page_tokens_from_signals(signals: dict | None) -> dict | None:
         return None
 
 
+def _qa_pixel_pass(nodes: list, root_frame: dict) -> list:
+    """Детерминированный QA-пасс захвата: сверяет flow-арифметику auto-контейнеров
+    с измеренным размером. Если сумма детей (+gap+padding) расходится с захваченной
+    высотой/шириной сильнее допуска — flow в нашем рендерере поедет (чужие шрифты,
+    переносы): контейнер переводится в free, дети пиннятся по захваченным x/y
+    (они теперь всегда в кадре) — позиции остаются pixel-perfect по конструкции.
+    Возвращает журнал предупреждений."""
+    warnings: list = []
+    TOL = 3
+
+    def pad_main(frame: dict) -> float:
+        pad = frame.get("padding") or 0
+        if isinstance(pad, (list, tuple)):
+            return float(pad[1] + pad[3]) if frame.get("direction") == "row" else float(pad[0] + pad[2])
+        return float(pad) * 2
+
+    def drift(frame: dict, kids: list) -> float:
+        gap = float(frame.get("gap") or 0)
+        total = pad_main(frame) + gap * max(0, len(kids) - 1)
+        for k in kids:
+            kf = k.get("frame") or {}
+            main = kf.get("width") if frame.get("direction") == "row" else kf.get("height")
+            if isinstance(main, (int, float)):
+                total += float(main)
+        captured = frame.get("width") if frame.get("direction") == "row" else frame.get("height")
+        if not isinstance(captured, (int, float)):
+            return 0.0
+        return total - float(captured)
+
+    def pin(frame: dict, kids: list, path: str) -> None:
+        frame["layout"] = "free"
+        pinned = 0
+        for k in kids:
+            kf = k.get("frame") or {}
+            if isinstance(kf.get("x"), (int, float)) and isinstance(kf.get("y"), (int, float)):
+                kf["absolute"] = True
+                pinned += 1
+        warnings.append(f"qa: flow drift at {path} -> layout free, pinned {pinned} children")
+
+    def walk(node: dict, path: str) -> None:
+        frame = node.get("frame") or {}
+        kids = node.get("children") or []
+        if frame.get("layout") == "auto" and kids and not frame.get("wrap") \
+                and frame.get("justify") not in ("space-between", "space-around"):
+            placed = [k for k in kids if not (k.get("frame") or {}).get("absolute")]
+            if placed and abs(drift(frame, placed)) > TOL:
+                pin(frame, placed, path)
+        for i, k in enumerate(kids):
+            if isinstance(k, dict):
+                walk(k, f"{path}.{i}")
+
+    walk({"frame": root_frame, "children": nodes}, "root")
+    for i, n in enumerate(nodes):
+        if isinstance(n, dict):
+            walk(n, f"children.{i}")
+    return warnings
+
+
 def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) -> dict:
     """DOM-capture → валидный свободный Design IR.
 
@@ -843,10 +901,14 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) ->
     if capture.get("align"):
         root_frame["align"] = capture.get("align")
 
+    # дополнительный QA-контур парсера: дрейф flow → free + пиннинг по захваченным x/y
+    qa_warnings = _qa_pixel_pass(children, root_frame)
+
     return {
         "version": "1.0",
         "meta": {"name": f"Импорт: {semantic['label']}",
-                 "description": f"Rendered DOM capture · {semantic['role']}"},
+                 "description": f"Rendered DOM capture · {semantic['role']}",
+                 "qaWarnings": qa_warnings},
         "sourcePreview": source_preview,
         # The browser measures this block as its own artboard. Keeping the same
         # root frame prevents Editor from falling back to the generic 960px
@@ -1145,9 +1207,13 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                     return {layout:auto?'auto':'free',direction,wrap};
                   };
                   const frameFor = (r,parentRect,cs,parentAuto,isContainer,layout) => {
-                    const frame={width:Math.round(r.width),height:Math.round(r.height)};
+                    // x/y снимаем ВСЕГДА (даже в auto-родителях): рендерер в auto их
+                    // игнорирует, но QA-пасс при дрейфе flow переводит контейнер в free
+                    // и пиннит детей по этим координатам = pixel-perfect по конструкции.
+                    const frame={width:Math.round(r.width),height:Math.round(r.height),
+                      x:Math.round(r.left-parentRect.left),y:Math.round(r.top-parentRect.top)};
                     const positioned=['absolute','fixed'].includes(cs.position)||cs.transform!=='none';
-                    if(positioned || !parentAuto){ frame.absolute=true; frame.x=Math.round(r.left-parentRect.left); frame.y=Math.round(r.top-parentRect.top); }
+                    if(positioned || !parentAuto){ frame.absolute=true; }
                     if(isContainer){
                       frame.layout=layout.layout; frame.direction=layout.direction;
                       const rowGap=num(cs.rowGap), colGap=num(cs.columnGap);
@@ -1177,8 +1243,11 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                         if(child.nodeType===Node.TEXT_NODE){
                           const text=(child.textContent||'').replace(/\\s+/g,' ').trim(); if(!text) return;
                           const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect(); if(tr.width<1||tr.height<1) return;
-                          const textFrame={width:Math.round(tr.width),height:Math.round(tr.height)};
-                          if(!childParentAuto){ textFrame.absolute=true; textFrame.x=Math.round(tr.left-r.left); textFrame.y=Math.round(tr.top-r.top); }
+                          // +2px эпсилон к ширине: рендерер при повторном переносе не
+                          // должен заворачивать лишнюю строку на границе округления
+                          const textFrame={width:Math.ceil(tr.width)+2,height:Math.round(tr.height),
+                            x:Math.round(tr.left-r.left),y:Math.round(tr.top-r.top)};
+                          if(!childParentAuto){ textFrame.absolute=true; }
                           rawChildren.push({type:'text',text:text.slice(0,1000),sourceKey:key+'::text'+idx,style:cleanTextStyle(styleOf(cs,warnings)),frame:textFrame}); layerCount++; candidateCount++;
                         } else if(child.nodeType===Node.ELEMENT_NODE){
                           const compiled=compile(child,r,childParentAuto,rootEl); if(compiled) rawChildren.push(compiled);
@@ -1284,8 +1353,9 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                         const text=(child.textContent||'').replace(/\\s+/g,' ').trim();
                         if(text){
                           const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect();
-                          const textFrame={width:Math.round(tr.width),height:Math.round(tr.height)};
-                          if(!rootAuto){ textFrame.absolute=true; textFrame.x=Math.round(tr.left-rr.left); textFrame.y=Math.round(tr.top-rr.top); }
+                          const textFrame={width:Math.ceil(tr.width)+2,height:Math.round(tr.height),
+                            x:Math.round(tr.left-rr.left),y:Math.round(tr.top-rr.top)};
+                          if(!rootAuto){ textFrame.absolute=true; }
                           rootChildren.push({type:'text',text:text.slice(0,1000),sourceKey:'root::text'+idx,style:cleanTextStyle(styleOf(rcs,warnings)),frame:textFrame});
                           layerCount++; candidateCount++;
                         }
