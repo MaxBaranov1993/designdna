@@ -7,17 +7,10 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- Legacy-ядро превью/Figma-правки: подключаем оригиналы из app/static БЕЗ
-         переписывания (решение владельца №6). Порядок — как в nodes.html (171-176),
-         кроме nodes.js (его заменяет этот бандл):
-         IRRenderer (renderer.js), GeoEdit (geoedit.js), Inspector (inspector.js),
-         IRHistory (irhistory.js), Editor (editor.js). -->
-    <script src="/static/font_catalog.js?v=fonts1"></script>
-    <script src="/static/renderer.js?v=dom19"></script>
-    <script src="/static/geoedit.js?v=dom19"></script>
-    <script src="/static/inspector.js"></script>
-    <script src="/static/irhistory.js"></script>
-    <script src="/static/editor.js?v=dom19"></script>
+    <!-- Движки (IRRenderer/GeoEdit/IRHistory/fontCatalog) — TS-модули в
+         frontend/src/engine, входят в этот бандл. Для headless-рендера на
+         стороне Python app/static/flow/engine.js собирается отдельно
+         (vite.engine.config.ts) и восстанавливает window-глобалы. -->
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

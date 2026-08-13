@@ -1,7 +1,5 @@
-/* Типы для legacy-движков, подключённых глобальными скриптами (index.html):
- * GeoEdit (geoedit.js), IRHistory (irhistory.js), Inspector (inspector.js),
- * каталог шрифтов (font_catalog.js). IRRenderer уже описан в IrPreview.tsx.
- * Движки остаются императивными «островами» — React-редактор только оркестрирует. */
+/* Типы движков (frontend/src/engine): GeoEdit, IRHistory. Движки — императивные
+ * TS-модули внутри React-сборки; React-редактор оркестрирует их. */
 
 export type GeoRef = { secIdx: number | null; path: string | null };
 export type GeoSel = { ref: GeoRef; label: string; node: any };
@@ -60,24 +58,4 @@ export interface IRHistoryHandle {
   canUndo: () => boolean;
   canRedo: () => boolean;
   clear: () => void;
-}
-
-declare global {
-  interface Window {
-    GeoEdit?: { attach: (opts: GeoAttachOpts) => GeoHandle };
-    IRHistory?: {
-      createHistory: (opts?: { limit?: number; coalesceMs?: number }) => IRHistoryHandle;
-    };
-    Inspector?: {
-      render: (
-        container: HTMLElement,
-        ctx: { ir: any; selections: GeoSel[]; geo: GeoHandle | null },
-      ) => void;
-      scrubbing?: boolean;
-    };
-    DesignAIFontCatalog?: {
-      families: string[];
-      groups?: { label: string; fonts: string[] }[];
-    };
-  }
 }

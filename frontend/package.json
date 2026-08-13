@@ -6,7 +6,8 @@
   "description": "Нодовый редактор DesignAI на React Flow + shadcn/ui (Фаза A: фундамент)",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && vite build --config vite.engine.config.ts",
+    "build:engine": "vite build --config vite.engine.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {

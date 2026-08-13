@@ -1574,11 +1574,11 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
 
 # ---------- Fidelity: честное пиксельное сходство IR со скриншотом источника ----------
 
-_RENDERER_JS = Path(__file__).resolve().parent / "static" / "renderer.js"
+_RENDERER_JS = Path(__file__).resolve().parent / "static" / "flow" / "engine.js"
 
 
 def _render_ir_jpeg(page, ir: dict, width: int, height: int) -> bytes:
-    """Отрисовать IR существующим app/static/renderer.js и вернуть JPEG-скриншот."""
+    """Отрисовать IR движком из React-сборки (app/static/flow/engine.js) и вернуть JPEG."""
     page.set_viewport_size({"width": max(320, int(width)), "height": max(320, int(height) + 40)})
     page.set_content(f'<div id="preview" style="width:{int(width)}px"></div>')
     page.add_script_tag(path=str(_RENDERER_JS))
@@ -1608,8 +1608,8 @@ def ir_fidelity(ir: dict, reference_jpeg_data_url: str, width: int, height: int,
                 page=None) -> float | None:
     """Пиксельное сходство рендера IR со скриншотом источника, 0-100.
 
-    Рендер — тем же app/static/renderer.js, что и редактор, поэтому метрика
-    измеряет именно то, что увидит пользователь. None при любой ошибке (нет
+    Рендер — тем же движком (app/static/flow/engine.js), что и редактор, поэтому
+    метрика измеряет именно то, что увидит пользователь. None при любой ошибке (нет
     Chromium, битый data URL, renderer не отрисовал) — функция никогда не кидает.
     page — переиспользуемая вкладка для пакетного прогона; без неё поднимаем
     одноразовый headless Chromium.

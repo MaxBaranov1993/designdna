@@ -3,21 +3,7 @@ import type { MouseEventHandler } from "react";
 import { deepClone } from "../flow/dataflow";
 import type { IRObject, SourceViewport } from "../flow/types";
 import { cn } from "../lib/utils";
-
-declare global {
-  interface Window {
-    IRRenderer?: {
-      renderIR: (
-        container: HTMLElement,
-        ir: IRObject,
-        options?: { viewport?: SourceViewport; fit?: boolean },
-      ) => void;
-      materializeResponsiveIR: (ir: IRObject, viewport: string) => IRObject;
-      fitPreview: (container: HTMLElement, inner?: HTMLElement | null) => void;
-      DESIGN_WIDTH: number;
-    };
-  }
-}
+import { IRRenderer } from "../engine/renderer";
 
 export function IrPreview({
   ir,
@@ -46,8 +32,8 @@ export function IrPreview({
 
   const syncPreviewSize = () => {
     const el = innerRef.current;
-    if (!el || !window.IRRenderer) return;
-    window.IRRenderer.fitPreview(el);
+    if (!el) return;
+    IRRenderer.fitPreview(el, null);
     if (!fitHeight || !ir) return;
     const renderedHeight = Number.parseFloat(el.style.height) || el.getBoundingClientRect().height;
     const nextHeight = Math.max(minHeight, Math.min(height, Math.ceil(renderedHeight)));
@@ -57,7 +43,7 @@ export function IrPreview({
   useEffect(() => {
     const el = innerRef.current;
     if (!el) return;
-    if (!ir || !window.IRRenderer) {
+    if (!ir) {
       el.innerHTML = "";
       setMeasuredHeight(null);
       return;
@@ -71,7 +57,7 @@ export function IrPreview({
         ? meta.activeViewport
         : undefined
     );
-    window.IRRenderer.renderIR(el, deepClone(ir), activeViewport ? { viewport: activeViewport } : undefined);
+    IRRenderer.renderIR(el, deepClone(ir), activeViewport ? { viewport: activeViewport } : undefined);
     const frame = requestAnimationFrame(syncPreviewSize);
     return () => cancelAnimationFrame(frame);
   }, [ir, viewport, fitHeight, height, minHeight]);

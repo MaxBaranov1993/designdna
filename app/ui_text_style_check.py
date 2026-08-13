@@ -101,21 +101,20 @@ def main() -> None:
             raise AssertionError(f"text node leaked visual container styles: bg={bg}, border={border}, shadow={shadow}")
         print("OK text node has no background/border/shadow")
 
-        # Проверяем Inspector: transparent-кнопка и opacity slider
-        insp_html = page.evaluate("""(ir) => {
-            const sec = ir.tree && ir.tree[0];
-            const btn = sec && sec.children && sec.children[0];
-            const node = btn && btn.children && btn.children[0];
-            if (!node) throw new Error('node not found: sec=' + JSON.stringify(sec) + ' btn=' + JSON.stringify(btn));
-            const container = document.createElement('div');
-            document.body.appendChild(container);
-            window.Inspector.render(container, {
-                ir: ir,
-                selections: [{ref: {secIdx: 0, path: 'children.0.children.0'}, label: 'text', node: node}],
-                geo: {frameOf: () => node.frame, posOf: () => ({x:0,y:0}), sizeOf: () => ({w:100,h:20}), setNodeStyle: () => {}}
-            });
-            return container.innerHTML;
-        }""", IR)
+        # Проверяем Inspector: transparent-кнопка и opacity slider — в React-инспекторе
+        # открытого DNA-редактора (legacy window.Inspector удалён вместе с vanilla-движками)
+        page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        page.evaluate("window.GraphDev.add('edit', 60, 40)")
+        nid = int(page.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
+        page.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, IR)
+        page.wait_for_timeout(500)
+        page.click(".n-edit .f-open-editor")
+        page.wait_for_selector('.dna-editor[style*="flex"]')
+        page.wait_for_timeout(400)
+        tb = page.query_selector('.dna-editor [data-ir-sec="0"] [data-ir-path="children.0.children.0"]').bounding_box()
+        page.mouse.click(tb["x"] + tb["width"] / 2, tb["y"] + tb["height"] / 2)
+        page.wait_for_timeout(400)
+        insp_html = page.evaluate("document.querySelector('.dna-editor .fe-inspector').innerHTML")
         assert "data-clear-style=\"background\"" in insp_html, "missing transparent button for Fill"
         assert "data-clear-style=\"color\"" in insp_html, "missing transparent button for Text"
         assert "data-style-range=\"opacity\"" in insp_html, "missing opacity slider"

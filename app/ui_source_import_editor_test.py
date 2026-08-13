@@ -87,7 +87,7 @@ def main() -> None:
 
         page.evaluate("localStorage.clear()")
         page.reload()
-        page.wait_for_function("window.GraphDev && window.IRRenderer && window.Editor")
+        page.wait_for_function("window.GraphDev && window.IRRenderer && window.DNAEditor")
         node_id = page.evaluate("window.GraphDev.add('edit', 80, 60).id")
         page.evaluate("(v) => window.GraphDev.setIR(v.id, v.ir)", {"id": node_id, "ir": SOURCE_IR})
         page.wait_for_function(
@@ -114,7 +114,7 @@ def main() -> None:
           buttonChildren: document.querySelector('.fe-canvas-inner [data-ir-path="children.2"]').querySelectorAll('[data-ir-path]').length,
           sectionLayout: getComputedStyle(document.querySelector('.dna-editor [data-ir-sec="0"]')).display,
           canonicalLayout: window.GraphDev.node(%d).data.ir.tree[0].frame.layout,
-          activeLayout: window.Editor.getIR().tree[0].frame.layout,
+          activeLayout: window.DNAEditor.getIR().tree[0].frame.layout,
         })""" % node_id)
         check("desktop artboard uses source viewport", desktop["art"] == [800, 72], json.dumps(desktop))
         check("source screenshot is not an editor underlay", desktop["underlays"] == 0, json.dumps(desktop))
@@ -130,7 +130,7 @@ def main() -> None:
           const art = document.querySelector('.dna-editor .fe-canvas-inner div[class^="ir-"]');
           const button = document.querySelector('.fe-canvas-inner [data-ir-path="children.2"]');
           return {art:[art.offsetWidth,art.offsetHeight], buttonWidth:button.offsetWidth,
-                  buttonCss:button.getAttribute('style'), buttonFrame:window.Editor.getIR().tree[0].children[2].frame,
+                  buttonCss:button.getAttribute('style'), buttonFrame:window.DNAEditor.getIR().tree[0].children[2].frame,
                   active:document.querySelector('[data-viewport="mobile"]').classList.contains('active')};
         }""")
         check("mobile switches the same artboard to 390x180", mobile["art"] == [390, 180], json.dumps(mobile))
@@ -143,7 +143,7 @@ def main() -> None:
           const section = document.querySelector('.dna-editor [data-ir-sec="0"]');
           return {art:[art.offsetWidth,art.offsetHeight], display:getComputedStyle(section).display,
                   direction:getComputedStyle(section).flexDirection,
-                  activeLayout:window.Editor.getIR().tree[0].frame.layout};
+                  activeLayout:window.DNAEditor.getIR().tree[0].frame.layout};
         }""")
         check("tablet keeps imported auto-layout",
               tablet["art"] == [768, 72] and tablet["display"] == "flex" and
@@ -168,7 +168,7 @@ def main() -> None:
         page.mouse.up()
         page.wait_for_timeout(120)
         drag_state = page.evaluate("""() => {
-          const ir=window.Editor.getIR(); const button=ir.tree[0].children[2];
+          const ir=window.DNAEditor.getIR(); const button=ir.tree[0].children[2];
           const r=document.querySelector('.fe-canvas-inner [data-ir-path="children.2"]').getBoundingClientRect();
           return {parentLayout:ir.tree[0].frame.layout, absolute:button.frame.absolute, x:button.frame.x,
                   moved:[r.left,r.top]};
@@ -177,11 +177,11 @@ def main() -> None:
         check("free drag detaches only the selected component", drag_state["absolute"] is True and drag_state["x"] >= 0,
               json.dumps({"before": before, **drag_state}))
 
-        page.evaluate("window.Editor.getIR().tree[0].children[1].children[0].text = 'Search everywhere'")
+        page.evaluate("window.DNAEditor.getIR().tree[0].children[1].children[0].text = 'Search everywhere'")
         page.click('.dna-editor [data-viewport="desktop"]')
         page.wait_for_timeout(120)
         desktop_after_edit = page.evaluate("""() => ({
-          buttonFrame:window.Editor.getIR().tree[0].children[2].frame,
+          buttonFrame:window.DNAEditor.getIR().tree[0].children[2].frame,
           search:document.querySelector('.fe-canvas-inner [data-ir-path="children.1.children.0"]').textContent,
         })""")
         check("text edits are shared between viewports", desktop_after_edit["search"] == "Search everywhere",
@@ -191,7 +191,7 @@ def main() -> None:
 
         page.click('.dna-editor [data-viewport="mobile"]')
         page.wait_for_timeout(120)
-        mobile_after_return = page.evaluate("window.Editor.getIR().tree[0].children[2].frame")
+        mobile_after_return = page.evaluate("window.DNAEditor.getIR().tree[0].children[2].frame")
         check("breakpoint-specific layout survives viewport switching",
               mobile_after_return.get("absolute") is True and mobile_after_return.get("x") == drag_state["x"],
               json.dumps(mobile_after_return))

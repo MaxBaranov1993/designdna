@@ -1,5 +1,4 @@
-(function (global) {
-  "use strict";
+// @ts-nocheck
 
   const groups = [
     { label: "Sans", fonts: [
@@ -42,7 +41,7 @@
   const systemFamilies = new Set(groups.filter(g => g.provider === "system").flatMap(g => g.fonts));
   const families = groups.flatMap(g => g.fonts);
 
-  global.DesignAIFontCatalog = {
+export const DesignAIFontCatalog = {
     groups,
     families,
     googleFamilies,
@@ -54,4 +53,3 @@
       return systemFamilies.has(String(name || "").trim());
     }
   };
-})(window);

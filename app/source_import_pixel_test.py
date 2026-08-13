@@ -77,7 +77,7 @@ def main() -> None:
 
             render = browser.new_page(viewport={"width": 1500, "height": 500})
             render.set_content('<div id="preview" style="width:1440px"></div>')
-            render.add_script_tag(path=str(ROOT / "app" / "static" / "renderer.js"))
+            render.add_script_tag(path=str(ROOT / "app" / "static" / "flow" / "engine.js"))
             render.evaluate("(ir) => window.IRRenderer.renderIR(document.querySelector('#preview'), ir)", ir)
             render.wait_for_selector('[data-ir-sec="0"]')
             actual = render.evaluate(

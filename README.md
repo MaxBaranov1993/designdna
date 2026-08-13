@@ -41,15 +41,17 @@ generation roles.
 ## Repository layout
 
 ```
-app/            FastAPI backend + vanilla-JS engine islands
-  server.py     all API routes (port 8420)
+app/            FastAPI backend
+  server.py     all API routes (port 8420; serves /static and the font base at /fonts)
   scraper.py    Source Import: DOM capture, font base, QA pass
   blockparse.py block detection / LLM clone pipeline
   llm_client.py OpenRouter client, role routing, system prompts
   qualitygate.py, mergeback.py, reproduce.py, motion_render.py, ...
-  static/       renderer.js / geoedit.js / inspector.js / irhistory.js (engines)
-  static/flow/  built React app (vite output)
+  static/flow/  built React app + engine.js (IIFE engine bundle for headless renders)
 frontend/       React + TS + Vite source (flow graph, DNA editor, inspector)
+  src/engine/   Design-IR engines as TS modules: renderer (IR→DOM), geoedit
+                (Figma geometry), irhistory (undo/redo), fontCatalog
+  src/editor/   DNA editor: session controller + React panels
 schema/         Design IR / Interaction IR / Motion IR JSON schemas
 spike/          generation spike scripts + system prompt template
 app/*_test.py   Playwright UI suite (needs a running server)

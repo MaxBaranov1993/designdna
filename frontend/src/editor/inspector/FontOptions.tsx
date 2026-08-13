@@ -1,11 +1,12 @@
-/* Опции шрифтов для селектов инспектора — JSX-порт fontOptionsHtml
- * (editor.js/inspector.js): каталог window.DesignAIFontCatalog с группами
- * или плоский fallback-список. Выбранное значение задаёт селект через defaultValue. */
+/* Опции шрифтов для селектов инспектора — JSX-порт fontOptionsHtml:
+ * каталог engine/fontCatalog с группами или плоский fallback-список.
+ * Выбранное значение задаёт селект через defaultValue. */
+import { DesignAIFontCatalog } from "../../engine/fontCatalog";
 
 const FALLBACK_FONTS = ["Inter", "Sora", "Manrope", "Playfair Display", "Space Grotesk", "DM Sans", "IBM Plex Mono", "Montserrat"];
 
 export function FontOptions({ autoLabel }: { autoLabel?: string }) {
-  const catalog = window.DesignAIFontCatalog || null;
+  const catalog = DesignAIFontCatalog;
   return (
     <>
       {autoLabel != null ? <option value="">{autoLabel}</option> : null}

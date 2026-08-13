@@ -10,7 +10,7 @@ import imageio_ffmpeg
 from playwright.sync_api import sync_playwright
 
 
-RENDERER_JS = Path(__file__).resolve().parent / "static" / "renderer.js"
+RENDERER_JS = Path(__file__).resolve().parent / "static" / "flow" / "engine.js"
 MAX_RENDER_FRAMES = 10_800
 
 

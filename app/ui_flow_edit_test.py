@@ -71,7 +71,7 @@ def main():
         pg.reload()
         pg.wait_for_selector(".react-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
-        pg.wait_for_function("window.IRRenderer && window.Editor")
+        pg.wait_for_function("window.GraphDev && window.IRRenderer && window.DNAEditor")
 
         e1 = pg.evaluate("window.GraphDev.add('edit', 80, 60).id")
         e2 = pg.evaluate("window.GraphDev.add('edit', 620, 60).id")

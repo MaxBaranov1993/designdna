@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* DesignAI Web — GeoEdit: ядро Figma-геометрии поверх IR-превью.
  * Самостоятельный модуль без глобального состояния приложения.
  * Используется editor.js (полноэкранный редактор) и nodes.js (нода Edit).
@@ -20,8 +21,6 @@
  * Адресация узлов: ref = {secIdx: number|null (артборд), path: string|null}.
  * path — от корня секции: "children.0", "children.1.children.0", ...
  */
-(function (global) {
-  "use strict";
 
   /* ---------- CSS (инжектится один раз) ---------- */
 
@@ -2643,5 +2642,4 @@
     };
   }
 
-  global.GeoEdit = { attach };
-})(window);
+export const GeoEdit = { attach };

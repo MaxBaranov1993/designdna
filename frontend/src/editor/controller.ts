@@ -1,8 +1,11 @@
-/* DNA Editor — контроллер сессии: порт императивной логики legacy app/static/editor.js
- * на TypeScript. React (EditorApp и панели) отдаёт статический каркас и DOM-refs;
- * вся работа с IR/GeoEdit/Inspector/IRHistory/линейками/Style DNA живёт здесь и
- * повторяет поведение editor.js 1:1 (селекторы, порядок вызовов, семантика undo). */
+/* DNA Editor — контроллер сессии: оркестрирует TS-движки (engine/renderer,
+ * engine/geoedit, engine/irhistory) и React-каркас панелей. Селекторы и
+ * семантика undo — контракт UI-тестов. */
 import type { GeoHandle, GeoRef, GeoSel, IRHistoryHandle } from "./globals";
+import { IRRenderer } from "../engine/renderer";
+import { GeoEdit } from "../engine/geoedit";
+import { IRHistory } from "../engine/irhistory";
+import { DesignAIFontCatalog } from "../engine/fontCatalog";
 
 /* ---------- DOM-refs: регистрируются React-компонентами ---------- */
 
@@ -77,7 +80,7 @@ function getByPath(obj: any, path: string) {
   return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
 }
 
-const FONT_CATALOG = typeof window !== "undefined" ? window.DesignAIFontCatalog || null : null;
+const FONT_CATALOG = DesignAIFontCatalog;
 const FONT_FAMILIES = FONT_CATALOG
   ? FONT_CATALOG.families
   : ["Inter", "Sora", "Manrope", "Playfair Display", "Space Grotesk", "DM Sans", "IBM Plex Mono", "Montserrat"];
@@ -196,7 +199,6 @@ export function handleAct(act: string) {
 
 /** Фаза 1 открытия: состояние + не-layout части (вызывается из store.openEditor). */
 export function open(node: NodeShim, onSave: (ir: any) => void, onClose: (saved: boolean) => void) {
-  if (!window.IRRenderer || !window.GeoEdit || !window.IRHistory) return false;
   upgradeSourceNesting(node.data.ir);
   state = {
     ir: node.data.ir,
@@ -204,7 +206,7 @@ export function open(node: NodeShim, onSave: (ir: any) => void, onClose: (saved:
     onSave,
     onClose,
     geo: null,
-    history: window.IRHistory.createHistory({ limit: 50 }),
+    history: IRHistory.createHistory({ limit: 50 }),
     sel: [], // массив выделенных {ref, label, node}
     zoom: 1,
     panX: 40,
@@ -855,7 +857,7 @@ function buildActiveIR() {
     state.activeIR = state.ir;
     return state.activeIR;
   }
-  state.activeIR = window.IRRenderer!.materializeResponsiveIR(state.ir, state.viewport);
+  state.activeIR = IRRenderer.materializeResponsiveIR(state.ir, state.viewport);
   if (state.activeIR.frame && Number.isFinite(state.previewWidth)) state.activeIR.frame.width = state.previewWidth;
   delete state.activeIR.responsive;
   return state.activeIR;
@@ -946,7 +948,7 @@ function syncActiveIR() {
 function renderCanvas() {
   if (!state || !dom.canvasInner) return;
   const inner = dom.canvasInner;
-  window.IRRenderer!.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
+  IRRenderer.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
   applyLayerFlags();
   applyTransform();
   attachGeoEdit();
@@ -1153,22 +1155,22 @@ const panAdapter = {
 };
 
 function attachGeoEdit() {
-  if (!state || !dom.canvasInner || !window.GeoEdit) return;
+  if (!state || !dom.canvasInner) return;
   if (state.geo) state.geo.destroy();
   const inner = dom.canvasInner;
   const previewEl = inner;
-  state.geo = window.GeoEdit.attach({
+  state.geo = GeoEdit.attach({
     previewEl,
     tools: true,
     escapeViaHandle: true, // Esc обрабатываем сами через geo.consumeEscape()
-    isLocked: (ref) => refFlag(ref, "locked"), // locked-слои не выделяются на канвасе
+    isLocked: (ref: GeoRef) => refFlag(ref, "locked"), // locked-слои не выделяются на канвасе
     scrollEl: panAdapter,
-    onToolChange: (t) => { if (state && state.tool !== t) setTool(t); },
+    onToolChange: (t: string) => { if (state && state.tool !== t) setTool(t); },
     getIR: () => (state ? state.activeIR || state.ir : null),
     getScale: () => {
       const irEl = inner.querySelector('[class^="ir-"]') as HTMLElement | null;
       if (!irEl) return 1;
-      const dw = Number(irEl.dataset.designWidth) || window.IRRenderer!.DESIGN_WIDTH;
+      const dw = Number(irEl.dataset.designWidth) || IRRenderer.DESIGN_WIDTH;
       const w = irEl.getBoundingClientRect().width;
       return w > 0 ? w / dw : 1;
     },
@@ -1177,7 +1179,7 @@ function attachGeoEdit() {
       if (!state) return;
       syncActiveIR();
       const savedRefs = state.sel.map((s) => s.ref);
-      window.IRRenderer!.renderIR(inner, buildActiveIR(), { fit: false });
+      IRRenderer.renderIR(inner, buildActiveIR(), { fit: false });
       applyLayerFlags();
       applyTransform();
       attachGeoEdit();
@@ -1188,7 +1190,7 @@ function attachGeoEdit() {
       // во время drag-scrub инспектор не перестраиваем — иначе умрёт pointer capture
       if (!inspScrubbing) renderInspector();
     },
-    onSelect: (sels) => {
+    onSelect: (sels: GeoSel[]) => {
       if (!state) return;
       state.sel = sels || [];
       // во время drag-scrub не перестраиваем инспектор — умрёт pointer capture
@@ -1424,7 +1426,7 @@ export function copyResponsiveTo(sel: GeoSel, viewport: string) {
 export function rerenderEditorCanvas() {
   if (!state || !dom.canvasInner) return;
   const inner = dom.canvasInner;
-  window.IRRenderer!.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
+  IRRenderer.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
   applyLayerFlags();
   applyTransform();
   attachGeoEdit();

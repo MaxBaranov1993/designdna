@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* irhistory.js — общая snapshot-история IR (undo/redo) для ноды Edit и DNA-редактора.
  *
  * IRHistory.createHistory({ limit, coalesceMs }) → {
@@ -10,8 +11,6 @@
  * }
  * Хранение — JSON-снапшоты (глубокая копия), лимит по умолчанию 50.
  */
-(function (global) {
-  "use strict";
 
   const DEFAULT_LIMIT = 50;
   const DEFAULT_COALESCE_MS = 500;
@@ -63,5 +62,4 @@
     return { push, undo, redo, canUndo, canRedo, clear };
   }
 
-  global.IRHistory = { createHistory };
-})(window);
+export const IRHistory = { createHistory };

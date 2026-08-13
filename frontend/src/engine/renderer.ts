@@ -1,6 +1,6 @@
-/* DesignAI Web — renderer: Design IR -> DOM. Чистый vanilla JS, без зависимостей. */
-(function (global) {
-  "use strict";
+// @ts-nocheck
+/* DesignAI Web — renderer: Design IR -> DOM. TS-модуль ядра (без window-глобалов). */
+import { DesignAIFontCatalog } from "./fontCatalog";
 
   const DESIGN_WIDTH = 960;
 
@@ -112,7 +112,7 @@
 
   function shouldLoadGoogleFont(family) {
     const name = safeFontFamily(family);
-    const catalog = global.DesignAIFontCatalog;
+    const catalog = DesignAIFontCatalog;
     if (catalog && catalog.isSystemFamily && catalog.isSystemFamily(name)) return false;
     if (catalog && catalog.isGoogleFamily) return catalog.isGoogleFamily(name);
     return !!name;
@@ -838,5 +838,4 @@
     });
   }
 
-  global.IRRenderer = { renderIR, materializeResponsiveIR, fitPreview, DESIGN_WIDTH };
-})(window);
+export const IRRenderer = { renderIR, materializeResponsiveIR, fitPreview, DESIGN_WIDTH };

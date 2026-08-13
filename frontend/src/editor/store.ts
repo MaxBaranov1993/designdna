@@ -31,10 +31,7 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
     const ir = n ? ((n.data as { ir?: IRObject | null }).ir ?? null) : null;
     if (!ir) {
       toast("Сначала подключите IR к входу ноды", "error");
-      return true; // ошибка показана — fallback не нужен
-    }
-    if (!(window.IRRenderer && window.GeoEdit && window.IRHistory && window.Inspector)) {
-      return false; // legacy editor.js подхватит
+      return true; // ошибка показана
     }
 
     // DNA Editor мутирует IR in-place. Write-through shim держит граф и редактор
