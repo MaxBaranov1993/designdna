@@ -11,7 +11,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
 BASE = "http://127.0.0.1:8420"
-IR_PATH = pathlib.Path(__file__).resolve().parent.parent / "docs" / "frame-example.json"
+IR_PATH = pathlib.Path(__file__).resolve().parent.parent / "app" / "fixtures" / "frame-example.json"
 OUT = pathlib.Path(__file__).resolve().parent.parent / "results" / "ui_edit_node_clean.png"
 
 

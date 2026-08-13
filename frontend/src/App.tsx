@@ -34,6 +34,7 @@ import { DeriveNode } from "./nodes/DeriveNode";
 import { PageBridgeNode } from "./nodes/PageBridgeNode";
 import { RecorderNode } from "./nodes/RecorderNode";
 import { MotionNode } from "./nodes/MotionNode";
+import { EditorApp } from "./editor/EditorApp";
 
 /* Реестр кастомных нод — вне компонента, ключи = legacy type (конвертация данных не нужна) */
 const nodeTypes = {
@@ -246,7 +247,7 @@ function FlowCanvas() {
          * RF по умолчанию слушает Shift для своей рамки и может перехватывать drag
          * поверх кастомных поверхностей, поэтому selectionKeyCode гасим. */
         selectionKeyCode={null}
-        connectionLineStyle={{ stroke: "#9d9de8", strokeWidth: 2, strokeDasharray: "5 4" }}
+        connectionLineStyle={{ stroke: "#d4d4d8", strokeWidth: 2, strokeDasharray: "5 4" }}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="#23232e" />
       </ReactFlow>
@@ -310,7 +311,7 @@ function TopBar() {
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-4">
       <span className="text-sm font-extrabold tracking-tight">
-        DNA<span className="text-[#5b5bd6]">·</span>Web
+        DNA<span className="text-muted-foreground">·</span>Web
       </span>
       <span className="hidden text-xs text-muted-foreground lg:inline">
         ПКМ — создать ноду · колесо — зум · drag фона — панорама
@@ -448,6 +449,7 @@ export default function App() {
         </div>
       </ReactFlowProvider>
       <ToastViewport />
+      <EditorApp />
     </div>
   );
 }

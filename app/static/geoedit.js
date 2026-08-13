@@ -14,6 +14,7 @@
  *           alignLeft(), alignCenterH(), alignRight(),
  *           alignTop(), alignCenterV(), alignBottom(),
  *           distributeH(), distributeV(),
+ *           selectAll(), copySelection(), cutSelection(), pasteClipboard(),
  *           destroy(), selection, selections }
  *
  * Адресация узлов: ref = {secIdx: number|null (артборд), path: string|null}.
@@ -28,21 +29,22 @@
   /* Оверлей живёт ВНУТРИ трансформированного контейнера (canvas-координаты).
      --geo-inv = 1/zoom: ручки, чипы и линии держат постоянный экранный размер. */
   .geo-overlay { position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:auto; z-index:50; overflow:visible; cursor:default; }
-  .geo-overlay[data-tool="rect"], .geo-overlay[data-tool="frame"], .geo-overlay[data-tool="text"] { cursor:crosshair; }
+  .geo-overlay[data-tool="rect"], .geo-overlay[data-tool="frame"], .geo-overlay[data-tool="text"],
+  .geo-overlay[data-tool="ellipse"], .geo-overlay[data-tool="line"], .geo-overlay[data-tool="image"] { cursor:crosshair; }
   .geo-overlay[data-tool="hand"] { cursor:grab; }
   .geo-overlay.geo-handling { cursor:grabbing; }
   .geo-overlay * { pointer-events:none; }
   .geo-overlay .geo-h { pointer-events:auto; }
   .geo-box { position:absolute; border:calc(1.5px * var(--geo-inv,1)) solid transparent; pointer-events:none; }
   .geo-box.hover { border-color:rgba(120,120,160,.55); border-style:dashed; }
-  .geo-box.selected { border-color:#5B5BD6; }
+  .geo-box.selected { border-color:#0D99FF; }
   .geo-chip { position:absolute; top:calc(-20px * var(--geo-inv,1)); left:calc(-1px * var(--geo-inv,1));
-    background:#5B5BD6; color:#fff; font-family:'Inter',system-ui,sans-serif; font-weight:600;
+    background:#0D99FF; color:#fff; font-family:'Inter',system-ui,sans-serif; font-weight:600;
     font-size:calc(10px * var(--geo-inv,1)); padding:calc(1px * var(--geo-inv,1)) calc(7px * var(--geo-inv,1));
     border-radius:calc(4px * var(--geo-inv,1)) calc(4px * var(--geo-inv,1)) 0 0;
     white-space:nowrap; pointer-events:none; }
   .geo-h { position:absolute; width:calc(8px * var(--geo-inv,1)); height:calc(8px * var(--geo-inv,1));
-    background:#fff; border:calc(1.5px * var(--geo-inv,1)) solid #5B5BD6;
+    background:#fff; border:calc(1.5px * var(--geo-inv,1)) solid #0D99FF;
     border-radius:2px; pointer-events:auto; z-index:2; }
   .geo-h.h-nw { top:calc(-4px * var(--geo-inv,1)); left:calc(-4px * var(--geo-inv,1)); cursor:nwse-resize; }
   .geo-h.h-n  { top:calc(-4px * var(--geo-inv,1)); left:calc(50% - 4px * var(--geo-inv,1)); cursor:ns-resize; }
@@ -52,7 +54,7 @@
   .geo-h.h-s  { bottom:calc(-4px * var(--geo-inv,1)); left:calc(50% - 4px * var(--geo-inv,1)); cursor:ns-resize; }
   .geo-h.h-sw { bottom:calc(-4px * var(--geo-inv,1)); left:calc(-4px * var(--geo-inv,1)); cursor:nesw-resize; }
   .geo-h.h-w  { top:calc(50% - 4px * var(--geo-inv,1)); left:calc(-4px * var(--geo-inv,1)); cursor:ew-resize; }
-  .geo-marquee { position:absolute; border:calc(1px * var(--geo-inv,1)) solid #5B5BD6; background:rgba(91,91,214,.08);
+  .geo-marquee { position:absolute; border:calc(1px * var(--geo-inv,1)) solid #0D99FF; background:rgba(13,153,255,.08);
     pointer-events:none; z-index:60; }
   .geo-guide { position:absolute; pointer-events:none; z-index:58; }
   .geo-guide-h { left:0; right:0; height:calc(1px * var(--geo-inv,1)); background:#ff3b30; }
@@ -70,7 +72,7 @@
     font-weight:500; font-size:calc(9px * var(--geo-inv,1));
     color:#9747ff; background:rgba(151,71,255,.12); padding:0 calc(3px * var(--geo-inv,1)); border-radius:2px; white-space:nowrap; }
   .geo-hint { position:absolute; left:50%; top:calc(8px * var(--geo-inv,1)); transform:translateX(-50%);
-    background:rgba(24,24,37,.92); color:#cdd6f4; border:1px solid #45475a; border-radius:6px;
+    background:rgba(24,24,27,.92); color:#e4e4e7; border:1px solid #3f3f46; border-radius:6px;
     font-family:'Inter',system-ui,sans-serif; font-weight:500; font-size:calc(11px * var(--geo-inv,1));
     padding:calc(5px * var(--geo-inv,1)) calc(10px * var(--geo-inv,1)); white-space:nowrap;
     pointer-events:none; z-index:70; }
@@ -87,6 +89,15 @@
     const s = document.createElement("style");
     s.textContent = GEO_CSS;
     document.head.appendChild(s);
+  }
+
+  /* ---------- буфер обмена (уровень модуля: переживает re-attach владельца) ---------- */
+
+  let geoClipboard = [];  // [{node, parentRef, intoTree}]
+  let geoUidCounter = 0;
+  /** Уникальный id создаваемых/вставляемых узлов (IR не требует id, но он полезен). */
+  function nextUid() {
+    return "geo-" + Date.now().toString(36) + "-" + (++geoUidCounter);
   }
 
   /* ---------- утилиты ---------- */
@@ -137,7 +148,12 @@
       const irEl = previewEl.querySelector('[class^="ir-"]');
       if (irEl) irEl.classList.add("geo-content-block");
     }
-    function onMutated() { _onMutated(); requestAnimationFrame(blockContentEarly); }
+    function onMutated() {
+      _onMutated();
+      requestAnimationFrame(blockContentEarly);
+      // владелец мог перерисовать превью целиком — восстановить рамки выделения
+      scheduleBoxSync();
+    }
     injectCSS();
 
     // КРИТИЧНО: previewEl должен быть positioned-контейнером для оверлея
@@ -151,7 +167,7 @@
     let selections = [];   // [{ref, label, node}]
     let drag = null;
     let marquee = null;
-    let tool = "select";   // select | rect | text | frame | hand (панель как в pen.dev)
+    let tool = "select";   // select | rect | ellipse | line | image | text | frame | hand (панель как в pen.dev)
     let hand = null;
     let create = null;
     let destroyed = false;
@@ -402,16 +418,27 @@
     /** Проверяет попадание в resize-хендл текущего выделения. Возвращает направление или null. */
     function hitTestHandle(clientX, clientY) {
       if (!selections.length) return null;
-      const primary = selections[selections.length - 1];
-      const el = domAt(primary.ref);
-      if (!el) return null;
       const s = scale();
-      const r = el.getBoundingClientRect();
       const base = previewEl.getBoundingClientRect();
-      const hx = (r.left - base.left ) / s;
-      const hy = (r.top - base.top ) / s;
-      const hw = r.width / s;
-      const hh = r.height / s;
+      let hx, hy, hw, hh;
+      if (selections.length > 1) {
+        // мультивыделение: ручки на объединяющей рамке (как рисует renderSelectionBoxes)
+        const rects = selectedRects();
+        if (rects.length < 2) return null;
+        hx = Math.min(...rects.map(r => r.x));
+        hy = Math.min(...rects.map(r => r.y));
+        hw = Math.max(...rects.map(r => r.x + r.w)) - hx;
+        hh = Math.max(...rects.map(r => r.y + r.h)) - hy;
+      } else {
+        const primary = selections[selections.length - 1];
+        const el = domAt(primary.ref);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        hx = (r.left - base.left ) / s;
+        hy = (r.top - base.top ) / s;
+        hw = r.width / s;
+        hh = r.height / s;
+      }
       const pt = screenToCanvas(clientX, clientY);
       const handles = [
         { dir: "nw", cx: hx, cy: hy },
@@ -780,10 +807,35 @@
       return `${labelOf(ref)} · ${w}×${h}`;
     }
 
-    /** Перерисовка всех боксов выделения. */
+    function addHandles(box) {
+      ["nw", "n", "ne", "e", "se", "s", "sw", "w"].forEach(d => {
+        const h = document.createElement("span");
+        h.className = "geo-h h-" + d;
+        h.dataset.dir = d;
+        box.appendChild(h);
+      });
+    }
+
+    /** Объединяющий прямоугольник выделения в координатах оверлея (или null). */
+    function selectionUnionBox() {
+      let u = null;
+      selections.forEach(sel => {
+        const el = domAt(sel.ref);
+        if (!el) return;
+        const r = boxRect(el);
+        if (!u) { u = { left: r.left, top: r.top, right: r.left + r.width, bottom: r.top + r.height }; return; }
+        u.left = Math.min(u.left, r.left); u.top = Math.min(u.top, r.top);
+        u.right = Math.max(u.right, r.left + r.width); u.bottom = Math.max(u.bottom, r.top + r.height);
+      });
+      return u && { left: u.left, top: u.top, width: u.right - u.left, height: u.bottom - u.top };
+    }
+
+    /** Перерисовка всех боксов выделения. При мультивыделении ручки resize —
+     *  на объединяющей рамке (resize масштабирует все выделенные пропорционально). */
     function renderSelectionBoxes() {
       const cont = selContainer();
       cont.innerHTML = "";
+      const multi = selections.length > 1;
       selections.forEach((sel, i) => {
         const el = domAt(sel.ref);
         if (!el) return;
@@ -794,17 +846,22 @@
         chip.className = "geo-chip";
         chip.textContent = chipText(sel.ref);
         box.appendChild(chip);
-        if (i === selections.length - 1) {
-          ["nw", "n", "ne", "e", "se", "s", "sw", "w"].forEach(d => {
-            const h = document.createElement("span");
-            h.className = "geo-h h-" + d;
-            h.dataset.dir = d;
-            box.appendChild(h);
-          });
-        }
+        if (!multi && i === selections.length - 1) addHandles(box);
         placeBox(box, boxRect(el));
         cont.appendChild(box);
       });
+      if (multi) {
+        const u = selectionUnionBox();
+        if (u) {
+          // без chip: внешние счётчики (.geo-box.selected .geo-chip) не должны
+          // видеть объединяющую рамку как лишний выделенный элемент
+          const box = document.createElement("div");
+          box.className = "geo-box selected geo-union";
+          addHandles(box);
+          placeBox(box, u);
+          cont.appendChild(box);
+        }
+      }
     }
 
     function hideHover() {
@@ -1082,13 +1139,28 @@
       if (tool === "rect") {
         fr.width = Math.round(clicked ? 120 : Math.max(16, rw));
         fr.height = Math.round(clicked ? 90 : Math.max(16, rh));
-        child = { type: "rect", fill: "#8B5CF6", radius: 8, frame: fr };
+        child = { type: "rect", sourceKey: nextUid(), fill: "#8B5CF6", radius: 8, frame: fr };
+      } else if (tool === "ellipse") {
+        // как rect, но pill/эллипс: renderer читает node.radius
+        fr.width = Math.round(clicked ? 120 : Math.max(16, rw));
+        fr.height = Math.round(clicked ? 90 : Math.max(16, rh));
+        child = { type: "rect", sourceKey: nextUid(), fill: "#8B5CF6", radius: 9999, frame: fr };
+      } else if (tool === "line") {
+        // линия — тонкий rect; доминантная ось drag'а задаёт направление
+        const horizontal = clicked || rw >= rh;
+        if (horizontal) { fr.width = Math.round(clicked ? 120 : Math.max(8, rw)); fr.height = 2; }
+        else { fr.width = 2; fr.height = Math.round(Math.max(8, rh)); }
+        child = { type: "rect", sourceKey: nextUid(), fill: "#6b7280", frame: fr };
+      } else if (tool === "image") {
+        fr.width = Math.round(clicked ? 240 : Math.max(40, rw));
+        fr.height = Math.round(clicked ? 160 : Math.max(40, rh));
+        child = { type: "image", sourceKey: nextUid(), alt: "изображение", frame: fr };
       } else if (tool === "text") {
-        child = { type: "text", text: "Новый текст", frame: fr };
+        child = { type: "text", sourceKey: nextUid(), text: "Новый текст", frame: fr };
       } else {
         fr.width = Math.round(clicked ? 240 : Math.max(40, rw));
         fr.height = Math.round(clicked ? 160 : Math.max(40, rh));
-        child = { type: "card", children: [], frame: fr };
+        child = { type: "card", sourceKey: nextUid(), children: [], frame: fr };
       }
       contNode.children = contNode.children || [];
       contNode.children.push(child);
@@ -1256,6 +1328,45 @@
       onMutated();
     }
 
+    /** Live-превью multi-resize: двигаем/растягиваем только объединяющую рамку. */
+    function liveResizeMulti(d, dx, dy) {
+      const dir = d.dir, u0 = d.union0;
+      let w = u0.w, h = u0.h, tx = 0, ty = 0;
+      if (dir.includes("e")) w = u0.w + dx;
+      if (dir.includes("s")) h = u0.h + dy;
+      if (dir.includes("w")) { w = u0.w - dx; tx = dx; }
+      if (dir.includes("n")) { h = u0.h - dy; ty = dy; }
+      w = Math.max(8, w); h = Math.max(8, h);
+      d.wLive = w; d.hLive = h; d.txLive = tx; d.tyLive = ty;
+      const k = canvasK(); // union0 в canvas-координатах, рамка — в координатах оверлея
+      d.el.style.width = (w * k) + "px";
+      d.el.style.height = (h * k) + "px";
+      d.el.style.transform = (tx || ty) ? `translate(${tx * k}px, ${ty * k}px)` : "";
+    }
+
+    /** Коммит multi-resize: все выделенные узлы масштабируются пропорционально
+     *  объединяющей рамке (позиции — дельтами, чтобы не зависеть от родителя). */
+    function commitResizeMulti(d) {
+      if (d.wLive == null) { onMutated(); return; }
+      onCommit();
+      const u0 = d.union0;
+      const sx = u0.w > 0 ? d.wLive / u0.w : 1;
+      const sy = u0.h > 0 ? d.hLive / u0.h : 1;
+      const nx = u0.x + (d.txLive || 0), ny = u0.y + (d.tyLive || 0);
+      d.items.forEach(it => {
+        ensureParentFree(it.ref);
+        const f = Object.assign({}, getFrame(it.ref));
+        const baseX = typeof f.x === "number" ? f.x : 0;
+        const baseY = typeof f.y === "number" ? f.y : 0;
+        f.x = Math.round(baseX + nx + (it.x - u0.x) * sx - it.x);
+        f.y = Math.round(baseY + ny + (it.y - u0.y) * sy - it.y);
+        f.width = Math.max(1, Math.round(it.w * sx));
+        f.height = Math.max(1, Math.round(it.h * sy));
+        setFrameData(it.ref, f);
+      });
+      onMutated();
+    }
+
     /** Constraints (модель Figma): как дети реагируют на resize родителя.
      *  child.frame.constraints = {h: left|center|right|scale, v: top|center|bottom|scale};
      *  по умолчанию left/top (ничего не делаем). Работает во free-родителях,
@@ -1294,7 +1405,7 @@
 
       // инструменты панели (как левый тулбар pen.dev)
       if (tool === "hand") { startHand(e); return; }
-      if (tool === "rect" || tool === "text" || tool === "frame") { startCreate(e); return; }
+      if (["rect", "text", "frame", "ellipse", "line", "image"].includes(tool)) { startCreate(e); return; }
 
       // 1) Проверяем resize-хендлы (геометрически)
       const handleDir = hitTestHandle(e.clientX, e.clientY);
@@ -1338,6 +1449,24 @@
     function startResize(dir, e) {
       if (!selections.length) return;
       e.preventDefault();
+      if (selections.length > 1) {
+        // мультивыделение: resize объединяющей рамки, коммит масштабирует все узлы
+        const rects = selectedRects()
+          .filter(r => r.ref.path == null || r.ref.path.startsWith("children."));
+        if (rects.length < 2) return;
+        const ux = Math.min(...rects.map(r => r.x));
+        const uy = Math.min(...rects.map(r => r.y));
+        drag = { type: "resize-multi", dir, startX: e.clientX, startY: e.clientY, moved: true,
+                 union0: { x: ux, y: uy,
+                           w: Math.max(...rects.map(r => r.x + r.w)) - ux,
+                           h: Math.max(...rects.map(r => r.y + r.h)) - uy },
+                 items: rects,
+                 el: overlay().querySelector(".geo-box.geo-union") };
+        overlay().setPointerCapture(e.pointerId);
+        overlay().addEventListener("pointermove", onDragMove);
+        overlay().addEventListener("pointerup", onDragUp, { once: true });
+        return;
+      }
       const primary = selections[selections.length - 1];
       const el = domAt(primary.ref);
       if (!el) return;
@@ -1413,6 +1542,8 @@
         });
         const chip = overlay().querySelector(".geo-box.selected:last-child .geo-chip");
         if (chip) chip.textContent = `Δ ${Math.round(tx)} · ${Math.round(ty)}`;
+      } else if (drag.type === "resize-multi") {
+        if (drag.el) liveResizeMulti(drag, dx / s, dy / s);
       } else {
         if (!drag.el) drag.el = domAt(drag.ref);
         if (drag.el) liveResize(drag, dx / s, dy / s);
@@ -1441,6 +1572,7 @@
         if (d.altKey) commitDuplicateMove(dx, dy);
         else commitMoveAll(dx, dy);
       }
+      else if (d.type === "resize-multi") { if (d.el) d.el.style.transform = ""; commitResizeMulti(d); }
       else { d.el.style.transform = ""; commitResize(d); }
     }
 
@@ -1918,6 +2050,133 @@
       onMutated();
     }
 
+    /* --- буфер обмена + выделение всего (clipboard уровня модуля) --- */
+
+    /** Ctrl+A: все top-level children текущего контекста (вошедшего контейнера
+     *  или всех секций); залоченные слои пропускаем, как hit-test/marquee. */
+    function selectAllInContext() {
+      const ir = getIR();
+      if (!ir || !ir.tree) return;
+      const refs = [];
+      if (containerCtx) {
+        const node = irNodeAt(containerCtx);
+        ((node && node.children) || []).forEach((_, j) => {
+          refs.push({ secIdx: containerCtx.secIdx,
+                      path: (containerCtx.path ? containerCtx.path + "." : "") + "children." + j });
+        });
+      } else {
+        ir.tree.forEach((sec, si) => {
+          ((sec && sec.children) || []).forEach((_, j) => refs.push({ secIdx: si, path: "children." + j }));
+        });
+      }
+      const visible = refs.filter(r => !skipLocked(r));
+      if (visible.length) selectMulti(visible);
+    }
+
+    /** Ctrl+C: глубокие клоны выделенных узлов + ref исходного контейнера. */
+    function copySelection() {
+      const items = [];
+      selections.forEach(sel => {
+        if (sel.ref.secIdx == null) return;
+        if (sel.ref.path != null && !sel.ref.path.startsWith("children.")) return;
+        const node = irNodeAt(sel.ref);
+        if (!node) return;
+        if (sel.ref.path == null) {
+          // секция целиком: при вставке уходит в ir.tree, а не в контейнер
+          items.push({ node: JSON.parse(JSON.stringify(node)), intoTree: true });
+          return;
+        }
+        const parent = parentOf(sel.ref);
+        if (!parent) return;
+        items.push({ node: JSON.parse(JSON.stringify(node)),
+                     parentRef: { secIdx: sel.ref.secIdx, path: parent.parentPath || null } });
+      });
+      if (items.length) geoClipboard = items;
+      return items.length;
+    }
+
+    /** Удаление выделенных (Delete / Ctrl+X): общая механика сплайса с хвоста. */
+    function deleteSelections() {
+      if (!selections.length) return;
+      onCommit();
+      const targets = [];
+      selections.forEach(sel => {
+        if (sel.ref.secIdx == null) return;
+        // props.* не удаляем — только children и секции (path === null)
+        if (sel.ref.path != null && !sel.ref.path.startsWith("children.")) return;
+        const parent = parentOf(sel.ref);
+        if (!parent) return;
+        // parentOf даёт сам массив сиблингов: для секции это ir.tree,
+        // для children.a.children.b — children узла по пути родителя
+        const idx = sel.ref.path == null ? sel.ref.secIdx
+                                         : parseInt(sel.ref.path.split(".").pop());
+        if (!Number.isInteger(idx) || idx < 0 || idx >= parent.siblings.length) return;
+        targets.push({ arr: parent.siblings, idx });
+      });
+      // в пределах одного массива удаляем с хвоста, чтобы индексы не съехали
+      targets.sort((a, b) => (a.arr === b.arr ? b.idx - a.idx : 0));
+      targets.forEach(t => t.arr.splice(t.idx, 1));
+      clear();
+      onMutated();
+    }
+
+    /** Ctrl+X: копия + удаление. */
+    function cutSelection() {
+      if (!copySelection()) return;
+      deleteSelections();
+    }
+
+    /** Ctrl+V: вставка клонов в текущий контейнер (контекст → исходный родитель →
+     *  корневая секция), свежие ключи, сдвиг +16/+16 чтобы вставка была видна.
+     *  Схема IR: id разрешён только секциям — дочерним узлам даём sourceKey. */
+    function pasteClipboard() {
+      if (!geoClipboard.length) return;
+      const ir = getIR();
+      if (!ir || !ir.tree || !ir.tree.length) return;
+      onCommit();
+      const rekey = (n, isSection) => {
+        if (!n || typeof n !== "object") return;
+        if (isSection) {
+          if ("id" in n) n.id = nextUid();
+        } else {
+          delete n.id;
+          n.sourceKey = nextUid();
+        }
+        (n.children || []).forEach((c) => rekey(c, false));
+      };
+      const newRefs = [];
+      geoClipboard.forEach(item => {
+        const node = JSON.parse(JSON.stringify(item.node));
+        rekey(node, !!item.intoTree);
+        if (node.frame) {
+          if (typeof node.frame.x === "number") node.frame.x += 16;
+          if (typeof node.frame.y === "number") node.frame.y += 16;
+        }
+        if (item.intoTree) {
+          ir.tree.push(node);
+          newRefs.push({ secIdx: ir.tree.length - 1, path: null });
+          return;
+        }
+        let contRef = containerCtx;
+        let contNode = contRef ? irNodeAt(contRef) : null;
+        if (!contNode && item.parentRef) {
+          contRef = item.parentRef;
+          contNode = irNodeAt(contRef);
+        }
+        if (!contNode) {
+          contRef = { secIdx: 0, path: null };
+          contNode = ir.tree[0];
+        }
+        if (!contNode) return;
+        contNode.children = contNode.children || [];
+        contNode.children.push(node);
+        newRefs.push({ secIdx: contRef.secIdx,
+                       path: (contRef.path ? contRef.path + "." : "") + "children." + (contNode.children.length - 1) });
+      });
+      if (newRefs.length) selectMulti(newRefs);
+      onMutated();
+    }
+
     /* --- клавиатура: nudge, escape, delete --- */
 
     /** Esc: выйти из контейнера или снять выделение.
@@ -1937,11 +2196,28 @@
       const ae = document.activeElement;
       if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return;
 
-      // хоткеи инструментов как в pen.dev: V/R/T/F/H (только если владелец включил панель)
+      // хоткеи инструментов как в pen.dev: V/R/O/L/I/T/F/H (только если владелец включил панель)
       if (toolsEnabled) {
-        const toolKeys = { v: "select", r: "rect", t: "text", f: "frame", h: "hand" };
+        const toolKeys = { v: "select", r: "rect", o: "ellipse", l: "line", i: "image",
+                           t: "text", f: "frame", h: "hand" };
         const tk = toolKeys[e.key.toLowerCase()];
         if (tk && !e.ctrlKey && !e.metaKey && !e.altKey) { setTool(tk); return; }
+      }
+
+      // выделение всего и буфер обмена (Ctrl+A/C/X/V), как в Figma
+      if (e.ctrlKey || e.metaKey) {
+        const ck = e.key.toLowerCase();
+        if (ck === "a" && !e.altKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          selectAllInContext();
+          return;
+        }
+        if (!e.shiftKey && !e.altKey) {
+          if (ck === "c" && selections.length) { copySelection(); return; }
+          if (ck === "x" && selections.length) { e.preventDefault(); e.stopPropagation(); cutSelection(); return; }
+          if (ck === "v" && geoClipboard.length) { e.preventDefault(); e.stopPropagation(); pasteClipboard(); return; }
+        }
       }
 
       // Esc: выйти из контейнера или снять выделение.
@@ -1977,26 +2253,7 @@
       if ((e.key === "Delete" || e.key === "Backspace") && selections.length) {
         e.preventDefault();
         e.stopPropagation(); // не дать графу удалить саму ноду-редактор
-        onCommit();
-        const targets = [];
-        selections.forEach(sel => {
-          if (sel.ref.secIdx == null) return;
-          // props.* не удаляем — только children и секции (path === null)
-          if (sel.ref.path != null && !sel.ref.path.startsWith("children.")) return;
-          const parent = parentOf(sel.ref);
-          if (!parent) return;
-          // parentOf даёт сам массив сиблингов: для секции это ir.tree,
-          // для children.a.children.b — children узла по пути родителя
-          const idx = sel.ref.path == null ? sel.ref.secIdx
-                                           : parseInt(sel.ref.path.split(".").pop());
-          if (!Number.isInteger(idx) || idx < 0 || idx >= parent.siblings.length) return;
-          targets.push({ arr: parent.siblings, idx });
-        });
-        // в пределах одного массива удаляем с хвоста, чтобы индексы не съехали
-        targets.sort((a, b) => (a.arr === b.arr ? b.idx - a.idx : 0));
-        targets.forEach(t => t.arr.splice(t.idx, 1));
-        clear();
-        onMutated();
+        deleteSelections();
         return;
       }
 
@@ -2113,7 +2370,7 @@
       if (!badge) {
         badge = document.createElement("div");
         badge.className = "geo-container-badge";
-        badge.style.cssText = "position:absolute;top:4px;left:4px;background:#5B5BD6;color:#fff;font:600 11px 'Inter',system-ui,sans-serif;padding:2px 8px;border-radius:4px;pointer-events:none;z-index:55;";
+        badge.style.cssText = "position:absolute;top:4px;left:4px;background:#0D99FF;color:#fff;font:600 11px 'Inter',system-ui,sans-serif;padding:2px 8px;border-radius:4px;pointer-events:none;z-index:55;";
         overlay().appendChild(badge);
       }
       const node = irNodeAt(containerCtx);
@@ -2180,6 +2437,10 @@
       moveSibling,
       groupSelection,
       ungroupSelection,
+      selectAll: selectAllInContext,
+      copySelection,
+      cutSelection,
+      pasteClipboard,
       destroy,
       get selection() { return selections[0] || null; },
       get selections() { return selections; },

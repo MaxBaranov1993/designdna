@@ -1,0 +1,327 @@
+/* Навешивание событий инспектора — порт inspector.js (wireActs/wireSingle) и
+ * editor.js (wireInspectorEvents/wireResponsiveInspector) на React-разметку.
+ * Инпуты неконтролируемые, поэтому слушатели — нативные: поведение «change после
+ * fill + dispatchEvent(new Event('change'))» из тестов сохраняется 1:1.
+ * Scrub-drag по label держит флаг ctl.setInspScrubbing: пока он поднят, контроллер
+ * не бампит inspectorTick, и React не перемонтирует панель (pointer capture жив). */
+import * as ctl from "../controller";
+import type { GeoHandle } from "../globals";
+import { applyNum, readNumInput } from "./evalMath";
+
+function sess() {
+  return ctl.getSession();
+}
+
+function geo() {
+  const s = sess();
+  return s ? s.geo : null;
+}
+
+/* ---------- общие data-act (align/distribute/reset-frame) ---------- */
+
+function wireActs(root: HTMLElement) {
+  root.querySelectorAll("[data-act]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const g = geo();
+      if (!g) return;
+      const map: Record<string, keyof GeoHandle> = {
+        "align-left": "alignLeft", "align-center-h": "alignCenterH", "align-right": "alignRight",
+        "align-top": "alignTop", "align-center-v": "alignCenterV", "align-bottom": "alignBottom",
+        "distribute-h": "distributeH", "distribute-v": "distributeV", "reset-frame": "resetFrame",
+      };
+      const fn = map[(btn as HTMLElement).dataset.act!];
+      if (fn && typeof g[fn] === "function") (g[fn] as () => void)();
+    });
+  });
+}
+
+/* ---------- одиночное выделение: data-pi / data-style-* / scrub ---------- */
+
+function wireSingle(root: HTMLElement) {
+  const s = sess();
+  const g = geo();
+  if (!s || !g || !s.sel.length) return;
+  const ref = s.sel[0].ref;
+  const f = () => (geo() ? geo()!.frameOf(ref) : {}) || {};
+
+  root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-pi]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const g2 = geo();
+      if (!g2) return;
+      const key = inp.dataset.pi;
+      const cur = f();
+      if (key === "x" || key === "y" || key === "width" || key === "height" ||
+          key === "rotation" || key === "gap") {
+        // numeric math: «100*2», «960/3» и т.п. схлопываются в число
+        const v = readNumInput(inp as HTMLInputElement);
+        if (v === undefined) return; // не распознано — не применяем
+        if (v !== null) inp.value = String(v);
+        applyNum(g2, key!, v);
+      } else if (key === "constr-h" || key === "constr-v") {
+        const constraints = cur.constraints || {};
+        const axis = key === "constr-h" ? "h" : "v";
+        g2.setFrameProps({ constraints: Object.assign({}, constraints, { [axis]: inp.value }) });
+      } else if (key === "padv" || key === "padh") {
+        const v = Math.max(0, readNumInput(root.querySelector('[data-pi="padv"]')!) || 0);
+        const h = Math.max(0, readNumInput(root.querySelector('[data-pi="padh"]')!) || 0);
+        g2.setFrameProps({ padding: v === h ? v : [v, h, v, h] });
+      } else if (key === "absolute") {
+        if ((inp as HTMLInputElement).checked) {
+          const extra: Record<string, number> = {};
+          if (typeof cur.x !== "number" || typeof cur.y !== "number") {
+            const p = g2.posOf(ref);
+            if (p) { extra.x = p.x; extra.y = p.y; }
+          }
+          g2.setFrameProps(Object.assign({ absolute: true }, extra));
+        } else {
+          g2.setFrameProps({ absolute: null });
+        }
+      } else if (key === "clip") {
+        g2.setFrameProps({ clip: (inp as HTMLInputElement).checked ? true : null });
+      } else if (key === "fillw") {
+        g2.setFrameProps({ width: (inp as HTMLInputElement).checked ? "fill" : null });
+      } else if (key === "hugw") {
+        g2.setFrameProps({ width: (inp as HTMLInputElement).checked ? "hug" : null });
+      } else if (key === "fillh") {
+        g2.setFrameProps({ height: (inp as HTMLInputElement).checked ? "fill" : null });
+      } else if (key === "hugh") {
+        g2.setFrameProps({ height: (inp as HTMLInputElement).checked ? "hug" : null });
+      }
+    });
+  });
+
+  root.querySelectorAll<HTMLInputElement>("[data-style-color]").forEach((inp) => {
+    inp.addEventListener("input", () => {
+      const g2 = geo();
+      if (!g2) return;
+      const key = inp.dataset.styleColor!;
+      const text = root.querySelector<HTMLInputElement>(`[data-style-text="${key}"]`);
+      if (text) text.value = inp.value;
+      g2.setNodeStyle({ [key]: inp.value });
+    });
+  });
+  root.querySelectorAll<HTMLInputElement>("[data-style-text]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const g2 = geo();
+      if (!g2) return;
+      const key = inp.dataset.styleText!;
+      const value = String(inp.value || "").trim();
+      g2.setNodeStyle({ [key]: !value || value.toLowerCase() === "transparent" ? null : value });
+    });
+  });
+  root.querySelectorAll<HTMLElement>("[data-clear-style]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const g2 = geo();
+      if (!g2) return;
+      const key = btn.dataset.clearStyle!;
+      const text = root.querySelector<HTMLInputElement>(`[data-style-text="${key}"]`);
+      const color = root.querySelector<HTMLInputElement>(`[data-style-color="${key}"]`);
+      if (text) { text.value = ""; text.dispatchEvent(new Event("change")); }
+      if (color) color.value = "#ffffff";
+      g2.setNodeStyle({ [key]: null });
+    });
+  });
+  root.querySelectorAll<HTMLInputElement>("[data-style-num]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const g2 = geo();
+      if (!g2) return;
+      const key = inp.dataset.styleNum!;
+      const v = readNumInput(inp);
+      if (v === undefined) return;
+      if (v !== null) inp.value = String(Math.max(0, v));
+      g2.setNodeStyle({ [key]: v == null ? null : Math.max(0, v) });
+    });
+  });
+  root.querySelectorAll<HTMLInputElement>("[data-style-range]").forEach((inp) => {
+    inp.addEventListener("input", () => {
+      const g2 = geo();
+      if (!g2) return;
+      const key = inp.dataset.styleRange!;
+      const pct = Math.max(0, Math.min(100, Number(inp.value) || 0));
+      const label = inp.parentElement && inp.parentElement.querySelector("[data-opacity-label]");
+      if (label) label.textContent = pct + "%";
+      g2.setNodeStyle({ [key]: pct === 100 ? null : Math.round(pct) / 100 });
+    });
+  });
+  root.querySelectorAll<HTMLSelectElement>("[data-style-select]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const g2 = geo();
+      if (!g2) return;
+      g2.setNodeStyle({ [sel.dataset.styleSelect!]: sel.value || null });
+    });
+  });
+
+  // drag-scrub: тянуть лейбл горизонтально = менять значение (Shift — шаг 10)
+  root.querySelectorAll<HTMLElement>(".pi-field").forEach((field) => {
+    const inp = field.querySelector<HTMLInputElement>("input[data-pi]");
+    const lab = field.querySelector("label");
+    if (!inp || !lab || inp.disabled) return;
+    const key = inp.dataset.pi!;
+    if (!["x", "y", "width", "height", "rotation", "gap"].includes(key)) return;
+    lab.style.cursor = "ew-resize";
+    lab.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      const base = readNumInput(inp);
+      const start = typeof base === "number" ? base : 0;
+      const sx = e.clientX;
+      lab.setPointerCapture(e.pointerId);
+      // пока scrub жив, контроллер не бампит tick — панель не перемонтируется
+      ctl.setInspScrubbing(true);
+      const move = (ev: PointerEvent) => {
+        const step = ev.shiftKey ? 10 : 1;
+        const v = start + Math.round(ev.clientX - sx) * step;
+        inp.value = String(v);
+        // geo() — живой геттер: после ре-аттача geoedit ручка обновится сама
+        const g3 = geo();
+        if (g3) applyNum(g3, key, v);
+      };
+      const up = () => {
+        lab.removeEventListener("pointermove", move);
+        ctl.setInspScrubbing(false);
+      };
+      lab.addEventListener("pointermove", move);
+      lab.addEventListener("pointerup", up, { once: true });
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-pi-dir]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const g2 = geo();
+      if (!g2) return;
+      const d = btn.dataset.piDir;
+      if (d === "free") g2.setFrameProps({ layout: "free" });
+      else g2.setFrameProps({ layout: "auto", direction: d });
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-pi-ja]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const g2 = geo();
+      if (!g2) return;
+      const [j, a] = btn.dataset.piJa!.split("|");
+      g2.setFrameProps({ justify: j, align: a });
+    });
+  });
+
+  root.querySelectorAll<HTMLInputElement>("[data-pi-justify]").forEach((radio) => {
+    radio.addEventListener("change", () => {
+      const g2 = geo();
+      if (g2 && radio.checked) g2.setFrameProps({ justify: radio.dataset.piJustify });
+    });
+  });
+}
+
+/* ---------- type-specific группы (порт wireInspectorEvents из editor.js) ---------- */
+
+function wireTypeGroups(root: HTMLElement) {
+  // element props (text/size/align/level/variant)
+  root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-el-prop]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const s = sess();
+      if (!s || !s.sel.length) return;
+      const node = s.sel[0].node;
+      if (!node) return;
+      ctl.pushHistory();
+      const key = inp.dataset.elProp!;
+      let val: any = inp.value;
+      if (key === "level") val = Number(val);
+      node[key] = val;
+      ctl.rerenderEditorCanvas();
+    });
+  });
+  // text content
+  root.querySelectorAll<HTMLTextAreaElement>("[data-textprop]").forEach((ta) => {
+    ta.addEventListener("change", () => {
+      const s = sess();
+      if (!s || !s.sel.length) return;
+      ctl.pushHistory();
+      s.sel[0].node[ta.dataset.textprop!] = ta.value;
+      ctl.rerenderEditorCanvas();
+    });
+  });
+  // token colors: снапшот ДО мутации (по первому input серии) —
+  // pushHistory на change снимал бы уже изменённый цвет, и undo его не возвращал
+  root.querySelectorAll<HTMLInputElement>("[data-color]").forEach((inp) => {
+    let armed = false;
+    inp.addEventListener("focus", () => { armed = true; });
+    inp.addEventListener("input", () => {
+      const s = sess();
+      if (!s) return;
+      if (armed) { ctl.pushHistory(); armed = false; }
+      s.ir.tokens.color[inp.dataset.color!] = inp.value;
+      (inp.nextElementSibling as HTMLElement).textContent = inp.value;
+      ctl.rerenderEditorCanvas();
+    });
+  });
+  // font family
+  root.querySelectorAll<HTMLSelectElement>("[data-font]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const s = sess();
+      if (!s) return;
+      ctl.pushHistory();
+      s.ir.tokens.font[sel.dataset.font!].family = sel.value;
+      ctl.rerenderEditorCanvas();
+    });
+  });
+  // token-level props (font.scale, radius.card, spacing.section, shadow)
+  root.querySelectorAll<HTMLSelectElement>("[data-token]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const s = sess();
+      if (!s) return;
+      ctl.pushHistory();
+      const path = sel.dataset.token!.split(".");
+      let obj = s.ir.tokens;
+      for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
+      obj[path[path.length - 1]] = sel.value;
+      ctl.rerenderEditorCanvas();
+    });
+  });
+  root.querySelectorAll<HTMLInputElement>("[data-node-style-color]").forEach((inp) => {
+    inp.addEventListener("input", () => {
+      const g2 = geo();
+      if (!g2 || !g2.setNodeStyle) return;
+      g2.setNodeStyle({ [inp.dataset.nodeStyleColor!]: inp.value });
+    });
+  });
+  root.querySelectorAll<HTMLInputElement>("[data-node-style-num]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const g2 = geo();
+      if (!g2 || !g2.setNodeStyle) return;
+      const raw = String(inp.value || "").trim();
+      const value = raw === "" ? null : Number(raw);
+      if (raw !== "" && !Number.isFinite(value)) return;
+      g2.setNodeStyle({ [inp.dataset.nodeStyleNum!]: value == null ? null : Math.max(0, value) });
+    });
+  });
+  root.querySelectorAll<HTMLSelectElement>("[data-node-style-select]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const g2 = geo();
+      if (!g2 || !g2.setNodeStyle) return;
+      g2.setNodeStyle({ [sel.dataset.nodeStyleSelect!]: sel.value || null });
+    });
+  });
+}
+
+/* ---------- responsive-блок (порт wireResponsiveInspector из editor.js) ---------- */
+
+function wireResponsive(root: HTMLElement) {
+  const s = sess();
+  if (!s || !s.sel.length) return;
+  const sel = s.sel[0];
+  const reset = root.querySelector('[data-responsive-act="reset"]');
+  if (reset) reset.addEventListener("click", () => ctl.resetResponsiveOverride(sel));
+  const all = root.querySelector('[data-responsive-act="all"]');
+  if (all) all.addEventListener("click", () => ctl.applyResponsiveToAll(sel));
+  root.querySelectorAll("[data-responsive-copy]").forEach((button) => {
+    button.addEventListener("click", () =>
+      ctl.copyResponsiveTo(sel, (button as HTMLElement).dataset.responsiveCopy!));
+  });
+}
+
+/** Точка входа: зовётся из InspectorPanel после монтирования свежего дерева. */
+export function wireInspector(root: HTMLElement) {
+  wireActs(root);
+  wireSingle(root);
+  wireTypeGroups(root);
+  wireResponsive(root);
+}

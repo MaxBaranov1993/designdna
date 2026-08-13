@@ -131,7 +131,7 @@ def build_system_prompt(mode: str = "generate") -> str:
     template = template.split("---", 1)[-1]  # убрать шапку-описание
     return (
         template.replace("{{SCHEMA}}", load("schema/design-ir.schema.json"))
-        .replace("{{BLOCKS}}", load("docs/BLOCKS.md"))
+        .replace("{{BLOCKS}}", load("app/prompts/BLOCKS.md"))
         .replace("{{BRIEF}}", "")
         .replace("{{STYLE_HINT}}", "")
         .replace("{{MODE}}", mode)

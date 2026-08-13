@@ -15,7 +15,7 @@ import time
 from playwright.sync_api import sync_playwright
 
 BASE = "http://127.0.0.1:8420"
-IR_PATH = pathlib.Path(__file__).resolve().parent.parent / "docs" / "frame-example.json"
+IR_PATH = pathlib.Path(__file__).resolve().parent.parent / "app" / "fixtures" / "frame-example.json"
 
 FAILS = []
 
@@ -119,8 +119,8 @@ def main():
         check("undo откатывает gap", gp2 != 24, str(gp2))
 
         # левая панель инструментов как в pen.dev
-        check("rail: 5 инструментов", pg.evaluate(
-            "document.querySelectorAll('.dna-editor .fe-rail [data-tool]').length === 5"))
+        check("rail: 8 инструментов", pg.evaluate(
+            "document.querySelectorAll('.dna-editor .fe-rail [data-tool]').length === 8"))
         pg.click('.dna-editor .fe-rail [data-tool="rect"]')
         pg.wait_for_timeout(200)
         check("rail: rect активен", pg.evaluate(

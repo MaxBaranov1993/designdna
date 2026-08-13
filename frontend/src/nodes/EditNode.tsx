@@ -3,6 +3,7 @@ import { IrPreview } from "../components/IrPreview";
 import { deepClone } from "../flow/dataflow";
 import { useFlowStore } from "../flow/store";
 import { toast } from "../flow/toast";
+import { useEditorStore } from "../editor/store";
 import type { EditFlowNode, IRObject } from "../flow/types";
 import { NodeShell, NodeStatus } from "./NodeShell";
 import { InPorts, OutPorts } from "./PortHandles";
@@ -36,6 +37,12 @@ export function EditNode({ id, data, selected }: NodeProps<EditFlowNode>) {
       toast("Сначала подключите IR к входу ноды", "error");
       return;
     }
+
+    // По умолчанию — React DNA Editor (frontend/src/editor): та же семантика
+    // snapshot/save/propagate внутри editor store. Legacy editor.js — fallback,
+    // если движки-«острова» ещё не загрузились.
+    if (useEditorStore.getState().openEditor(nodeId)) return;
+
     if (!window.Editor) {
       toast("DNA-редактор ещё не загружен", "error");
       return;

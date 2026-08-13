@@ -15,7 +15,7 @@ import time
 from playwright.sync_api import sync_playwright
 
 BASE = "http://127.0.0.1:8420"
-IR_PATH = pathlib.Path(__file__).resolve().parent.parent / "docs" / "frame-example.json"
+IR_PATH = pathlib.Path(__file__).resolve().parent.parent / "app" / "fixtures" / "frame-example.json"
 SHOT_DIR = pathlib.Path(__file__).resolve().parent.parent / "results"
 
 

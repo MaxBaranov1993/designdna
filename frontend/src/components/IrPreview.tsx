@@ -7,7 +7,12 @@ import { cn } from "../lib/utils";
 declare global {
   interface Window {
     IRRenderer?: {
-      renderIR: (container: HTMLElement, ir: IRObject, options?: { viewport?: SourceViewport }) => void;
+      renderIR: (
+        container: HTMLElement,
+        ir: IRObject,
+        options?: { viewport?: SourceViewport; fit?: boolean },
+      ) => void;
+      materializeResponsiveIR: (ir: IRObject, viewport: string) => IRObject;
       fitPreview: (container: HTMLElement, inner?: HTMLElement | null) => void;
       DESIGN_WIDTH: number;
     };
