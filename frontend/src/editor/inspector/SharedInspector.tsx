@@ -5,6 +5,7 @@
  * Инпуты неконтролируемые (defaultValue): коммит по нативному change, как в legacy. */
 import type { GeoHandle, GeoRef, GeoSel } from "../globals";
 import * as ctl from "../controller";
+import { ColorField } from "./ColorPicker";
 import { FontOptions } from "./FontOptions";
 
 function getByPath(obj: any, path: string) {
@@ -180,27 +181,18 @@ function SingleInspector({ sel, ir, geo }: { sel: GeoSel; ir: any; geo: GeoHandl
       {!isRoot && (
         <div className="pi-group"><span className="pi-glabel">Appearance</span>
           <div className="pi-row">
-            <div className="pi-field"><label>Fill</label>
-              <input type="color" data-style-color="background" defaultValue={fill} className={isTransparent(st.background || node.fill) ? "pi-empty" : ""} />
-              <button className={`pi-ibtn pi-clear-color ${isTransparent(st.background || node.fill) ? "pi-active" : ""}`} data-clear-style="background" title="Transparent">×</button>
-              <input type="text" data-style-text="background" defaultValue={st.background || node.fill || ""} placeholder="transparent" />
-            </div>
+            <ColorField styleKey="background" label="Fill" hex={fill}
+              raw={st.background || node.fill || ""} transparent={isTransparent(st.background || node.fill)} />
           </div>
           {isText && (
             <div className="pi-row">
-              <div className="pi-field"><label>Text</label>
-                <input type="color" data-style-color="color" defaultValue={color} className={isTransparent(st.color) ? "pi-empty" : ""} />
-                <button className={`pi-ibtn pi-clear-color ${isTransparent(st.color) ? "pi-active" : ""}`} data-clear-style="color" title="Transparent">×</button>
-                <input type="text" data-style-text="color" defaultValue={st.color || ""} placeholder="transparent" />
-              </div>
+              <ColorField styleKey="color" label="Text" hex={color}
+                raw={st.color || ""} transparent={isTransparent(st.color)} />
             </div>
           )}
           <div className="pi-row">
-            <div className="pi-field"><label>Line</label>
-              <input type="color" data-style-color="borderColor" defaultValue={stroke} className={isTransparent(st.borderColor) ? "pi-empty" : ""} />
-              <button className={`pi-ibtn pi-clear-color ${isTransparent(st.borderColor) ? "pi-active" : ""}`} data-clear-style="borderColor" title="Transparent">×</button>
-              <input type="text" data-style-text="borderColor" defaultValue={st.borderColor || ""} placeholder="transparent" />
-            </div>
+            <ColorField styleKey="borderColor" label="Line" hex={stroke}
+              raw={st.borderColor || ""} transparent={isTransparent(st.borderColor)} />
           </div>
           <div className="pi-row">
             <div className="pi-field"><label>Opacity</label><input type="range" min={0} max={100} data-style-range="opacity" defaultValue={opacityVal} /><span data-opacity-label>{opacityVal}%</span></div>

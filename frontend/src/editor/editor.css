@@ -262,3 +262,36 @@
 .pi .pi-wide { width:100%; }
 .pi .pi-sel-list { font-size:11px; color:var(--muted); }
 .pi .pi-sel-list div { padding:1px 0; }
+
+/* ---------- color picker (по мотивам OpenPencil: SV-поле + hue + HEX + токены) ---------- */
+.pi-cp-native { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+.pi-cp-swatch { position:relative; width:28px; height:24px; flex:none; padding:0; cursor:pointer;
+  border:1px solid var(--border); border-radius:6px; overflow:hidden;
+  background: conic-gradient(#777 25%, #fff 0 50%, #777 0 75%, #fff 0);
+  background-size: 8px 8px; }
+.pi-cp-swatch:hover { border-color:hsl(var(--ring)); }
+.pi-cp-fill { position:absolute; inset:0; display:block; }
+.pi-cp-pop { position:fixed; z-index:120; width:232px; padding:10px;
+  background:var(--fe-panel); border:1px solid var(--border); border-radius:10px;
+  box-shadow:0 12px 32px rgba(0,0,0,.45); display:flex; flex-direction:column; gap:8px; }
+.pi-cp-sv { position:relative; width:100%; height:128px; border-radius:6px; cursor:crosshair;
+  touch-action:none; }
+.pi-cp-thumb { position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%;
+  border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.55), 0 1px 4px rgba(0,0,0,.4);
+  pointer-events:none; }
+.pi-cp-hue { width:100%; height:12px; appearance:none; -webkit-appearance:none; border:none;
+  border-radius:6px; cursor:pointer; padding:0; outline:none;
+  background:linear-gradient(to right,#f00 0%,#ff0 17%,#0f0 33%,#0ff 50%,#00f 67%,#f0f 83%,#f00 100%); }
+.pi-cp-hue::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:14px; height:14px;
+  border-radius:50%; background:#fff; border:1px solid rgba(0,0,0,.4);
+  box-shadow:0 1px 3px rgba(0,0,0,.35); cursor:pointer; }
+.pi-cp-hexrow { display:flex; align-items:center; gap:6px; font-size:10px; font-weight:700;
+  color:var(--muted); }
+.pi-cp-hexrow input { flex:1; min-width:0; background:var(--fe-input); border:1px solid var(--border);
+  color:var(--text); border-radius:6px; padding:4px 6px; font-size:11.5px; outline:none;
+  font-variant-numeric:tabular-nums; text-transform:lowercase; }
+.pi-cp-hexrow input:focus { border-color:hsl(var(--ring)); }
+.pi-cp-tokens { display:flex; flex-wrap:wrap; gap:5px; }
+.pi-cp-token { width:20px; height:20px; border-radius:5px; border:1px solid var(--border);
+  cursor:pointer; padding:0; transition:transform .1s; }
+.pi-cp-token:hover { border-color:hsl(var(--ring)); transform:scale(1.08); }

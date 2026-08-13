@@ -197,6 +197,9 @@
     // Батчинг nudge (паттерн OpenPencil nudge.ts): серия стрелок короче 300 мс
     // между нажатиями — ОДИН undo-шаг; onCommit только на старте серии.
     let nudgeSessionUntil = 0;
+    // Тот же паттерн для потоковых записей стиля (drag в color picker,
+    // нативный color-input): onCommit один раз на серию быстрее 300 мс.
+    let styleSessionUntil = 0;
 
     function scale() { const s = getScale(); return s > 0 ? s : 1; }
 
@@ -2013,7 +2016,9 @@
 
     function setNodeStyle(partial) {
       if (!selections.length) return;
-      onCommit();
+      const now = Date.now();
+      if (now >= styleSessionUntil) onCommit();
+      styleSessionUntil = now + 300;
       selections.forEach(sel => {
         const node = irNodeAt(sel.ref);
         if (!node) return;
