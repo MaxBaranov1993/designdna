@@ -218,18 +218,59 @@ def main():
               and sum(1 for c in cs if c.startswith("card ·")) == 3,
               str(cs))
 
-        # ---------- 5) deep-логика (Ctrl+click) не конфликтует с marquee ----------
+        # ---------- 5) Ctrl+click: Figma drill-down + отмена выделения ----------
+        # NB: Esc при ПУСТОМ выделении закрывает редактор — поэтому между шагами
+        # с пустым выделением Esc не жмём.
         pg.keyboard.press("Escape")
         pg.wait_for_timeout(250)
         check("Esc снимает выделение после marquee", len(chips(pg)) == 0)
         nx, ny = nb["x"] + nb["width"] / 2, nb["y"] + nb["height"] / 2
-        pg.keyboard.down("Control")
-        pg.mouse.click(nx, ny)
-        pg.keyboard.up("Control")
-        pg.wait_for_timeout(300)
+
+        def ctrl_click():
+            pg.keyboard.down("Control")
+            pg.mouse.click(nx, ny)
+            pg.keyboard.up("Control")
+            pg.wait_for_timeout(300)
+
+        ctrl_click()
         cs = chips(pg)
-        check("Ctrl+click после marquee: один вложенный элемент",
-              len(cs) == 1 and cs[0].startswith("rect ·"), str(cs))
+        check("Ctrl+click: верхний слой под курсором выделен", len(cs) == 1, str(cs))
+        ctrl_click()
+        check("Ctrl+click повторно: отмена выделения", len(chips(pg)) == 0, str(chips(pg)))
+
+        ctrl_click()  # снова [rect]
+        pg.keyboard.down("Shift")
+        pg.mouse.click(nx, ny)
+        pg.keyboard.up("Shift")
+        pg.wait_for_timeout(300)
+        check("Shift+click по выделенному снимает выделение", len(chips(pg)) == 0, str(chips(pg)))
+
+        # мультивыделение Shift+кликами по разным элементам + отмена одного
+        b0 = pg.query_selector('.dna-editor [data-ir-sec="1"] [data-ir-path="children.0"]').bounding_box()
+        b1 = pg.query_selector('.dna-editor [data-ir-sec="1"] [data-ir-path="children.1"]').bounding_box()
+
+        def shift_click(bb):
+            pg.keyboard.down("Shift")
+            pg.mouse.click(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+            pg.keyboard.up("Shift")
+            pg.wait_for_timeout(250)
+
+        shift_click(b0)
+        shift_click(b1)
+        cs = chips(pg)
+        check("Shift+click по двум карточкам: мультивыделение",
+              len(cs) == 2 and sum(1 for c in cs if c.startswith("card ·")) == 2, str(cs))
+        shift_click(b0)
+        cs = chips(pg)
+        check("Shift+click повторно: карточка убрана из выделения",
+              len(cs) == 1 and cs[0].startswith("card ·"), str(cs))
+        pg.keyboard.press("Escape")  # выделение не пусто — безопасно
+        pg.wait_for_timeout(250)
+
+        # состояние для секции 6: rect выделен
+        ctrl_click()
+        check("состояние для Shift+marquee: rect выделен",
+              len(chips(pg)) == 1 and chips(pg)[0].startswith("rect ·"), str(chips(pg)))
 
         # ---------- 6) Shift+marquee добирает к существующему выделению ----------
         c2 = pg.query_selector('.dna-editor [data-ir-sec="1"] [data-ir-path="children.1"]').bounding_box()

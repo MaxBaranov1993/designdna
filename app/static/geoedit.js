@@ -1443,8 +1443,8 @@
       }
 
       // 2) Геометрический hit-test по элементам
-      // Cmd/Ctrl+click = deep select: пропустить контейнер, выбрать вложенный
-      const ref = hitTest(e.clientX, e.clientY, !!(e.ctrlKey || e.metaKey));
+      const deep = !!(e.ctrlKey || e.metaKey);
+      const ref = hitTest(e.clientX, e.clientY, deep);
 
       if (!ref) {
         // клик по пустому месту → marquee или deselect
@@ -1453,16 +1453,29 @@
         return;
       }
 
-      // 3) Shift+клик → toggle selection
+      // 3) Shift+клик → toggle selection (добавить/убрать, как в Figma)
       if (e.shiftKey) {
         toggleSelect(ref);
         return;
       }
 
-      // 4) Клик по невыделенному → выделить
-      const alreadySelected = selections.some(s => refKey(s.ref) === refKey(ref));
-      if (!alreadySelected) {
-        select(ref);
+      // 3.5) Ctrl/Cmd+клик — выделение точного элемента под курсором (без хоума
+      // к контейнеру); повторный клик по тому же единственному выделению снимает
+      // его (Figma-паттерн «выделил/отменил»). Ctrl+drag после этого тащит элемент.
+      if (deep) {
+        const k = refKey(ref);
+        const already = selections.some(s => refKey(s.ref) === k);
+        if (already && selections.length === 1) {
+          clear();
+          return; // сняли выделение — drag не нужен
+        }
+        if (!already) select(ref);
+      } else {
+        // 4) Клик по невыделенному → выделить
+        const alreadySelected = selections.some(s => refKey(s.ref) === refKey(ref));
+        if (!alreadySelected) {
+          select(ref);
+        }
       }
 
       // 5) Готовим drag (move); Alt+drag на drop создаст копию (как в Figma)
