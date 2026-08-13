@@ -175,6 +175,9 @@
     let boxSyncRaf = null;
     let pendingPointer = null;
     let containerCtx = null;  // ref контейнера, в который вошли (dbl-click enter)
+    // Батчинг nudge (паттерн OpenPencil nudge.ts): серия стрелок короче 300 мс
+    // между нажатиями — ОДИН undo-шаг; onCommit только на старте серии.
+    let nudgeSessionUntil = 0;
 
     function scale() { const s = getScale(); return s > 0 ? s : 1; }
 
@@ -2075,6 +2078,13 @@
 
     /** Ctrl+C: глубокие клоны выделенных узлов + ref исходного контейнера. */
     function copySelection() {
+      const items = collectSelectionItems();
+      if (items.length) geoClipboard = items;
+      return items.length;
+    }
+
+    /** Глубокие клоны выделенных узлов без записи в буфер (база для Ctrl+C и Ctrl+D). */
+    function collectSelectionItems() {
       const items = [];
       selections.forEach(sel => {
         if (sel.ref.secIdx == null) return;
@@ -2091,8 +2101,7 @@
         items.push({ node: JSON.parse(JSON.stringify(node)),
                      parentRef: { secIdx: sel.ref.secIdx, path: parent.parentPath || null } });
       });
-      if (items.length) geoClipboard = items;
-      return items.length;
+      return items;
     }
 
     /** Удаление выделенных (Delete / Ctrl+X): общая механика сплайса с хвоста. */
@@ -2126,14 +2135,13 @@
       deleteSelections();
     }
 
-    /** Ctrl+V: вставка клонов в текущий контейнер (контекст → исходный родитель →
+    /** Вставка набора клонов в текущий контейнер (контекст → исходный родитель →
      *  корневая секция), свежие ключи, сдвиг +16/+16 чтобы вставка была видна.
-     *  Схема IR: id разрешён только секциям — дочерним узлам даём sourceKey. */
-    function pasteClipboard() {
-      if (!geoClipboard.length) return;
+     *  Схема IR: id разрешён только секциям — дочерним узлам даём sourceKey.
+     *  НЕ зовёт onCommit/onMutated — владелец решает сам. Возвращает ref'ы копий. */
+    function insertItems(items) {
       const ir = getIR();
-      if (!ir || !ir.tree || !ir.tree.length) return;
-      onCommit();
+      if (!ir || !ir.tree || !ir.tree.length) return [];
       const rekey = (n, isSection) => {
         if (!n || typeof n !== "object") return;
         if (isSection) {
@@ -2145,7 +2153,7 @@
         (n.children || []).forEach((c) => rekey(c, false));
       };
       const newRefs = [];
-      geoClipboard.forEach(item => {
+      items.forEach(item => {
         const node = JSON.parse(JSON.stringify(item.node));
         rekey(node, !!item.intoTree);
         if (node.frame) {
@@ -2173,8 +2181,32 @@
         newRefs.push({ secIdx: contRef.secIdx,
                        path: (contRef.path ? contRef.path + "." : "") + "children." + (contNode.children.length - 1) });
       });
+      return newRefs;
+    }
+
+    /** Ctrl+V: вставка буфера обмена. */
+    function pasteClipboard() {
+      if (!geoClipboard.length) return;
+      const ir = getIR();
+      if (!ir || !ir.tree || !ir.tree.length) return;
+      onCommit();
+      const newRefs = insertItems(geoClipboard);
       if (newRefs.length) selectMulti(newRefs);
       onMutated();
+    }
+
+    /** Ctrl+D: дубликат выделения in-place (Figma-стандарт): как paste, но из
+     *  текущего выделения и не трогая буфер обмена. */
+    function duplicateSelection() {
+      const items = collectSelectionItems();
+      if (!items.length) return;
+      const ir = getIR();
+      if (!ir || !ir.tree || !ir.tree.length) return;
+      onCommit();
+      const newRefs = insertItems(items);
+      if (newRefs.length) selectMulti(newRefs);
+      onMutated();
+      return newRefs.length;
     }
 
     /* --- клавиатура: nudge, escape, delete --- */
@@ -2217,6 +2249,7 @@
           if (ck === "c" && selections.length) { copySelection(); return; }
           if (ck === "x" && selections.length) { e.preventDefault(); e.stopPropagation(); cutSelection(); return; }
           if (ck === "v" && geoClipboard.length) { e.preventDefault(); e.stopPropagation(); pasteClipboard(); return; }
+          if (ck === "d" && selections.length) { e.preventDefault(); e.stopPropagation(); duplicateSelection(); return; }
         }
       }
 
@@ -2227,7 +2260,9 @@
         return;
       }
 
-      // Arrow keys: nudge выделенных элементов
+      // Arrow keys: nudge выделенных элементов.
+      // Серия нажатий с интервалом < 300 мс — один undo-шаг (паттерн OpenPencil):
+      // onCommit только когда предыдущая серия истекла.
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && selections.length) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
@@ -2236,7 +2271,9 @@
         if (e.key === "ArrowRight") dx = step;
         if (e.key === "ArrowUp") dy = -step;
         if (e.key === "ArrowDown") dy = step;
-        onCommit();
+        const now = Date.now();
+        if (now >= nudgeSessionUntil) onCommit();
+        nudgeSessionUntil = now + 300;
         selections.forEach(sel => {
           if (sel.ref.secIdx == null) return;
           ensureParentFree(sel.ref);
@@ -2441,6 +2478,7 @@
       copySelection,
       cutSelection,
       pasteClipboard,
+      duplicateSelection,
       destroy,
       get selection() { return selections[0] || null; },
       get selections() { return selections; },
