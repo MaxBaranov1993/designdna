@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const ALLOWED_MCP_TRANSPORTS = new Set(["stdio", "http"]);
+const ALLOWED_MCP_TRANSPORTS = new Set(["stdio"]);
+const ALLOWED_CREDENTIALS = new Set(["openai", "kimi"]);
+const serverId = (value) => String(value).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
 
 export class SettingsStore {
   constructor(userDataPath) {
@@ -29,17 +31,21 @@ export class SettingsStore {
       if (!name) throw new Error(`MCP server ${index + 1} needs a name`);
       if (!ALLOWED_MCP_TRANSPORTS.has(transport)) throw new Error(`Unsupported MCP transport: ${transport}`);
       if (transport === "stdio" && !String(server.command || "").trim()) throw new Error(`${name}: command is required`);
-      if (transport === "http") {
-        const url = new URL(String(server.url || ""));
-        if (!new Set(["http:", "https:"]).has(url.protocol)) throw new Error(`${name}: invalid URL`);
-      }
+      const id = serverId(server?.id || name);
+      if (!id) throw new Error(`${name}: invalid id`);
+      const credentialEnv = Object.fromEntries(Object.entries(server?.credentialEnv || {}).map(([variable, provider]) => {
+        if (!/^[A-Z_][A-Z0-9_]*$/.test(variable)) throw new Error(`${name}: invalid environment variable ${variable}`);
+        if (!ALLOWED_CREDENTIALS.has(String(provider))) throw new Error(`${name}: unsupported credential reference ${provider}`);
+        return [variable, String(provider)];
+      }));
       return {
+        id,
         name,
         transport,
         enabled: server.enabled !== false,
-        ...(transport === "stdio"
-          ? { command: String(server.command), args: Array.isArray(server.args) ? server.args.map(String) : [] }
-          : { url: String(server.url) }),
+        command: String(server.command),
+        args: Array.isArray(server.args) ? server.args.map(String) : [],
+        credentialEnv,
       };
     });
     this.#write({ ...this.read(), mcpServers });

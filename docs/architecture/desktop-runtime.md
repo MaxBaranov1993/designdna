@@ -28,13 +28,12 @@ The production application opens no local HTTP port. Electron loads the compiled
 | Provider | Desktop integration |
 | --- | --- |
 | OpenAI Codex | `codex app-server` over stdio; ChatGPT sign-in or an encrypted API key |
-| Claude | Direct provider adapter with a user-owned API key; embedded Claude subscription login is not assumed |
 | Kimi | Local CLI/account connection when installed, with encrypted API-key fallback |
-| MCP | User-configured stdio or HTTP servers, mediated by Electron main |
+| MCP | User-configured stdio servers, tool discovery/calls and approval gating in Electron main |
 
 ## Migration phases
 
 1. **Runtime convergence (this change):** Electron host, ASGI bridge, Repo Canvas worker, safe IPC, Design/Project Map switch.
-2. **Provider orchestration:** unified task/session model, streaming events, approval UI and MCP capability routing.
-3. **Distribution:** Electron Forge packaging, signing/notarization, auto-update channels and Windows/macOS smoke tests.
+2. **Provider orchestration (implemented):** Codex threads/turns, streamed item events, command/file approvals, MCP tool discovery/calls and dynamic-tool routing.
+3. **Distribution (next):** Electron Forge packaging, signing/notarization, auto-update channels and Windows/macOS smoke tests.
 4. **Legacy retirement:** remove the standalone Repo Canvas HTTP entry point after desktop parity is verified.

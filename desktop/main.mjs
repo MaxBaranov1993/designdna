@@ -6,6 +6,7 @@ import { CredentialStore } from "./services/credential-store.mjs";
 import { SettingsStore } from "./services/settings-store.mjs";
 import { getProviderStatus } from "./services/provider-status.mjs";
 import { CodexAppServer } from "./services/codex-app-server.mjs";
+import { McpManager } from "./services/mcp-manager.mjs";
 
 const desktopDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(desktopDirectory, "..");
@@ -17,6 +18,23 @@ let repoCanvasWorker;
 let codex;
 let credentials;
 let settings;
+let mcp;
+let approvalSequence = 0;
+const mcpApprovals = new Map();
+const codexRequests = new Map();
+
+function broadcast(channel, payload) {
+  for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, payload);
+}
+
+function requestMcpApproval(payload) {
+  const id = `mcp-${++approvalSequence}`;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { mcpApprovals.delete(id); resolve(false); }, 120_000);
+    mcpApprovals.set(id, { resolve, timer });
+    broadcast("mcp:approval-requested", { id, ...payload });
+  });
+}
 
 function pythonCommand() {
   return process.env.DESIGNDNA_PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -40,6 +58,21 @@ function createWorkers() {
     timeoutMs: 180_000,
   });
   codex = new CodexAppServer({ cwd: repositoryRoot });
+  codex.on("notification", (message) => broadcast("codex:event", message));
+  codex.on("request", async (message) => {
+    if (message.method === "item/tool/call") {
+      try {
+        const toolResult = await mcp.callTool(message.params.tool, message.params.arguments, { source: "codex" });
+        codex.respond(message.id, { contentItems: toolResult.content || [], success: toolResult.isError !== true });
+      } catch (error) {
+        codex.respond(message.id, { contentItems: [{ type: "text", text: error.message }], success: false });
+      }
+      return;
+    }
+    codexRequests.set(String(message.id), message.method);
+    broadcast("codex:request", message);
+  });
+  codex.on("serverError", (error) => broadcast("codex:event", { method: "desktop/error", params: { message: error.message } }));
 }
 
 function validateApiRequest(request) {
@@ -73,8 +106,36 @@ function registerIpc() {
   ipcMain.handle("providers:delete-credential", (_event, { provider }) => credentials.delete(provider));
   ipcMain.handle("codex:account", () => codex.account());
   ipcMain.handle("codex:login", (_event, { type }) => codex.login({ type, apiKey: type === "apiKey" ? credentials.get("openai") : undefined }));
+  ipcMain.handle("codex:threads", (_event, params) => codex.listThreads(params || {}));
+  ipcMain.handle("codex:start-thread", async (_event, params) => {
+    await mcp.refresh();
+    return codex.startThread({ cwd: repositoryRoot, ...params, dynamicTools: mcp.dynamicTools() });
+  });
+  ipcMain.handle("codex:resume-thread", (_event, { threadId }) => codex.resumeThread(String(threadId)));
+  ipcMain.handle("codex:start-turn", (_event, params) => codex.startTurn(params));
+  ipcMain.handle("codex:steer-turn", (_event, params) => codex.steerTurn(params));
+  ipcMain.handle("codex:interrupt-turn", (_event, { threadId, turnId }) => codex.interruptTurn(String(threadId), String(turnId)));
+  ipcMain.handle("codex:respond", (_event, { id, result }) => {
+    const method = codexRequests.get(String(id));
+    if (!method) throw new Error("Unknown or resolved Codex request");
+    if (method.endsWith("requestApproval")) {
+      const decision = result?.decision;
+      if (!new Set(["accept", "acceptForSession", "decline", "cancel"]).has(decision)) throw new Error("Invalid approval decision");
+    }
+    codexRequests.delete(String(id));
+    codex.respond(id, result);
+    return { ok: true };
+  });
   ipcMain.handle("mcp:list", () => settings.listMcpServers());
-  ipcMain.handle("mcp:save", (_event, servers) => settings.saveMcpServers(servers));
+  ipcMain.handle("mcp:save", async (_event, servers) => { const saved = settings.saveMcpServers(servers); return { servers: saved, statuses: await mcp.refresh() }; });
+  ipcMain.handle("mcp:refresh", () => mcp.refresh());
+  ipcMain.handle("mcp:tools", () => mcp.listTools());
+  ipcMain.handle("mcp:call", (_event, { name, arguments: args }) => mcp.callTool(String(name), args || {}, { source: "user" }));
+  ipcMain.handle("mcp:approval-response", (_event, { id, accepted }) => {
+    const pending = mcpApprovals.get(String(id));
+    if (!pending) return { ok: false };
+    clearTimeout(pending.timer); mcpApprovals.delete(String(id)); pending.resolve(accepted === true); return { ok: true };
+  });
 }
 
 function createWindow() {
@@ -111,6 +172,7 @@ function createWindow() {
 app.whenReady().then(() => {
   credentials = new CredentialStore({ userDataPath: app.getPath("userData"), safeStorage });
   settings = new SettingsStore(app.getPath("userData"));
+  mcp = new McpManager({ settings, credentials, cwd: repositoryRoot, approve: requestMcpApproval });
   createWorkers();
   registerIpc();
   createWindow();
@@ -127,4 +189,5 @@ app.on("before-quit", () => {
   void pythonWorker?.stop();
   void repoCanvasWorker?.stop();
   codex?.stop();
+  mcp?.stop();
 });

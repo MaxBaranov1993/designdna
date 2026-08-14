@@ -4,7 +4,6 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const PROVIDERS = [
   { id: "codex", command: "codex", args: ["--version"], auth: "chatgpt-or-api-key" },
-  { id: "claude", command: "claude", args: ["--version"], auth: "api-key" },
   { id: "kimi", command: "kimi", args: ["--version"], auth: "account-or-api-key" },
 ];
 

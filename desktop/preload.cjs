@@ -17,9 +17,23 @@ contextBridge.exposeInMainWorld("designDNA", Object.freeze({
   codex: Object.freeze({
     account: () => ipcRenderer.invoke("codex:account"),
     login: (type = "chatgpt") => ipcRenderer.invoke("codex:login", { type }),
+    threads: (params = {}) => ipcRenderer.invoke("codex:threads", params),
+    startThread: (params = {}) => ipcRenderer.invoke("codex:start-thread", params),
+    resumeThread: (threadId) => ipcRenderer.invoke("codex:resume-thread", { threadId }),
+    startTurn: (params) => ipcRenderer.invoke("codex:start-turn", params),
+    steerTurn: (params) => ipcRenderer.invoke("codex:steer-turn", params),
+    interruptTurn: (threadId, turnId) => ipcRenderer.invoke("codex:interrupt-turn", { threadId, turnId }),
+    respond: (id, result) => ipcRenderer.invoke("codex:respond", { id, result }),
+    onEvent: (listener) => { const wrapped = (_event, payload) => listener(payload); ipcRenderer.on("codex:event", wrapped); return () => ipcRenderer.removeListener("codex:event", wrapped); },
+    onRequest: (listener) => { const wrapped = (_event, payload) => listener(payload); ipcRenderer.on("codex:request", wrapped); return () => ipcRenderer.removeListener("codex:request", wrapped); },
   }),
   mcp: Object.freeze({
     list: () => ipcRenderer.invoke("mcp:list"),
     save: (servers) => ipcRenderer.invoke("mcp:save", servers),
+    refresh: () => ipcRenderer.invoke("mcp:refresh"),
+    tools: () => ipcRenderer.invoke("mcp:tools"),
+    call: (name, args = {}) => ipcRenderer.invoke("mcp:call", { name, arguments: args }),
+    respondToApproval: (id, accepted) => ipcRenderer.invoke("mcp:approval-response", { id, accepted }),
+    onApproval: (listener) => { const wrapped = (_event, payload) => listener(payload); ipcRenderer.on("mcp:approval-requested", wrapped); return () => ipcRenderer.removeListener("mcp:approval-requested", wrapped); },
   }),
 }));

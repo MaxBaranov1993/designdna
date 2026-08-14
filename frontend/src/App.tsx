@@ -36,6 +36,7 @@ import { RecorderNode } from "./nodes/RecorderNode";
 import { MotionNode } from "./nodes/MotionNode";
 import { EditorApp } from "./editor/EditorApp";
 import { ProjectMapPanel } from "./desktop/ProjectMapPanel";
+import { AgentWorkspace } from "./desktop/AgentWorkspace";
 
 /* Реестр кастомных нод — вне компонента, ключи = legacy type (конвертация данных не нужна) */
 const nodeTypes = {
@@ -418,7 +419,7 @@ function PagesPanel() {
   );
 }
 
-type WorkspaceSurface = "design" | "map";
+type WorkspaceSurface = "design" | "map" | "agents";
 
 export default function App() {
   const [surface, setSurface] = useState<WorkspaceSurface>("design");
@@ -440,6 +441,9 @@ export default function App() {
           </Button>
           <Button variant={surface === "map" ? "default" : "ghost"} size="sm" onClick={() => setSurface("map")}>
             Project Map
+          </Button>
+          <Button variant={surface === "agents" ? "default" : "ghost"} size="sm" onClick={() => setSurface("agents")}>
+            Agents
           </Button>
         </div>
         <span className="text-[11px] text-muted-foreground">{window.designDNA ? "Desktop · local" : "Browser mode"}</span>
@@ -471,8 +475,10 @@ export default function App() {
             <ToastViewport />
             <EditorApp />
           </div>
-        ) : (
+        ) : surface === "map" ? (
           <ProjectMapPanel />
+        ) : (
+          <AgentWorkspace />
         )}
       </div>
     </div>
