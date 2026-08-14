@@ -111,20 +111,21 @@ Pixel / UI suite (start the server first, `app/server.py`):
 # ...see app/ui_*_test.py for the full set
 ```
 
-## Repository Canvas
+## Project Map (Repo Canvas)
 
-The semantic repository map and live AI-agent session navigator are included in this
-repository under `tools/repo-canvas/`.
+Repo Canvas is integrated as the **Project Map** surface inside the DesignDNA desktop
+window. Its event store and architect remain under `tools/repo-canvas/`, but the
+desktop app runs them through an internal stdio worker—there is no second production
+server or port.
 
 ```bash
 npm run repo-canvas:install
 npm run repo-canvas:setup
-npm run repo-canvas:start
+npm run desktop:start
 ```
 
-Repo Canvas opens on a protected loopback URL (port 4173) and maps the complete
-DesignDNA Git root. See [docs/repo-canvas.md](docs/repo-canvas.md) for architecture,
-provenance and all commands.
+Use the root Repo Canvas CLI commands for diagnostics and maintenance. See
+[docs/repo-canvas.md](docs/repo-canvas.md) for provenance and operational details.
 
 ## Security notes
 
