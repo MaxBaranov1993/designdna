@@ -50,7 +50,16 @@ export type GeneratorNodeData = {
   preset: string;
   variants: IRObject[];
   active: number;
+  tasteEnabled?: boolean;
+  tasteWeight?: number;
+  tasteScope?: "project" | "recent" | "none";
+  qa?: GenerationQa[];
+  rejected?: GenerationRejection[];
+  design?: { type?: string; label?: string; skills?: string[] };
 };
+export type GenerationIssue = { category?: string; severity?: string; path?: string; problem?: string; instruction?: string };
+export type GenerationQa = { index: number; score: number; verdict: string; summary?: string; issues?: GenerationIssue[]; fixed?: number };
+export type GenerationRejection = { index: number; reason?: string; error?: string; score?: number; issues?: GenerationIssue[] };
 export type EditNodeData = { ir: IRObject | null };
 export type PageNodeData = { inputs: string[]; ir: IRObject | null; activeViewport: SourceViewport };
 export type MixNodeData = {
@@ -188,6 +197,8 @@ export type MotionNodeData = {
   motion: IRObject | null;
   sceneIrs: MotionScenePreview[];
   selectedScene: number;
+  selectedLayer: number;
+  prompt: string;
   composition: { width: number; height: number; fps: number };
   renderSettings: { format: "mp4" | "webm"; quality: "draft" | "high" | "lossless" };
   renderJob: MotionRenderJob | null;

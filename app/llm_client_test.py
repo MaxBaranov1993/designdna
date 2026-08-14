@@ -1,4 +1,4 @@
-"""LLM-клиент OpenRouter: chat()/chat_vision() на локальном mock-сервере.
+"""LLM-клиент GPT Codex: chat()/chat_vision() на локальном mock-сервере.
 Запуск: .venv/Scripts/python app/llm_client_test.py (сервер не нужен)
 """
 import json
@@ -55,8 +55,8 @@ def main():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
     os.environ["MOCK_KEY"] = "test-key"
-    llm_client.PROVIDERS["openrouter"] = {
-        "url": f"http://127.0.0.1:{port}/openrouter/chat/completions",
+    llm_client.PROVIDERS["codex"] = {
+        "url": f"http://127.0.0.1:{port}/codex",
         "env": "MOCK_KEY", "model": None,
     }
 
@@ -67,51 +67,47 @@ def main():
         {"role": "user", "content": "next"},
     ]
 
-    # ---------- chat: OpenRouter-совместимый формат ----------
-    os.environ["OPENROUTER_MODELS_MECHANICS"] = "mock/text"
-    r = llm_client.chat("openrouter", msgs[:2], 0.2)
+    # ---------- chat: OpenAI-compatible Codex format ----------
+    os.environ["CODEX_MODELS_MECHANICS"] = "mock/text"
+    r = llm_client.chat("codex", msgs[:2], 0.2)
     check("chat openai: контент", r == '{"ok": "mock/text"}', r)
     path, body = RECORDED[-1]
     check("chat openai: response_format json_object",
           body.get("response_format") == {"type": "json_object"}, str(body)[:200])
 
-    # ---------- chat_vision: OpenRouter-совместимый формат ----------
+    # ---------- chat_vision: Codex vision format ----------
     img = "data:image/png;base64," + "A" * 64
-    os.environ["OPENROUTER_MODELS_VISION"] = "mock/vision"
-    r = llm_client.chat_vision("openrouter", img, "опиши", "", 0.1)
-    check("vision openrouter: контент", r == '{"ok": "mock/vision"}', r)
+    os.environ["CODEX_MODELS_VISION"] = "mock/vision"
+    r = llm_client.chat_vision("codex", img, "опиши", "", 0.1)
+    check("vision codex: контент", r == '{"ok": "mock/vision"}', r)
     path, body = RECORDED[-1]
     uc = body["messages"][-1]["content"]
-    check("vision openrouter: text + image_url",
+    check("vision codex: text + image_url",
           uc[0]["type"] == "text" and uc[1]["type"] == "image_url", str(uc)[:200])
 
-    # ---------- openrouter: роутинг и fallback-цепочка ----------
-    os.environ["OPENROUTER_MODELS_MECHANICS"] = "mock/first,mock/second"
+    # ---------- codex: routing and fallback chain ----------
+    os.environ["CODEX_MODELS_MECHANICS"] = "mock/first,mock/second"
     check("routing_models: env-оверрайд",
           llm_client.routing_models("mechanics") == ["mock/first", "mock/second"])
     for role in ("generator", "clone", "blockparse", "source_semantics", "reskin", "reproduce", "edit", "vision", "taste"):
-        os.environ.pop("OPENROUTER_MODELS_" + role.upper(), None)
+        os.environ.pop("CODEX_MODELS_" + role.upper(), None)
+    expected_model = os.environ.get("CODEX_MODEL") or llm_client.CODEX_DEFAULT_MODEL
     check("routing_models: дефолт taste из таблицы",
-          llm_client.routing_models("taste")[0] == "anthropic/claude-opus-5")
+          llm_client.routing_models("taste")[0] == expected_model)
     check(
-        "routing_models: роли нод закреплены за OpenRouter-моделями",
-        llm_client.routing_models("generator")[0] == "anthropic/claude-opus-5"
-        and llm_client.routing_models("motion_director")[0] == "anthropic/claude-opus-5"
-        and llm_client.routing_models("clone")[0] == "anthropic/claude-sonnet-5"
-        and llm_client.routing_models("blockparse")[0] == "anthropic/claude-sonnet-5"
-        and llm_client.routing_models("source_semantics")[0] == "anthropic/claude-sonnet-5"
-        and llm_client.routing_models("reskin")[0] == "anthropic/claude-opus-5"
-        and llm_client.routing_models("reproduce")[0] == "anthropic/claude-opus-5",
+        "routing_models: роли нод закреплены за Codex-моделью",
+        all(llm_client.routing_models(role)[0] == expected_model for role in
+            ("generator", "motion_director", "clone", "blockparse", "source_semantics", "reskin", "reproduce")),
     )
     n_before = len(RECORDED)
-    r = llm_client.chat("openrouter", msgs[:2], 0.2, role="mechanics")
-    check("openrouter: fallback на вторую модель", json.loads(r) == {"ok": "mock/second"}, r)
+    r = llm_client.chat("codex", msgs[:2], 0.2, role="mechanics")
+    check("codex: fallback на вторую модель", json.loads(r) == {"ok": "mock/second"}, r)
     calls = RECORDED[n_before:]
-    check("openrouter: две попытки (404 -> 200)", len(calls) == 2
+    check("codex: две попытки (404 -> 200)", len(calls) == 2
           and calls[0][1]["model"] == "mock/first" and calls[1][1]["model"] == "mock/second",
           str([c[1].get("model") for c in calls]))
-    os.environ.pop("OPENROUTER_MODELS_MECHANICS", None)
-    os.environ.pop("OPENROUTER_MODELS_VISION", None)
+    os.environ.pop("CODEX_MODELS_MECHANICS", None)
+    os.environ.pop("CODEX_MODELS_VISION", None)
 
     # ---------- load_dotenv ----------
     import tempfile

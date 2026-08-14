@@ -92,7 +92,7 @@ export interface FlowStoreState {
   runLiveRecorder: (id: number, actions: InteractionLiveAction[]) => Promise<boolean>;
   runMotion: (id: number) => Promise<void>;
   runPageBridge: (id: number) => void;
-  sendToNode: (id: number, targetType: "edit" | "reference") => void;
+  sendToNode: (id: number, targetType: "edit" | "reference" | "motion") => void;
   addMixInput: (id: number) => void;
   removeMixInput: (id: number, name: string) => void;
   addPageInput: (id: number) => void;
@@ -108,6 +108,7 @@ export interface FlowStoreState {
   renamePage: (id: string, name: string) => void;
   deletePage: (id: string) => void;
   loadPersistedProject: () => Promise<void>;
+  applyRecipe: (kind: "describe" | "import" | "reskin" | "reel") => void;
 }
 
 /* Стартовое состояние — из сейва designai-flow-v1 (битый сейв → пустой граф) */
@@ -433,25 +434,34 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     const styleHint = styleRaw ? String(styleRaw) : undefined;
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
     const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as Record<string, unknown>) : undefined;
-    get().setStatus(id, `Генерация (OpenRouter, ${data.count})… 20–120 сек`);
+    get().setStatus(id, `Генерация + visual QA (${data.count})…`);
     get().setBusy(id, true);
     try {
       const res = await api<GenerateResp>("/api/generate", {
         brief,
         count: data.count,
-        provider: "openrouter",
+        provider: "codex",
         styleHint,
         tokens,
         preset: data.preset || undefined,
+        tasteEnabled: data.tasteEnabled !== false,
+        tasteWeight: typeof data.tasteWeight === "number" ? data.tasteWeight : 0.35,
+        tasteScope: data.tasteScope || "project",
       });
       const variants = Array.isArray(res.variants) ? res.variants : [];
-      get().setNodeData(id, { variants, active: 0 });
+      const generationQa = Array.isArray(res.qa) ? res.qa : [];
+      const rejected = Array.isArray(res.errors) ? res.errors : [];
+      get().setNodeData(id, { variants, active: 0, qa: generationQa, rejected, design: res.design || {} });
       const errNote = res.errors && res.errors.length ? `, ошибок: ${res.errors.length}` : "";
-      const fixedCount = (res.qa || []).reduce((s, q) => s + (q.fixed || 0), 0);
+      const fixedCount = generationQa.reduce((s, q) => s + (q.fixed || 0), 0);
       const qaNote = fixedCount ? `, автофиксов QA: ${fixedCount}` : "";
       const designNote = res.design?.label ? `, тип: ${res.design.label}` : "";
-      get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote}`, "ok");
-      get().propagate(id);
+      if (!variants.length) {
+        get().setStatus(id, `Отклонено QA: ${rejected[0]?.error || "варианты не прошли проверку"}`, "err");
+      } else {
+        get().setStatus(id, `Принято QA: ${variants.length}${errNote}${qaNote}${designNote}`, "ok");
+        get().propagate(id);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       get().setStatus(id, "Ошибка: " + msg, "err");
@@ -535,11 +545,11 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
           get().setStatus(id, "Загрузите скриншот элемента", "err");
           return;
         }
-        get().setStatus(id, "Скриншот → pixel capture через OpenRouter…");
+        get().setStatus(id, "Скриншот → pixel capture через GPT Codex…");
         const res = await api<ReproduceResp>("/api/reproduce", {
           image: data.image,
           url: "",
-          provider: "openrouter",
+          provider: "codex",
         });
         const ir = res.ir || null;
         const dna = extractStyleDna(ir, null);
@@ -620,20 +630,21 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       tokens ? "Style DNA:\n" + JSON.stringify(tokens) : "",
       reference ? "Reference IR:\n" + JSON.stringify(reference).slice(0, 9000) : "",
     ].filter(Boolean).join("\n\n");
-    get().setStatus(id, `Derive: ${data.count} вариант(а) через OpenRouter…`);
+    get().setStatus(id, `Derive: ${data.count} вариант(а) через GPT Codex…`);
     get().setBusy(id, true);
     try {
       const res = await api<GenerateResp>("/api/generate", {
         brief: prompt,
         count: data.count,
-        provider: "openrouter",
+        provider: "codex",
         styleHint: styleHint || undefined,
         tokens: tokens && typeof tokens === "object" ? tokens : undefined,
       });
       const variants = Array.isArray(res.variants) ? res.variants : [];
       get().setNodeData(id, { variants, active: 0 });
-      get().setStatus(id, `Готово: вариантов ${variants.length}`, "ok");
-      get().propagate(id);
+      const reason = res.reason ? `${res.reason}: ` : "";
+      get().setStatus(id, `${reason}вариантов ${variants.length}`, variants.length ? "ok" : "err");
+      if (variants.length) get().propagate(id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       get().setStatus(id, "Ошибка: " + msg, "err");
@@ -687,7 +698,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
 
   /* Quality Pass: независимый judge оценивает IR, затем при необходимости
    * запускает адресный repair и повторную оценку. Все LLM-вызовы внутри
-   * endpoint идут только через OpenRouter; UI получает объяснимый scorecard. */
+   * endpoint идут только через GPT Codex; UI получает объяснимый scorecard. */
   runQualityPass: async (id) => {
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
@@ -800,16 +811,17 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     const data = n.data as MotionNodeData;
     const designIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
     const interaction = (pullInput(st.nodes, st.edges, n, "interaction") || data.interaction) as IRObject | null;
-    if (!designIr || !interaction) {
-      get().setStatus(id, "Connect Design IR and Interaction IR", "err");
+    if (!designIr) {
+      get().setStatus(id, "Подключите страницу или макет", "err");
       return;
     }
     get().setBusy(id, true);
-    get().setStatus(id, "Building editable motion timeline...");
+    get().setStatus(id, interaction ? "Собираю таймлайн из сценария..." : (data.prompt?.trim() ? "Нейросеть собирает композицию..." : "Собираю композицию из секций..."));
     try {
       const response = await api<{ motion?: IRObject; sceneIrs?: MotionNodeData["sceneIrs"] }>("/api/motion/build", {
         base_ir: designIr,
-        interaction,
+        interaction: interaction || undefined,
+        prompt: interaction ? "" : (data.prompt || ""),
         composition: data.composition,
         scene_settings: data.sceneSettings,
         render_settings: data.renderSettings || { format: "mp4", quality: "high" },
@@ -1096,6 +1108,39 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       statuses: {},
       busy: {},
     });
+  },
+
+  applyRecipe: (kind) => {
+    const x = 80;
+    const y = 80;
+    if (kind === "describe") {
+      const prompt = get().addNode("prompt", x, y);
+      const gen = get().addNode("generator", x + 320, y);
+      const edit = get().addNode("edit", x + 700, y);
+      get().connect({ node: prompt.id, port: "out" }, { node: gen.id, port: "prompt" });
+      get().connect({ node: gen.id, port: "ir" }, { node: edit.id, port: "ir" });
+      toast("Схема готова: опишите экран в «Промпт»", "ok");
+      return;
+    }
+    if (kind === "import") {
+      get().addNode("sourceimport", x, y);
+      get().addNode("edit", x + 440, y);
+      toast("Импортируйте сайт, затем протяните блок в «Редактор»", "ok");
+      return;
+    }
+    if (kind === "reel") {
+      const page = get().addNode("page", x, y);
+      const motion = get().addNode("motion", x + 420, y);
+      get().connect({ node: page.id, port: "ir" }, { node: motion.id, port: "ir" });
+      toast("Соберите страницу, затем нажмите «Собрать» на ролике", "ok");
+      return;
+    }
+    const dna = get().addNode("styledna", x, y);
+    const reskin = get().addNode("reskin", x + 360, y);
+    const edit = get().addNode("edit", x + 760, y);
+    get().connect({ node: dna.id, port: "tokens" }, { node: reskin.id, port: "tokens" });
+    get().connect({ node: reskin.id, port: "ir" }, { node: edit.id, port: "ir" });
+    toast("Подключите макет в «Reskin», затем откройте редактор", "ok");
   },
 
   loadPersistedProject: async () => {

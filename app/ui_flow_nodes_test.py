@@ -118,7 +118,11 @@ def route_generate(route):
     route.fulfill(
         status=200,
         content_type="application/json",
-        body=json.dumps({"variants": [SMALL_IR], "errors": []}),
+        body=json.dumps({
+            "variants": [SMALL_IR], "errors": [],
+            "qa": [{"index": 1, "score": 92, "verdict": "pass", "summary": "rendered pass", "issues": [], "fixed": 1}],
+            "design": {"type": "marketplace", "label": "Marketplace", "skills": ["web-design-guidelines", "frontend-design"]},
+        }),
     )
 
 
@@ -194,7 +198,8 @@ def main():
         for sel in (".n-prompt", ".n-sourceimport", ".n-styledna", ".n-derive", ".n-edit", ".n-mix", ".n-qualitypass"):
             pg.wait_for_selector(sel)
         check("created 8 nodes", pg.evaluate("window.GraphDev.state().nodes.length === 8"))
-        check("Generator shows Opus 5 OpenRouter route", pg.locator(".n-generator .generator-model-row").inner_text().strip() == "Opus 5 · OpenRouter")
+        check("Generator shows GPT Codex route", pg.locator(".n-generator .generator-model-row").inner_text().strip() == "GPT Codex")
+        check("Generator exposes Taste Memory controls", pg.locator(".n-generator .generator-taste-toggle").count() == 1)
 
         old_add_rejected = pg.evaluate("""(() => {
             const before = window.GraphDev.state().nodes.length;
@@ -232,7 +237,12 @@ def main():
 
         run_node_type(pg, "generator")
         pg.wait_for_selector('.n-generator .f-preview .ir-preview-inner div[class^="ir-"]', timeout=8000)
-        check("Generator uses OpenRouter role", CAPTURED.get("generate", [{}])[0].get("provider") == "openrouter")
+        check("Generator uses Codex role", CAPTURED.get("generate", [{}])[0].get("provider") == "codex")
+        generate_payload = CAPTURED.get("generate", [{}])[0]
+        check("Generator sends scoped Taste Memory settings", generate_payload.get("tasteEnabled") is True
+              and generate_payload.get("tasteWeight") == 0.35 and generate_payload.get("tasteScope") == "project")
+        check("Generator displays rendered QA score and skills", "92/100" in pg.locator(".n-generator .generator-quality").inner_text()
+              and "web-design-guidelines" in pg.locator(".n-generator .generator-quality").inner_text())
         pg.wait_for_selector('.n-edit .f-preview .ir-preview-inner div[class^="ir-"]', timeout=5000)
 
         run_node_type(pg, "styledna")

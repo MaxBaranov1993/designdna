@@ -26,6 +26,88 @@ ANTI_AI = [
     " generic stock-описания изображений («business team smiling»)",
 ]
 
+# Installed Codex design skills distilled into prompt-time routing rules.
+# The source skills live in ~/.codex/skills; this compact registry keeps the
+# generator deterministic and avoids sending unrelated instructions on every
+# request.
+DESIGN_SKILL_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "web-design-guidelines": (
+        (),
+        (
+            "Use semantic structure, explicit labels, visible keyboard focus and WCAG-AA contrast.",
+            "Every interactive state needs a clear hover, focus, pressed, loading and error treatment.",
+            "Check responsive behavior and horizontal overflow at 375, 768 and 1440 px.",
+        ),
+    ),
+    "frontend-design": (
+        ("бренд", "style", "стиль", "premium", "премиум", "distinctive", "identity", "визуал"),
+        (
+            "Make one deliberate aesthetic choice tied to the subject: a specific type pairing, palette, layout signature or material.",
+            "Avoid templated defaults; define a compact token system and one memorable signature element.",
+            "Use specific, user-facing copy and make hierarchy carry the design instead of decorative filler.",
+        ),
+    ),
+    "canvas-design": (
+        ("poster", "постер", "плакат", "canvas", "арт", "artwork", "иллюстрац", "обложк", "афиш"),
+        (
+            "Treat the visual as a crafted composition: communicate through form, space, color and rhythm, with minimal essential text.",
+            "Create a visual philosophy first; preserve breathing room, contained margins and master-level polish.",
+        ),
+    ),
+    "apple-design": (
+        ("apple", "ios", "iphone", "ipad", "mobile", "мобиль", "gesture", "жест", "drag", "свайп", "sheet", "drawer", "spring", "motion", "анимац"),
+        (
+            "Respond on pointer-down, keep direct manipulation 1:1 and make transitions interruptible from the current on-screen value.",
+            "Use critically damped springs by default; reserve bounce for momentum-driven gestures and respect reduced-motion settings.",
+            "Anchor popovers and sheets to their trigger, keep touch targets at least 44 px and preserve spatial consistency.",
+        ),
+    ),
+    "taste-design": (
+        ("premium", "премиум", "taste", "вкус", "editorial", "редакцион", "luxury", "дорог", "beautiful", "красив", "стильно", "стиль"),
+        (
+            "Use one restrained accent, warm neutrals and a coherent type system; never use neon purple/blue AI gradients or pure black.",
+            "Prefer asymmetric or editorial composition when the brief permits; avoid generic three-equal-card rows.",
+            "Use skeletal loading and composed empty states; never fabricate metrics, names or broken image links.",
+        ),
+    ),
+    "web-design-reviewer": (
+        ("review", "ревью", "проверь", "провер", "audit", "аудит", "fix", "исправ", "bug", "ошиб", "overflow", "доступн", "accessib"),
+        (
+            "Treat overflow, overlap, clipped text, missing focus, low contrast and broken mobile layout as blocking defects.",
+            "Generate, inspect and repair the rendered result; do not accept a schema-valid IR that looks broken.",
+        ),
+    ),
+    "tailwind-design-system": (
+        ("tailwind", "token", "токен", "design system", "дизайн-систем", "component", "компонент", "theme", "тема"),
+        (
+            "Organize decisions as brand → semantic → component tokens with explicit radius, spacing, color and typography roles.",
+            "Use reusable component variants and responsive grid patterns; avoid ad-hoc one-off values and percentage math hacks.",
+        ),
+    ),
+}
+
+
+def select_design_skills(brief: str, preset_label: str = "", style_hint: str = "") -> list[str]:
+    """Select installed design skills relevant to the user's language."""
+    low = f" {(brief or '').lower()} {(preset_label or '').lower()} {(style_hint or '').lower()} "
+    selected = ["web-design-guidelines", "frontend-design"]
+    for name, (keywords, _rules) in DESIGN_SKILL_RULES.items():
+        if name in selected or not keywords:
+            continue
+        if any(keyword in low for keyword in keywords):
+            selected.append(name)
+    return selected
+
+
+def design_skill_directives(skills: list[str]) -> list[str]:
+    """Return deduplicated prompt rules for the selected skills."""
+    rules: list[str] = []
+    for name in skills:
+        for rule in DESIGN_SKILL_RULES.get(name, ((), ()))[1]:
+            if rule not in rules:
+                rules.append(rule)
+    return rules
+
 # ---------- типы продуктов ----------
 
 PRODUCT_TYPES: dict[str, dict] = {
@@ -279,3 +361,93 @@ def design_direction(type_id: str, info: dict, variant: int) -> tuple[str, dict]
         *("- " + a for a in ANTI_AI),
     ]
     return "\n".join(lines), palette
+
+
+def compile_art_direction(brief: str, type_id: str, info: dict,
+                          preset_label: str = "", style_hint: str = "") -> str:
+    """Turn a short user brief into a compact, reusable art-direction contract.
+
+    This is deliberately deterministic: it runs before the creative LLM call,
+    so a vague prompt still gets composition, hierarchy and asset rules without
+    adding another network round-trip or changing the public Generator API.
+    """
+    low = f" {(brief or '').lower()} "
+    hint_low = f" {(style_hint or '').lower()} "
+
+    if any(word in low for word in ("мобиль", "mobile", "телефон", "phone")):
+        viewport = "mobile-first, 390 px baseline with a deliberate desktop expansion"
+    elif any(word in low for word in ("дашборд", "dashboard", "admin", "панел")):
+        viewport = "desktop-first application shell with a compact tablet fallback"
+    else:
+        viewport = "desktop 1440 px with an intentional 390 px mobile composition"
+
+    if type_id in {"marketplace", "ecommerce"}:
+        composition = (
+            "Use a clear commerce hierarchy: utility/header → page heading → "
+            "search or filters → dominant product imagery → title → price → one CTA. "
+            "Prefer an editorially composed grid over a wall of identical cards."
+        )
+        imagery = (
+            "Every product needs a real, specific imagePrompt (subject, material, "
+            "angle, lighting, background and crop). Never render grey placeholder "
+            "blocks or imagePrompt text as visible content."
+        )
+    elif type_id == "saas":
+        composition = (
+            "Lead with one value proposition and one primary action; use a small "
+            "number of purposeful panels and a clear reading path, not a grid of "
+            "decorative feature cards."
+        )
+        imagery = "Use diagrams, product UI or purposeful data visuals only when they explain the task."
+    elif type_id == "editorial":
+        composition = (
+            "Create a strong editorial rhythm: display headline, metadata, one "
+            "dominant visual or typographic focal point, then supporting content."
+        )
+        imagery = "Use art-directed photography with a consistent crop; imagery must support the story."
+    else:
+        composition = (
+            "Establish one focal point per section, a visible primary action and "
+            "a deliberate rhythm between dense and quiet areas."
+        )
+        imagery = "Use concrete, art-directed imagery only when it improves comprehension."
+
+    mood = ""
+    mood_words = {
+        "premium": "premium, restrained and tactile",
+        "премиум": "premium, restrained and tactile",
+        "минимал": "quiet minimalism with precise spacing",
+        "minimal": "quiet minimalism with precise spacing",
+        "editorial": "editorial, typographic and image-led",
+        "bold": "confident and high-contrast",
+        "ярк": "confident and high-contrast",
+        "dark": "dark, atmospheric and high-contrast",
+        "тёмн": "dark, atmospheric and high-contrast",
+    }
+    for key, value in mood_words.items():
+        if key in low or key in hint_low:
+            mood = value
+            break
+    if not mood:
+        mood = "clear, contemporary and trustworthy"
+
+    selected_skills = select_design_skills(brief, preset_label, style_hint)
+    skill_rules = design_skill_directives(selected_skills)
+    preset_line = f"Selected preset: {preset_label}." if preset_label else "No preset was selected; choose a coherent direction yourself."
+    lines = [
+        "## Internal art-direction brief (compiled from the user's prompt)",
+        f"Product intent: {info['label']}; visual mood: {mood}.",
+        f"Viewport strategy: {viewport}.",
+        preset_line,
+        "Active installed design skills: " + ", ".join(selected_skills) + ".",
+        f"Composition: {composition}",
+        "Hierarchy: one dominant heading and one dominant action per section; body text >= 16px; price/value outranks metadata.",
+        "Layout: use a consistent container, 8px spacing rhythm, explicit grid columns and equal sibling-card heights.",
+        "Content: write specific copy in the user's language; no lorem ipsum, filler labels or repeated generic marketing phrases.",
+        f"Assets: {imagery}",
+        "Visual quality gate: reject generic purple gradients, random badge/pill decoration, tiny text, empty card shells, accidental asymmetry and placeholder imagery.",
+        "Variation rule: variants must differ by composition or art direction, not merely by swapping colors.",
+    ]
+    if skill_rules:
+        lines.extend(["Skill-derived directives:", *["- " + rule for rule in skill_rules]])
+    return "\n".join(lines)

@@ -1,20 +1,74 @@
-"""Продакшен LLM-клиент DesignAI Web (ранее жил в spike/run_test.py).
+"""Production LLM client for the user-owned GPT Codex connection.
 
-Только stdlib. Все текстовые и vision-вызовы проходят через OpenRouter.
-Таймауты: LLM_TIMEOUT_S (по умолчанию 120с), раньше было 600с.
+Only stdlib is required. Text and vision use the user's Codex Desktop login
+or an explicit OpenAI-compatible CODEX_API_KEY.
 """
 import json
 import os
+import random
 import re
 import sys
+import time
+import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
+from email.utils import parsedate_to_datetime
+
+from ai_scheduler import AIRequestError, GLOBAL_AI_QUEUE
 
 ROOT = Path(__file__).resolve().parent.parent
 
 # таймаут одного LLM-вызова; генерация IR обычно 10-60с
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT_S", "120"))
+RETRY_ATTEMPTS = max(1, int(os.environ.get("AI_RETRY_ATTEMPTS", "4")))
+RETRY_BASE_S = max(0.05, float(os.environ.get("AI_RETRY_BASE_S", "0.75")))
+RETRY_MAX_S = max(RETRY_BASE_S, float(os.environ.get("AI_RETRY_MAX_S", "12")))
+TRANSIENT_HTTP_CODES = {429, 502, 503}
+
+
+def _retry_after_seconds(error: urllib.error.HTTPError) -> float | None:
+    value = error.headers.get("Retry-After") if error.headers else None
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(value)
+            return max(0.0, parsed.timestamp() - time.time())
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+
+def _with_transient_retry(operation, timeout: float):
+    """Retry provider throttling/outages inside one caller deadline."""
+    deadline = time.monotonic() + max(0.001, timeout)
+    last_error = None
+    for attempt in range(RETRY_ATTEMPTS):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AIRequestError("таймаут", "deadline AI-запроса истёк") from last_error
+        try:
+            return operation(max(1, int(remaining)))
+        except urllib.error.HTTPError as exc:
+            if exc.code not in TRANSIENT_HTTP_CODES:
+                raise
+            last_error = exc
+            if attempt + 1 >= RETRY_ATTEMPTS:
+                raise AIRequestError("лимит провайдера", f"HTTP {exc.code} после {RETRY_ATTEMPTS} попыток") from exc
+            exponential = min(RETRY_MAX_S, RETRY_BASE_S * (2 ** attempt))
+            jittered = random.uniform(exponential * 0.5, exponential * 1.5)
+            delay = max(jittered, _retry_after_seconds(exc) or 0.0)
+            if delay >= deadline - time.monotonic():
+                raise AIRequestError("таймаут", "Retry-After выходит за deadline AI-запроса") from exc
+            time.sleep(delay)
+        except (TimeoutError, urllib.error.URLError) as exc:
+            if isinstance(exc, urllib.error.URLError) and not isinstance(exc.reason, TimeoutError):
+                raise
+            raise AIRequestError("таймаут", "таймаут соединения с AI-провайдером") from exc
+    raise AIRequestError("лимит провайдера", "временная ошибка AI-провайдера") from last_error
 
 
 def load_dotenv(path: Path | None = None) -> int:
@@ -38,63 +92,41 @@ def load_dotenv(path: Path | None = None) -> int:
 
 load_dotenv()
 
+CODEX_DEFAULT_MODEL = "gpt-5.6-sol"
+CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 PROVIDERS = {
-    # Единственный транспорт продукта. Модель выбирается из ROUTING по роли.
-    "openrouter": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "env": "OPENROUTER_API_KEY",
+    "codex": {
+        # CODEX_BASE_URL may be a base URL or a full /chat/completions URL.
+        "url": os.environ.get("CODEX_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/"),
+        "env": "CODEX_API_KEY",
         "model": None,
+        "label": "GPT Codex",
     },
 }
 
-# Роутинг моделей через OpenRouter (роль ноды → [основная, fallback]).
-# Любую роль можно переопределить env: OPENROUTER_MODELS_<ROLE> (через запятую).
-# Current quality-first routing:
-# - Claude owns taste, composition, design generation, reskin and judging.
-# - Gemini is a multimodal fallback for visual import/reproduction.
-# - Qwen is reserved for mechanical IR/JSON/schema repair.
-# - Kimi is intentionally not a default route; test it only via env overrides.
-ROUTING = {
-    # канонические роли владельца (конфиг от 2026-08-05)
-    "prompt_enhancer": ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
-    "planner":    ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "motion_director": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "generator":  ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol"],
-    "reskin":     ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol"],
-    "repair":     ["qwen/qwen3-coder-plus", "anthropic/claude-sonnet-5"],
-    "style_analysis": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "vision":     ["anthropic/claude-opus-5", "google/gemini-3.6-flash", "openai/gpt-5.6-sol", "qwen/qwen3.8-max"],
-    "vision_fast": ["google/gemini-3.6-flash", "qwen/qwen3.8-max", "anthropic/claude-sonnet-5"],
-    "vision_pixel_qa": ["anthropic/claude-opus-5", "openai/gpt-5.6-sol", "google/gemini-3.6-flash"],
-    "judge":      ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    # Премиальный Quality Pass: независимая оценка и адресная починка.
-    "quality_judge": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol-pro"],
-    "quality_repair": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "qwen/qwen3-coder-plus"],
-    # дополнительные роли из таблицы 2026-08-04
-    "edit":       ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "derive":     ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "optimizer":  ["qwen/qwen3-coder-plus", "anthropic/claude-sonnet-5"],
-    "tokens":     ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "components": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "google/gemini-3.6-flash"],
-    "clone":      ["anthropic/claude-sonnet-5", "qwen/qwen3-coder-plus"],
-    "blockparse": ["anthropic/claude-sonnet-5", "qwen/qwen3-coder-plus"],
-    # Source Import geometry stays deterministic; Sonnet labels only ambiguous
-    # rendered containers. Opus is an escalation, not the pixel/layout engine.
-    "source_semantics": ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
-    "source_vision_audit": ["anthropic/claude-opus-5", "openai/gpt-5.6-sol", "google/gemini-3.6-flash"],
-    "reproduce":  ["anthropic/claude-opus-5", "google/gemini-3.6-flash", "qwen/qwen3.8-max"],
-    "a11y":       ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "docs":       ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
-    # legacy-роли (старые вызовы и env-оверрайды)
-    "mechanics":  ["qwen/qwen3-coder-plus", "anthropic/claude-sonnet-5"],
-    "taste":      ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-}
+# Every role resolves to the same user-owned Codex connection. Role-specific
+# CODEX_MODELS_<ROLE> overrides keep the existing role semantics without a
+# silent vendor fallback.
+_CODEX_ROLES = (
+    "prompt_enhancer", "planner", "motion_director", "generator", "reskin",
+    "repair", "style_analysis", "vision", "vision_fast", "vision_pixel_qa",
+    "judge", "quality_judge", "quality_repair", "edit", "derive", "optimizer",
+    "tokens", "components", "clone", "blockparse", "source_semantics",
+    "source_vision_audit", "reproduce", "a11y", "docs", "mechanics", "taste",
+)
+ROUTING = {role: [CODEX_DEFAULT_MODEL] for role in _CODEX_ROLES}
 
 
 def routing_models(role: str) -> list:
-    env_key = "OPENROUTER_MODELS_" + role.upper()
+    env_key = "CODEX_MODELS_" + role.upper()
     if os.environ.get(env_key):
         return [m.strip() for m in os.environ[env_key].split(",") if m.strip()]
+    role_model = os.environ.get("CODEX_MODEL_" + role.upper(), "").strip()
+    if role_model:
+        return [role_model]
+    default_model = os.environ.get("CODEX_MODEL", "").strip()
+    if default_model:
+        return [default_model]
     return list(ROUTING.get(role, ROUTING["mechanics"]))
 
 
@@ -115,11 +147,79 @@ def _check_model_slug(slug) -> None:
         raise ValueError(f"недопустимый model slug: {slug!r}")
 
 
-def get_key(cfg: dict) -> str:
+def _codex_auth_path() -> Path:
+    configured = os.environ.get("CODEX_AUTH_FILE", "").strip()
+    return Path(configured).expanduser() if configured else Path.home() / ".codex" / "auth.json"
+
+
+def _load_codex_auth() -> dict | None:
+    """Load the ChatGPT-managed token only in memory; never persist or log it."""
+    try:
+        raw = json.loads(_codex_auth_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    tokens = raw.get("tokens") if isinstance(raw, dict) else None
+    if not isinstance(tokens, dict):
+        return None
+    access_token = tokens.get("access_token")
+    if not isinstance(access_token, str) or not access_token.strip():
+        return None
+    auth_mode = str(raw.get("auth_mode") or "").strip().lower()
+    if auth_mode and auth_mode not in {"chatgpt", "chatgpt-managed"}:
+        return None
+    account_id = tokens.get("account_id")
+    return {
+        "auth_mode": "chatgpt",
+        "access_token": access_token.strip(),
+        "account_id": account_id.strip() if isinstance(account_id, str) else "",
+    }
+
+
+def _chatgpt_auth_allowed(cfg: dict) -> bool:
+    """Do not use the user's auth file for local mock endpoints."""
+    mode = os.environ.get("CODEX_AUTH_MODE", "auto").strip().lower()
+    if mode in {"off", "disabled", "api_key", "apikey"}:
+        return False
+    parsed = urllib.parse.urlsplit(str(cfg.get("url", "")).strip())
+    host = (parsed.hostname or "").lower()
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        return False
+    # An explicit auth-file path opts in for a custom remote gateway.
+    if os.environ.get("CODEX_AUTH_FILE", "").strip():
+        return True
+    return host in {"api.openai.com", "chatgpt.com"}
+
+
+def _codex_connection(cfg: dict) -> dict:
+    """Resolve request auth without exposing credentials in metadata."""
+    env_name = cfg.get("env", "CODEX_API_KEY")
+    explicit_key = os.environ.get(env_name, "").strip()
+    if explicit_key:
+        return {"auth_mode": "api_key", "key": explicit_key, "account_id": ""}
+    if _chatgpt_auth_allowed(cfg):
+        auth = _load_codex_auth()
+        if auth:
+            return {
+                "auth_mode": "chatgpt",
+                "key": auth["access_token"],
+                "account_id": auth.get("account_id", ""),
+            }
+    raise RuntimeError(
+        "Нет Codex credentials: задайте CODEX_API_KEY или войдите в Codex Desktop "
+        f"(ожидается {_codex_auth_path()})."
+    )
+
+
+def _legacy_get_explicit_key(cfg: dict) -> str:
     key = os.environ.get(cfg.get("env", ""))
     if not key:
         raise RuntimeError(f"Нет ключа: set {cfg.get('env', '?')}=...")
     return key
+
+
+# Resolve either explicit API-key auth or the live Codex Desktop auth file.
+def get_key(cfg: dict) -> str:
+    return _codex_connection(cfg)["key"]
 
 
 def load(name: str) -> str:
@@ -139,6 +239,37 @@ def build_system_prompt(mode: str = "generate") -> str:
     )
 
 
+def chat_endpoint(cfg: dict) -> str:
+    """Resolve a configurable Codex base URL to chat completions."""
+    url = str(cfg.get("url", "")).strip().rstrip("/")
+    if not url:
+        raise RuntimeError("CODEX_BASE_URL is not configured")
+    return url if url.endswith("/chat/completions") else f"{url}/chat/completions"
+
+
+def public_config() -> dict:
+    """Return safe provider metadata; never expose credentials."""
+    cfg = PROVIDERS["codex"]
+    connection = None
+    try:
+        connection = _codex_connection(cfg)
+    except RuntimeError:
+        pass
+    parsed = urllib.parse.urlsplit(
+        CHATGPT_CODEX_BASE_URL if connection and connection["auth_mode"] == "chatgpt"
+        else str(cfg.get("url", ""))
+    )
+    host = parsed.netloc or parsed.path.split("/", 1)[0]
+    return {
+        "id": "codex",
+        "label": "GPT Codex",
+        "configured": connection is not None,
+        "authMode": connection["auth_mode"] if connection else None,
+        "baseUrlHost": host or "custom",
+        "model": routing_models("generator")[0],
+    }
+
+
 def _post_json(url: str, payload: dict, key: str | None, timeout: int) -> dict:
     body = json.dumps(payload).encode()
     headers = {"Content-Type": "application/json"}
@@ -149,6 +280,178 @@ def _post_json(url: str, payload: dict, key: str | None, timeout: int) -> dict:
         return json.loads(resp.read())
 
 
+def _responses_content(content):
+    """Translate Chat Completions content parts to Responses input parts."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content)
+    parts = []
+    for part in content:
+        if isinstance(part, str):
+            parts.append({"type": "input_text", "text": part})
+            continue
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind in {"text", "input_text"}:
+            parts.append({"type": "input_text", "text": str(part.get("text", ""))})
+        elif kind in {"image_url", "input_image"}:
+            image = part.get("image_url")
+            url = image.get("url") if isinstance(image, dict) else image
+            if url:
+                parts.append({"type": "input_image", "image_url": url})
+    return parts
+
+
+def _responses_payload(model: str, messages: list) -> dict:
+    instructions = []
+    inputs = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "user")
+        content = message.get("content", "")
+        if role == "system":
+            instructions.append(content if isinstance(content, str) else json.dumps(content, ensure_ascii=False))
+            continue
+        if role not in {"user", "assistant", "developer"}:
+            role = "user"
+        inputs.append({"role": role, "content": _responses_content(content)})
+    payload = {
+        "model": model,
+        "store": False,
+        "stream": True,
+        "instructions": "\n\n".join(instructions),
+        "input": inputs,
+    }
+    effort = os.environ.get("CODEX_REASONING_EFFORT", "medium").strip()
+    if effort:
+        payload["reasoning"] = {"effort": effort}
+    if os.environ.get("CODEX_JSON_MODE", "1").strip().lower() not in {"0", "false", "off"}:
+        payload["text"] = {"format": {"type": "json_object"}}
+    return payload
+
+
+def _response_output_text(data) -> str:
+    if not isinstance(data, dict):
+        return ""
+    direct = data.get("output_text")
+    if isinstance(direct, str):
+        return direct
+    response = data.get("response")
+    if isinstance(response, dict):
+        found = _response_output_text(response)
+        if found:
+            return found
+    output = data.get("output")
+    if not isinstance(output, list):
+        return ""
+    pieces = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        for part in item.get("content", []) or []:
+            if not isinstance(part, dict):
+                continue
+            text = part.get("text")
+            if isinstance(text, str):
+                pieces.append(text)
+    return "".join(pieces)
+
+
+def _parse_responses_stream(raw: bytes) -> str:
+    text = raw.decode("utf-8", errors="replace")
+    stripped = text.strip()
+    if stripped.startswith("{"):
+        try:
+            return _response_output_text(json.loads(stripped)).strip()
+        except ValueError:
+            pass
+    deltas = []
+    for line in text.splitlines():
+        if not line.startswith("data:"):
+            continue
+        item = line[5:].strip()
+        if not item or item == "[DONE]":
+            continue
+        try:
+            event = json.loads(item)
+        except ValueError:
+            continue
+        if event.get("type") == "error":
+            detail = event.get("error") or event.get("message") or "unknown error"
+            raise RuntimeError(f"Codex Responses error: {str(detail)[:300]}")
+        if event.get("type") == "response.output_text.delta":
+            delta = event.get("delta")
+            if isinstance(delta, str):
+                deltas.append(delta)
+        elif not deltas and event.get("type") in {"response.output_text.done", "response.completed"}:
+            fallback = _response_output_text(event)
+            if fallback:
+                deltas.append(fallback)
+    return "".join(deltas).strip()
+
+
+def _post_codex_responses(payload: dict, key: str, account_id: str, timeout: int) -> bytes:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    headers = {
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}",
+        "User-Agent": "codex_cli_rs",
+        "originator": "codex_cli_rs",
+        "openai-beta": "responses=experimental",
+        "session_id": str(uuid.uuid4()),
+    }
+    if account_id:
+        headers["ChatGPT-Account-ID"] = account_id
+    req = urllib.request.Request(
+        f"{CHATGPT_CODEX_BASE_URL}/responses", data=body, headers=headers
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
+
+
+def _chat_codex_responses_once(key, account_id, model, messages, timeout) -> str:
+    payload = _responses_payload(model, messages)
+    for attempt in range(3):
+        try:
+            content = _parse_responses_stream(
+                _post_codex_responses(payload, key, account_id, timeout)
+            )
+            if not content:
+                raise RuntimeError("пустой content в Codex Responses")
+            return content
+        except urllib.error.HTTPError as error:
+            if error.code != 400:
+                raise
+            # Older Codex gateways may not expose structured JSON output yet.
+            if attempt == 0 and "text" in payload:
+                payload.pop("text", None)
+                continue
+            if attempt == 1 and "reasoning" in payload:
+                payload.pop("reasoning", None)
+                continue
+            raise
+    raise RuntimeError("Codex Responses: не удалось получить ответ")
+
+
+def _call_codex_vision(key, account_id, model, image_data_url, text_prompt,
+                       system_prompt, timeout):
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text_prompt},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+        ],
+    })
+    return _chat_codex_responses_once(key, account_id, model, messages, timeout)
+
+
 def _chat_openai_once(cfg, key, model, messages, temp, t) -> str:
     payload = {
         "model": model,
@@ -157,13 +460,19 @@ def _chat_openai_once(cfg, key, model, messages, temp, t) -> str:
         "response_format": {"type": "json_object"},
     }
     data = None
-    for attempt in (True, False):  # если response_format не поддержан — повтор без него
+    for attempt in range(3):
         try:
-            data = _post_json(cfg["url"], payload, key, t)
+            data = _post_json(chat_endpoint(cfg), payload, key, t)
             break
         except urllib.error.HTTPError as e:
-            if attempt and e.code == 400:
+            if e.code == 400 and attempt == 0:
+                # Some Codex-compatible endpoints expose JSON mode under a
+                # different name; keep the request usable without it.
                 payload.pop("response_format", None)
+                continue
+            if e.code == 400 and attempt == 1:
+                # Reasoning-first Codex deployments may reject temperature.
+                payload.pop("temperature", None)
                 continue
             raise
     msg = data["choices"][0]["message"]
@@ -174,14 +483,18 @@ def _chat_openai_once(cfg, key, model, messages, temp, t) -> str:
 
 
 def chat(provider: str, messages: list, temperature: float, timeout: int | None = None,
-         role: str = "mechanics", model: str | None = None) -> str:
-    """Вызов OpenRouter. role выбирает цепочку ROUTING, model — явный override."""
+         role: str = "mechanics", model: str | None = None,
+         priority: str = "normal") -> str:
+    """Call the user-owned GPT Codex endpoint."""
     if model is not None:
         _check_model_slug(model)
-    if provider != "openrouter":
-        raise ValueError("Поддерживается только provider=openrouter")
-    cfg = PROVIDERS["openrouter"]
-    key = get_key(cfg)
+    if provider != "codex":
+        raise ValueError("Поддерживается только provider=codex")
+    cfg = PROVIDERS["codex"]
+    connection = _codex_connection(cfg)
+    key = connection["key"]
+    auth_mode = connection["auth_mode"]
+    account_id = connection.get("account_id", "")
     t = timeout or TIMEOUT
     temp = temperature
 
@@ -192,26 +505,44 @@ def chat(provider: str, messages: list, temperature: float, timeout: int | None 
         models = routing_models(role) if cfg["model"] is None else [cfg["model"]]
     for m in models:  # валидны все пути разрешения: явный, cfg, ROUTING/env
         _check_model_slug(m)
-    last_error = None
-    for model in models:
-        try:
-            return _chat_openai_once(cfg, key, model, messages, temp, t)
-        except urllib.error.HTTPError as e:
-            last_error = f"{model} HTTP {e.code}: {e.read()[:300]!r}"
-            if e.code in (404, 429, 500, 502, 503) and model != models[-1]:
-                continue  # fallback на следующую модель цепочки
-            raise RuntimeError(f"{provider} {last_error}")
-    raise RuntimeError(f"{provider}: все модели цепочки недоступны. Последняя ошибка: {last_error}")
+    def perform(remaining: float) -> str:
+        last_error = None
+        for selected_model in models:
+            try:
+                def request(request_timeout: int) -> str:
+                    if auth_mode == "chatgpt":
+                        return _chat_codex_responses_once(
+                            key, account_id, selected_model, messages, request_timeout
+                        )
+                    return _chat_openai_once(
+                        cfg, key, selected_model, messages, temp, request_timeout
+                    )
+
+                return _with_transient_retry(request, remaining)
+            except AIRequestError:
+                raise
+            except urllib.error.HTTPError as e:
+                last_error = f"{selected_model} HTTP {e.code}: {e.read()[:300]!r}"
+                if e.code in (404, 500) and selected_model != models[-1]:
+                    continue
+                raise RuntimeError(f"{provider} {last_error}")
+        raise RuntimeError(f"{provider}: все модели цепочки недоступны. Последняя ошибка: {last_error}")
+
+    return GLOBAL_AI_QUEUE.run(perform, timeout=t, priority=priority)
 
 
 def chat_vision(provider: str, image_data_url: str, text_prompt: str,
                 system_prompt: str = "", temperature: float = 0.2,
-                timeout: int | None = None, role: str = "vision") -> str:
-    """Vision-вызов через OpenRouter с fallback-моделями роли."""
-    if provider != "openrouter":
-        raise ValueError("Поддерживается только provider=openrouter")
-    cfg = PROVIDERS["openrouter"]
-    key = get_key(cfg)
+                timeout: int | None = None, role: str = "vision",
+                priority: str = "normal") -> str:
+    """Vision call through the same user-owned Codex endpoint."""
+    if provider != "codex":
+        raise ValueError("Поддерживается только provider=codex")
+    cfg = PROVIDERS["codex"]
+    connection = _codex_connection(cfg)
+    key = connection["key"]
+    auth_mode = connection["auth_mode"]
+    account_id = connection.get("account_id", "")
     t = timeout or TIMEOUT
 
     vision_models = routing_models(role)
@@ -220,29 +551,44 @@ def chat_vision(provider: str, image_data_url: str, text_prompt: str,
     for m in vision_models:
         _check_model_slug(m)
 
-    last_error = None
-    for model in vision_models:
-        try:
-            content = _call_openai_vision(cfg, key, model, image_data_url,
-                                          text_prompt, system_prompt, temperature, t)
-            if content and content.strip():
-                return content
-        except urllib.error.HTTPError as e:
-            err_body = e.read()[:300]
-            last_error = f"{model} HTTP {e.code}: {err_body!r}"
-            if e.code in (404, 400, 429, 403):
-                continue
-            raise RuntimeError(f"{provider} vision {last_error}")
-        except Exception as e:
-            last_error = str(e)
-            continue
+    def perform(remaining: float) -> str:
+        last_error = None
+        for selected_model in vision_models:
+            try:
+                def request(request_timeout: int) -> str:
+                    if auth_mode == "chatgpt":
+                        return _call_codex_vision(
+                            key, account_id, selected_model, image_data_url,
+                            text_prompt, system_prompt, request_timeout,
+                        )
+                    return _call_openai_vision(
+                        cfg, key, selected_model, image_data_url, text_prompt,
+                        system_prompt, temperature, request_timeout,
+                    )
 
-    raise RuntimeError(f"{provider} vision: все модели недоступны. Последняя ошибка: {last_error}")
+                content = _with_transient_retry(request, remaining)
+                if content and content.strip():
+                    return content
+            except AIRequestError:
+                raise
+            except urllib.error.HTTPError as e:
+                err_body = e.read()[:300]
+                last_error = f"{selected_model} HTTP {e.code}: {err_body!r}"
+                if e.code in (404, 400, 403) and selected_model != vision_models[-1]:
+                    continue
+                raise RuntimeError(f"{provider} vision {last_error}")
+            except Exception as e:
+                last_error = str(e)
+                if selected_model == vision_models[-1]:
+                    raise
+        raise RuntimeError(f"{provider} vision: все модели недоступны. Последняя ошибка: {last_error}")
+
+    return GLOBAL_AI_QUEUE.run(perform, timeout=t, priority=priority)
 
 
 def _call_openai_vision(cfg, key, model, image_data_url, text_prompt, system_prompt,
                         temperature, timeout):
-    """OpenRouter vision-вызов в OpenAI-совместимом формате."""
+    """Vision request in the OpenAI-compatible chat format."""
     user_content = [
         {"type": "text", "text": text_prompt},
         {"type": "image_url", "image_url": {"url": image_data_url}},
@@ -257,7 +603,7 @@ def _call_openai_vision(cfg, key, model, image_data_url, text_prompt, system_pro
         "messages": messages,
         "temperature": cfg.get("fixed_temperature", temperature),
     }
-    data = _post_json(cfg["url"], payload, key, timeout)
+    data = _post_json(chat_endpoint(cfg), payload, key, timeout)
     return data["choices"][0]["message"].get("content") or ""
 
 

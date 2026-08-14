@@ -7,7 +7,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   prompt: { title: "Промпт", icon: "✎", w: 260 },
   reference: { title: "Референс", icon: "▣", w: 270 },
   generator: { title: "Генератор", icon: "◈", w: 300 },
-  edit: { title: "Редактор (DNA)", icon: "⬚", w: 430 },
+  edit: { title: "Редактор", icon: "⬚", w: 430 },
   mix: { title: "Микс", icon: "⊕", w: 290 },
   page: { title: "Страница", icon: "▤", w: 340 },
   sourceimport: { title: "Source Import", icon: "⌁", w: 360 },
@@ -16,7 +16,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   reskin: { title: "Reskin", icon: "✦", w: 340 },
   qualitypass: { title: "Quality Pass", icon: "✓", w: 350 },
   recorder: { title: "Interaction Recorder", icon: "REC", w: 420 },
-  motion: { title: "Motion Editor", icon: "M", w: 390 },
+  motion: { title: "Ролик", icon: "▶", w: 390 },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300 },
 };
 
@@ -37,8 +37,8 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
     out: [{ name: "ir", label: "варианты", kind: "ir" }],
   },
   edit: {
-    in: [{ name: "ir", label: "IR", kind: "ir" }],
-    out: [{ name: "ir", label: "IR", kind: "ir" }],
+    in: [{ name: "ir", label: "макет", kind: "ir" }],
+    out: [{ name: "ir", label: "макет", kind: "ir" }],
   },
   mix: { in: [], out: [{ name: "ir", label: "IR", kind: "ir" }] },
   page: { in: [], out: [{ name: "ir", label: "страница", kind: "ir" }] },
@@ -78,10 +78,10 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   },
   motion: {
     in: [
-      { name: "ir", label: "Design IR", kind: "ir" },
-      { name: "interaction", label: "Interaction IR", kind: "interaction" },
+      { name: "ir", label: "макет", kind: "ir" },
+      { name: "interaction", label: "сценарий", kind: "interaction" },
     ],
-    out: [{ name: "motion", label: "Motion IR", kind: "motion" }],
+    out: [{ name: "motion", label: "ролик", kind: "motion" }],
   },
   pagebridge: {
     in: [{ name: "ir", label: "component", kind: "ir" }],
@@ -127,7 +127,7 @@ export function portsOfNode(n: {
   return PORTS[n.type];
 }
 
-/* Каждая AI-нода идёт через OpenRouter в закреплённую роль ROUTING.
+/* Каждая AI-нода идёт через пользовательское GPT Codex-подключение.
  * Прямой выбор провайдера в UI убран: он создавал расхождение с модельной картой. */
 export function defaultData(type: NodeType): AnyNodeData {
   switch (type) {
@@ -136,7 +136,8 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "reference":
       return { brief: "", image: null, fileName: "", decomposed: false };
     case "generator":
-      return { provider: "openrouter", count: 2, ownPrompt: "", preset: "", variants: [], active: 0 };
+      return { provider: "codex", count: 2, ownPrompt: "", preset: "", variants: [], active: 0,
+        tasteEnabled: true, tasteWeight: 0.35, tasteScope: "project", qa: [], rejected: [] };
     case "edit":
       return { ir: null };
     case "mix":
@@ -166,8 +167,9 @@ export function defaultData(type: NodeType): AnyNodeData {
       };
     case "motion":
       return {
-        ir: null, interaction: null, motion: null, sceneIrs: [], selectedScene: 0,
-        composition: { width: 1920, height: 1080, fps: 30 },
+        ir: null, interaction: null, motion: null, sceneIrs: [], selectedScene: 0, selectedLayer: 0,
+        prompt: "",
+        composition: { width: 1080, height: 1920, fps: 30 },
         renderSettings: { format: "mp4", quality: "high" }, renderJob: null, sceneSettings: {},
       };
     case "pagebridge":
@@ -183,12 +185,12 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "sourceimport", note: "URL/скрин → блоки + DNA" },
   { type: "styledna", note: "палитра, шрифты, отступы" },
   { type: "derive", note: "родственный компонент" },
-  { type: "edit", note: "DNA-редактор" },
+  { type: "edit", note: "правка макета" },
   { type: "mix", note: "смешение по весам" },
   { type: "page", note: "страница из блоков" },
   { type: "reskin", note: "вариант с локом структуры" },
   { type: "qualitypass", note: "judge + repair + scorecard" },
-  { type: "recorder", note: "IR actions -> Interaction IR" },
-  { type: "motion", note: "Interaction IR -> editable timeline" },
+  { type: "motion", note: "композиция из страницы, руками или AI" },
+  { type: "recorder", note: "записать клик-сценарий, необязательно" },
   { type: "pagebridge", note: "передать компонент между страницами" },
 ];

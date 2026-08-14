@@ -254,23 +254,31 @@ def load_taste_profile(user_id: str = DEFAULT_USER_ID, project_id: str = DEFAULT
         return {"version": "taste-profile-v1", "prompt_count": 0, "recent_prompts": [], "style": {}, "components": []}
 
 
-def build_prompt_memory_hint(user_id: str = DEFAULT_USER_ID, project_id: str = DEFAULT_PROJECT_ID) -> str:
+def build_prompt_memory_hint(user_id: str = DEFAULT_USER_ID, project_id: str = DEFAULT_PROJECT_ID,
+                             weight: float = 0.35, scope: str = "project") -> str:
+    """Build bounded taste guidance; callers may disable it or keep only recent intent."""
+    if scope == "none" or weight <= 0:
+        return ""
+    weight = max(0.0, min(float(weight), 1.0))
     profile = load_taste_profile(user_id, project_id)
     if not profile.get("prompt_count"):
         return ""
     style = profile.get("style") if isinstance(profile.get("style"), dict) else {}
     lines = [
         "## Project Taste Memory",
-        "Use this as soft guidance, not as a hard override. Keep the user's explicit request first.",
+        f"Influence: {round(weight * 100)}%. This is soft guidance only; the current user request always wins.",
     ]
     prompts = profile.get("recent_prompts") or []
     if prompts:
         lines.append("Recent user directions: " + " | ".join(str(p)[:140] for p in prompts[-5:]))
+    if scope == "recent":
+        return "\n".join(lines)
+    limit = 3 if weight < 0.5 else 5 if weight < 0.8 else 8
     for label, key in (("Preferred colors", "colors"), ("Preferred fonts", "fonts"), ("Preferred radius", "radii"), ("Style tags", "tags")):
         vals = style.get(key) if isinstance(style, dict) else None
         if vals:
-            lines.append(f"{label}: " + ", ".join(str(v) for v in vals[:8]))
+            lines.append(f"{label}: " + ", ".join(str(v) for v in vals[:limit]))
     components = profile.get("components") or []
     if components:
-        lines.append("Repeated component patterns: " + ", ".join(str(v) for v in components[:8]))
+        lines.append("Repeated component patterns: " + ", ".join(str(v) for v in components[:limit]))
     return "\n".join(lines)

@@ -8,9 +8,11 @@ import contextlib
 import copy
 import json
 import mimetypes
+import os
 import re
 import sys
 import threading
+import time
 import traceback
 import urllib.request
 import urllib.error
@@ -44,6 +46,8 @@ import cache_store
 import blockparse
 import mergeback
 import qualitygate
+import generation_quality
+import visual_quality
 import project_store
 import typography
 import designkb
@@ -54,6 +58,7 @@ from ir import ensure_current as ensure_current_ir
 from config import FEATURE_FLAGS
 
 EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+VARIANT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 RENDER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 RENDER_JOBS: dict[str, dict] = {}
 RENDER_JOBS_LOCK = threading.Lock()
@@ -64,15 +69,17 @@ RENDER_DIR = ROOT / "data" / "renders"
 async def lifespan(app: FastAPI):
     yield
     EXECUTOR.shutdown(wait=True)
+    VARIANT_EXECUTOR.shutdown(wait=True)
     RENDER_EXECUTOR.shutdown(wait=True)
+    llm.GLOBAL_AI_QUEUE.shutdown()
 
 
 app = FastAPI(title="DesignAI Web", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 COLOR_TOKEN_KEYS = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"]
-PRODUCT_PROVIDER = "openrouter"
+PRODUCT_PROVIDER = "codex"
 
-# роли вызовов для роутинга OpenRouter — см. таблицу llm_client.ROUTING
+# роли вызовов для Codex routing — см. таблицу llm_client.ROUTING
 # (generate/edit/repair/clone/reference/...)
 
 
@@ -80,6 +87,8 @@ PRODUCT_PROVIDER = "openrouter"
 
 def validate_ir(doc: dict) -> list[str]:
     """Список ошибок валидации IR по схеме (пустой = ок)."""
+    if isinstance(doc, dict):
+        ir.repair_for_schema(doc)
     return ir.format_errors(ir.validate_ir(doc))
 
 
@@ -91,16 +100,23 @@ def parse_ir_response(raw: str):
         return None, f"невалидный JSON от модели: {e}"
 
 
-def call_llm_ir(provider: str, user_content: str, temperature: float = 0.8, mode: str = "generate"):
+def call_llm_ir(provider: str, user_content: str, temperature: float = 0.8,
+                mode: str = "generate", timeout: float | None = None):
     """Вызов LLM с системным промптом генератора -> (ir, error)."""
     try:
         raw = llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt(mode)},
             {"role": "user", "content": user_content},
-        ], temperature, role="generator" if mode == "generate" else "edit")
+        ], temperature, timeout=timeout,
+            role="generator" if mode == "generate" else "edit")
+    except llm.AIRequestError as e:
+        return None, {"reason": e.reason, "error": e.detail}
     except Exception as e:
-        return None, str(e)
-    return parse_ir_response(raw)
+        return None, {"reason": "лимит провайдера", "error": str(e)}
+    parsed, parse_error = parse_ir_response(raw)
+    if parsed is None:
+        return None, {"reason": "лимит провайдера", "error": parse_error}
+    return parsed, None
 
 
 def err(status: int, message: str) -> JSONResponse:
@@ -109,7 +125,8 @@ def err(status: int, message: str) -> JSONResponse:
 
 def normalize_provider(provider: str | None) -> str:
     # Старые сейвы могли передавать имя прямого провайдера. Продукт всегда
-    # маршрутизирует вызов через OpenRouter, поэтому вход намеренно игнорируется.
+    # использует пользовательское Codex-подключение, поэтому вход не выбирает
+    # внешний транспорт и не может переключить ноду на другой vendor.
     return PRODUCT_PROVIDER
 
 
@@ -118,11 +135,15 @@ def normalize_provider(provider: str | None) -> str:
 class GenerateReq(BaseModel):
     brief: str = ""
     count: int = 3
-    provider: str = "openrouter"
+    provider: str = "codex"
     styleHint: str | None = None
     seedTag: str | None = None
     tokens: dict | None = None  # Style DNA: залоченные design-токены
     preset: str = ""  # стилевой пресет: minimal|bento|editorial|brutal|glass
+    deadlineSeconds: float | None = None
+    tasteEnabled: bool = True
+    tasteWeight: float = Field(default=0.35, ge=0.0, le=1.0)
+    tasteScope: str = "project"  # project|recent|none
 
 
 class MixReq(BaseModel):
@@ -133,7 +154,7 @@ class MixReq(BaseModel):
 class CloneReq(BaseModel):
     url: str = ""
     component: str = ""
-    provider: str = "openrouter"
+    provider: str = "codex"
 
 
 class BlockParseReq(BaseModel):
@@ -176,6 +197,26 @@ class StyleDnaApplyReq(BaseModel):
     tokens: dict
 
 
+class EditorAssistScope(BaseModel):
+    sourceKeys: list[str] = Field(default_factory=list)
+    viewport: str = "current"
+
+
+class EditorAssistConstraints(BaseModel):
+    allowStructure: bool = False
+    allowContent: bool = True
+    allowStyle: bool = True
+    allowFrame: bool = True
+
+
+class EditorAssistReq(BaseModel):
+    ir: dict
+    prompt: str = ""
+    action: str = "custom"
+    scope: EditorAssistScope = Field(default_factory=EditorAssistScope)
+    constraints: EditorAssistConstraints = Field(default_factory=EditorAssistConstraints)
+
+
 class StyleNormalizeReq(BaseModel):
     ir: dict
     tolerance: float = 0.12
@@ -214,7 +255,8 @@ class InteractionCaptureReq(BaseModel):
 
 class MotionBuildReq(BaseModel):
     base_ir: dict
-    interaction: dict
+    interaction: dict | None = None
+    prompt: str = ""
     composition: dict = Field(default_factory=dict)
     scene_settings: dict = Field(default_factory=dict)
     render_settings: dict = Field(default_factory=dict)
@@ -227,7 +269,7 @@ class MotionValidateReq(BaseModel):
 
 class MotionRenderReq(BaseModel):
     base_ir: dict
-    interaction: dict
+    interaction: dict | None = None
     motion: dict
 
 
@@ -251,7 +293,7 @@ class ScrapeReq(BaseModel):
 class ReproduceReq(BaseModel):
     image: str = ""  # base64 data URL
     url: str = ""  # или URL сайта: скриншот снимем сами, результат кэшируется
-    provider: str = "openrouter"  # роль vision выбирает модель из ROUTING
+    provider: str = "codex"  # роль vision выбирает модель из Codex routing
     regions: list | None = None  # опциональные регионы для diff: [["name", x1, y1, x2, y2], ...]
 
 
@@ -275,9 +317,18 @@ def generate(req: GenerateReq):
     if not brief:
         return err(422, "Пустой бриф: опишите, что нужно сгенерировать.")
     count = max(1, min(int(req.count or 1), 5))
+    batch_timeout = req.deadlineSeconds if req.deadlineSeconds is not None else float(
+        os.environ.get("AI_BATCH_DEADLINE_S", "420")
+    )
+    batch_timeout = max(1.0, min(float(batch_timeout), 900.0))
+    batch_deadline = time.monotonic() + batch_timeout
     has_style = bool(req.styleHint and req.styleHint.strip())
     style = f"\n\n## Reference / style context\n{req.styleHint.strip()}" if has_style else ""
-    memory_hint = project_store.build_prompt_memory_hint()
+    taste_scope = req.tasteScope if req.tasteScope in {"project", "recent", "none"} else "project"
+    memory_hint = project_store.build_prompt_memory_hint(
+        weight=req.tasteWeight if req.tasteEnabled else 0.0,
+        scope=taste_scope if req.tasteEnabled else "none",
+    )
     memory = f"\n\n{memory_hint}" if memory_hint else ""
     mode = "edit" if has_style else "generate"
     dna_keys = ("mode", "color", "font", "radius", "spacing", "shadow")
@@ -289,6 +340,21 @@ def generate(req: GenerateReq):
         dna = None
     preset = typography.PRESETS.get(req.preset or "")
     ptype, pinfo = designkb.detect_product(brief)
+    # Compile a deterministic art-direction contract before the creative call.
+    # This keeps the node's UX simple while giving the model concrete visual
+    # intent, layout, content and asset constraints even for short prompts.
+    art_direction = designkb.compile_art_direction(
+        brief,
+        ptype,
+        pinfo,
+        preset_label=(preset.get("label") if preset else ""),
+        style_hint=req.styleHint or "",
+    )
+    active_design_skills = designkb.select_design_skills(
+        brief,
+        preset_label=(preset.get("label") if preset else ""),
+        style_hint=req.styleHint or "",
+    )
     # Шрифт из Style DNA — без подбора своей пары; иначе — библиотека typography.
     # Предпочтение: пресет → рекомендация design KB по типу продукта → настроение брифа.
     pair = None
@@ -321,6 +387,8 @@ def generate(req: GenerateReq):
             user += style
         if memory:
             user += memory
+        if mode == "generate":
+            user += "\n\n" + art_direction
         if dna:
             user += ("\n\n## Style DNA — обязательные design-токены (залочены)\n"
                      + json.dumps(dna, ensure_ascii=False)
@@ -340,7 +408,13 @@ def generate(req: GenerateReq):
             else:
                 user += ("\n\nАнти-паттерны — НИКОГДА так не делай:\n"
                          + "\n".join("- " + a for a in designkb.ANTI_AI))
-        ir, error = call_llm_ir(provider, user, 0.8 if mode == "generate" else 0.3, mode)
+        remaining = batch_deadline - time.monotonic()
+        if remaining <= 0:
+            return None, {"reason": "таймаут", "error": "общий deadline batch истёк"}, None
+        ir, error = call_llm_ir(
+            provider, user, 0.8 if mode == "generate" else 0.3, mode,
+            timeout=remaining,
+        )
         qa = None
         if ir is not None:
             if dna:
@@ -356,26 +430,69 @@ def generate(req: GenerateReq):
             # Page/редактор переключали устройства и per-device правки имели куда писаться
             ir.setdefault("responsive", {"viewports": {
                 "desktop": {"width": 1440}, "tablet": {"width": 768}, "mobile": {"width": 390}}})
-            # авто quality-gate: детерминированный autofix (контраст/сетка/overflow)
-            ir, fixlog = qualitygate.autofix(ir)
-            qa = {"index": n, "fixed": len(fixlog),
-                  "violations": [v["rule"] for v in qualitygate.check(ir)]}
-            ir = ensure_current_ir(ir, source="generate")
+            ir, acceptance = _run_generation_acceptance(ir, brief, n, batch_deadline)
+            qa = acceptance
+            if ir is None:
+                return None, {
+                    "reason": "quality rejected",
+                    "error": acceptance.get("summary", "Вариант не прошёл quality acceptance."),
+                    "issues": acceptance.get("issues", [])[:8],
+                    "score": acceptance.get("score", 0),
+                }, acceptance
         return ir, error, qa
 
-    futures = [EXECUTOR.submit(gen_one, i + 1) for i in range(count)]
+    futures = {VARIANT_EXECUTOR.submit(gen_one, i + 1): i + 1 for i in range(count)}
     variants, errors, qa = [], [], []
-    for i, f in enumerate(futures):
-        ir, error, q = f.result()
-        if ir is not None:
-            variants.append(ir)
-            qa.append(q)
-        else:
-            errors.append({"index": i + 1, "error": error})
-    if not variants:
-        return err(502, f"Ни один вариант не сгенерирован. {errors[0]['error'] if errors else ''}")
-    return {"variants": variants, "errors": errors, "qa": qa,
-            "design": {"type": ptype, "label": pinfo["label"]}}
+    pending = set(futures)
+    while pending:
+        remaining = batch_deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        done, pending = concurrent.futures.wait(
+            pending, timeout=remaining,
+            return_when=concurrent.futures.FIRST_COMPLETED,
+        )
+        if not done:
+            break
+        for future in done:
+            index = futures[future]
+            try:
+                generated_ir, failure, result_qa = future.result()
+            except Exception as exc:
+                generated_ir, failure, result_qa = None, {
+                    "reason": "лимит провайдера", "error": str(exc),
+                }, None
+            if generated_ir is not None:
+                variants.append((index, generated_ir))
+                qa.append(result_qa)
+            else:
+                detail = failure if isinstance(failure, dict) else {
+                    "reason": "лимит провайдера", "error": str(failure),
+                }
+                errors.append({"index": index, **detail})
+    for future in pending:
+        index = futures[future]
+        future.cancel()
+        errors.append({
+            "index": index,
+            "reason": "таймаут",
+            "error": "отменено после общего deadline batch",
+        })
+    variants.sort(key=lambda item: item[0])
+    qa.sort(key=lambda item: item.get("index", 0) if isinstance(item, dict) else 0)
+    errors.sort(key=lambda item: item["index"])
+    ready_variants = [item[1] for item in variants]
+    if errors and ready_variants:
+        reason = "частичный результат"
+    elif errors:
+        reason = errors[0]["reason"]
+    else:
+        reason = None
+    return {"variants": ready_variants, "errors": errors, "qa": qa,
+            "reason": reason, "complete": not errors,
+            "design": {"type": ptype, "label": pinfo["label"],
+                       "artDirection": art_direction,
+                       "skills": active_design_skills}}
 
 
 @app.post("/api/mix")
@@ -528,7 +645,7 @@ def block_parse(req: BlockParseReq):
 def reskin(req: ReskinReq):
     """Reskin: AI-рестайл блока с локом структуры.
 
-    LLM через OpenRouter → детерминированный merge-back
+    LLM через GPT Codex → детерминированный merge-back
     (залоченные поля принудительно из входного IR) → валидация по схеме →
     один repair-вызов по существующему паттерну. Дрейф структуры невозможен.
     """
@@ -557,7 +674,7 @@ def reskin(req: ReskinReq):
     if req.prompt.strip():
         user += f"\n\n## Пожелания по новому стилю\n{req.prompt.strip()}"
 
-    provider = "openrouter"  # роль reskin: закреплённая модель и fallback из ROUTING
+    provider = PRODUCT_PROVIDER  # reskin остаётся в пользовательском Codex routing
     try:
         raw = llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt("edit")},
@@ -667,11 +784,12 @@ def _quality_scorecard(ir: dict, brief: str) -> dict:
         "summary": str(parsed.get("summary", "")),
         "issues": issues[:12],
         "repair_instruction": str(parsed.get("repair_instruction", "")),
-        "model_route": "OpenRouter / quality_judge",
+        "model_route": "GPT Codex / quality_judge",
     }
 
 
-def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None, str | None]:
+def _quality_repair(ir: dict, scorecard: dict, brief: str,
+                    timeout: float | None = None) -> tuple[dict | None, str | None]:
     """Адресная починка только по замечаниям независимого судьи."""
     instructions = scorecard.get("repair_instruction", "").strip()
     if not instructions:
@@ -692,16 +810,195 @@ def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None,
         raw = llm.chat(PRODUCT_PROVIDER, [
             {"role": "system", "content": llm.build_system_prompt("edit")},
             {"role": "user", "content": user},
-        ], 0.25, role="quality_repair")
+        ], 0.25, timeout=timeout, role="quality_repair")
         repaired, parse_error = parse_ir_response(raw)
         if repaired is None:
             return None, parse_error
+        repaired, _ = generation_quality.resolve_assets(repaired)
         schema_errors = validate_ir(repaired)
         if schema_errors:
             return None, "; ".join(schema_errors[:5])
         return repaired, None
     except Exception as e:
         return None, str(e)
+
+
+VISUAL_QUALITY_SYSTEM = """Ты — строгий мультимодальный арт-директор DesignAI.
+Перед тобой один коллаж: desktop 1440 слева и mobile 390 справа. Оцени только
+наблюдаемое качество рендера и соответствие брифу: полноту, композицию, иерархию,
+реальные изображения, типографику, плотность, адаптивность, overflow и доступность.
+Серые заглушки, текст imagePrompt, пустые карточки, случайные большие пустоты и
+сломанный mobile — critical. Верни только JSON:
+{"score":0,"verdict":"pass|needs_repair","summary":"...","issues":[{"category":"brief|hierarchy|composition|consistency|content|accessibility","severity":"critical|major|minor","path":"desktop|mobile|(root)","problem":"...","instruction":"..."}],"repair_instruction":"..."}.
+Pass допустим только при score >= 78 и отсутствии critical/major дефектов."""
+
+
+def _visual_quality_scorecard(ir: dict, brief: str, bundle: dict,
+                              deterministic_issues: list[dict], timeout: float) -> dict:
+    prompt = (
+        "## Бриф\n" + (brief.strip() or "(не указан)")
+        + "\n\n## Browser DOM metrics\n" + json.dumps(bundle.get("metrics", {}), ensure_ascii=False)
+        + "\n\n## Deterministic issues\n" + json.dumps(deterministic_issues, ensure_ascii=False)
+        + "\n\nОцени приложенный desktop/mobile коллаж."
+    )
+    raw = llm.chat_vision(
+        PRODUCT_PROVIDER, bundle["montage"], prompt,
+        system_prompt=VISUAL_QUALITY_SYSTEM, temperature=0.1,
+        timeout=timeout, role="vision_pixel_qa",
+    )
+    try:
+        parsed = json.loads(llm.extract_json(raw))
+        score = max(0, min(int(parsed.get("score", 0)), 100))
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise ValueError(f"visual judge вернул невалидный scorecard: {exc}") from exc
+    issues = []
+    for item in parsed.get("issues", []):
+        if not isinstance(item, dict):
+            continue
+        severity = str(item.get("severity", "minor"))
+        if severity not in {"critical", "major", "minor"}:
+            severity = "minor"
+        issues.append({
+            "category": str(item.get("category", "composition")),
+            "severity": severity,
+            "path": str(item.get("path", "(root)")),
+            "problem": str(item.get("problem", "")),
+            "instruction": str(item.get("instruction", "")),
+        })
+    important = any(item["severity"] in {"critical", "major"} for item in issues)
+    verdict = "pass" if str(parsed.get("verdict")) == "pass" and score >= 78 and not important else "needs_repair"
+    return {
+        "score": score, "verdict": verdict,
+        "summary": str(parsed.get("summary", "")), "issues": issues[:12],
+        "repair_instruction": str(parsed.get("repair_instruction", "")),
+        "model_route": "GPT Codex / vision_pixel_qa",
+    }
+
+
+def _acceptance_scorecard(issues: list[dict], summary: str) -> dict:
+    mapped = [{
+        "category": "content" if "card" in item.get("code", "") or "asset" in item.get("code", "") else "composition",
+        "severity": item.get("severity", "major"),
+        "path": item.get("path", "(root)"),
+        "problem": item.get("message", ""),
+        "instruction": "Исправь указанный дефект и сохрани остальные части IR без изменений.",
+    } for item in issues]
+    return {
+        "score": 0, "verdict": "needs_repair", "summary": summary,
+        "issues": mapped[:12],
+        "repair_instruction": "\n".join(f"- {i['path']}: {i['problem']}" for i in mapped[:12]),
+    }
+
+
+def _run_generation_acceptance(candidate: dict, brief: str, index: int,
+                               batch_deadline: float) -> tuple[dict | None, dict]:
+    """generate -> validate -> rendered judge -> repair -> rendered rejudge."""
+    min_score = max(0, min(int(os.environ.get("GENERATION_MIN_SCORE", "78")), 100))
+    work = ensure_current_ir(copy.deepcopy(candidate), source="generate")
+    work, fixlog = qualitygate.autofix(work)
+    work, assets = generation_quality.resolve_assets(work)
+    stages = ["schema", "semantic", "assets", "dom", "visual-judge"]
+    repair = {"attempted": False, "applied": False, "error": None}
+
+    def deterministic(ir_doc: dict) -> list[dict]:
+        found: list[dict] = []
+        for message in validate_ir(ir_doc):
+            found.append({"code": "schema", "severity": "critical", "path": "(schema)", "message": message})
+        found.extend(generation_quality.semantic_validate(ir_doc, brief, require_resolved_assets=True))
+        for item in qualitygate.check(ir_doc):
+            found.append({"code": item.get("rule", "quality"), "severity": "major",
+                          "path": item.get("path", "(root)"), "message": item.get("message", "")})
+        return found
+
+    preflight = deterministic(work)
+    if preflight:
+        repair["attempted"] = True
+        remaining = batch_deadline - time.monotonic()
+        if remaining > 1:
+            repaired, repair_error = _quality_repair(
+                work, _acceptance_scorecard(preflight, "IR не прошёл обязательную проверку."),
+                brief, timeout=remaining,
+            )
+            if repaired is not None:
+                work, extra_assets = generation_quality.resolve_assets(repaired)
+                assets.extend(extra_assets)
+                work, extra_fixes = qualitygate.autofix(work)
+                fixlog.extend(extra_fixes)
+                repair["applied"] = True
+            else:
+                repair["error"] = repair_error
+        preflight = deterministic(work)
+        if preflight:
+            scorecard = _acceptance_scorecard(preflight, "Вариант отклонён: структура или контент неполны.")
+            return None, {"index": index, "score": 0, "verdict": "rejected", "summary": scorecard["summary"],
+                          "issues": scorecard["issues"], "fixed": len(fixlog), "assets": assets,
+                          "repair": repair, "stages": stages}
+
+    try:
+        bundle = visual_quality.capture_quality_bundle(work)
+    except Exception as exc:
+        issue = {"category": "accessibility", "severity": "critical", "path": "render",
+                 "problem": f"Не удалось проверить итоговый DOM: {exc}",
+                 "instruction": "Восстанови quality renderer и повтори генерацию."}
+        return None, {"index": index, "score": 0, "verdict": "rejected",
+                      "summary": "Вариант не возвращён без desktop/mobile проверки.",
+                      "issues": [issue], "fixed": len(fixlog), "assets": assets,
+                      "repair": repair, "stages": stages}
+
+    dom_issues = generation_quality.dom_contract_audit(bundle.get("metrics", {}))
+    remaining = batch_deadline - time.monotonic()
+    if remaining <= 1:
+        return None, {"index": index, "score": 0, "verdict": "rejected", "summary": "Истёк deadline до visual judge.",
+                      "issues": _acceptance_scorecard(dom_issues, "DOM не прошёл проверку.")["issues"],
+                      "fixed": len(fixlog), "assets": assets, "repair": repair, "stages": stages}
+    try:
+        initial = _visual_quality_scorecard(work, brief, bundle, dom_issues, remaining)
+    except Exception as exc:
+        return None, {"index": index, "score": 0, "verdict": "rejected", "summary": f"Visual judge недоступен: {exc}",
+                      "issues": [], "fixed": len(fixlog), "assets": assets, "repair": repair, "stages": stages}
+
+    blocking_dom = any(item.get("severity") in {"critical", "major"} for item in dom_issues)
+    passed = initial["score"] >= min_score and initial["verdict"] == "pass" and not blocking_dom
+    final = initial
+    if not passed:
+        repair["attempted"] = True
+        combined = copy.deepcopy(initial)
+        combined["issues"] = list(initial.get("issues", [])) + _acceptance_scorecard(dom_issues, "DOM issues")["issues"]
+        if dom_issues:
+            combined["repair_instruction"] = (combined.get("repair_instruction", "") + "\n" +
+                "\n".join(f"- {item['path']}: {item['message']}" for item in dom_issues)).strip()
+        remaining = batch_deadline - time.monotonic()
+        repaired, repair_error = _quality_repair(work, combined, brief, timeout=max(1.0, remaining)) if remaining > 1 else (None, "deadline")
+        if repaired is not None:
+            repaired, extra_assets = generation_quality.resolve_assets(repaired)
+            assets.extend(extra_assets)
+            repaired, extra_fixes = qualitygate.autofix(repaired)
+            fixlog.extend(extra_fixes)
+            remaining_issues = deterministic(repaired)
+            if not remaining_issues:
+                try:
+                    repaired_bundle = visual_quality.capture_quality_bundle(repaired)
+                    repaired_dom = generation_quality.dom_contract_audit(repaired_bundle.get("metrics", {}))
+                    remaining = batch_deadline - time.monotonic()
+                    if remaining > 1:
+                        final = _visual_quality_scorecard(repaired, brief, repaired_bundle, repaired_dom, remaining)
+                        work, bundle, dom_issues = repaired, repaired_bundle, repaired_dom
+                        repair["applied"] = True
+                except Exception as exc:
+                    repair_error = str(exc)
+            else:
+                repair_error = "; ".join(item["message"] for item in remaining_issues[:4])
+        repair["error"] = repair_error
+
+    blocking_dom = any(item.get("severity") in {"critical", "major"} for item in dom_issues)
+    passed = final["score"] >= min_score and final["verdict"] == "pass" and not blocking_dom
+    issues = list(final.get("issues", [])) + _acceptance_scorecard(dom_issues, "DOM issues")["issues"]
+    qa = {"index": index, "score": final["score"], "verdict": "pass" if passed else "rejected",
+          "summary": final.get("summary", ""), "issues": issues[:16], "fixed": len(fixlog),
+          "violations": [item.get("category", "quality") for item in issues[:16]],
+          "assets": assets, "repair": repair, "stages": stages,
+          "metrics": bundle.get("metrics", {})}
+    return (ensure_current_ir(work, source="generate"), qa) if passed else (None, qa)
 
 
 @app.post("/api/quality-pass")
@@ -878,6 +1175,467 @@ def project_load(req: ProjectLoadReq):
     return {"project": saved["payload"], "updated_at": saved["updated_at"]}
 
 
+EDITOR_ASSIST_ACTIONS = {
+    "adapt", "overflow", "content-fit", "align", "accessibility",
+    "rename-layers", "style", "custom",
+}
+EDITOR_ASSIST_VIEWPORTS = {"current", "desktop", "tablet", "mobile", "all"}
+EDITOR_ASSIST_FORBIDDEN_FIELDS = {"id", "type", "sourceKey"}
+EDITOR_ASSIST_STRUCTURAL_COLLECTIONS = {"tree", "children"}
+
+
+def _editor_pointer_parts(path: str) -> list[str]:
+    if not isinstance(path, str) or not path.startswith("/"):
+        raise ValueError("patch path должен быть JSON Pointer")
+    return [part.replace("~1", "/").replace("~0", "~") for part in path[1:].split("/") if part != ""]
+
+
+def _editor_pointer_get(doc: dict, path: str):
+    current = doc
+    for part in _editor_pointer_parts(path):
+        if isinstance(current, list):
+            current = current[int(part)]
+        else:
+            current = current[part]
+    return copy.deepcopy(current)
+
+
+def _editor_pointer_apply(doc: dict, operation: dict):
+    parts = _editor_pointer_parts(operation.get("path", ""))
+    if not parts:
+        raise ValueError("изменение корневого IR запрещено")
+    parent = doc
+    for part in parts[:-1]:
+        if isinstance(parent, list):
+            parent = parent[int(part)]
+        else:
+            parent = parent[part]
+    last = parts[-1]
+    op = operation.get("op")
+    if isinstance(parent, list):
+        if op == "add" and last == "-":
+            parent.append(copy.deepcopy(operation.get("after")))
+        elif op == "add":
+            parent.insert(int(last), copy.deepcopy(operation.get("after")))
+        elif op == "replace":
+            parent[int(last)] = copy.deepcopy(operation.get("after"))
+        elif op == "remove":
+            parent.pop(int(last))
+        else:
+            raise ValueError(f"неподдерживаемая операция: {op}")
+    else:
+        if op in {"add", "replace"}:
+            parent[last] = copy.deepcopy(operation.get("after"))
+        elif op == "remove":
+            parent.pop(last, None)
+        else:
+            raise ValueError(f"неподдерживаемая операция: {op}")
+
+
+def _editor_structure_signature(doc: dict) -> list[tuple]:
+    result = []
+
+    def visit(node: dict, path: str):
+        if not isinstance(node, dict):
+            return
+        result.append((path, node.get("id"), node.get("type"), node.get("sourceKey")))
+        for index, child in enumerate(node.get("children") or []):
+            visit(child, f"{path}/children/{index}")
+
+    for index, section in enumerate(doc.get("tree") or []):
+        visit(section, f"/tree/{index}")
+    return result
+
+
+def _editor_source_paths(doc: dict) -> dict[str, str]:
+    """Map stable editor identities to their JSON Pointer paths."""
+    result: dict[str, str] = {}
+
+    def visit(node: dict, path: str):
+        if not isinstance(node, dict):
+            return
+        source_key = node.get("sourceKey")
+        if isinstance(source_key, str) and source_key:
+            result[source_key] = path
+        for index, child in enumerate(node.get("children") or []):
+            visit(child, f"{path}/children/{index}")
+
+    for index, section in enumerate(doc.get("tree") or []):
+        visit(section, f"/tree/{index}")
+    return result
+
+
+def _editor_ensure_source_keys(doc: dict) -> dict:
+    """Assign deterministic editor identities to legacy nodes that lack them."""
+    seen: set[str] = set()
+
+    def visit(node: dict, path: str):
+        if not isinstance(node, dict):
+            return
+        source_key = str(node.get("sourceKey") or "").strip()
+        if not source_key:
+            source_key = f"editor:{path}"
+        base = source_key
+        suffix = 1
+        while source_key in seen:
+            source_key = f"{base}#{suffix:03d}"
+            suffix += 1
+        node["sourceKey"] = source_key
+        seen.add(source_key)
+        for index, child in enumerate(node.get("children") or []):
+            visit(child, f"{path}/children/{index}")
+
+    for index, section in enumerate(doc.get("tree") or []):
+        visit(section, f"/tree/{index}")
+    return doc
+
+
+def _editor_path_exists(doc: dict, path: str) -> bool:
+    try:
+        _editor_pointer_get(doc, path)
+        return True
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False
+
+
+def _editor_commands_to_ops(base: dict, commands: list, scope: EditorAssistScope) -> list[dict]:
+    """Resolve semantic, sourceKey-based AI commands into guarded IR operations."""
+    if not isinstance(commands, list) or len(commands) > 60:
+        raise ValueError("AI должен вернуть от 0 до 60 редакторских команд")
+    source_paths = _editor_source_paths(base)
+    allowed_groups = {"frame", "style", "styleBindings", "props"}
+    content_fields = {"text", "title", "placeholder", "value", "label", "name", "alt", "ariaLabel"}
+    ops: list[dict] = []
+    shadow = copy.deepcopy(base)
+
+    def ensure_object(path: str, reason: str) -> None:
+        parts = _editor_pointer_parts(path)
+        for end in range(1, len(parts) + 1):
+            current_path = "/" + "/".join(
+                part.replace("~", "~0").replace("/", "~1") for part in parts[:end]
+            )
+            if _editor_path_exists(shadow, current_path):
+                continue
+            operation = {"op": "add", "path": current_path, "after": {}, "reason": reason}
+            _editor_pointer_apply(shadow, operation)
+            ops.append(operation)
+    for raw in commands:
+        if not isinstance(raw, dict) or raw.get("command") != "update":
+            raise ValueError("поддерживается только редакторская команда update")
+        target = str(raw.get("targetSourceKey") or "")
+        target_path = source_paths.get(target)
+        if not target_path:
+            raise ValueError(f"не найден элемент редактора: {target or 'без sourceKey'}")
+        if scope.sourceKeys and target not in scope.sourceKeys:
+            allowed_paths = [source_paths[key] for key in scope.sourceKeys if key in source_paths]
+            if not any(target_path == prefix or target_path.startswith(prefix + "/") for prefix in allowed_paths):
+                raise ValueError("AI попытался изменить элемент вне текущего выделения")
+        viewport = str(raw.get("viewport") or scope.viewport or "current").lower()
+        if viewport == "current":
+            viewport = scope.viewport if scope.viewport in {"desktop", "tablet", "mobile"} else "shared"
+        if viewport in {"all", "desktop"}:
+            viewport = "shared"
+        if viewport not in {"shared", "tablet", "mobile"}:
+            raise ValueError(f"неизвестный viewport команды: {viewport}")
+        changes = raw.get("changes")
+        if not isinstance(changes, dict) or not changes:
+            raise ValueError("команда update должна содержать changes")
+        reason = str(raw.get("reason") or "").strip()
+        for group, values in changes.items():
+            if group in allowed_groups:
+                if not isinstance(values, dict):
+                    raise ValueError(f"{group} должен быть объектом")
+                group_path = f"{target_path}/{group}" if viewport == "shared" else f"{target_path}/responsive/{viewport}/{group}"
+                ensure_object(group_path, reason)
+                for key, value in values.items():
+                    key_part = str(key).replace("~", "~0").replace("/", "~1")
+                    path = f"{group_path}/{key_part}"
+                    operation = {
+                        "op": "replace" if _editor_path_exists(shadow, path) else "add",
+                        "path": path,
+                        "after": copy.deepcopy(value),
+                        "reason": reason,
+                    }
+                    _editor_pointer_apply(shadow, operation)
+                    ops.append(operation)
+            elif group in content_fields and viewport == "shared":
+                path = f"{target_path}/{group}"
+                operation = {
+                    "op": "replace" if _editor_path_exists(shadow, path) else "add",
+                    "path": path,
+                    "after": copy.deepcopy(values),
+                    "reason": reason,
+                }
+                _editor_pointer_apply(shadow, operation)
+                ops.append(operation)
+            else:
+                raise ValueError(f"недопустимая группа изменения: {group}")
+    return ops
+
+
+def _editor_validate_scope(base: dict, ops: list[dict], source_keys: list[str]) -> None:
+    if not source_keys:
+        return
+    source_paths = _editor_source_paths(base)
+    allowed_paths = [source_paths[key] for key in source_keys if key in source_paths]
+    if not allowed_paths:
+        raise ValueError("выделенные элементы больше не найдены в документе")
+    for operation in ops:
+        path = str(operation.get("path") or "")
+        if not any(path == prefix or path.startswith(prefix + "/") for prefix in allowed_paths):
+            raise ValueError("AI попытался изменить элемент вне текущего выделения")
+
+
+def _editor_diff(before, after, path: str = "") -> list[dict]:
+    if isinstance(before, dict) and isinstance(after, dict):
+        ops: list[dict] = []
+        keys = list(dict.fromkeys([*before.keys(), *after.keys()]))
+        for key in keys:
+            child_path = f"{path}/{str(key).replace('~', '~0').replace('/', '~1')}"
+            if key not in after:
+                ops.append({"op": "remove", "path": child_path, "before": copy.deepcopy(before[key])})
+            elif key not in before:
+                ops.append({"op": "add", "path": child_path, "after": copy.deepcopy(after[key])})
+            else:
+                ops.extend(_editor_diff(before[key], after[key], child_path))
+        return ops
+    if isinstance(before, list) and isinstance(after, list):
+        if len(before) == len(after):
+            ops: list[dict] = []
+            for index, (before_item, after_item) in enumerate(zip(before, after)):
+                ops.extend(_editor_diff(before_item, after_item, f"{path}/{index}"))
+            return ops
+        if before != after:
+            return [{"op": "replace", "path": path or "/tree", "before": copy.deepcopy(before), "after": copy.deepcopy(after)}]
+        return []
+    if isinstance(before, list) or isinstance(after, list):
+        return [{"op": "replace", "path": path or "/tree", "before": copy.deepcopy(before), "after": copy.deepcopy(after)}]
+    if before != after:
+        return [{"op": "replace", "path": path or "/frame", "before": copy.deepcopy(before), "after": copy.deepcopy(after)}]
+    return []
+
+
+def _editor_validate_and_apply(base: dict, raw_ops: list, constraints: EditorAssistConstraints) -> tuple[dict, list[dict]]:
+    if not isinstance(raw_ops, list) or len(raw_ops) > 100:
+        raise ValueError("AI patch должен содержать от 0 до 100 операций")
+    candidate = copy.deepcopy(base)
+    normalized: list[dict] = []
+    for raw in raw_ops:
+        if not isinstance(raw, dict):
+            raise ValueError("операция AI patch должна быть объектом")
+        op = str(raw.get("op", ""))
+        path = str(raw.get("path", ""))
+        if op not in {"add", "remove", "replace"}:
+            raise ValueError(f"неподдерживаемая операция: {op}")
+        parts = _editor_pointer_parts(path)
+        if not parts or parts[0] not in {"tree", "frame", "responsive", "tokens", "styleBindings"}:
+            raise ValueError(f"недопустимый путь: {path}")
+        changes_identity = parts[-1] in EDITOR_ASSIST_FORBIDDEN_FIELDS
+        changes_collection = (
+            parts[-1] in EDITOR_ASSIST_STRUCTURAL_COLLECTIONS
+            or (len(parts) > 1 and parts[-2] in EDITOR_ASSIST_STRUCTURAL_COLLECTIONS)
+        )
+        if not constraints.allowStructure and (changes_identity or changes_collection):
+            raise ValueError(f"структурное изменение запрещено: {path}")
+        if any(part in {"frame", "responsive"} for part in parts) and not constraints.allowFrame:
+            raise ValueError(f"изменение frame запрещено: {path}")
+        if any(part in {"style", "styleBindings", "tokens"} for part in parts) and not constraints.allowStyle:
+            raise ValueError(f"изменение style запрещено: {path}")
+        if any(part in {"text", "title", "placeholder", "value", "label", "name", "props"} for part in parts) and not constraints.allowContent:
+            raise ValueError(f"изменение content запрещено: {path}")
+        before = raw.get("before")
+        if before is None and op != "add":
+            try:
+                before = _editor_pointer_get(base, path)
+            except (KeyError, IndexError, TypeError, ValueError):
+                before = None
+        operation = {
+            "op": op,
+            "path": path,
+            "before": copy.deepcopy(before),
+            "after": copy.deepcopy(raw.get("after")),
+            "reason": str(raw.get("reason", "")).strip(),
+        }
+        _editor_pointer_apply(candidate, operation)
+        normalized.append(operation)
+    if not constraints.allowStructure and _editor_structure_signature(base) != _editor_structure_signature(candidate):
+        raise ValueError("AI patch изменил структуру дерева")
+    schema_errors = validate_ir(candidate)
+    if schema_errors:
+        raise ValueError("AI patch создал невалидный IR: " + "; ".join(schema_errors[:5]))
+    return candidate, normalized
+
+
+def _editor_changed_viewports(ops: list[dict]) -> list[str]:
+    found = []
+    for viewport in ("desktop", "tablet", "mobile"):
+        if any(
+            f"/responsive/{viewport}" in str(op.get("path", ""))
+            or f"/responsive/viewports/{viewport}" in str(op.get("path", ""))
+            or (
+                str(op.get("path", "")).endswith("/responsive")
+                and isinstance(op.get("after"), dict)
+                and viewport in op["after"]
+            )
+            or (
+                str(op.get("path", "")).endswith("/responsive/viewports")
+                and isinstance(op.get("after"), dict)
+                and viewport in op["after"]
+            )
+            for op in ops
+        ):
+            found.append(viewport)
+    return found
+
+
+def _editor_adapt_preview(base: dict, scope: EditorAssistScope) -> dict:
+    """Create conservative, selection-aware responsive overrides."""
+    candidate = ir.ensure_fluid_layout(base)
+    if not scope.sourceKeys:
+        return candidate
+    paths = _editor_source_paths(candidate)
+    for source_key in scope.sourceKeys:
+        path = paths.get(source_key)
+        if not path:
+            continue
+        try:
+            node = _editor_pointer_get(candidate, path)
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        frame = node.get("frame") if isinstance(node.get("frame"), dict) else {}
+        responsive = node.setdefault("responsive", {})
+        if not isinstance(responsive, dict):
+            responsive = {}
+            node["responsive"] = responsive
+
+        mobile = responsive.setdefault("mobile", {})
+        if isinstance(mobile, dict):
+            mobile_frame = mobile.setdefault("frame", {})
+            if isinstance(mobile_frame, dict):
+                mobile_frame.setdefault("width", "fill")
+                mobile_frame.setdefault("minWidth", 0)
+                if frame.get("layout") == "auto" and frame.get("direction") == "row":
+                    mobile_frame.setdefault("direction", "column")
+                    mobile_frame.setdefault("wrap", False)
+                    if isinstance(frame.get("gap"), (int, float)):
+                        mobile_frame.setdefault("gap", min(float(frame["gap"]), 16))
+                    mobile_frame.setdefault("align", "stretch")
+
+        tablet = responsive.setdefault("tablet", {})
+        if isinstance(tablet, dict):
+            tablet_frame = tablet.setdefault("frame", {})
+            if isinstance(tablet_frame, dict):
+                if isinstance(frame.get("width"), (int, float)) and frame["width"] > 720:
+                    tablet_frame.setdefault("width", "fill")
+                    tablet_frame.setdefault("minWidth", 0)
+                if frame.get("layout") == "auto" and frame.get("direction") == "row":
+                    tablet_frame.setdefault("wrap", True)
+                    tablet_frame.setdefault("align", "stretch")
+
+        _editor_pointer_apply(candidate, {"op": "replace", "path": path, "after": node})
+    return candidate
+
+
+def _editor_assist_llm(base: dict, req: EditorAssistReq) -> tuple[dict, list[dict], str]:
+    system = (
+        "You are a visual editor agent. Return JSON only with keys summary and commands. "
+        "Each command must be {command:'update', targetSourceKey, viewport, changes, reason}. "
+        "viewport is shared, tablet, or mobile. changes may contain frame, style, "
+        "styleBindings, props, text, title, placeholder, value, label, name, alt, or ariaLabel. "
+        "Use only sourceKeys present in the IR and stay inside scope.sourceKeys when supplied. "
+        "Never change hierarchy, ids, types, sourceKeys, children, or array order. "
+        "Prefer auto-layout, fill sizing, consistent spacing, and existing design tokens; "
+        "preserve the current visual direction and make the smallest coherent change."
+    )
+    user = json.dumps({
+        "action": req.action,
+        "prompt": req.prompt.strip(),
+        "scope": req.scope.model_dump() if hasattr(req.scope, "model_dump") else req.scope.dict(),
+        "constraints": req.constraints.model_dump() if hasattr(req.constraints, "model_dump") else req.constraints.dict(),
+        "ir": base,
+    }, ensure_ascii=False)
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    last_error: ValueError | None = None
+    for attempt in range(2):
+        raw = llm.chat(PRODUCT_PROVIDER, messages, 0.2, role="edit", priority="high")
+        try:
+            parsed = json.loads(llm.extract_json(raw))
+            if not isinstance(parsed, dict):
+                raise ValueError("AI вернул не объект")
+            if "commands" in parsed:
+                ops = _editor_commands_to_ops(base, parsed.get("commands", []), req.scope)
+            else:
+                # Backward compatibility for providers/tests still returning guarded ops.
+                ops = parsed.get("ops", [])
+            _editor_validate_scope(base, ops, req.scope.sourceKeys)
+            candidate, ops = _editor_validate_and_apply(base, ops, req.constraints)
+            return candidate, ops, str(parsed.get("summary") or "Изменения готовы к применению")
+        except (json.JSONDecodeError, ValueError) as exc:
+            last_error = ValueError(f"AI вернул невалидное изменение: {exc}")
+            if attempt == 0:
+                messages.extend([
+                    {"role": "assistant", "content": raw},
+                    {"role": "user", "content": f"Команда отклонена редактором: {exc}. Верни исправленный JSON по схеме."},
+                ])
+                continue
+    raise last_error or ValueError("AI не смог подготовить безопасное изменение")
+
+
+@app.post("/api/editor/assist")
+def editor_assist(req: EditorAssistReq):
+    """Return a validated visual-edit preview; never mutates the submitted IR."""
+    if not FEATURE_FLAGS.is_enabled("editorAiAssist"):
+        return err(404, "AI assist редактора отключён feature flag.")
+    action = req.action.strip().lower()
+    if action not in EDITOR_ASSIST_ACTIONS:
+        return err(422, "Неизвестное AI-действие редактора.")
+    if req.scope.viewport not in EDITOR_ASSIST_VIEWPORTS:
+        return err(422, "Неизвестный viewport.")
+    schema_errors = validate_ir(req.ir)
+    if schema_errors:
+        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
+    if not req.prompt.strip():
+        return err(422, "Опишите, что нужно изменить.")
+    base = _editor_ensure_source_keys(ensure_current_ir(copy.deepcopy(req.ir), source="editor-assist"))
+    try:
+        if action == "adapt":
+            candidate = _editor_adapt_preview(base, req.scope)
+            ops = _editor_diff(base, candidate)[:100]
+            summary = "Адаптивные настройки выделения подготовлены" if req.scope.sourceKeys else "Адаптивные fallback-настройки подготовлены"
+        elif action == "overflow":
+            candidate, journal = qualitygate.autofix(base)
+            ops = _editor_diff(base, candidate)[:100]
+            summary = journal[0] if journal else "Переполнения не найдены"
+        else:
+            candidate, ops, summary = _editor_assist_llm(base, req)
+        if not ops:
+            summary = summary or "Изменений не требуется"
+        remaining_overflow = qualitygate.check(candidate)
+        warnings = [
+            {"code": str(item.get("rule", "quality")), "message": str(item.get("message", item)), "path": str(item.get("path", ""))}
+            for item in remaining_overflow[:12]
+            if isinstance(item, dict)
+        ]
+        return {
+            "summary": summary,
+            "ops": ops,
+            "previewIr": candidate,
+            "changedViewports": _editor_changed_viewports(ops),
+            "warnings": warnings,
+            "validation": {"schema": True, "overflow": remaining_overflow, "constraints": []},
+        }
+    except llm.AIRequestError as exc:
+        status = 429 if exc.reason in {"очередь", "лимит провайдера"} else 504
+        return err(status, exc.reason)
+    except ValueError as exc:
+        return err(422, str(exc))
+    except Exception as exc:
+        return err(502, f"AI assist недоступен: {exc}")
+
+
 @app.get("/api/project/taste")
 def project_taste():
     return project_store.load_taste_profile()
@@ -894,6 +1652,8 @@ def app_config():
             "motionDirector": llm.routing_models("motion_director")[0],
             "video": video_client.public_models(),
         },
+        "provider": llm.public_config(),
+        "videoProvider": video_client.public_config(),
     }
 
 
@@ -1015,20 +1775,28 @@ def motion_build(req: MotionBuildReq):
         return err(404, "Motion Editor отключён feature flag.")
     base_ir = ensure_current_ir(req.base_ir)
     base_errors = validate_ir(base_ir)
-    interaction_errors = ir.validate_interaction(req.interaction)
     if base_errors:
         return err(422, "Base IR не проходит schema: " + "; ".join(base_errors[:5]))
-    if interaction_errors:
-        return err(422, "Interaction IR не проходит schema: " + "; ".join(interaction_errors[:5]))
     try:
-        motion = ir.build_motion(req.interaction, req.composition, req.scene_settings, req.render_settings)
-        scene_irs = []
-        for scene in motion["scenes"]:
-            scene_ir = ir.replay_interaction(base_ir, req.interaction, scene["interactionSceneId"])
-            replay_errors = validate_ir(scene_ir)
-            if replay_errors:
-                raise ValueError("Motion scene создаёт невалидный IR: " + "; ".join(replay_errors[:5]))
-            scene_irs.append({"sceneId": scene["id"], "ir": ensure_current_ir(scene_ir)})
+        if req.interaction:
+            interaction_errors = ir.validate_interaction(req.interaction)
+            if interaction_errors:
+                return err(422, "Interaction IR не проходит schema: " + "; ".join(interaction_errors[:5]))
+            motion = ir.build_motion(req.interaction, req.composition, req.scene_settings, req.render_settings)
+            scene_irs = []
+            for scene in motion["scenes"]:
+                scene_ir = ir.replay_interaction(base_ir, req.interaction, scene["interactionSceneId"])
+                replay_errors = validate_ir(scene_ir)
+                if replay_errors:
+                    raise ValueError("Motion scene создаёт невалидный IR: " + "; ".join(replay_errors[:5]))
+                scene_irs.append({"sceneId": scene["id"], "ir": ensure_current_ir(scene_ir)})
+        else:
+            plan = None
+            prompt = (req.prompt or "").strip()
+            if prompt:
+                plan = ir.direct_comp_plan(base_ir, prompt, req.composition)
+            motion = ir.build_motion_from_design(base_ir, req.composition, req.render_settings, plan)
+            scene_irs = [{"sceneId": motion["scenes"][0]["id"], "ir": base_ir}]
     except ValueError as exc:
         return err(422, str(exc))
     return {"motion": motion, "sceneIrs": scene_irs}
@@ -1083,21 +1851,26 @@ def motion_render(req: MotionRenderReq):
         return err(404, "Video render is disabled by feature flag.")
     base_ir = ensure_current_ir(req.base_ir)
     base_errors = validate_ir(base_ir)
-    interaction_errors = ir.validate_interaction(req.interaction)
     motion_errors = ir.validate_motion(req.motion, req.interaction)
     if base_errors:
         return err(422, "Base IR does not pass schema: " + "; ".join(base_errors[:5]))
-    if interaction_errors:
-        return err(422, "Interaction IR does not pass schema: " + "; ".join(interaction_errors[:5]))
     if motion_errors:
         return err(422, "Motion IR does not pass schema: " + "; ".join(motion_errors[:5]))
-    if req.motion["source"]["interactionHash"] != ir.content_hash(req.interaction):
-        return err(409, "Motion IR does not belong to the supplied Interaction IR.")
     base_hash = base_ir.get("contentHash") or ir.content_hash(base_ir)
     if req.motion["source"]["baseDesignIrHash"] != base_hash:
         return err(409, "Motion IR does not belong to the supplied Design IR.")
     try:
-        scene_irs = _materialize_motion_scenes(base_ir, req.interaction, req.motion)
+        if req.motion.get("layers"):
+            scene_irs = [{"sceneId": req.motion["scenes"][0]["id"], "ir": base_ir}]
+        else:
+            if not req.interaction:
+                return err(422, "Для старого slideshow-ролика нужен Interaction IR.")
+            interaction_errors = ir.validate_interaction(req.interaction)
+            if interaction_errors:
+                return err(422, "Interaction IR does not pass schema: " + "; ".join(interaction_errors[:5]))
+            if req.motion["source"]["interactionHash"] != ir.content_hash(req.interaction):
+                return err(409, "Motion IR does not belong to the supplied Interaction IR.")
+            scene_irs = _materialize_motion_scenes(base_ir, req.interaction, req.motion)
         total_frames, output_format = validate_render_input(req.motion, scene_irs)
     except ValueError as exc:
         return err(422, str(exc))
@@ -1146,11 +1919,11 @@ def motion_render_download(render_id: str):
 
 @app.post("/api/ai-video/generate")
 def ai_video_generate(req: AiVideoGenerateReq):
-    """Submit an explicitly confirmed generative B-roll job to OpenRouter."""
+    """Submit an explicitly confirmed generative B-roll job to Seedance."""
     if not FEATURE_FLAGS.is_enabled("generativeVideo"):
         return err(404, "Generative video is disabled by feature flag.")
     if not req.confirmed:
-        return err(409, "Confirm the paid OpenRouter video generation before submitting.")
+        return err(409, "Confirm the paid Seedance video generation before submitting.")
     if len(req.references) > 4:
         return err(422, "At most four video reference images are allowed.")
     safe_references = []
@@ -1178,7 +1951,7 @@ def ai_video_generate(req: AiVideoGenerateReq):
 
 @app.get("/api/ai-video/{job_id}")
 def ai_video_status(job_id: str):
-    """Poll one OpenRouter video job without accepting arbitrary polling URLs."""
+    """Poll one Seedance video job without accepting arbitrary polling URLs."""
     if not FEATURE_FLAGS.is_enabled("generativeVideo"):
         return err(404, "Generative video is disabled by feature flag.")
     try:

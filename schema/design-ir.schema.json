@@ -365,6 +365,10 @@
           "then": { "properties": { "props": { "$ref": "#/$defs/heroProps" } } }
         },
         {
+          "if": { "properties": { "type": { "const": "feature-grid" } } },
+          "then": { "required": ["children"], "properties": { "children": { "minItems": 2 } } }
+        },
+        {
           "if": { "properties": { "type": { "const": "pricing" } } },
           "then": { "properties": { "props": { "$ref": "#/$defs/pricingProps" } } }
         },
@@ -572,7 +576,7 @@
       "additionalProperties": false,
       "properties": {
         "type": {
-          "enum": ["heading", "text", "button", "image", "badge", "card", "icon", "divider", "avatar", "rating", "input", "stat", "list", "rect"]
+          "enum": ["heading", "text", "button", "image", "badge", "card", "product-card", "icon", "divider", "avatar", "rating", "input", "stat", "list", "rect"]
         },
         "frame": { "$ref": "#/$defs/frame" },
         "sourceKey": { "type": "string", "maxLength": 500 },
@@ -592,6 +596,18 @@
         "imagePrompt": { "type": "string", "description": "Описание изображения для подбора/генерации ассета" },
         "alt": { "type": "string" },
         "aspect": { "enum": ["1:1", "4:3", "16:9", "3:4", "9:16", "auto"] },
+        "price": { "type": "string", "maxLength": 60 },
+        "compareAtPrice": { "type": "string", "maxLength": 60 },
+        "ctaText": { "type": "string", "maxLength": 40 },
+        "badgeText": { "type": "string", "maxLength": 40 },
+        "gridSpan": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "columns": { "type": "integer", "minimum": 1, "maximum": 4 },
+            "rows": { "type": "integer", "minimum": 1, "maximum": 3 }
+          }
+        },
         "tone": { "enum": ["default", "primary", "accent", "muted", "success", "warning", "error"] },
         "fill": { "type": "string", "pattern": "^#[0-9a-fA-F]{3,8}$", "description": "Цвет заливки rect (hex)" },
         "radius": { "type": "number", "minimum": 0, "description": "Скругление углов rect, px" },
@@ -606,7 +622,13 @@
           "type": "array",
           "items": { "$ref": "#/$defs/element" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "product-card" } }, "required": ["type"] },
+          "then": { "required": ["title", "price", "src", "alt"] }
+        }
+      ]
     },
     "elementStyle": {
       "type": "object",

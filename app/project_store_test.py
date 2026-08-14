@@ -89,6 +89,7 @@ def test_project_save_load_and_taste(tmp_path: Path) -> None:
 def test_generate_receives_taste_memory(tmp_path: Path) -> None:
     old_db = project_store.DB_PATH
     old_chat = server.llm.chat
+    old_acceptance = server._run_generation_acceptance
     project_store.DB_PATH = tmp_path / "projects.db"
     seen: list[str] = []
     try:
@@ -120,16 +121,20 @@ def test_generate_receives_taste_memory(tmp_path: Path) -> None:
             }
         )
 
-        def fake_chat(provider, messages, temperature, role=None):
+        def fake_chat(provider, messages, temperature, role=None, **kwargs):
             seen.append(messages[-1]["content"])
             return '{"version":"1.0","tokens":{},"tree":[]}'
 
         server.llm.chat = fake_chat
+        server._run_generation_acceptance = lambda candidate, brief, index, deadline: (
+            candidate, {"index": index, "score": 100, "verdict": "pass", "issues": [], "fixed": 0}
+        )
         response = server.generate(server.GenerateReq(brief="сделай hero", count=1))
         check("generate returns variant", bool(response["variants"]))
         check("generate prompt includes taste memory", "Project Taste Memory" in seen[0] and "editorial" in seen[0], seen[0])
     finally:
         server.llm.chat = old_chat
+        server._run_generation_acceptance = old_acceptance
         project_store.DB_PATH = old_db
 
 

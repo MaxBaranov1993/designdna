@@ -30,7 +30,17 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 /* Формы ответов бэкенда — по server.py и контрактам docs/NODES.md */
-export type GenerateResp = { variants?: IRObject[]; errors?: string[]; qa?: { index: number; fixed: number; violations: string[] }[]; design?: { type: string; label: string } };
+export type GenerateFailureReason = "очередь" | "лимит провайдера" | "таймаут" | "quality rejected";
+export type GenerateIssue = { category?: string; severity?: string; path?: string; problem?: string; instruction?: string };
+export type GenerateQa = { index: number; score: number; verdict: string; summary?: string; issues?: GenerateIssue[]; fixed?: number; violations?: string[] };
+export type GenerateResp = {
+  variants?: IRObject[];
+  errors?: Array<{ index: number; reason: GenerateFailureReason; error: string; score?: number; issues?: GenerateIssue[] }>;
+  qa?: GenerateQa[];
+  reason?: GenerateFailureReason | "частичный результат" | null;
+  complete?: boolean;
+  design?: { type: string; label: string; artDirection?: string; skills?: string[] };
+};
 export type MixResp = { ir?: IRObject | null };
 export type ReproduceResp = {
   ir?: IRObject | null;
@@ -89,6 +99,19 @@ export type ConfigResp = {
     generator?: string;
     motionDirector?: string;
     video?: Record<string, string>;
+  };
+  provider?: {
+    id?: string;
+    label?: string;
+    configured?: boolean;
+    baseUrlHost?: string;
+    model?: string;
+  };
+  videoProvider?: {
+    id?: string;
+    label?: string;
+    configured?: boolean;
+    baseUrlHost?: string;
   };
 };
 export type StyleDnaExtractResp = { tokens?: IRObject };

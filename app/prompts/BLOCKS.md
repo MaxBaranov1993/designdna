@@ -60,6 +60,7 @@ Common props:
 Children:
 
 - `card`
+- `product-card` for commerce/catalog items
 - `heading`
 - `text`
 
@@ -68,6 +69,10 @@ Variants:
 - `grid-3`
 - `grid-4`
 - `bento`
+
+For `bento`, children may use `gridSpan: {columns: 1..4, rows: 1..3}`.
+Spans must produce a complete grid without accidental holes on desktop and
+must collapse to one column on mobile.
 
 ### feature-alternating
 
@@ -226,6 +231,8 @@ Allowed child elements:
 - `button`
 - `image`
 - `card`
+- `product-card` — requires `title`, `price`, resolved `src`, `alt`; optional
+  `text`, `compareAtPrice`, `ctaText`, `badgeText`, `aspect`, `gridSpan`
 - `avatar`
 - `rating`
 - `rect`

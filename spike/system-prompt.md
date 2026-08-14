@@ -1,6 +1,6 @@
 # System prompt для Generator-ноды (v2 — редактор + генератор)
 
-Используется как system message при вызове через OpenRouter.
+Используется как system message при вызове через GPT Codex.
 Плейсхолдеры: `{{SCHEMA}}` — schema/design-ir.schema.json, `{{BLOCKS}}` — app/prompts/BLOCKS.md,
 `{{BRIEF}}` — инструкция пользователя (правка или задача), `{{STYLE_HINT}}` — описание референса / стиль,
 `{{MODE}}` — "edit" или "generate".

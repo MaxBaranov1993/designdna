@@ -167,7 +167,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
   function baseCss(uid) {
     return `
       .ir-${uid} { background:var(--c-bg); color:var(--c-text); font-family:var(--font-body); font-weight:var(--fw-body);
-        font-size:calc(15px * var(--fs)); line-height:1.6; width:${DESIGN_WIDTH}px; transform-origin:top left; }
+        font-size:calc(15px * var(--fs)); line-height:1.6; width:${DESIGN_WIDTH}px; transform-origin:top left; container-type:inline-size; }
       .ir-${uid} * { margin:0; padding:0; box-sizing:border-box; }
       .ir-${uid} h1,.ir-${uid} h2,.ir-${uid} h3,.ir-${uid} h4 { font-family:var(--font-display); font-weight:var(--fw-display); line-height:1.15; }
       .ir-${uid} h1 { font-size:calc(46px * var(--fs)); letter-spacing:-.02em; }
@@ -189,6 +189,8 @@ import { DesignAIFontCatalog } from "./fontCatalog";
       .ir-${uid} .btn-secondary { background:var(--c-secondary); color:#fff; }
       .ir-${uid} .btn-outline { border-color:var(--c-border); color:var(--c-text); background:transparent; }
       .ir-${uid} .btn-ghost { color:var(--c-primary); background:transparent; padding:8px 12px; }
+      .ir-${uid} .btn:hover { filter:brightness(.94); }
+      .ir-${uid} .btn:focus-visible, .ir-${uid} input:focus-visible { outline:3px solid color-mix(in srgb,var(--c-primary),white 35%); outline-offset:3px; }
       .ir-${uid} .card { background:var(--c-surface); border:1px solid var(--c-border); border-radius:var(--r-card);
         padding:24px; box-shadow:var(--shadow); position:relative; }
       .ir-${uid} .badge { display:inline-block; padding:5px 12px; border-radius:var(--r-btn); font-size:calc(12px * var(--fs));
@@ -203,6 +205,17 @@ import { DesignAIFontCatalog } from "./fontCatalog";
         color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:15px; flex:none; }
       .ir-${uid} .img-ph { background:linear-gradient(135deg, var(--c-surface), var(--c-border)); border-radius:var(--r-card);
         display:flex; align-items:center; justify-content:center; color:var(--c-muted); font-size:12px; min-height:180px; padding:16px; text-align:center; }
+      .ir-${uid} .asset-loading { min-height:180px; border-radius:var(--r-card); background:var(--c-surface); color:var(--c-muted); display:grid; place-items:center; }
+      .ir-${uid} .product-card { display:flex; min-width:0; height:100%; flex-direction:column; overflow:hidden; padding:0; background:var(--c-bg); }
+      .ir-${uid} .product-card-media { aspect-ratio:4/3; overflow:hidden; background:var(--c-surface); }
+      .ir-${uid} .product-card-media img { width:100%; height:100%; object-fit:cover; }
+      .ir-${uid} .product-card-body { display:flex; flex:1; min-width:0; flex-direction:column; gap:10px; padding:20px; }
+      .ir-${uid} .product-card-title { text-wrap:balance; overflow-wrap:anywhere; }
+      .ir-${uid} .product-card-copy { display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+      .ir-${uid} .product-card-price { margin-top:auto; display:flex; align-items:baseline; gap:8px; font:700 calc(20px * var(--fs))/1.2 var(--font-display); font-variant-numeric:tabular-nums; }
+      .ir-${uid} .product-card-price del { color:var(--c-muted); font-size:12px; font-weight:500; }
+      .ir-${uid} .grid-bento { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); grid-auto-flow:dense; grid-auto-rows:minmax(180px,auto); gap:20px; }
+      @container (max-width:600px) { .ir-${uid} .grid-bento { grid-template-columns:minmax(0,1fr); } .ir-${uid} .grid-bento > * { grid-column:1 / -1 !important; grid-row:span 1 !important; } }
       .ir-${uid} .sec-head { text-align:center; max-width:640px; margin:0 auto 40px; }
       .ir-${uid} .sec-head h2 { margin-bottom:12px; }
       .ir-${uid} .divider { height:1px; background:var(--c-border); margin:16px 0; }
@@ -210,6 +223,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
         display:inline-flex; align-items:center; justify-content:center; font-weight:700; flex:none; }
       .ir-${uid} .stars { color:var(--c-accent); letter-spacing:2px; }
       .ir-${uid} [data-ir-path].editing { outline:2px dashed var(--c-primary); outline-offset:2px; cursor:text; }
+      @media (prefers-reduced-motion:reduce) { .ir-${uid} *, .ir-${uid} *::before, .ir-${uid} *::after { scroll-behavior:auto !important; animation-duration:.01ms !important; transition-duration:.01ms !important; } }
     `;
   }
 
@@ -342,7 +356,9 @@ import { DesignAIFontCatalog } from "./fontCatalog";
         }
         const textCss = visualTextCss(el.style);
         const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
-        return `<a class="btn btn-${el.variant || "primary"}"${path}${styleAttr(el.style)}><span${textCss ? ` style="${textCss}"` : ""}>${esc(el.text || "")}</span></a>`;
+        const tag = el.href ? "a" : "button";
+        const href = el.href ? ` href="${esc(el.href)}"` : ` type="button"`;
+        return `<${tag} class="btn btn-${el.variant || "primary"}"${href}${path}${styleAttr(el.style)}><span${textCss ? ` style="${textCss}"` : ""}>${esc(el.text || "")}</span></${tag}>`;
       }
       case "badge":
         return `<span class="badge${el.tone && el.tone !== "default" ? " tone-" + el.tone : ""}">${esc(el.text || el.label || "")}</span>`;
@@ -350,9 +366,9 @@ import { DesignAIFontCatalog } from "./fontCatalog";
         return `<span class="icon-dot">${esc((el.icon || "✦").slice(0, 2))}</span>`;
       case "image":
         if (el.src) {
-          return `<img src="${esc(el.src)}" alt="${esc(el.alt || "")}"${styleAttr(el.style, "display:block;width:100%;height:100%;object-fit:contain")} loading="lazy">`;
+          return `<img src="${esc(el.src)}" alt="${esc(el.alt || "")}" width="1200" height="900"${styleAttr(el.style, "display:block;width:100%;height:100%;object-fit:contain")} loading="lazy">`;
         }
-        return `<div class="img-ph">${esc(el.alt || el.imagePrompt || "изображение")}</div>`;
+        return `<div class="asset-loading" role="status" aria-live="polite">Изображение загружается…</div>`;
       case "divider":
         return `<div class="divider"></div>`;
       case "rect": {
@@ -382,7 +398,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
           const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
           return `<div class="source-input"${path}${css ? ` style="${css}"` : ""}>${kids}</div>`;
         }
-        return `<input class="input" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value || "")}">`;
+        return `<input class="input" type="text" name="${esc(el.name || "design-input")}" aria-label="${esc(el.label || el.placeholder || "Поле ввода")}" autocomplete="off" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value || "")}">`;
       case "card": {
         const free = el.frame && el.frame.layout === "free";
         const inner = (el.children || []).map(c => renderElement(c, uid, free, el.frame)).join("");
@@ -399,6 +415,27 @@ import { DesignAIFontCatalog } from "./fontCatalog";
           ${el.text ? `<p class="muted">${esc(el.text)}</p>` : ""}
           ${inner}</div>`;
       }
+      case "product-card": {
+        const fcss = frameCss(el.frame, parentFree, true, parentFrame);
+        const span = el.gridSpan && typeof el.gridSpan === "object"
+          ? `grid-column:span ${Math.max(1, Math.min(4, Number(el.gridSpan.columns) || 1))};grid-row:span ${Math.max(1, Math.min(3, Number(el.gridSpan.rows) || 1))}`
+          : "";
+        const css = [fcss, span, visualCss(el.style)].filter(Boolean).join(";");
+        const cardPath = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
+        const media = el.src
+          ? `<img src="${esc(el.src)}" alt="${esc(el.alt || "")}" width="1200" height="900" loading="lazy">`
+          : `<div class="asset-loading" role="status" aria-live="polite">Изображение загружается…</div>`;
+        return `<article class="card product-card"${cardPath}${css ? ` style="${css}"` : ""}>
+          <div class="product-card-media">${media}</div>
+          <div class="product-card-body">
+            ${el.badgeText ? `<span class="badge">${esc(el.badgeText)}</span>` : ""}
+            <h3 class="product-card-title">${esc(el.title || "")}</h3>
+            ${el.text ? `<p class="muted product-card-copy">${esc(el.text)}</p>` : ""}
+            <div class="product-card-price"><span>${esc(el.price || "")}</span>${el.compareAtPrice ? `<del>${esc(el.compareAtPrice)}</del>` : ""}</div>
+            <button type="button" class="btn btn-primary">${esc(el.ctaText || "Купить")}</button>
+          </div>
+        </article>`;
+      }
       default:
         return `<div class="card">${esc(el.text || el.title || el.type)}</div>`;
     }
@@ -408,7 +445,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     return (name || "?").split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
   }
 
-  function renderChildren(children, uid, cols, parentFrame) {
+  function renderChildren(children, uid, cols, parentFrame, bento) {
     if (!children || !children.length) return "";
     const free = parentFrame && parentFrame.layout === "free";
     const hasAbs = children.some(c => c.frame && c.frame.absolute);
@@ -416,7 +453,9 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     // position:relative — якорь для absolute-детей и free-позиционирования
     const style = (free || hasAbs) ? ' style="position:relative"'
       : cols ? ` style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:20px"` : "";
-    return `<div${style}>${children.map(c => renderElement(c, uid, free, parentFrame)).join("")}</div>`;
+    const className = bento && !(free || hasAbs) ? ' class="grid-bento"' : "";
+    const finalStyle = bento && !(free || hasAbs) ? "" : style;
+    return `<div${className}${finalStyle}>${children.map(c => renderElement(c, uid, free, parentFrame)).join("")}</div>`;
   }
 
   /* ---------- секции ---------- */
@@ -424,7 +463,8 @@ import { DesignAIFontCatalog } from "./fontCatalog";
   function btnHtml(btn, defVariant, path) {
     if (!btn) return "";
     const btnPath = path ? ` data-ir-path="${esc(path.replace(/\.text$/, ""))}"` : "";
-    return `<a class="btn btn-${btn.variant || defVariant}"${btnPath}><span>${esc(btn.text || "")}</span></a>`;
+    if (btn.href) return `<a class="btn btn-${btn.variant || defVariant}" href="${esc(btn.href)}"${btnPath}><span>${esc(btn.text || "")}</span></a>`;
+    return `<button type="button" class="btn btn-${btn.variant || defVariant}"${btnPath}><span>${esc(btn.text || "")}</span></button>`;
   }
 
   function renderSection(sec, uid, parentFree) {
@@ -538,7 +578,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
       const cols = v === "grid-2" ? 2 : v === "grid-4" ? 4 : 3;
       return `<section class="sec ${base}"><div class="wrap">
         ${secHead(p)}
-        ${renderChildren(sec.children, uid, v === "bento" ? 3 : cols, sec.frame)}
+        ${renderChildren(sec.children, uid, v === "bento" ? 3 : cols, sec.frame, v === "bento")}
         </div></section>`;
     }
 
