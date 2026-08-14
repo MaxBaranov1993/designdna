@@ -5,9 +5,16 @@ DesignDNA uses Electron Forge to produce these artifacts:
 - Windows x64: Squirrel installer (`.exe`) and package (`.nupkg`);
 - macOS: application archive (`.zip`) and disk image (`.dmg`).
 
-Run a local unsigned build after the frontend and Repo Canvas dependencies are installed:
+Run a local unsigned build after installing the frontend, Repo Canvas and desktop dependencies plus the Python build requirements:
 
 ```bash
+npm --prefix frontend ci
+npm --prefix tools/repo-canvas ci
+npm --prefix desktop ci
+python -m pip install -r requirements.txt -r requirements-desktop-build.txt
+npm --prefix frontend run build:desktop
+npm --prefix desktop run runtime:build
+npm --prefix desktop run runtime:smoke
 npm run desktop:make
 ```
 
@@ -28,6 +35,8 @@ Windows installer signing is enabled when both secrets exist:
 
 Unsigned artifacts are suitable only for internal testing: Windows SmartScreen and macOS Gatekeeper will warn users. Never commit certificates or passwords.
 
-## Current release boundary
+## Standalone runtime
 
-The Forge layout includes the React bundle, DesignDNA Python application source, Repo Canvas runtime and internal workers. The current `0.3.x` artifact expects a compatible Python installation on the machine. Do not call it a standalone public release until the Python runtime, native dependencies and required browser assets are bundled and verified on clean Windows and macOS machines.
+The `0.4.x` Forge layout includes the React bundle, Repo Canvas worker, a platform-native PyInstaller `onedir` Python sidecar and the matching Playwright Chromium headless shell as a sibling resource. Every browser call in DesignDNA is headless, so the full browser is intentionally omitted. Keeping Chromium outside PyInstaller preserves its native macOS bundle structure for Electron signing. Installed applications do not use a system Python. The release workflow starts the bundled sidecar and verifies its JSONL health response before creating an installer.
+
+Application code and schema assets are read from the signed resource bundle. Projects remain user-selected workspaces; databases, captured fonts and rendered media are written below Electron's per-user `userData/data` directory.

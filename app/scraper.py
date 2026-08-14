@@ -14,6 +14,7 @@ import base64
 import copy
 import hashlib
 import io
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -741,7 +742,8 @@ def _page_tokens_from_signals(signals: dict | None) -> dict | None:
 
 # ---------- база шрифтов сайтов (Source Import, по мотивам html.to.design) ----------
 
-_FONTS_DIR = Path(__file__).resolve().parent.parent / "data" / "fonts"
+_DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or Path(__file__).resolve().parent.parent / "data")
+_FONTS_DIR = _DATA_ROOT / "fonts"
 _FONT_MAGIC = ((b"wOF2", ".woff2"), (b"wOFF", ".woff"), (b"OTTO", ".otf"), (b"\x00\x01\x00\x00", ".ttf"))
 
 
@@ -1574,7 +1576,8 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
 
 # ---------- Fidelity: честное пиксельное сходство IR со скриншотом источника ----------
 
-_RENDERER_JS = Path(__file__).resolve().parent / "static" / "flow" / "engine.js"
+_APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
+_RENDERER_JS = _APP_ROOT / "static" / "flow" / "engine.js"
 
 
 def _render_ir_jpeg(page, ir: dict, width: int, height: int) -> bytes:

@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
 
 # таймаут одного LLM-вызова; генерация IR обычно 10-60с
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT_S", "120"))

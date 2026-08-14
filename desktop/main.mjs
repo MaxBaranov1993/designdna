@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
 import { JsonlProcess } from "./lib/jsonl-process.mjs";
+import { pythonWorkerEnvironment, pythonWorkerSpec } from "./lib/runtime-paths.mjs";
 import { CredentialStore } from "./services/credential-store.mjs";
 import { SettingsStore } from "./services/settings-store.mjs";
 import { getProviderStatus } from "./services/provider-status.mjs";
@@ -41,17 +42,20 @@ function requestMcpApproval(payload) {
   });
 }
 
-function pythonCommand() {
-  return process.env.DESIGNDNA_PYTHON || (process.platform === "win32" ? "python" : "python3");
-}
-
 function createWorkers() {
+  const python = pythonWorkerSpec({
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    resourcesPath: process.resourcesPath,
+    sourceRoot,
+    pythonOverride: process.env.DESIGNDNA_PYTHON,
+  });
   pythonWorker = new JsonlProcess({
     name: "DesignDNA Python runtime",
-    command: pythonCommand(),
-    args: [path.join(runtimeRoot, "app", "desktop_worker.py")],
+    command: python.command,
+    args: python.args,
     cwd: repositoryRoot,
-    env: { PYTHONUNBUFFERED: "1" },
+    env: pythonWorkerEnvironment({ isPackaged: app.isPackaged, runtimeRoot, userDataPath: app.getPath("userData") }),
     timeoutMs: 120_000,
   });
   repoCanvasWorker = new JsonlProcess({

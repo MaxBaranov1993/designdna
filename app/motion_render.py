@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import os
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -10,7 +11,8 @@ import imageio_ffmpeg
 from playwright.sync_api import sync_playwright
 
 
-RENDERER_JS = Path(__file__).resolve().parent / "static" / "flow" / "engine.js"
+APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
+RENDERER_JS = APP_ROOT / "static" / "flow" / "engine.js"
 MAX_RENDER_FRAMES = 10_800
 
 

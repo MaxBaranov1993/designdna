@@ -5,14 +5,16 @@
 """
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "data" / "cache.db"
+ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
+DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data")
+DB_PATH = DATA_ROOT / "cache.db"
 
 _lock = threading.Lock()
 

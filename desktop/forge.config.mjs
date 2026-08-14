@@ -15,7 +15,10 @@ export default {
     asar: { unpack: "workers/**" },
     extraResource: [
       path.join(projectRoot, "app"),
+      path.join(projectRoot, "schema"),
+      path.join(projectRoot, "spike"),
       path.join(projectRoot, "tools"),
+      path.join(desktopDirectory, "runtime"),
     ],
     ...(signedMac ? {
       osxSign: {},

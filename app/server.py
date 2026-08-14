@@ -8,6 +8,7 @@ import contextlib
 import copy
 import json
 import mimetypes
+import os
 import re
 import sys
 import threading
@@ -32,8 +33,10 @@ from pydantic import BaseModel, Field
 from interaction_capture import capture_live_flow
 from motion_render import render_video, validate_render_input
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
+ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or APP_ROOT.parent)
+DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data")
+sys.path.insert(0, str(APP_ROOT))
 
 import llm_client as llm  # chat, chat_vision, build_system_prompt, extract_json
 from colorutils import mix_hex_colors
@@ -57,7 +60,7 @@ EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 RENDER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 RENDER_JOBS: dict[str, dict] = {}
 RENDER_JOBS_LOCK = threading.Lock()
-RENDER_DIR = ROOT / "data" / "renders"
+RENDER_DIR = DATA_ROOT / "renders"
 
 
 @contextlib.asynccontextmanager
@@ -1207,13 +1210,13 @@ def flow_page():
     # Единственная актуальная SPA: новый нодовый редактор (React Flow, сборка из
     # frontend/). Любой подпуть /flow отдаёт index.html, ассеты приходят через
     # /static/flow/.
-    return FileResponse(Path(__file__).resolve().parent / "static" / "flow" / "index.html")
+    return FileResponse(APP_ROOT / "static" / "flow" / "index.html")
 
 
-app.mount("/static", StaticFiles(directory=Path(__file__).resolve().parent / "static"), name="static")
+app.mount("/static", StaticFiles(directory=APP_ROOT / "static"), name="static")
 
 # ---------- база захваченных шрифтов сайтов (Source Import) ----------
-FONTS_DIR = ROOT / "data" / "fonts"
+FONTS_DIR = DATA_ROOT / "fonts"
 _FONT_NAME = re.compile(r"^[0-9a-f]{16}\.(woff2|woff|ttf|otf)$")
 
 

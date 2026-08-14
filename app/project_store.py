@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 from collections import Counter
@@ -13,8 +14,9 @@ from typing import Any
 
 import ir
 
-ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "data" / "projects.db"
+ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
+DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data")
+DB_PATH = DATA_ROOT / "projects.db"
 DEFAULT_USER_ID = "local-user"
 DEFAULT_PROJECT_ID = "default"
 

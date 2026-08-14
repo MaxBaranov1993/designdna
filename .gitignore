@@ -19,3 +19,5 @@ design-qa.md
 desktop/node_modules/
 desktop/dist/
 desktop/out/
+desktop/.runtime-build/
+desktop/runtime/
