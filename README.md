@@ -1,4 +1,4 @@
-# DesignAI Web
+# DesignDNA
 
 A local-first AI web-design studio. A node-graph pipeline generates, imports, edits and
 animates web designs around a canonical, schema-validated **Design IR** — the LLM never
@@ -6,6 +6,19 @@ owns the truth, the schema does.
 
 Runs fully on `127.0.0.1:8420`. No external services except the OpenRouter API for
 generation roles.
+
+## Desktop runtime
+
+DesignDNA now has a single desktop runtime: the React editor and Project Map run in one Electron window, while the existing Python ASGI application and Repo Canvas execute as internal stdio workers. Production desktop mode opens no local HTTP ports.
+
+```bash
+npm run frontend:install
+npm run repo-canvas:install
+npm run desktop:install
+npm run desktop:start
+```
+
+The standalone FastAPI and Repo Canvas server commands are retained only for browser development/compatibility. See [desktop runtime architecture](docs/architecture/desktop-runtime.md).
 
 ## What it does
 

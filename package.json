@@ -12,8 +12,11 @@
     "repo-canvas:install": "npm --prefix tools/repo-canvas ci",
     "repo-canvas": "node tools/repo-canvas/repo-canvas/scripts/canvas.mjs",
     "repo-canvas:setup": "node tools/repo-canvas/repo-canvas/scripts/canvas.mjs setup",
-    "repo-canvas:start": "node tools/repo-canvas/repo-canvas/scripts/canvas.mjs start",
     "repo-canvas:check": "node tools/repo-canvas/repo-canvas/scripts/canvas.mjs check",
-    "repo-canvas:test": "npm --prefix tools/repo-canvas test"
+    "repo-canvas:test": "npm --prefix tools/repo-canvas test",
+    "desktop:install": "npm --prefix desktop install",
+    "desktop:build": "npm --prefix frontend run build:desktop",
+    "desktop:start": "npm run desktop:build && npm --prefix desktop start",
+    "desktop:test": "npm --prefix desktop test"
   }
 }

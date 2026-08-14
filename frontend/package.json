@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build && vite build --config vite.engine.config.ts",
     "build:engine": "vite build --config vite.engine.config.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:desktop": "tsc --noEmit && vite build --mode desktop && vite build --config vite.engine.config.ts"
   },
   "dependencies": {
     "@fontsource/inter": "^5.1.0",

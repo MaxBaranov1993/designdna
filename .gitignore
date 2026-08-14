@@ -16,3 +16,6 @@ tools/repo-canvas/node_modules/
 .repo-canvas/
 artifacts/
 design-qa.md
+desktop/node_modules/
+desktop/dist/
+desktop/out/

@@ -1,12 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Сборку раздаёт FastAPI: статика лежит в app/static/flow/, URL-префикс /static/flow/
-export default defineConfig({
+// FastAPI uses /static/flow/. Electron loads the same bundle from file:// with relative assets.
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  base: "/static/flow/",
+  base: mode === "desktop" ? "./" : "/static/flow/",
   build: {
     outDir: "../app/static/flow",
     emptyOutDir: true,
   },
-});
+}));

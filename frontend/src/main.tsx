@@ -7,6 +7,9 @@ import App from "./App";
 import "./index.css";
 import "./engine"; // движки в бандле + window-хуки для headless-страниц/тестов
 import * as ctl from "./editor/controller";
+import { installDesktopFetchBridge } from "./desktop/bridge";
+
+installDesktopFetchBridge();
 
 // read-only хук сессии DNA-редактора для UI-тестов (вместо legacy window.Editor)
 (window as any).DNAEditor = {

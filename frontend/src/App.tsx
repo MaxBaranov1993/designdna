@@ -35,6 +35,7 @@ import { PageBridgeNode } from "./nodes/PageBridgeNode";
 import { RecorderNode } from "./nodes/RecorderNode";
 import { MotionNode } from "./nodes/MotionNode";
 import { EditorApp } from "./editor/EditorApp";
+import { ProjectMapPanel } from "./desktop/ProjectMapPanel";
 
 /* Реестр кастомных нод — вне компонента, ключи = legacy type (конвертация данных не нужна) */
 const nodeTypes = {
@@ -417,39 +418,63 @@ function PagesPanel() {
   );
 }
 
+type WorkspaceSurface = "design" | "map";
+
 export default function App() {
+  const [surface, setSurface] = useState<WorkspaceSurface>("design");
+
   useEffect(() => {
     installGraphDev();
     void useFlowStore.getState().loadPersistedProject();
     // Load runtime config/feature flags once on boot. Failures are non-fatal.
     void getConfig().catch(() => ({ flags: {} }));
   }, []);
+
   return (
     <div className="flex h-full flex-col">
-      <ReactFlowProvider>
-        <TopBar />
-        <div className="flex min-h-0 flex-1">
-          <aside className="w-72 shrink-0 space-y-4 overflow-y-auto border-r p-4">
-            <PagesPanel />
-            <Card>
-              <CardHeader>
-                <CardTitle>Инспектор</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  Фаза B1: ядро графа — ноды, провода по правилам legacy, автосейв в
-                  designai-flow-v1. Инспектор выбранной ноды появится в следующих фазах.
-                </p>
-              </CardContent>
-            </Card>
-          </aside>
-          <main className="min-w-0 flex-1">
-            <FlowCanvas />
-          </main>
+      <nav className="flex h-11 shrink-0 items-center justify-between border-b bg-background px-3">
+        <strong className="text-sm tracking-tight">DesignDNA</strong>
+        <div className="flex rounded-lg border bg-muted/50 p-0.5" aria-label="Workspace surface">
+          <Button variant={surface === "design" ? "default" : "ghost"} size="sm" onClick={() => setSurface("design")}>
+            Design
+          </Button>
+          <Button variant={surface === "map" ? "default" : "ghost"} size="sm" onClick={() => setSurface("map")}>
+            Project Map
+          </Button>
         </div>
-      </ReactFlowProvider>
-      <ToastViewport />
-      <EditorApp />
+        <span className="text-[11px] text-muted-foreground">{window.designDNA ? "Desktop · local" : "Browser mode"}</span>
+      </nav>
+      <div className="min-h-0 flex-1">
+        {surface === "design" ? (
+          <div className="flex h-full flex-col">
+            <ReactFlowProvider>
+              <TopBar />
+              <div className="flex min-h-0 flex-1">
+                <aside className="w-72 shrink-0 space-y-4 overflow-y-auto border-r p-4">
+                  <PagesPanel />
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Инспектор</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        Design IR — единый источник истины для графа, редактора DNA и генерации.
+                      </p>
+                    </CardContent>
+                  </Card>
+                </aside>
+                <main className="min-w-0 flex-1">
+                  <FlowCanvas />
+                </main>
+              </div>
+            </ReactFlowProvider>
+            <ToastViewport />
+            <EditorApp />
+          </div>
+        ) : (
+          <ProjectMapPanel />
+        )}
+      </div>
     </div>
   );
 }
