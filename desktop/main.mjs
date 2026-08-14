@@ -9,9 +9,14 @@ import { CodexAppServer } from "./services/codex-app-server.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
 
 const desktopDirectory = path.dirname(fileURLToPath(import.meta.url));
-const repositoryRoot = path.resolve(desktopDirectory, "..");
-const rendererEntry = path.join(repositoryRoot, "app", "static", "flow", "index.html");
+const sourceRoot = path.resolve(desktopDirectory, "..");
+const runtimeRoot = app.isPackaged ? process.resourcesPath : sourceRoot;
+const repositoryRoot = path.resolve(process.env.DESIGNDNA_PROJECT_ROOT || (app.isPackaged ? app.getPath("documents") : sourceRoot));
+const rendererEntry = path.join(runtimeRoot, "app", "static", "flow", "index.html");
 const preload = path.join(desktopDirectory, "preload.cjs");
+const repoCanvasWorkerEntry = app.isPackaged
+  ? path.join(`${app.getAppPath()}.unpacked`, "workers", "repo-canvas-worker.mjs")
+  : path.join(desktopDirectory, "workers", "repo-canvas-worker.mjs");
 
 let pythonWorker;
 let repoCanvasWorker;
@@ -44,7 +49,7 @@ function createWorkers() {
   pythonWorker = new JsonlProcess({
     name: "DesignDNA Python runtime",
     command: pythonCommand(),
-    args: [path.join(repositoryRoot, "app", "desktop_worker.py")],
+    args: [path.join(runtimeRoot, "app", "desktop_worker.py")],
     cwd: repositoryRoot,
     env: { PYTHONUNBUFFERED: "1" },
     timeoutMs: 120_000,
@@ -52,7 +57,7 @@ function createWorkers() {
   repoCanvasWorker = new JsonlProcess({
     name: "Repo Canvas runtime",
     command: process.execPath,
-    args: [path.join(desktopDirectory, "workers", "repo-canvas-worker.mjs"), repositoryRoot],
+    args: [repoCanvasWorkerEntry, repositoryRoot],
     cwd: repositoryRoot,
     env: { DESIGNDNA_PROJECT_ROOT: repositoryRoot, ELECTRON_RUN_AS_NODE: "1" },
     timeoutMs: 180_000,

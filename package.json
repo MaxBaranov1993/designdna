@@ -17,6 +17,8 @@
     "desktop:install": "npm --prefix desktop ci",
     "desktop:build": "npm --prefix frontend run build:desktop",
     "desktop:start": "npm run desktop:build && npm --prefix desktop start",
-    "desktop:test": "npm --prefix desktop test"
+    "desktop:test": "npm --prefix desktop test",
+    "desktop:package": "npm run desktop:build && npm --prefix desktop run package",
+    "desktop:make": "npm run desktop:build && npm --prefix desktop run make"
   }
 }

@@ -35,5 +35,5 @@ The production application opens no local HTTP port. Electron loads the compiled
 
 1. **Runtime convergence (this change):** Electron host, ASGI bridge, Repo Canvas worker, safe IPC, Design/Project Map switch.
 2. **Provider orchestration (implemented):** Codex threads/turns, streamed item events, command/file approvals, MCP tool discovery/calls and dynamic-tool routing.
-3. **Distribution (next):** Electron Forge packaging, signing/notarization, auto-update channels and Windows/macOS smoke tests.
+3. **Distribution (in progress):** Electron Forge produces Squirrel.Windows and macOS ZIP/DMG artifacts. Signing and notarization activate only when CI secrets are present. A fully self-contained release still needs a bundled Python runtime and browser assets.
 4. **Legacy retirement:** remove the standalone Repo Canvas HTTP entry point after desktop parity is verified.
