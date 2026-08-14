@@ -34,11 +34,13 @@ jobs:
           cache-dependency-path: |
             frontend/package-lock.json
             tools/repo-canvas/package-lock.json
+            desktop/package-lock.json
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: npm --prefix frontend ci
       - run: npm --prefix tools/repo-canvas ci
+      - run: npm --prefix desktop ci --ignore-scripts
       - run: npm --prefix frontend run build:desktop
       - run: npm --prefix desktop test
       - run: python -m py_compile app/desktop_worker.py
