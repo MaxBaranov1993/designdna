@@ -1,0 +1,40 @@
+name: Repo Canvas CI
+
+on:
+  push:
+    paths:
+      - "tools/repo-canvas/**"
+      - "package.json"
+      - ".github/workflows/repo-canvas.yml"
+  pull_request:
+    paths:
+      - "tools/repo-canvas/**"
+      - "package.json"
+      - ".github/workflows/repo-canvas.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: tools/repo-canvas
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/repo-canvas/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: 'node -e "require(''node:fs'').mkdirSync(''dist'', { recursive: true })"'
+      - run: npm pack --pack-destination dist
+      - run: npm run test:package -- dist/repo-canvas-0.8.9.tgz
+      - run: npm run test:update -- dist/repo-canvas-0.8.9.tgz

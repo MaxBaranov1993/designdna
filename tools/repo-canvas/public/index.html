@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Repo Canvas — semantic project map</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><i></i><i></i><i></i><span><strong>Repo Canvas</strong><small>живая смысловая карта проекта</small></span></div>
+    <div class="telemetry" aria-label="Canvas status">
+      <span><small>ОБЛАСТИ</small><strong id="areaValue">0</strong></span>
+      <span><small>СУЩНОСТИ</small><strong id="entityValue">0</strong></span>
+      <span class="hot"><small>В РАБОТЕ</small><strong id="activeValue">0</strong></span>
+      <span id="connectionStatus" class="connection is-online"><i></i><b>онлайн</b></span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="left-rail">
+      <section class="rail-section project-section">
+        <header><b>ПРОЕКТ</b><span id="projectCount">0</span></header>
+        <button id="allProject" class="project-all is-active" type="button"><i>∞</i><span><strong>Вся система</strong><small>общая карта</small></span></button>
+        <div id="projectTree" class="project-tree"></div>
+      </section>
+
+      <section id="passport" class="passport" hidden>
+        <button id="closePassport" type="button" aria-label="Закрыть">×</button>
+        <small id="passportArea">СУЩНОСТЬ</small>
+        <h2 id="passportTitle"></h2>
+        <p id="passportPurpose"></p>
+        <dl id="passportFacts"></dl>
+      </section>
+
+      <section class="rail-section now-section">
+        <header><b>СЕЙЧАС</b><span id="nowCount">0</span></header>
+        <div id="nowList" class="now-list"></div>
+      </section>
+
+      <section class="rail-section latest-section">
+        <header><b>ПОСЛЕДНЕЕ</b><span id="lastSync">—</span></header>
+        <div id="activityList" class="activity-list"></div>
+      </section>
+    </aside>
+
+    <section class="canvas-shell">
+      <header class="canvas-header">
+        <span><small>АРХИТЕКТУРА И ТЕКУЩАЯ РАБОТА</small><h1 id="canvasTitle">Весь проект</h1></span>
+        <nav>
+          <button id="refreshCanvas" class="refresh-action" type="button" aria-label="Обновить данные Canvas" title="Обновить данные Canvas">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.7-2.1L20 9M4 15l2.2 2.1A7 7 0 0 0 17.9 15" /></svg>
+          </button>
+          <button id="regenerateMap" class="regenerate-action" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h6M4 12h10M4 18h16M16 4l4 4-4 4" /></svg><span id="regenerateLabel">Повторная генерация карты</span></button>
+          <i class="toolbar-divider" aria-hidden="true"></i>
+          <button id="zoomOut" type="button" aria-label="Уменьшить">−</button><button id="fitView" type="button">Показать всё</button><button id="zoomIn" type="button" aria-label="Увеличить">+</button><button id="legendToggle" class="legend-toggle" type="button" aria-controls="canvasLegend" aria-expanded="false"><span>Легенда</span></button>
+        </nav>
+      </header>
+      <div id="viewport" class="viewport" aria-label="Semantic repository canvas">
+        <div id="world" class="world">
+          <div id="areaLayer" class="area-layer"></div>
+          <svg id="edgeLayer" class="edge-layer" aria-hidden="true"></svg>
+          <div id="relationLabelLayer" class="relation-label-layer"></div>
+          <div id="entityLayer" class="entity-layer"></div>
+          <div id="workLayer" class="work-layer"></div>
+        </div>
+        <p id="emptyState" class="empty-state">Смысловая карта проекта пока не построена.</p>
+        <section id="accessState" class="access-state" hidden>
+          <span class="access-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <small>НУЖНА СВЯЗЬ С ЛОКАЛЬНЫМ CANVAS</small>
+          <h2>Эта вкладка потеряла доступ</h2>
+          <p>Сервер откроет рабочую вкладку сам. Если она уже открылась, эта страница подключится автоматически.</p>
+          <button id="retryAccess" type="button">Проверить снова</button>
+        </section>
+        <span class="canvas-hint">тяните фон · колесо меняет масштаб · двойной клик по названию переименовывает</span>
+        <aside id="canvasLegend" class="canvas-legend" aria-label="Легенда карты" hidden>
+          <header><span><small>ЛЕГЕНДА</small><strong>Как читать карту</strong></span><button id="legendClose" type="button" aria-label="Закрыть легенду">×</button></header>
+          <div class="legend-list">
+            <div><i class="legend-mark area"></i><span><strong>Область</strong><small>смысловой раздел проекта</small></span></div>
+            <div><i class="legend-mark entity"></i><span><strong>Сущность</strong><small>модуль, сервис, хранилище или ответственность</small></span></div>
+            <div><i class="legend-mark work"><b></b></i><span><strong>Работа агента</strong><small>двойной клик открывает связанную сессию</small></span></div>
+            <div><i class="legend-mark active"><b></b></i><span><strong>Активный маркер</strong><small>над этой сущностью сейчас работают</small></span></div>
+            <div><i class="legend-mark relation"></i><span><strong>Связь</strong><small>подпись на линии объясняет поток или зависимость</small></span></div>
+          </div>
+          <div class="legend-statuses" aria-label="Статусы сущностей">
+            <span><i class="operational"></i>работает</span><span><i class="disabled"></i>отключено</span><span><i class="problem"></i>проблема</span><span><i class="planned"></i>планируется</span>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+  <button id="updateAvailable" class="update-available" type="button" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></svg>
+    <span><small>ДОСТУПНО ОБНОВЛЕНИЕ</small><strong id="updateAvailableLabel">Update</strong></span>
+  </button>
+  <dialog id="renameDialog" class="rename-dialog">
+    <form id="renameForm" method="dialog">
+      <small>РУЧНОЕ ИМЯ</small>
+      <h2 id="renameTitle">Переименовать</h2>
+      <label><span>Новое название</span><input id="renameInput" name="name" maxlength="240" autocomplete="off" required /></label>
+      <div><button id="renameCancel" value="cancel" type="button">Отмена</button><button class="rename-save" value="save" type="submit">Сохранить</button></div>
+    </form>
+  </dialog>
+  <dialog id="regenerateDialog" class="action-dialog">
+    <form method="dialog">
+      <small>АРХИТЕКТОР ПРОЕКТА</small>
+      <h2>Повторно сгенерировать карту?</h2>
+      <p>Architect заново прочитает репозиторий, сверит смысловые области, сущности и связи с текущей картой. Ручные названия и расположение существующих элементов сохранятся.</p>
+      <div><button id="cancelRegenerate" value="cancel" type="button">Отмена</button><button id="confirmRegenerate" class="regenerate-confirm" value="confirm" type="button">Начать генерацию</button></div>
+    </form>
+  </dialog>
+  <dialog id="updateDialog" class="action-dialog update-dialog">
+    <form method="dialog">
+      <small>REPO CANVAS UPDATE</small>
+      <h2 id="updateDialogTitle">Установить обновление?</h2>
+      <p>Canvas скачает официальный релиз, проверит SHA-256, установит его в локальную служебную папку и сам перезапустится. Карта проекта не изменится.</p>
+      <div><button id="cancelUpdate" value="cancel" type="button">Отмена</button><button id="confirmUpdate" class="update-confirm" value="confirm" type="button">Обновить и перезапустить</button></div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
