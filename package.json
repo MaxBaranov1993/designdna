@@ -1,0 +1,19 @@
+{
+  "name": "designdna",
+  "private": true,
+  "description": "Local-first AI web-design studio with an integrated semantic repository canvas",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "frontend:install": "npm --prefix frontend ci",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "repo-canvas:install": "npm --prefix tools/repo-canvas ci",
+    "repo-canvas": "node tools/repo-canvas/repo-canvas/scripts/canvas.mjs",
+    "repo-canvas:setup": "node tools/repo-canvas/repo-canvas/scripts/canvas.mjs setup",
+    "repo-canvas:start": "node tools/repo-canvas/repo-canvas/scripts/canvas.mjs start",
+    "repo-canvas:check": "node tools/repo-canvas/repo-canvas/scripts/canvas.mjs check",
+    "repo-canvas:test": "npm --prefix tools/repo-canvas test"
+  }
+}
