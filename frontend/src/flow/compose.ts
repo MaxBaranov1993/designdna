@@ -232,6 +232,7 @@ export function composePage(
       delete sf.y;
       delete sf.absolute;
       s.frame = sf;
+      delete s.name;
       tree.push(s);
     }
   }
@@ -250,9 +251,9 @@ export function composePage(
     // override'ы (visible/frame/style) и мобильные слои дублируются на десктопе
     responsive: {
       viewports: {
-        desktop: { width: PAGE_VIEWPORT_WIDTHS.desktop },
-        tablet: { width: PAGE_VIEWPORT_WIDTHS.tablet },
-        mobile: { width: PAGE_VIEWPORT_WIDTHS.mobile },
+        desktop: { width: PAGE_VIEWPORT_WIDTHS.desktop, height: 900 },
+        tablet: { width: PAGE_VIEWPORT_WIDTHS.tablet, height: 1024 },
+        mobile: { width: PAGE_VIEWPORT_WIDTHS.mobile, height: 844 },
       },
     },
     tokens: deepClone(tokensOverride || first?.tokens || {}),

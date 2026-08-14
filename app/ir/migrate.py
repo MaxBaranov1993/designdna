@@ -9,6 +9,34 @@ from .schema import CURRENT_SCHEMA_VERSION
 from .source_key import deduplicate_source_keys
 from .responsive import ensure_fluid_layout
 
+DEFAULT_VIEWPORT_HEIGHTS = {"desktop": 900, "tablet": 1024, "mobile": 844}
+
+
+def repair_for_schema(ir: dict) -> dict:
+    """In-place repair of known-safe schema drift from the editor/page compose.
+
+    Sections do not allow `name`; viewport metas require numeric `height`.
+    """
+    if not isinstance(ir, dict):
+        return ir
+    frame = ir.get("frame") if isinstance(ir.get("frame"), dict) else {}
+    frame_h = frame.get("height")
+    fallback_h = frame_h if isinstance(frame_h, (int, float)) and frame_h >= 1 else None
+    responsive = ir.get("responsive")
+    if isinstance(responsive, dict):
+        viewports = responsive.get("viewports")
+        if isinstance(viewports, dict):
+            for name, meta in viewports.items():
+                if not isinstance(meta, dict):
+                    continue
+                height = meta.get("height")
+                if not isinstance(height, (int, float)) or height < 1:
+                    meta["height"] = float(fallback_h or DEFAULT_VIEWPORT_HEIGHTS.get(str(name), 900))
+    for section in ir.get("tree") or []:
+        if isinstance(section, dict):
+            section.pop("name", None)
+    return ir
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -50,6 +78,7 @@ def migrate_ir(ir: dict, source: str | None = None) -> dict:
     # Ensure a stable element identity graph.
     out = deduplicate_source_keys(out)
     out = ensure_fluid_layout(out)
+    repair_for_schema(out)
 
     # Recompute content hash excluding preview/runtime fields.
     out["contentHash"] = content_hash(out)

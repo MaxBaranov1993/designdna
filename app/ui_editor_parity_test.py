@@ -125,15 +125,18 @@ def main():
 
         pg.click('.dna-editor .fe-viewports [data-viewport="tablet"]')
         pg.wait_for_timeout(350)
-        check("tablet: ширина 768", pg.evaluate(WIDTH_INPUT) == "768", pg.evaluate(WIDTH_INPUT))
         check("tablet: meta.activeViewport", pg.evaluate(WIDTH) == "tablet", str(pg.evaluate(WIDTH)))
         check("tablet: кнопка active", pg.evaluate(
             "document.querySelector('.dna-editor [data-viewport=\"tablet\"]').classList.contains('active')"))
 
         pg.click('.dna-editor .fe-viewports [data-viewport="mobile"]')
         pg.wait_for_timeout(350)
-        check("mobile: ширина 390", pg.evaluate(WIDTH_INPUT) == "390", pg.evaluate(WIDTH_INPUT))
+        check("mobile: кнопка active", pg.evaluate(
+            "document.querySelector('.dna-editor [data-viewport=\"mobile\"]').classList.contains('active')"))
 
+        pg.click('.dna-editor [data-act="custom-width"]')
+        pg.wait_for_timeout(100)
+        check("custom popover показывает текущую ширину", pg.evaluate(WIDTH_INPUT) == "390", pg.evaluate(WIDTH_INPUT))
         pg.fill(".dna-editor .fe-viewport-width", "500")
         pg.wait_for_timeout(350)
         check("кастом 500: активен mobile (<640)", pg.evaluate(
@@ -199,6 +202,8 @@ def main():
         pg.click('.dna-editor [data-act="close-style-dna"]')
         pg.wait_for_timeout(300)
         pg.click('.dna-editor [data-act="close"]')
+        if pg.query_selector('[data-act="discard-close"]'):
+            pg.click('[data-act="discard-close"]')
         pg.wait_for_timeout(400)
         browser.close()
 

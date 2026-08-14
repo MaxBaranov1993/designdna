@@ -1,7 +1,7 @@
-"""Пайплайн независимого ревью: diff спринта → два OpenRouter-ревьювера
+"""Пайплайн независимого ревью: diff спринта → два GPT Codex-ревьювера
 → консолидированный JSON-отчёт.
 
-Все LLM-вызовы проходят через OpenRouter.
+Все LLM-вызовы проходят через пользовательский Codex endpoint.
 Оркестрация — на мне (lead): модели дают независимые мнения, триаж и фиксы — человек/lead.
 Использование:
     .venv/Scripts/python app/review_pipeline.py [git-range]   (по умолчанию 737478f..HEAD)
@@ -18,10 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import llm_client
 
-# (имя, provider, model, fallback) — все модели вызываются через OpenRouter.
+# (имя, provider, model, fallback) — все модели вызываются через Codex.
 REVIEWERS = [
-    ("architecture", "openrouter", "anthropic/claude-opus-5", ("openrouter", "anthropic/claude-sonnet-5")),
-    ("implementation", "openrouter", "qwen/qwen3-coder-plus", ("openrouter", "anthropic/claude-sonnet-5")),
+    # Resolve the model from CODEX_MODEL/CODEX_MODELS_JUDGE at request time.
+    # ChatGPT-managed Codex accounts reject legacy API-only model slugs.
+    ("architecture", "codex", None, ("codex", None)),
+    ("implementation", "codex", None, ("codex", None)),
 ]
 
 PROMPT = (

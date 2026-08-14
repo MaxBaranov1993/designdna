@@ -185,7 +185,7 @@ function FlowCanvas() {
 
   return (
     <div
-      className="h-full w-full"
+      className="relative h-full w-full"
       onMouseMove={(e) => updateSnapTarget(e.clientX, e.clientY)}
       onMouseLeave={clearSnapTarget}
     >
@@ -252,6 +252,43 @@ function FlowCanvas() {
         <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="#23232e" />
       </ReactFlow>
       {menu ? <CtxMenu menu={menu} onClose={() => setMenu(null)} /> : null}
+      {nodes.length === 0 ? <EmptyRecipes /> : null}
+    </div>
+  );
+}
+
+function RecipeButtons({ compact = false }: { compact?: boolean }) {
+  const applyRecipe = useFlowStore((s) => s.applyRecipe);
+  const recipes = [
+    { kind: "describe" as const, title: "Описать экран", note: "Промпт → генератор → редактор" },
+    { kind: "import" as const, title: "Взять сайт", note: "Импорт страницы и правка" },
+    { kind: "reskin" as const, title: "Перекрасить", note: "Стиль + рескин + редактор" },
+    { kind: "reel" as const, title: "Ролик из страницы", note: "Страница → композиция After Effects" },
+  ];
+  return (
+    <div className={compact ? "recipe-list" : "recipe-grid"}>
+      {recipes.map((recipe) => (
+        <button
+          key={recipe.kind}
+          type="button"
+          className="recipe-card"
+          data-recipe={recipe.kind}
+          onClick={() => applyRecipe(recipe.kind)}
+        >
+          <strong>{recipe.title}</strong>
+          <span>{recipe.note}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function EmptyRecipes() {
+  return (
+    <div className="flow-empty-recipes" data-empty-recipes>
+      <h2>С чего начать</h2>
+      <p>Выберите готовую схему — ноды и провода появятся сами.</p>
+      <RecipeButtons />
     </div>
   );
 }
@@ -433,13 +470,13 @@ export default function App() {
             <PagesPanel />
             <Card>
               <CardHeader>
-                <CardTitle>Инспектор</CardTitle>
+                <CardTitle>Схемы</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-3">
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Фаза B1: ядро графа — ноды, провода по правилам legacy, автосейв в
-                  designai-flow-v1. Инспектор выбранной ноды появится в следующих фазах.
+                  Готовые цепочки для старта. ПКМ на холсте добавит отдельную ноду.
                 </p>
+                <RecipeButtons compact />
               </CardContent>
             </Card>
           </aside>

@@ -1,4 +1,4 @@
-"""OpenRouter generative-video gateway contract checks without paid calls."""
+"""Seedance-only generative-video gateway contract checks without paid calls."""
 from __future__ import annotations
 
 import json
@@ -45,11 +45,11 @@ def main() -> None:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     original_url = video_client.VIDEO_API_URL
     video_client.VIDEO_API_URL = f"http://127.0.0.1:{server.server_address[1]}/api/v1/videos"
-    os.environ["OPENROUTER_API_KEY"] = "test-key"
+    os.environ["SEEDANCE_API_KEY"] = "test-key"
     try:
         check("Studio video route uses Seedance 2.0", video_client.model_for_tier("studio") == "bytedance/seedance-2.0")
         check("Draft video route uses Seedance 2.0 Fast", video_client.model_for_tier("draft") == "bytedance/seedance-2.0-fast")
-        check("Cinematic route uses full Veo 3.1", video_client.model_for_tier("cinematic") == "google/veo-3.1")
+        check("Cinematic route stays on Seedance", video_client.model_for_tier("cinematic") == "bytedance/seedance-2.0")
         job = video_client.submit(
             "A precise product insert",
             tier="studio",
@@ -59,12 +59,12 @@ def main() -> None:
             seed=42,
         )
         request = RECORDED[-1][2] or {}
-        check("Submit uses dedicated OpenRouter videos endpoint", RECORDED[-1][1] == "/api/v1/videos")
+        check("Submit uses dedicated Seedance videos endpoint", RECORDED[-1][1] == "/api/v1/videos")
         check("Submit sends normalized model and controls", request.get("model") == "bytedance/seedance-2.0" and request.get("duration") == 5 and request.get("seed") == 42, str(request))
-        check("Reference image uses OpenRouter input_references", request.get("input_references", [])[0]["image_url"]["url"].startswith("https://"), str(request))
+        check("Reference image uses Seedance input_references", request.get("input_references", [])[0]["image_url"]["url"].startswith("https://"), str(request))
         check("Gateway returns model metadata", job.get("tier") == "studio" and job.get("model") == "bytedance/seedance-2.0", str(job))
         result = video_client.status(job["id"])
-        check("Status polling is pinned to the OpenRouter job path", RECORDED[-1][1].endswith("/job_test_123") and result.get("status") == "completed", str(result))
+        check("Status polling is pinned to the Seedance job path", RECORDED[-1][1].endswith("/job_test_123") and result.get("status") == "completed", str(result))
         try:
             video_client.status("../models")
             raise AssertionError("unsafe job id accepted")

@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 import { IrPreview } from "../components/IrPreview";
@@ -14,6 +14,7 @@ import { OutPorts } from "./PortHandles";
  * Вход tokens (style DNA) задаёт токены страницы; без него — токены первого
  * блока. Артборд 1440, секции width:"fill", responsive-override'ы сохраняются. */
 export function PageNode({ id, data, selected }: NodeProps<PageFlowNode>) {
+  const [highlightBuilt, setHighlightBuilt] = useState(false);
   const setNodeData = useFlowStore((s) => s.setNodeData);
   const propagate = useFlowStore((s) => s.propagate);
   const runNode = useFlowStore((s) => s.runNode);
@@ -22,6 +23,12 @@ export function PageNode({ id, data, selected }: NodeProps<PageFlowNode>) {
   const removePageInput = useFlowStore((s) => s.removePageInput);
   const reorderPageInputs = useFlowStore((s) => s.reorderPageInputs);
   const dragFrom = useRef<number | null>(null);
+  useEffect(() => {
+    if (!data.ir) return;
+    setHighlightBuilt(true);
+    const timer = window.setTimeout(() => setHighlightBuilt(false), 2400);
+    return () => window.clearTimeout(timer);
+  }, [data.ir]);
   const setViewport = (viewport: SourceViewport) => {
     setNodeData(Number(id), { activeViewport: viewport });
     // вьюпорт едет вниз по графу через outValue → meta.activeViewport
@@ -113,11 +120,15 @@ export function PageNode({ id, data, selected }: NodeProps<PageFlowNode>) {
         height={320}
         fitHeight
         viewport={data.activeViewport}
+        highlightSections={highlightBuilt}
         empty="Подключите блоки и нажмите «Собрать страницу»"
       />
       <div className="gen-actions">
         <button className="btn-node small f-to-editor nodrag" onClick={() => sendToNode(Number(id), "edit")}>
-          → Editor
+          → Редактор
+        </button>
+        <button className="btn-node small f-to-motion nodrag" onClick={() => sendToNode(Number(id), "motion")}>
+          → Ролик
         </button>
       </div>
       <NodeStatus id={id} />

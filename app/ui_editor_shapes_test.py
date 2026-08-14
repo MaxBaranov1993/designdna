@@ -244,6 +244,8 @@ def main():
         check("IR с фигурами проходит схему (style-dna/extract)", resp == 200, str(resp))
 
         pg.click('.fe-toolbar [data-act="close"]')
+        if pg.query_selector('[data-act="discard-close"]'):
+            pg.click('[data-act="discard-close"]')
         pg.wait_for_timeout(300)
         check("редактор закрыт", pg.evaluate("document.querySelector('.dna-editor').style.display === 'none'"))
         browser.close()

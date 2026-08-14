@@ -17,10 +17,13 @@ def main() -> None:
     with TestClient(app) as client:
         config = client.get("/api/config").json()
         models = config.get("models", {})
-        check("Generator primary is Claude Opus 5", models.get("generator") == "anthropic/claude-opus-5", str(models))
-        check("Motion Director route reserves Claude Opus 5", models.get("motionDirector") == "anthropic/claude-opus-5", str(models))
+        expected_model = llm_client.routing_models("generator")[0]
+        check("Generator primary is user Codex model", models.get("generator") == expected_model, str(models))
+        check("Motion Director route uses the same Codex model", models.get("motionDirector") == expected_model, str(models))
         check("Studio generative video uses Seedance 2.0", models.get("video", {}).get("studio") == "bytedance/seedance-2.0", str(models))
         check("Generator routing agrees with public config", llm_client.routing_models("generator")[0] == models.get("generator"))
+        check("Public provider is GPT Codex", config.get("provider", {}).get("id") == "codex", str(config))
+        check("Public video provider is Seedance", config.get("videoProvider", {}).get("id") == "seedance", str(config))
 
         unconfirmed = client.post("/api/ai-video/generate", json={"prompt": "A product insert"})
         check("Paid video generation requires confirmation", unconfirmed.status_code == 409, unconfirmed.text)

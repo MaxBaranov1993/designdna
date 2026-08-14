@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "devDependencies": {
+    "repo-canvas": "github:MaxBaranov1993/repo-canvas#codex/qwen-grok-adapters"
+  },
+  "scripts": {
+    "repo-canvas": "repo-canvas",
+    "repo-canvas:start": "repo-canvas start",
+    "repo-canvas:check": "repo-canvas check"
+  }
+}

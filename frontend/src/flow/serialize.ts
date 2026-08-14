@@ -345,10 +345,10 @@ export function parseLegacyPayload(input: unknown): LegacyGraphPayload {
     autoId = Math.max(autoId, id) + 1;
     let data =
       r.data && typeof r.data === "object" ? (r.data as AnyNodeData) : defaultData(r.type as NodeType);
-    // РЎРѕС…СЂР°РЅС‘РЅРЅС‹Рµ РґРѕ Р·Р°РєСЂРµРїР»РµРЅРёСЏ РјР°СЂС€СЂСѓС‚РёР·Р°С†РёРё РіСЂР°С„С‹ РјРѕРіР»Рё С…СЂР°РЅРёС‚СЊ qwen/kimi/etc.
-    // РќРѕРІР°СЏ СЃС…РµРјР° РІСЃРµРіРґР° РІРµРґС‘С‚ AI-РЅРѕРґС‹ С‡РµСЂРµР· OpenRouter Рё РµРіРѕ ROUTING РїРѕ СЂРѕР»Рё.
+    // Старые графы могли хранить vendor-specific model values.
+    // Legacy provider values are normalized to the single user-owned Codex route.
     if (r.type === "generator") {
-      data = { ...data, provider: "openrouter" } as AnyNodeData;
+      data = { ...data, provider: "codex" } as AnyNodeData;
     }
     data = dataForRuntime(r.type as NodeType, data);
     nodes.push({ id, type: r.type as NodeType, x: Number(r.x) || 0, y: Number(r.y) || 0, data });

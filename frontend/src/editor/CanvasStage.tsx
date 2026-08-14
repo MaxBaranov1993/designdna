@@ -28,6 +28,7 @@ export function CanvasStage() {
       <div className="fe-ruler-corner"></div>
       <div className="fe-ruler-h"><canvas ref={(el) => { ctl.dom.rulerH = el; }}></canvas></div>
       <div className="fe-ruler-v"><canvas ref={(el) => { ctl.dom.rulerV = el; }}></canvas></div>
+      <div className="fe-guide-layer" ref={(el) => { ctl.dom.guideLayer = el; }}></div>
       <ToolRail />
       <div className="fe-canvas-inner" ref={(el) => { ctl.dom.canvasInner = el; }}></div>
     </div>

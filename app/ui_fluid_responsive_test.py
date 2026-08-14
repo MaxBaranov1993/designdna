@@ -69,6 +69,7 @@ def main():
         page.click(".n-edit .f-open-editor")
 
         width = page.locator(".fe-viewport-width")
+        page.click('[data-act="custom-width"]')
         width.fill("900")
         width.press("Enter")
         page.wait_for_timeout(200)
@@ -80,18 +81,22 @@ def main():
         page.wait_for_timeout(200)
         select_find_button(page)
         status = page.locator(".fe-responsive-status").inner_text()
-        check("inspector identifies mobile override", "mobile" in status and "frame mobile" in status, status)
+        check("inspector identifies mobile override", "Телефон" in status and "Frame: Переопределено" in status, status)
 
+        page.click('.fe-responsive-advanced summary')
         page.click('[data-responsive-act="reset"]')
         mobile_override = page.evaluate("id => window.GraphDev.node(id).data.ir.tree[0].children[2].responsive?.mobile || null", node_id)
         check("Reset override removes current device patch", mobile_override is None, str(mobile_override))
 
         select_find_button(page)
+        page.click('.fe-responsive-advanced summary')
         page.click('[data-responsive-copy="tablet"]')
         tablet_frame = page.evaluate("id => window.GraphDev.node(id).data.ir.tree[0].children[2].responsive?.tablet?.frame || null", node_id)
         check("Copy to breakpoint writes explicit tablet frame", isinstance(tablet_frame, dict) and tablet_frame.get("width") == 100, str(tablet_frame))
 
         page.click('.dna-editor [data-act="close"]')
+        if page.query_selector('[data-act="discard-close"]'):
+            page.click('[data-act="discard-close"]')
         page.evaluate("(args) => window.GraphDev.setIR(args.id, args.ir)", {"id": node_id, "ir": copy.deepcopy(CARD_ROW_IR)})
         page.click(".n-edit .f-open-editor")
         page.click('.dna-editor [data-viewport="tablet"]')

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .schema import CURRENT_SCHEMA_VERSION, load_schema
-from .migrate import migrate_ir, ensure_current, migrate_project_payload
+from .migrate import migrate_ir, ensure_current, migrate_project_payload, repair_for_schema
 from .validate import validate_ir, ValidationError, format_errors
 from .hash import content_hash, canonical_json
 from .source_key import stable_key, resolve_collision, prefix_block_key
@@ -36,6 +36,10 @@ from .motion import (
     MOTION_VERSION,
     build as build_motion,
     validate as validate_motion,
+    build_from_design as build_motion_from_design,
+    direct_comp_plan,
+    frame_comp_state,
+    interpolate_pose,
 )
 
 __all__ = [
@@ -44,6 +48,7 @@ __all__ = [
     "migrate_ir",
     "ensure_current",
     "migrate_project_payload",
+    "repair_for_schema",
     "validate_ir",
     "ValidationError",
     "format_errors",
@@ -75,4 +80,8 @@ __all__ = [
     "MOTION_VERSION",
     "build_motion",
     "validate_motion",
+    "build_motion_from_design",
+    "direct_comp_plan",
+    "frame_comp_state",
+    "interpolate_pose",
 ]

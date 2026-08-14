@@ -113,6 +113,8 @@ def main():
             pg.screenshot(path=str(OUT / "ui_editor_react_dna.png"))
 
         pg.click('.dna-editor [data-act="close"]')
+        if pg.query_selector('[data-act="discard-close"]'):
+            pg.click('[data-act="discard-close"]')
         pg.wait_for_timeout(400)
         browser.close()
     print("shots saved to results/ui_editor_react_*.png")

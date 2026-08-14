@@ -18,11 +18,19 @@ export function EditNode({ id, data, selected }: NodeProps<EditFlowNode>) {
 
   const openEditor = () => {
     if (!data.ir) {
-      toast("Сначала подключите IR к входу ноды", "error");
+      toast("Сначала подключите макет к входу ноды", "error");
       return;
     }
     // React DNA Editor: snapshot/save/propagate — внутри editor store.
     useEditorStore.getState().openEditor(nodeId);
+  };
+
+  const openAi = () => {
+    if (!data.ir) {
+      toast("Сначала подключите макет к входу ноды", "error");
+      return;
+    }
+    useEditorStore.getState().openEditor(nodeId, { ai: true });
   };
 
   return (
@@ -34,16 +42,24 @@ export function EditNode({ id, data, selected }: NodeProps<EditFlowNode>) {
           height={240}
           fitHeight
           className="f-preview"
-          empty="Подключите IR — здесь будет только превью"
+          empty="Подключите макет — здесь будет превью"
         />
         <div className="edit-preview-meta">
-          <span>{hasIr ? "Read-only preview" : "Нет IR на входе"}</span>
-          <span>{hasIr ? "редактирование внутри" : "подключите провод IR"}</span>
+          <span>{hasIr ? "Превью" : "Нет макета на входе"}</span>
+          <span>{hasIr ? "Макет" : "подключите провод макета"}</span>
         </div>
       </div>
-      <button className="btn-node primary small f-open-editor nodrag" style={{ width: "100%" }} onClick={openEditor}>
-        ✦ Открыть DNA-редактор
-      </button>
+      <div className="edit-node-actions nodrag">
+        <button className="btn-node primary small f-open-editor" onClick={openEditor} disabled={!hasIr}>
+          ✦ Открыть
+        </button>
+        <button className="btn-node small f-open-ai" onClick={openAi} disabled={!hasIr} title="Открыть редактор с AI‑ассистентом">
+          Попросить AI
+        </button>
+      </div>
+      <div className={`edit-node-state${hasIr ? " ready" : ""}`} data-edit-status>
+        {hasIr ? "Готово к редактированию" : "Ожидает макет"}
+      </div>
       <NodeStatus id={id} />
       <OutPorts type="edit" />
     </NodeShell>

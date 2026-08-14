@@ -11,5 +11,8 @@ start.bat
 .worker-brief-*.txt
 app/static/flow/
 frontend/node_modules/
+/node_modules/
 artifacts/
 design-qa.md
+.repo-canvas/
+/repo-canvas-*.tgz

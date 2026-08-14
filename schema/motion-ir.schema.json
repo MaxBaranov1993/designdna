@@ -69,6 +69,21 @@
     },
     "markers": { "type": "array", "items": { "type": "object" } },
     "assets": { "type": "array", "items": { "type": "object" } },
+    "layers": {
+      "type": "array",
+      "description": "Компоненты страницы как слои композиции (After Effects-модель).",
+      "items": { "$ref": "#/$defs/compLayer" }
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keyframes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/compKeyframe" }
+        }
+      }
+    },
     "renderSettings": {
       "type": "object",
       "required": ["format", "codec", "quality"],
@@ -76,6 +91,37 @@
       "properties": {
         "format": { "enum": ["mp4", "webm"] }, "codec": { "enum": ["h264", "vp9"] },
         "quality": { "enum": ["draft", "high", "lossless"] }
+      }
+    }
+  },
+  "$defs": {
+    "compKeyframe": {
+      "type": "object",
+      "required": ["t"],
+      "additionalProperties": false,
+      "properties": {
+        "t": { "type": "integer", "minimum": 0, "maximum": 120000 },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "scale": { "type": "number", "minimum": 0.05, "maximum": 8 },
+        "rotate": { "type": "number" }
+      }
+    },
+    "compLayer": {
+      "type": "object",
+      "required": ["id", "name", "sectionIndex", "enabled", "keyframes"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "sectionIndex": { "type": "integer", "minimum": 0 },
+        "sourceKey": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "keyframes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/compKeyframe" }
+        }
       }
     }
   }

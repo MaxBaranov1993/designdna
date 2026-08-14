@@ -6,6 +6,7 @@ import { IRRenderer } from "../engine/renderer";
 import { GeoEdit } from "../engine/geoedit";
 import { IRHistory } from "../engine/irhistory";
 import { DesignAIFontCatalog } from "../engine/fontCatalog";
+import type { AssistPreview, AssistRequest } from "./aiTypes";
 
 /* ---------- DOM-refs: регистрируются React-компонентами ---------- */
 
@@ -22,6 +23,7 @@ export const dom = {
   canvasInner: null as HTMLDivElement | null,
   rulerH: null as HTMLCanvasElement | null,
   rulerV: null as HTMLCanvasElement | null,
+  guideLayer: null as HTMLDivElement | null,
   layersTree: null as HTMLDivElement | null,
   search: null as HTMLInputElement | null,
   dnaPanel: null as HTMLDivElement | null,
@@ -46,11 +48,14 @@ interface Session {
   panX: number;
   panY: number;
   tool: string;
+  dirty: boolean;
+  spacePan: boolean;
   viewport: string;
   previewWidth: number;
   activeIR: any;
   layerFlags: Record<string, { hidden?: boolean; locked?: boolean }>;
   layerQuery: string;
+  guides: { axis: "h" | "v"; pos: number }[];
   dragLayerKey?: string | null;
 }
 
@@ -62,11 +67,32 @@ let dnaPanelState: {
   tailwindText?: string;
 } | null = null;
 
+let aiAssistState: AssistPreview | null = null;
+let closeConfirmOpen = false;
+
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void } = {
+let ui: {
+  setTool: (t: string) => void;
+  setOpen: (v: boolean) => void;
+  bumpInspector: () => void;
+  setDirty: (dirty: boolean) => void;
+  setAiOpen: (open: boolean) => void;
+  setAiBusy: (busy: boolean) => void;
+  setAiError: (error: string) => void;
+  setAiPreview: (preview: AssistPreview | null) => void;
+  setPreviewing: (previewing: boolean) => void;
+  setCloseConfirm: (open: boolean) => void;
+} = {
   setTool: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
+  setDirty: () => {},
+  setAiOpen: () => {},
+  setAiBusy: () => {},
+  setAiError: () => {},
+  setAiPreview: () => {},
+  setPreviewing: () => {},
+  setCloseConfirm: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -128,6 +154,26 @@ export function setTool(tool: string) {
   }
 }
 
+export function openAiPanel() {
+  if (!state) return;
+  closeStyleDnaInspector();
+  ui.setAiOpen(true);
+  ui.setAiError("");
+}
+
+export function closeAiPanel() {
+  if (aiAssistState) cancelAiAssist();
+  ui.setAiOpen(false);
+  ui.setAiError("");
+}
+
+export function togglePreview() {
+  if (!state) return;
+  const next = !dom.overlay?.classList.contains("previewing");
+  dom.overlay?.classList.toggle("previewing", next);
+  ui.setPreviewing(next);
+}
+
 export function setViewport(viewport: string) {
   if (!state || !["desktop", "tablet", "mobile"].includes(viewport)) return;
   const widths: Record<string, number> = { desktop: 1440, tablet: 768, mobile: 390 };
@@ -159,32 +205,35 @@ function activateViewport(viewport: string, width: number) {
     b.classList.toggle("active", (b as HTMLElement).dataset.viewport === viewport);
   });
   if (dom.viewportWidth) dom.viewportWidth.value = String(width);
-  state.sel = [];
+  const refs = snapshotSelRefs();
   renderCanvas();
   renderLayers();
-  renderInspector();
+  restoreSelection(refs);
   zoomFit();
 }
 
 export function handleAct(act: string) {
   if (!state) return;
   if (act === "save") save();
-  else if (act === "close") close();
+  else if (act === "close") requestClose();
   else if (act === "undo") undo();
   else if (act === "redo") redo();
   else if (act === "style-dna") openStyleDnaInspector();
+  else if (act === "ai") openAiPanel();
+  else if (act === "preview") togglePreview();
   else if (act === "close-style-dna") closeStyleDnaInspector();
   else if (act === "reset-style-dna") resetStyleDnaInspector();
   else if (act === "apply-style-dna") void applyStyleDnaFromInspector();
   else if (act === "zoom-in") zoomBy(1.2);
   else if (act === "zoom-out") zoomBy(1 / 1.2);
   else if (act === "zoom-fit") zoomFit();
-  else if (act.startsWith("align-") || act.startsWith("distribute-")) {
+  else if (act.startsWith("align-") || act.startsWith("distribute-") || act === "stretch-width") {
     if (!state.geo) return;
     const map: Record<string, keyof GeoHandle> = {
       "align-left": "alignLeft", "align-center-h": "alignCenterH", "align-right": "alignRight",
       "align-top": "alignTop", "align-center-v": "alignCenterV", "align-bottom": "alignBottom",
       "distribute-h": "distributeH", "distribute-v": "distributeV",
+      "stretch-width": "stretchWidth",
     };
     const fn = map[act];
     const geo = state.geo;
@@ -212,11 +261,14 @@ export function open(node: NodeShim, onSave: (ir: any) => void, onClose: (saved:
     panX: 40,
     panY: 40,
     tool: "select",
+    dirty: false,
+    spacePan: false,
     viewport: "desktop",
     previewWidth: 1440,
     activeIR: null,
     layerFlags: {}, // refKey -> {hidden, locked}; сессия редактора, не часть IR
     layerQuery: "",
+    guides: [],
   };
   const st = state;
   const responsive = !!(st.ir && st.ir.responsive && st.ir.responsive.viewports);
@@ -234,6 +286,7 @@ export function open(node: NodeShim, onSave: (ir: any) => void, onClose: (saved:
   });
   if (dom.viewportWidth) dom.viewportWidth.value = String(st.previewWidth);
   if (dom.search) dom.search.value = "";
+  stripIllegalSectionNames(st.ir);
   return true;
 }
 
@@ -343,6 +396,7 @@ function upgradeSourceNesting(ir: any) {
 
 export function openStyleDnaInspector() {
   if (!state || !dom.dnaPanel || !dom.dnaBody) return;
+  ui.setAiOpen(false);
   dom.dnaPanel.classList.add("open");
   dom.dnaBody.innerHTML = '<div class="fe-dna-empty">Загрузка токенов…</div>';
   const existing = state.ir && state.ir.tokens;
@@ -778,7 +832,123 @@ function sanitizeIrForPost(ir: any) {
     (node.children || []).forEach(walk);
   };
   (clone.tree || []).forEach(walk);
+  stripIllegalSectionNames(clone);
+  const defaults: Record<string, number> = { desktop: 900, tablet: 1024, mobile: 844 };
+  const frameH = Number(clone.frame && clone.frame.height);
+  const fallbackH = Number.isFinite(frameH) && frameH >= 1 ? frameH : null;
+  const viewports = clone.responsive && clone.responsive.viewports;
+  if (viewports && typeof viewports === "object") {
+    for (const [name, meta] of Object.entries(viewports) as [string, any][]) {
+      if (!meta || typeof meta !== "object") continue;
+      if (typeof meta.height !== "number" || meta.height < 1) {
+        meta.height = fallbackH || defaults[name] || 900;
+      }
+    }
+  }
   return clone;
+}
+
+function selectedSourceKeys() {
+  if (!state) return [];
+  return state.sel.map((sel) => {
+    const active = activeSelectionNode(sel);
+    const canonical = canonicalNode(sel.ref);
+    const sourceKey = active?.sourceKey || canonical?.sourceKey;
+    if (sourceKey) return sourceKey;
+    if (sel.ref.secIdx == null) return "";
+    const suffix = sel.ref.path ? "/" + sel.ref.path.replace(/\./g, "/") : "";
+    return `editor:/tree/${sel.ref.secIdx}${suffix}`;
+  }).filter(Boolean);
+}
+
+function friendlyAiError(detail: string) {
+  console.warn("AI assist rejected:", detail);
+  if (/очередь/i.test(detail)) return "очередь";
+  if (/лимит провайдера/i.test(detail)) return "лимит провайдера";
+  if (/таймаут/i.test(detail)) return "таймаут";
+  if (/outside|вне текущего выделения|не найден элемент/i.test(detail)) {
+    return "Выделение изменилось. Выберите элемент ещё раз и повторите запрос.";
+  }
+  if (/schema|невалидн|структурн|children|sourceKey|patch|команд/i.test(detail)) {
+    return "Не удалось подготовить безопасное изменение. Уточните задачу или попробуйте ещё раз.";
+  }
+  if (/502|недоступ|network|fetch/i.test(detail)) {
+    return "лимит провайдера";
+  }
+  return "Не удалось подготовить preview. Попробуйте уточнить запрос.";
+}
+
+export async function requestAiAssist(request: AssistRequest) {
+  if (!state) return;
+  const prompt = request.prompt.trim();
+  if (!prompt) {
+    ui.setAiError("Опишите, что нужно изменить");
+    return;
+  }
+  ui.setAiOpen(true);
+  ui.setAiBusy(true);
+  ui.setAiError("");
+  const hadPreview = !!aiAssistState;
+  ui.setAiPreview(null);
+  aiAssistState = null;
+  if (hadPreview) rerenderEditorCanvas();
+  const viewport = request.viewport === "current" ? state.viewport : request.viewport;
+  try {
+    const resp = await fetch("/api/editor/assist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ir: sanitizeIrForPost(state.ir),
+        prompt,
+        action: request.action,
+        scope: { sourceKeys: selectedSourceKeys(), viewport },
+        constraints: {
+          allowStructure: false,
+          allowContent: true,
+          allowStyle: true,
+          allowFrame: true,
+        },
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    if (!data || !data.previewIr || !Array.isArray(data.ops)) {
+      throw new Error("AI вернул неполный preview");
+    }
+    aiAssistState = data as AssistPreview;
+    ui.setAiPreview(aiAssistState);
+    rerenderEditorCanvas();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    ui.setAiError(friendlyAiError(detail));
+  } finally {
+    ui.setAiBusy(false);
+  }
+}
+
+export function cancelAiAssist() {
+  const hadPreview = !!aiAssistState;
+  aiAssistState = null;
+  dom.overlay?.classList.remove("ai-previewing");
+  ui.setAiPreview(null);
+  ui.setAiError("");
+  if (hadPreview) rerenderEditorCanvas();
+}
+
+export function applyAiAssist() {
+  if (!state || !aiAssistState || !aiAssistState.previewIr) return false;
+  if (aiAssistState.validation && !aiAssistState.validation.schema) {
+    ui.setAiError("Не удалось применить правку. Выделите блок и попробуйте ещё раз.");
+    return false;
+  }
+  pushHistory();
+  state.ir = deepClone(aiAssistState.previewIr);
+  state.activeIR = null;
+  state.node.data.ir = state.ir;
+  aiAssistState = null;
+  ui.setAiPreview(null);
+  rerenderEditorCanvas();
+  return true;
 }
 
 /* ---------- сохранение / история ---------- */
@@ -787,15 +957,49 @@ function save() {
   if (!state) return;
   syncActiveIR();
   if (state.onSave) state.onSave(state.ir);
-  close(true);
+  state.dirty = false;
+  ui.setDirty(false);
+  ui.setCloseConfirm(false);
+}
+
+export function requestClose() {
+  if (!state) return;
+  if (state.dirty) {
+    closeConfirmOpen = true;
+    ui.setCloseConfirm(true);
+    return;
+  }
+  close(false);
+}
+
+export function confirmDiscard() {
+  closeConfirmOpen = false;
+  ui.setCloseConfirm(false);
+  close(false);
+}
+
+export function cancelCloseConfirm() {
+  closeConfirmOpen = false;
+  ui.setCloseConfirm(false);
 }
 
 export function close(saved?: boolean) {
+  closeConfirmOpen = false;
+  ui.setCloseConfirm(false);
   if (state && state.onClose) state.onClose(!!saved);
   if (state && state.geo) { state.geo.destroy(); state.geo = null; }
   state = null;
   dnaPanelState = null;
   dom.dnaPanel?.classList.remove("open");
+  aiAssistState = null;
+  dom.overlay?.classList.remove("ai-previewing");
+  ui.setAiPreview(null);
+  ui.setAiBusy(false);
+  ui.setAiError("");
+  ui.setAiOpen(false);
+  ui.setPreviewing(false);
+  dom.overlay?.classList.remove("previewing");
+  ui.setDirty(false);
   ui.setOpen(false);
 }
 
@@ -805,37 +1009,58 @@ export function pushHistory() {
   // одного выделения (nudge стрелками) сливаются в одну запись
   const key = state.sel.map((s) => s.ref.secIdx + ":" + (s.ref.path || "")).join(",");
   state.history.push(() => state!.ir, key);
+  state.dirty = true;
+  ui.setDirty(true);
   updateUndoBtn();
+}
+
+function snapshotSelRefs(): GeoRef[] {
+  return state ? state.sel.map((s) => ({ ...s.ref })) : [];
+}
+
+function restoreSelection(refs: GeoRef[]) {
+  if (!state) return;
+  if (refs.length && aiAssistState && !state.geo) {
+    // AI preview is intentionally read-only, but viewport inspection must not
+    // discard the selection that defined the assistant scope.
+    return;
+  }
+  if (refs.length && state.geo) {
+    state.geo.selectMulti(refs);
+    if (!state.sel.length) renderInspector();
+  } else {
+    state.sel = [];
+    renderInspector();
+  }
+  updateAlignVisibility();
 }
 
 function undo() {
   if (!state) return;
   const snap = state.history.undo(() => state!.ir);
   if (!snap) return;
+  const refs = snapshotSelRefs();
   state.ir = snap;
   state.node.data.ir = state.ir;
   if (state.geo) { state.geo.destroy(); state.geo = null; }
   renderCanvas();
   renderLayers();
-  state.sel = [];
-  renderInspector();
+  restoreSelection(refs);
   updateUndoBtn();
-  updateAlignVisibility();
 }
 
 function redo() {
   if (!state) return;
   const snap = state.history.redo(() => state!.ir);
   if (!snap) return;
+  const refs = snapshotSelRefs();
   state.ir = snap;
   state.node.data.ir = state.ir;
   if (state.geo) { state.geo.destroy(); state.geo = null; }
   renderCanvas();
   renderLayers();
-  state.sel = [];
-  renderInspector();
+  restoreSelection(refs);
   updateUndoBtn();
-  updateAlignVisibility();
 }
 
 function updateUndoBtn() {
@@ -846,7 +1071,7 @@ function updateUndoBtn() {
 
 function updateAlignVisibility() {
   if (!state) return;
-  if (dom.alignGroup) dom.alignGroup.hidden = state.sel.length < 2;
+  if (dom.alignGroup) dom.alignGroup.hidden = state.sel.length < 1;
 }
 
 /* ---------- канвас ---------- */
@@ -861,6 +1086,34 @@ function buildActiveIR() {
   if (state.activeIR.frame && Number.isFinite(state.previewWidth)) state.activeIR.frame.width = state.previewWidth;
   delete state.activeIR.responsive;
   return state.activeIR;
+}
+
+function buildAiPreviewIR() {
+  if (!state || !aiAssistState?.previewIr || aiAssistState.ops.length === 0) return null;
+  const source = deepClone(aiAssistState.previewIr);
+  if (!source.responsive || !source.responsive.viewports) return source;
+  const preview = IRRenderer.materializeResponsiveIR(source, state.viewport);
+  if (preview.frame && Number.isFinite(state.previewWidth)) preview.frame.width = state.previewWidth;
+  delete preview.responsive;
+  return preview;
+}
+
+function renderCanvasIr() {
+  const preview = buildAiPreviewIR();
+  dom.overlay?.classList.toggle("ai-previewing", !!preview);
+  return preview || buildActiveIR();
+}
+
+function attachCanvasEditor() {
+  if (!state) return;
+  if (aiAssistState) {
+    const selection = state.sel.slice();
+    if (state.geo) state.geo.destroy();
+    state.geo = null;
+    state.sel = selection;
+    return;
+  }
+  attachGeoEdit();
 }
 
 function sourceNodeMap(ir: any) {
@@ -921,10 +1174,32 @@ function syncSharedStructure() {
 
 function syncActiveIR() {
   if (!state || !state.activeIR || state.activeIR === state.ir || !state.ir.responsive) return;
+  // The artboard itself is editable too.  Previously we synchronized only
+  // nodes under `tree`, so a root resize was applied to the materialized IR
+  // and then lost on the next render (buildActiveIR recreated the old width).
+  // Keep the edited root frame and the active viewport width in the canonical
+  // responsive IR before rebuilding the preview.
+  if (state.activeIR.frame) {
+    const rootFrame = JSON.parse(JSON.stringify(state.activeIR.frame));
+    state.ir.frame = Object.assign({}, state.ir.frame || {}, rootFrame);
+    const vp = state.ir.responsive.viewports && state.ir.responsive.viewports[state.viewport];
+    if (vp && typeof rootFrame.width === "number") {
+      vp.width = rootFrame.width;
+      // buildActiveIR applies previewWidth after materializing a viewport.
+      // Keep that runtime value in sync, otherwise a root drag is immediately
+      // painted back at the old width on the next render.
+      state.previewWidth = rootFrame.width;
+      if (dom.viewportWidth) dom.viewportWidth.value = String(rootFrame.width);
+    }
+    if (vp && typeof rootFrame.height === "number") vp.height = rootFrame.height;
+  }
   syncSharedStructure();
   const source = sourceNodeMap(state.activeIR);
   const target = sourceNodeMap(state.ir);
-  const sharedKeys = ["text", "title", "placeholder", "value", "label", "src", "alt", "href"];
+  const sharedKeys = [
+    "text", "title", "placeholder", "value", "label", "src", "alt", "href",
+    "size", "align", "level", "variant", "role", "name", "description",
+  ];
   target.forEach((node, key) => {
     const active = source.get(key);
     if (!active) return;
@@ -948,10 +1223,10 @@ function syncActiveIR() {
 function renderCanvas() {
   if (!state || !dom.canvasInner) return;
   const inner = dom.canvasInner;
-  IRRenderer.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
+  IRRenderer.renderIR(inner, renderCanvasIr(), { fit: false }); // _frames применяет сам рендерер
   applyLayerFlags();
   applyTransform();
-  attachGeoEdit();
+  attachCanvasEditor();
 }
 
 /* ---------- флаги слоёв (hide/lock): сессия редактора, вне IR ---------- */
@@ -1080,6 +1355,49 @@ export function drawRulers() {
       ctxV.restore();
     }
   }
+  renderRulerGuides();
+}
+
+function renderRulerGuides() {
+  if (!state || !dom.guideLayer) return;
+  dom.guideLayer.innerHTML = "";
+  state.guides.forEach((guide) => {
+    const line = document.createElement("div");
+    line.className = `fe-guide-line fe-guide-line-${guide.axis}`;
+    if (guide.axis === "h") line.style.top = `${state!.panY + guide.pos * state!.zoom}px`;
+    else line.style.left = `${state!.panX + guide.pos * state!.zoom}px`;
+    dom.guideLayer!.appendChild(line);
+  });
+}
+
+function beginRulerGuide(e: PointerEvent, axis: "h" | "v") {
+  if (!state || !dom.canvas) return;
+  const rect = dom.canvas.getBoundingClientRect();
+  const guide = { axis, pos: axis === "h"
+    ? (e.clientY - rect.top - state.panY) / state.zoom
+    : (e.clientX - rect.left - state.panX) / state.zoom };
+  state.guides.push(guide);
+  const move = (ev: PointerEvent) => {
+    if (!state) return;
+    guide.pos = axis === "h"
+      ? (ev.clientY - rect.top - state.panY) / state.zoom
+      : (ev.clientX - rect.left - state.panX) / state.zoom;
+    renderRulerGuides();
+  };
+  const up = (ev: PointerEvent) => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    const localX = ev.clientX - rect.left, localY = ev.clientY - rect.top;
+    if ((axis === "h" && localY < 24) || (axis === "v" && localX < 24)) {
+      const index = state?.guides.indexOf(guide) ?? -1;
+      if (index >= 0) state?.guides.splice(index, 1);
+    }
+    renderRulerGuides();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up, { once: true });
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 function zoomBy(factor: number) {
@@ -1094,6 +1412,28 @@ function zoomBy(factor: number) {
   applyTransform();
 }
 
+function contentBBox(ir: any): { x: number; y: number; w: number; h: number } | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const visit = (node: any, ox = 0, oy = 0) => {
+    if (!node || typeof node !== "object") return;
+    const f = node.frame || {};
+    const x = ox + (typeof f.x === "number" ? f.x : 0);
+    const y = oy + (typeof f.y === "number" ? f.y : 0);
+    const w = typeof f.width === "number" ? f.width : 0;
+    const h = typeof f.height === "number" ? f.height : 0;
+    if (w > 0 && h > 0) {
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + w);
+      maxY = Math.max(maxY, y + h);
+    }
+    (node.children || []).forEach((child: any) => visit(child, x, y));
+  };
+  (ir?.tree || []).forEach((sec: any) => visit(sec, 0, 0));
+  if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
 export function zoomFit() {
   if (!state || !dom.canvasInner || !dom.canvas) return;
   const inner = dom.canvasInner;
@@ -1101,20 +1441,37 @@ export function zoomFit() {
   if (!irEl) return;
   const canvas = dom.canvas;
   const cr = canvas.getBoundingClientRect();
-  const iw = irEl.offsetWidth || 960, ih = irEl.offsetHeight || 600;
-  const z = Math.min(1, Math.min((cr.width - 60) / iw, (cr.height - 60) / ih));
+  const artW = irEl.offsetWidth || 960;
+  const artH = irEl.offsetHeight || 600;
+  const box = contentBBox(state.activeIR || state.ir);
+  const useContent = !!(box && (box.h < artH * 0.55 || box.w < artW * 0.7));
+  const iw = useContent ? Math.max(box!.w, 280) : artW;
+  const ih = useContent ? Math.max(box!.h, 64) : artH;
+  const maxZ = useContent ? 1.6 : 1;
+  const z = Math.min(maxZ, (cr.width - 80) / iw, (cr.height - 80) / ih);
   state.zoom = Math.max(0.15, z);
-  state.panX = (cr.width - iw * state.zoom) / 2;
-  state.panY = (cr.height - ih * state.zoom) / 2;
+  if (useContent && box) {
+    state.panX = cr.width / 2 - (box.x + box.w / 2) * state.zoom;
+    state.panY = cr.height / 2 - (box.y + box.h / 2) * state.zoom;
+  } else {
+    state.panX = (cr.width - iw * state.zoom) / 2;
+    state.panY = (cr.height - ih * state.zoom) / 2;
+  }
   applyTransform();
 }
 
 /* Панорама/зум канваса — навешивается CanvasStage один раз на живой элемент. */
 export function onCanvasPointerDown(e: PointerEvent) {
   if (!state || !dom.canvas) return;
-  if (state.tool !== "hand" && e.button !== 1) return;
+  const rulerTarget = e.target as HTMLElement;
+  if (rulerTarget.closest(".fe-ruler-h")) { beginRulerGuide(e, "h"); return; }
+  if (rulerTarget.closest(".fe-ruler-v")) { beginRulerGuide(e, "v"); return; }
+  if (!state.spacePan && state.tool !== "hand" && e.button !== 1) return;
   const target = e.target as HTMLElement;
-  if (target.closest('[class^="ir-"]') || target.closest(".fe-rail")) return;
+  // Space+drag is an explicit pan gesture and must work even when the
+  // pointer starts on an IR element. Without Space, keep element gestures
+  // available for selection/editing and only pan from the canvas background.
+  if (target.closest(".fe-rail") || (!state.spacePan && target.closest('[class^="ir-"]'))) return;
   e.preventDefault();
   const canvas = dom.canvas;
   canvas.style.cursor = "grabbing";
@@ -1232,7 +1589,7 @@ export function renderLayers() {
   // артборд
   addLayerItem(tree, state.ir, { secIdx: null, path: null }, 0, "Артборд");
   state.ir.tree.forEach((sec: any, si: number) => {
-    const secLabel = sec.type + (sec.props && sec.props.heading ? ` · ${String(sec.props.heading).slice(0, 18)}` : "");
+    const secLabel = layerLabel(sec, 18);
     addLayerItem(tree, sec, { secIdx: si, path: null }, 1, secLabel);
     // props-элементы
     propsElements(sec).forEach((pe) => {
@@ -1242,13 +1599,58 @@ export function renderLayers() {
   });
 }
 
+function clipLabel(text: string, max: number) {
+  const s = String(text || "").replace(/\s+/g, " ").trim();
+  if (s.length <= max) return s;
+  return s.slice(0, Math.max(1, max - 1)) + "…";
+}
+
+function firstLayerText(node: any): string {
+  if (!node || typeof node !== "object") return "";
+  for (const key of ["text", "title", "label", "placeholder", "alt", "ariaLabel"]) {
+    const v = node[key];
+    if (v != null && String(v).trim()) return String(v).trim();
+  }
+  for (const child of node.children || []) {
+    const hit = firstLayerText(child);
+    if (hit) return hit;
+  }
+  return "";
+}
+
+function inferLayerName(el: any): string {
+  const typeLabels: Record<string, string> = {
+    navbar: "Navigation", hero: "Hero", card: "Card", heading: "Heading", text: "Text",
+    button: "Button", image: "Image", input: "Input", badge: "Badge", footer: "Footer",
+    pricing: "Pricing", faq: "FAQ", stats: "Stats", source: "Section",
+    "source-block": "Блок", rect: "Группа", div: "Группа", frame: "Фрейм",
+  };
+  if (el.type === "source-block" || el.variant === "dom-capture") {
+    return el.label || el.role || "Блок";
+  }
+  const kids = el.children || [];
+  const text = firstLayerText(el);
+  if (el.type === "div" || el.type === "rect" || el.type === "frame") {
+    if (kids.some((c: any) => c && c.type === "input")) return text ? `Поиск · ${clipLabel(text, 16)}` : "Поиск";
+    if (text) return clipLabel(text, 22);
+    if (kids.some((c: any) => c && c.type === "button")) return "Действия";
+    return "Группа";
+  }
+  const base = typeLabels[el.type] || (el.type === "card" && el.role ? "Карточка" : el.type || "Слой");
+  return text ? `${base} · ${clipLabel(text, 16)}` : base;
+}
+
+function stripIllegalSectionNames(ir: any) {
+  if (!ir || !Array.isArray(ir.tree)) return;
+  ir.tree.forEach((sec: any) => {
+    if (sec && typeof sec === "object") delete sec.name;
+  });
+}
+
 function layerLabel(el: any, maxText: number) {
-  const base = el.type === "card" && el.role ? "div" : el.type;
-  const suffix = el.text ? ` · ${String(el.text).slice(0, maxText)}`
-    : el.title ? ` · ${String(el.title).slice(0, maxText)}`
-    : el.placeholder ? ` · ${String(el.placeholder).slice(0, maxText)}`
-    : "";
-  return base + suffix;
+  const explicit = el.name || el.layerName || el.ariaLabel || el.accessibleName;
+  if (explicit) return String(explicit).slice(0, maxText + 18);
+  return inferLayerName(el).slice(0, maxText + 18);
 }
 
 function renderChildLayers(tree: HTMLElement, children: any[], secIdx: number, basePath: string, depth: number) {
@@ -1362,15 +1764,59 @@ export function canonicalNode(ref: GeoRef): any {
 
 function activeSelectionNode(sel: GeoSel) {
   if (!state) return null;
+  const active = state.activeIR;
+  if (active) {
+    if (sel.ref.secIdx == null) return active;
+    let node = active.tree?.[sel.ref.secIdx];
+    if (node && sel.ref.path) node = getByPath(node, sel.ref.path);
+    if (node) return node;
+  }
   return (state.sel.find((item) => item.ref.secIdx === sel.ref.secIdx && item.ref.path === sel.ref.path) || sel).node || null;
+}
+
+/** Mutate the selected canonical/materialized node and keep responsive IR in sync. */
+export function mutateSelectedNode(mutator: (node: any) => void) {
+  if (!state || !state.sel.length) return false;
+  const selected = state.sel[0];
+  const node = activeSelectionNode(selected) || canonicalNode(selected.ref);
+  if (!node) return false;
+  pushHistory();
+  mutator(node);
+  syncActiveIR();
+  rerenderEditorCanvas();
+  return true;
+}
+
+/** Live keystroke: update canvas without remounting the inspector. */
+export function mutateSelectedNodeLive(mutator: (node: any) => void) {
+  if (!state || !state.sel.length) return false;
+  const selected = state.sel[0];
+  const node = activeSelectionNode(selected) || canonicalNode(selected.ref);
+  if (!node) return false;
+  mutator(node);
+  syncActiveIR();
+  state.dirty = true;
+  ui.setDirty(true);
+  const prev = inspScrubbing;
+  setInspScrubbing(true);
+  if (dom.canvasInner) {
+    IRRenderer.renderIR(dom.canvasInner, buildActiveIR(), { fit: false });
+    applyLayerFlags();
+    applyTransform();
+    attachGeoEdit();
+    renderLayers();
+    if (state.sel.length && state.geo) state.geo.selectMulti(state.sel.map((s) => s.ref));
+  }
+  setInspScrubbing(prev);
+  return true;
 }
 
 function finishResponsiveMutation() {
   if (!state) return;
-  state.sel = [];
+  const refs = snapshotSelRefs();
   renderCanvas();
   renderLayers();
-  renderInspector();
+  restoreSelection(refs);
   zoomFit();
 }
 
@@ -1426,10 +1872,10 @@ export function copyResponsiveTo(sel: GeoSel, viewport: string) {
 export function rerenderEditorCanvas() {
   if (!state || !dom.canvasInner) return;
   const inner = dom.canvasInner;
-  IRRenderer.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
+  IRRenderer.renderIR(inner, renderCanvasIr(), { fit: false }); // _frames применяет сам рендерер
   applyLayerFlags();
   applyTransform();
-  attachGeoEdit();
+  attachCanvasEditor();
   renderLayers();
   if (state.sel.length && state.geo) state.geo.selectMulti(state.sel.map((s) => s.ref));
   renderInspector();
@@ -1441,6 +1887,12 @@ export function onKeydown(e: KeyboardEvent) {
   if (!state) return;
   const ae = document.activeElement as HTMLElement | null;
   if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return;
+  if (e.code === "Space") {
+    state.spacePan = true;
+    e.preventDefault();
+    if (dom.canvas) dom.canvas.style.cursor = "grab";
+    return;
+  }
   if (e.key === "v" || e.key === "V" || e.key === "м" || e.key === "М") setTool("select");
   if (e.key === "h" || e.key === "H" || e.key === "р" || e.key === "Р") setTool("hand");
   if (e.key === "r" || e.key === "R" || e.key === "к" || e.key === "К") setTool("rect");
@@ -1460,9 +1912,28 @@ export function onKeydown(e: KeyboardEvent) {
   // Esc: сначала отдаём GeoEdit (выход из контейнера / снятие выделения);
   // закрываем редактор, только если geoedit событие не поглотил
   if (e.key === "Escape") {
+    if (dom.overlay?.classList.contains("previewing")) {
+      togglePreview();
+      return;
+    }
+    if (dom.overlay?.querySelector(".fe-ai-panel.open")) {
+      cancelAiAssist();
+      closeAiPanel();
+      return;
+    }
+    if (closeConfirmOpen) {
+      cancelCloseConfirm();
+      return;
+    }
     if (state.geo && state.geo.consumeEscape()) return;
-    close();
+    requestClose();
   }
+}
+
+export function onKeyup(e: KeyboardEvent) {
+  if (!state || e.code !== "Space") return;
+  state.spacePan = false;
+  if (dom.canvas) dom.canvas.style.cursor = state.tool === "hand" ? "grab" : "default";
 }
 
 /* ---------- утилиты ---------- */

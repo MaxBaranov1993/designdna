@@ -1979,6 +1979,24 @@
       onMutated();
     }
 
+    /** Растянуть выбранные блоки от левого до правого края их родителя. */
+    function stretchWidth() {
+      const targets = selections.filter(sel => sel.ref.secIdx != null);
+      if (!targets.length) return;
+      onCommit();
+      targets.forEach(sel => {
+        const parent = parentOf(sel.ref);
+        if (!parent || !parent.dom) return;
+        const pc = parentBox(sel.ref);
+        if (!pc) return;
+        const f = Object.assign({}, getFrame(sel.ref));
+        f.x = 0;
+        f.width = Math.max(8, Math.round(pc.w));
+        setFrameData(sel.ref, f);
+      });
+      onMutated();
+    }
+
     /* --- публичные методы записи --- */
 
     function setFrame(partial) {
@@ -2488,27 +2506,21 @@
 
     /* --- двойной клик: enter container или inline-текст --- */
 
-    function onDblClick(e) {
-      const ref = hitTest(e.clientX, e.clientY, true); // deep: сразу вложенный
-      if (!ref) return;
-      e.preventDefault();
+    function isTexty(node) {
+      if (!node) return false;
+      return node.type === "text" || node.type === "heading" || node.type === "button"
+        || node.text != null || node.title != null;
+    }
 
-      const node = irNodeAt(ref);
-
-      // если попали в секцию (контейнер) — войти в неё
-      if (ref.path === null && node && node.type) {
-        containerCtx = ref;
-        clear();
-        renderContainerBadge();
-        return;
-      }
-
-      // inline-редактирование текста
+    function startInlineText(ref, node) {
       const el = domAt(ref);
-      if (!el) return;
-
-      let textEl = el.querySelector("[data-ir-path]") || el;
-      if (textEl.classList.contains("editing")) return;
+      if (!el) return false;
+      let textEl = el;
+      if (!isTexty(node)) {
+        const nested = el.querySelector("[data-ir-path]");
+        if (nested) textEl = nested;
+      }
+      if (textEl.classList.contains("editing")) return true;
 
       const irEl = previewEl.querySelector('[class^="ir-"]');
       if (irEl) irEl.classList.remove("geo-content-block");
@@ -2540,7 +2552,11 @@
           }
         } else if (path.startsWith("props.")) {
           setByPath(sec, editableTextPath(path), newText);
+        } else if (node) {
+          if (node.text !== undefined) node.text = newText;
+          else if (node.title !== undefined) node.title = newText;
         }
+        select(ref);
         onMutated();
       };
       textEl.addEventListener("blur", commit, { once: true });
@@ -2549,6 +2565,29 @@
         if (ev.key === "Escape") { textEl.textContent = textEl.dataset.origText || textEl.textContent; textEl.blur(); }
       });
       textEl.dataset.origText = textEl.textContent;
+      return true;
+    }
+
+    function onDblClick(e) {
+      const ref = hitTest(e.clientX, e.clientY, true); // deep: сразу вложенный
+      if (!ref) return;
+      e.preventDefault();
+
+      const node = irNodeAt(ref);
+      if (isTexty(node)) {
+        startInlineText(ref, node);
+        return;
+      }
+
+      // если попали в секцию (контейнер) — войти в неё
+      if (ref.path === null && node && node.type) {
+        containerCtx = ref;
+        clear();
+        renderContainerBadge();
+        return;
+      }
+
+      startInlineText(ref, node);
     }
 
     /** Бейдж «Editing: ...» при входе в контейнер. */
@@ -2626,6 +2665,7 @@
       alignBottom,
       distributeH,
       distributeV,
+      stretchWidth,
       bringForward,
       sendBackward,
       moveSibling,

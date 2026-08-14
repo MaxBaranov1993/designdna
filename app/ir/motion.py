@@ -8,6 +8,8 @@ import jsonschema
 
 from .hash import content_hash
 
+DEFAULT_POSE = {"opacity": 1.0, "x": 0.0, "y": 0.0, "scale": 1.0, "rotate": 0.0}
+
 MOTION_VERSION = "1.0"
 ALLOWED_TRANSITIONS = {"cut", "fade", "slide-left", "slide-up", "zoom"}
 ALLOWED_EASINGS = {"linear", "ease", "ease-in", "ease-out", "ease-in-out"}
@@ -138,6 +140,248 @@ def build(interaction: dict, composition: dict | None = None,
     if errors:
         raise ValueError("invalid Motion IR: " + "; ".join(errors[:5]))
     return document
+
+
+def _section_name(section: dict, index: int) -> str:
+    semantic = section.get("semantic") if isinstance(section.get("semantic"), dict) else {}
+    label = semantic.get("label") or section.get("type") or f"Слой {index + 1}"
+    return str(label)[:48]
+
+
+def layers_from_design(ir: dict) -> list[dict]:
+    tree = ir.get("tree") if isinstance(ir.get("tree"), list) else []
+    layers = []
+    for index, section in enumerate(tree):
+        if not isinstance(section, dict):
+            continue
+        layers.append({
+            "id": f"layer-{index}",
+            "name": _section_name(section, index),
+            "sectionIndex": index,
+            "sourceKey": str(section.get("sourceKey") or ""),
+            "enabled": True,
+            "keyframes": [],
+        })
+    return layers
+
+
+def interpolate_pose(keyframes: list[dict], time_ms: float) -> dict:
+    pose = dict(DEFAULT_POSE)
+    if not keyframes:
+        return pose
+    ordered = sorted(
+        (frame for frame in keyframes if isinstance(frame, dict) and isinstance(frame.get("t"), (int, float))),
+        key=lambda frame: float(frame["t"]),
+    )
+    if not ordered:
+        return pose
+    if time_ms <= float(ordered[0]["t"]):
+        src = ordered[0]
+        for key in DEFAULT_POSE:
+            if key in src:
+                pose[key] = float(src[key])
+        return pose
+    if time_ms >= float(ordered[-1]["t"]):
+        src = ordered[-1]
+        for key in DEFAULT_POSE:
+            if key in src:
+                pose[key] = float(src[key])
+        return pose
+    start = ordered[0]
+    end = ordered[-1]
+    for index in range(1, len(ordered)):
+        if time_ms <= float(ordered[index]["t"]):
+            start = ordered[index - 1]
+            end = ordered[index]
+            break
+    span = max(1.0, float(end["t"]) - float(start["t"]))
+    mix = (time_ms - float(start["t"])) / span
+    mix = mix * mix * (3 - 2 * mix)
+    for key in DEFAULT_POSE:
+        a = float(start[key]) if key in start else DEFAULT_POSE[key]
+        b = float(end[key]) if key in end else DEFAULT_POSE[key]
+        pose[key] = a + (b - a) * mix
+    return pose
+
+
+def frame_comp_state(motion: dict, frame_index: int) -> dict:
+    composition = motion.get("composition") or {}
+    fps = max(1, int(composition.get("fps") or 30))
+    time_ms = frame_index * 1000 / fps
+    camera = interpolate_pose(((motion.get("camera") or {}).get("keyframes") or []), time_ms)
+    layers = []
+    for layer in motion.get("layers") or []:
+        if not isinstance(layer, dict) or not layer.get("enabled", True):
+            continue
+        pose = interpolate_pose(layer.get("keyframes") or [], time_ms)
+        layers.append({
+            "id": layer.get("id"),
+            "sectionIndex": int(layer.get("sectionIndex") or 0),
+            **pose,
+        })
+    return {"time": time_ms, "camera": camera, "layers": layers}
+
+
+def default_product_comp(layers: list[dict], duration_hint: int | None = None) -> tuple[list[dict], dict, int]:
+    count = max(1, len(layers))
+    step = 1100 if count > 4 else 1400
+    duration = duration_hint or min(28000, max(3200, count * step + 900))
+    next_layers = []
+    for index, layer in enumerate(layers):
+        enter = index * step
+        next_layers.append({
+            **layer,
+            "keyframes": [
+                {"t": max(0, enter - 80), "opacity": 0, "x": 0, "y": 56, "scale": 0.94, "rotate": 0},
+                {"t": enter + 520, "opacity": 1, "x": 0, "y": 0, "scale": 1, "rotate": 0},
+                {"t": duration, "opacity": 1, "x": 0, "y": 0, "scale": 1, "rotate": 0},
+            ],
+        })
+    camera = {
+        "keyframes": [
+            {"t": 0, "opacity": 1, "x": 0, "y": 0, "scale": 1, "rotate": 0},
+            {"t": duration, "opacity": 1, "x": 0, "y": -min(240, 36 * count), "scale": 1.04, "rotate": 0},
+        ]
+    }
+    return next_layers, camera, duration
+
+
+def apply_director_plan(layers: list[dict], plan: dict) -> tuple[list[dict], dict, int]:
+    planned = {item.get("id"): item for item in plan.get("layers") or [] if isinstance(item, dict)}
+    duration = max(250, min(28000, int(plan.get("duration") or 0)))
+    next_layers = []
+    max_t = 0
+    for layer in layers:
+        src = planned.get(layer["id"], {})
+        frames = []
+        for frame in src.get("keyframes") or []:
+            if not isinstance(frame, dict) or not isinstance(frame.get("t"), (int, float)):
+                continue
+            item = {"t": max(0, min(28000, int(frame["t"])))}
+            for key in ("opacity", "x", "y", "scale", "rotate"):
+                if key in frame:
+                    item[key] = float(frame[key])
+            frames.append(item)
+            max_t = max(max_t, item["t"])
+        if not frames:
+            frames = [{"t": 0, **DEFAULT_POSE}, {"t": max(duration, 1200), **DEFAULT_POSE}]
+        next_layers.append({**layer, "keyframes": frames})
+    camera_frames = []
+    for frame in ((plan.get("camera") or {}).get("keyframes") or []):
+        if not isinstance(frame, dict) or not isinstance(frame.get("t"), (int, float)):
+            continue
+        item = {"t": max(0, min(28000, int(frame["t"])))}
+        for key in ("opacity", "x", "y", "scale", "rotate"):
+            if key in frame:
+                item[key] = float(frame[key])
+        camera_frames.append(item)
+        max_t = max(max_t, item["t"])
+    if not camera_frames:
+        camera_frames = [{"t": 0, **DEFAULT_POSE}]
+    duration = max(duration, max_t + 400, 800)
+    return next_layers, {"keyframes": camera_frames}, min(28000, duration)
+
+
+def _wrap_comp_document(ir: dict, layers: list[dict], camera: dict, duration: int,
+                        composition: dict | None, render_settings: dict | None) -> dict:
+    raw_composition = composition or {}
+    width = max(320, min(3840, int(raw_composition.get("width") or 1080)))
+    height = max(240, min(2160, int(raw_composition.get("height") or 1920)))
+    fps = max(12, min(60, int(raw_composition.get("fps") or 30)))
+    raw_render = render_settings or {}
+    output_format = str(raw_render.get("format") or "mp4")
+    if output_format not in {"mp4", "webm"}:
+        output_format = "mp4"
+    quality = str(raw_render.get("quality") or "high")
+    if quality not in {"draft", "high", "lossless"}:
+        quality = "high"
+    duration = max(250, min(30000, int(duration)))
+    viewport = "mobile" if height > width else "desktop"
+    base_hash = str(ir.get("contentHash") or content_hash(ir))
+    document = {
+        "version": MOTION_VERSION,
+        "source": {
+            "interactionHash": content_hash({"mode": "comp", "base": base_hash}),
+            "baseDesignIrHash": base_hash,
+        },
+        "composition": {
+            "width": width, "height": height, "fps": fps,
+            "duration": duration, "background": "#0b0b10",
+        },
+        "scenes": [{
+            "id": "motion-comp-root",
+            "interactionSceneId": "comp-root",
+            "start": 0,
+            "duration": duration,
+            "viewport": viewport,
+            "transition": {"type": "cut", "duration": 0, "easing": "linear"},
+        }],
+        "tracks": [{
+            "id": "track-layers", "type": "scene", "name": "Layers", "locked": False,
+            "clips": [{"id": "clip-comp", "sceneId": "motion-comp-root", "start": 0, "duration": duration, "locked": False}],
+        }],
+        "markers": [],
+        "assets": [],
+        "layers": layers,
+        "camera": camera,
+        "renderSettings": {
+            "format": output_format,
+            "codec": "h264" if output_format == "mp4" else "vp9",
+            "quality": quality,
+        },
+    }
+    errors = validate(document)
+    if errors:
+        raise ValueError("invalid Motion IR: " + "; ".join(errors[:5]))
+    return document
+
+
+def build_from_design(ir: dict, composition: dict | None = None,
+                      render_settings: dict | None = None, plan: dict | None = None) -> dict:
+    """Build a keyframed composition from page/component Design IR."""
+    layers = layers_from_design(ir)
+    if not layers:
+        raise ValueError("В макете нет секций для ролика")
+    if plan:
+        layers, camera, duration = apply_director_plan(layers, plan)
+    else:
+        layers, camera, duration = default_product_comp(layers)
+    return _wrap_comp_document(ir, layers, camera, duration, composition, render_settings)
+
+
+def direct_comp_plan(ir: dict, prompt: str, composition: dict | None = None) -> dict:
+    """Ask the motion director model for a keyframe plan. Falls back to the product preset."""
+    from llm_client import chat
+
+    layers = layers_from_design(ir)
+    payload = {
+        "prompt": prompt,
+        "composition": composition or {},
+        "layers": [{"id": layer["id"], "name": layer["name"], "sectionIndex": layer["sectionIndex"]} for layer in layers],
+    }
+    system = (
+        "Ты motion-режиссёр в духе After Effects. Верни ТОЛЬКО JSON без markdown:\n"
+        '{"duration": 6400, "layers": [{"id": "layer-0", "keyframes": '
+        '[{"t": 0, "opacity": 0, "x": 0, "y": 40, "scale": 0.94, "rotate": 0}, '
+        '{"t": 700, "opacity": 1, "x": 0, "y": 0, "scale": 1, "rotate": 0}]}], '
+        '"camera": {"keyframes": [{"t": 0, "x": 0, "y": 0, "scale": 1}, {"t": 6400, "x": 0, "y": -80, "scale": 1.05}]}}\n'
+        "Правила: используй только переданные id слоёв; t в мс от 0 до duration; "
+        "2–6 кейфреймов на слой; анимируй сами компоненты (opacity/x/y/scale/rotate), "
+        "не делай слайдшоу из целых экранов."
+    )
+    try:
+        raw = chat("codex", [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ], temperature=0.4, role="motion_director")
+        from llm_client import extract_json
+        plan = json.loads(extract_json(raw))
+        if not isinstance(plan, dict) or not isinstance(plan.get("layers"), list):
+            raise ValueError("director returned no layers")
+        return plan
+    except Exception:
+        layers, camera, duration = default_product_comp(layers)
+        return {"duration": duration, "layers": layers, "camera": camera}
 
 
 class MotionIR(dict):

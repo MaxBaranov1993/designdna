@@ -21,8 +21,10 @@ DEFAULT_FLAGS = {
     # Stage 6: deterministic video render.
     "videoRender": True,
     # Stage 7: AI director for motion.
-    "aiDirector": False,
-    # Optional generative B-roll/asset jobs through OpenRouter Videos.
+    "aiDirector": True,
+    # Stage 8: AI-first Edit Node assist preview/apply flow.
+    "editorAiAssist": True,
+    # Optional generative B-roll/asset jobs through the Seedance gateway.
     "generativeVideo": True,
 }
 

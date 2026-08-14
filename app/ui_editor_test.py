@@ -103,6 +103,58 @@ def main():
         d = max(abs(box["x"] - cb2["x"]), abs(box["y"] - cb2["y"]))
         check("рамка выделения совпадает", d < 4, f"d={d:.1f}")
 
+        # P0: Txt должен менять canonical IR и DOM canvas, а не только поле.
+        button_layer = pg.locator('.fe-layer').filter(has_text="Button · Написать").first
+        if button_layer.count():
+            button_layer.click()
+            pg.wait_for_timeout(250)
+            text_input = pg.locator('.fe-inspector input[data-el-prop="text"]').first
+            before_text = pg.evaluate("""() => {
+                const walk = (n) => {
+                  if (n?.type === 'button') return n.text || '';
+                  for (const child of (n?.children || [])) { const hit = walk(child); if (hit != null) return hit; }
+                  return null;
+                };
+                const ir = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir;
+                return walk({children: ir.tree || []});
+            }""")
+            text_input.fill("Написать QA")
+            text_input.press("Tab")
+            pg.wait_for_timeout(350)
+            after_text = pg.evaluate("""() => {
+                const walk = (n) => {
+                  if (n?.type === 'button') return n.text || '';
+                  for (const child of (n?.children || [])) { const hit = walk(child); if (hit != null) return hit; }
+                  return null;
+                };
+                const ir = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir;
+                return walk({children: ir.tree || []});
+            }""")
+            check("P0 Txt: IR обновился", after_text == "Написать QA", f"{before_text} -> {after_text}")
+            check("P0 Txt: canvas обновился", "Написать QA" in pg.locator('.fe-canvas').inner_text())
+            pg.evaluate("document.activeElement && document.activeElement.blur()")
+            pg.keyboard.press("Control+z")
+            pg.wait_for_timeout(250)
+            restored_text = pg.evaluate("""() => {
+                const walk = (n) => {
+                  if (n?.type === 'button') return n.text || '';
+                  for (const child of (n?.children || [])) { const hit = walk(child); if (hit != null) return hit; }
+                  return null;
+                };
+                const ir = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir;
+                return walk({children: ir.tree || []});
+            }""")
+            check("P0 Txt: undo вернул значение", restored_text == before_text, f"{before_text} -> {restored_text}")
+
+            card_again = pg.query_selector('.fe-canvas [data-ir-path="children.0"]')
+            card_again.click(force=True)
+            pg.wait_for_timeout(250)
+
+        # сложный layout раскрывается только по запросу
+        if pg.query_selector('.fe-inspector details.pi-advanced summary'):
+            pg.click('.fe-inspector details.pi-advanced summary')
+            pg.wait_for_timeout(100)
+
         # gap через инспектор
         gin = pg.query_selector('.fe-inspector .fe-shared-insp input[data-pi="gap"]')
         gin.fill("24")
@@ -135,17 +187,35 @@ def main():
         rects = pg.evaluate("(() => { const out = []; const walk = (n) => (n.children || []).forEach(c => { out.push(c); walk(c); }); (window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir.tree || []).forEach(s => walk(s)); return out.filter(c => c.type === 'rect').length; })()")
         check("rail: rect создан на канвасе", rects == 1, str(rects))
 
-        # hand панорамирует канвас
+        # Space + drag панорамирует канвас; отдельной hand-кнопки нет
         tr0 = pg.evaluate("document.querySelector('.fe-canvas-inner').style.transform")
-        pg.click('.dna-editor .fe-rail [data-tool="hand"]')
+        check("rail: hand-кнопка убрана", pg.evaluate(
+            "document.querySelectorAll('.dna-editor .fe-rail [data-tool=\"hand\"]').length === 0"))
+        check("rail: AI-кнопка присутствует", pg.evaluate(
+            "document.querySelector('.dna-editor .fe-rail [data-tool=\"ai\"]') !== null"))
         pg.wait_for_timeout(150)
-        pg.mouse.move(sb["x"] + 200, sb["y"] + 150)
+        canvas_box = pg.query_selector('.fe-canvas').bounding_box()
+        pan_x = canvas_box["x"] + canvas_box["width"] - 32
+        pan_y = canvas_box["y"] + canvas_box["height"] - 32
+        pg.mouse.move(pan_x, pan_y)
+        pg.keyboard.down("Space")
         pg.mouse.down()
-        pg.mouse.move(sb["x"] + 240, sb["y"] + 190, steps=4)
+        pg.mouse.move(pan_x - 40, pan_y - 36, steps=4)
         pg.mouse.up()
+        pg.keyboard.up("Space")
         pg.wait_for_timeout(200)
         tr1 = pg.evaluate("document.querySelector('.fe-canvas-inner').style.transform")
-        check("rail: hand панорамирует", tr0 != tr1, f"{tr0} -> {tr1}")
+        check("rail: Space панорамирует", tr0 != tr1, f"{tr0} -> {tr1}")
+
+        # AI opened from the persistent fifth tool; no indefinite loading
+        pg.click('.dna-editor .fe-rail [data-tool="ai"]')
+        pg.wait_for_timeout(200)
+        check("AI-панель открывается", pg.evaluate(
+            "document.querySelector('#feAiPanel')?.classList.contains('open') === true"))
+        check("AI-панель не зависла в загрузке", pg.evaluate(
+            "!document.querySelector('#feAiPanel [data-ai-loading]')"))
+        pg.keyboard.press("Escape")
+        pg.wait_for_timeout(100)
 
         # хоткей V возвращает select (синхрон с панелью)
         pg.evaluate("document.activeElement && document.activeElement.blur()")
@@ -155,6 +225,8 @@ def main():
             "document.querySelector('.dna-editor .fe-rail [data-tool=\"select\"]').classList.contains('active')"))
 
         pg.click('.fe-toolbar [data-act="close"]')
+        if pg.query_selector('[data-act="discard-close"]'):
+            pg.click('[data-act="discard-close"]')
         pg.wait_for_timeout(300)
         check("редактор закрыт", pg.evaluate("document.querySelector('.dna-editor').style.display === 'none'"))
         browser.close()

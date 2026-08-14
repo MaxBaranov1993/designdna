@@ -2,9 +2,9 @@
 """CLI-обёртка LLM-клиента. Сам клиент — app/llm_client.py (продакшен-модуль).
 
 Использование:
-    set OPENROUTER_API_KEY=sk-...
-    python spike/run_test.py --provider openrouter --brief "Лендинг для кофейни..."
-    python spike/run_test.py --provider openrouter --repair broken.json --out fixed.json
+    set CODEX_API_KEY=...
+    python spike/run_test.py --provider codex --brief "Лендинг для кофейни..."
+    python spike/run_test.py --provider codex --repair broken.json --out fixed.json
 """
 import sys
 from pathlib import Path

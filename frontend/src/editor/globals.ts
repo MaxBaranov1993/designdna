@@ -27,6 +27,7 @@ export interface GeoHandle {
   alignBottom: () => void;
   distributeH: () => void;
   distributeV: () => void;
+  stretchWidth: () => void;
   bringForward: () => void;
   sendBackward: () => void;
   moveSibling: (ref: GeoRef, to: number) => void;

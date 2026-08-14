@@ -83,14 +83,23 @@ def main():
         publish_layer = [l for l in labels if "publish" in l.lower() or "размест" in l.lower()]
         check("слой publish найден", bool(publish_layer), str(labels))
 
+        # Layer data-key is the authoritative IR path; use it instead of a
+        # fixture-specific child index so wrappers added by the renderer do
+        # not turn a button click into a parent-card click.
+        publish_path = pg.evaluate("""() => {
+          const layer = [...document.querySelectorAll('.fe-layer')].find(el => /publish|размест/i.test(el.textContent || ''));
+          const key = layer?.dataset.key || '';
+          return key.includes(':') ? key.slice(key.indexOf(':') + 1) : null;
+        }""")
+
         # try to click the publish button on canvas
         bbox = pg.evaluate(
-            """() => {
-              const el = document.querySelector('.fe-canvas [data-ir-path="children.6"]');
+            """(path) => {
+              const el = path && document.querySelector(`.fe-canvas [data-ir-path="${CSS.escape(path)}"]`);
               if (!el) return null;
               const r = el.getBoundingClientRect();
               return {x: r.left + r.width/2, y: r.top + r.height/2, w: r.width, h: r.height};
-            }"""
+            }""", publish_path
         )
         check("publish button rendered", bbox is not None)
         if bbox:

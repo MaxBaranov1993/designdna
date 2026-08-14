@@ -404,7 +404,7 @@ def parse_design_tokens(css_text: str) -> dict:
 
 # ---------- image prep (Pillow) ----------
 
-MAX_VISION_DIM = 1568  # безопасный предел для vision-маршрута OpenRouter
+MAX_VISION_DIM = 1568  # безопасный предел для vision-маршрута GPT Codex
 
 
 def prepare_image_b64(data_url: str) -> str:

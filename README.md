@@ -4,8 +4,8 @@ A local-first AI web-design studio. A node-graph pipeline generates, imports, ed
 animates web designs around a canonical, schema-validated **Design IR** — the LLM never
 owns the truth, the schema does.
 
-Runs fully on `127.0.0.1:8420`. No external services except the OpenRouter API for
-generation roles.
+Runs fully on `127.0.0.1:8420`. Text/vision use your own GPT Codex or another
+OpenAI-compatible endpoint; video is isolated for a future Seedance connection.
 
 ## What it does
 
@@ -14,8 +14,8 @@ generation roles.
 - **Design IR** (`schema/`): versioned JSON schema for semantic web documents
   (sections, tokens, style bindings, responsive viewports). Every AI output is
   validated, repaired and merged back through deterministic code.
-- **LLM generation** via OpenRouter with role-based model routing (fallback chains,
-  env-overridable) and a token-saving cache (`/api/cache/stats`).
+- **LLM generation** via a user-owned GPT Codex endpoint with role-based model routing
+  (env-overridable) and a token-saving cache (`/api/cache/stats`).
 - **Quality pipeline**: deterministic Quality Gate (autofix without an LLM) plus an
   LLM judge pass with a repair/re-judge loop.
 - **Source Import** (pixel-faithful DOM capture of real sites):
@@ -45,7 +45,7 @@ app/            FastAPI backend
   server.py     all API routes (port 8420; serves /static and the font base at /fonts)
   scraper.py    Source Import: DOM capture, font base, QA pass
   blockparse.py block detection / LLM clone pipeline
-  llm_client.py OpenRouter client, role routing, system prompts
+  llm_client.py GPT Codex client, role routing, system prompts
   qualitygate.py, mergeback.py, reproduce.py, motion_render.py, ...
   static/flow/  built React app + engine.js (IIFE engine bundle for headless renders)
 frontend/       React + TS + Vite source (flow graph, DNA editor, inspector)
@@ -68,14 +68,17 @@ python -m venv .venv
 
 cd frontend && npm ci && npm run build && cd ..      # builds app/static/flow
 
-echo OPENROUTER_API_KEY=... > .env                   # your key
+copy .env.example .env                              # Codex Desktop auth is read automatically
 start.bat                                            # or: .venv\Scripts\python app\server.py
 ```
 
 Open http://127.0.0.1:8420 — the flow graph is at `/flow`.
 
 Feature flags: `DESIGNAI_FLAG_<NAME>=0|1` environment variables
-(see `app/config/flags.py`). Model routing overrides: `ROUTING_*` env vars.
+(see `app/config/flags.py`). Codex routing overrides: `CODEX_*` env vars.
+When Codex Desktop is signed in, text/vision read `%USERPROFILE%\\.codex\\auth.json`
+at request time and use the native ChatGPT Codex Responses API. `CODEX_API_KEY`
+remains an optional explicit API-key mode; neither credential is committed.
 
 ## Tests
 

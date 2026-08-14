@@ -102,6 +102,9 @@ def main():
         check("redo срабатывает", True)
 
         # --- gap + undo ---
+        if pg.query_selector('.fe-inspector details.pi-advanced summary'):
+            pg.click('.fe-inspector details.pi-advanced summary')
+            pg.wait_for_timeout(100)
         gin = pg.query_selector('.fe-inspector .fe-shared-insp input[data-pi="gap"]')
         if gin:
             gin.fill("42")
@@ -116,6 +119,9 @@ def main():
             check("gap input не найден", False)
 
         # --- закрытие без сохранения откатывает изменения ---
+        if pg.query_selector('.fe-inspector details.pi-advanced summary'):
+            pg.click('.fe-inspector details.pi-advanced summary')
+            pg.wait_for_timeout(100)
         gin2 = pg.query_selector('.fe-inspector .fe-shared-insp input[data-pi="gap"]')
         if gin2:
             gin2.fill("77")
@@ -123,6 +129,8 @@ def main():
             pg.wait_for_timeout(400)
             check("gap=77 применился", pg.evaluate(node_expr(".tree[0].children[0].frame.gap")) == 77)
         pg.click('[data-act="close"]')
+        pg.wait_for_selector('[data-act="discard-close"]')
+        pg.click('[data-act="discard-close"]')
         pg.wait_for_timeout(300)
         check("редактор закрылся", pg.evaluate("document.querySelector('.dna-editor').style.display === 'none'"))
         closed_gap = pg.evaluate(node_expr(".tree[0].children[0].frame.gap"))
@@ -136,6 +144,9 @@ def main():
             cb = card.bounding_box()
             pg.mouse.click(cb["x"] + 8, cb["y"] + 8)
             pg.wait_for_timeout(400)
+        if pg.query_selector('.fe-inspector details.pi-advanced summary'):
+            pg.click('.fe-inspector details.pi-advanced summary')
+            pg.wait_for_timeout(100)
         gin3 = pg.query_selector('.fe-inspector .fe-shared-insp input[data-pi="gap"]')
         if gin3:
             gin3.fill("99")

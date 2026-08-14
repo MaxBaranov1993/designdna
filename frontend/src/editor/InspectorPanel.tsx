@@ -30,13 +30,17 @@ export function InspectorPanel() {
     <div className="fe-inspector">
       {selCount ? (
         <div key={tick} ref={contentRef}>
+          <div className="fe-insp-heading">
+            <span>Быстрое редактирование</span>
+            <span className="fe-insp-hint">Esc — снять выбор</span>
+          </div>
+          {selCount === 1 ? <TypeGroups /> : null}
           <div className="fe-shared-insp">
             <SharedInspector />
           </div>
-          {selCount === 1 ? <TypeGroups /> : null}
         </div>
       ) : (
-        <div className="fe-insp-empty">Выделите элемент на канвасе или в слоях</div>
+        <div className="fe-insp-empty"><strong>Быстрое редактирование</strong><span>Выделите элемент на канвасе или в слоях</span></div>
       )}
     </div>
   );

@@ -170,6 +170,8 @@ def main():
         check("undo откатил только вторую серию", x5 == base + 2, f"x={x5!r}, ждём {base + 2}")
 
         pg.click('.dna-editor [data-act="close"]')
+        if pg.query_selector('[data-act="discard-close"]'):
+            pg.click('[data-act="discard-close"]')
         pg.wait_for_timeout(400)
         browser.close()
 

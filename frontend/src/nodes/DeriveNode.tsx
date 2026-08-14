@@ -4,6 +4,7 @@ import { useFlowStore } from "../flow/store";
 import type { DeriveFlowNode } from "../flow/types";
 import { NodeShell, NodeStatus } from "./NodeShell";
 import { InPorts, OutPorts } from "./PortHandles";
+import { FloatingSelect } from "../components/ui/floating-select";
 
 export function DeriveNode({ id, data, selected }: NodeProps<DeriveFlowNode>) {
   const setNodeData = useFlowStore((s) => s.setNodeData);
@@ -23,12 +24,14 @@ export function DeriveNode({ id, data, selected }: NodeProps<DeriveFlowNode>) {
         onChange={(e) => setNodeData(Number(id), { prompt: e.target.value })}
       />
       <div className="ctl-row">
-        <span className="f-provider">OpenRouter</span>
-        <select className="f-count nodrag" value={String(data.count)} onChange={(e) => setNodeData(Number(id), { count: Number(e.target.value) })}>
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-        </select>
+        <span className="f-provider">GPT Codex</span>
+          <FloatingSelect
+            className="f-count nodrag"
+            value={String(data.count)}
+            options={[1, 2, 3].map((count) => ({ value: String(count), label: String(count) }))}
+            onChange={(value) => setNodeData(Number(id), { count: Number(value) })}
+            ariaLabel="Количество вариантов"
+          />
         <button className="btn-node primary small f-run nodrag" disabled={busy} onClick={() => runNode(Number(id))}>
           {busy ? <span className="spinner" /> : null} Derive
         </button>

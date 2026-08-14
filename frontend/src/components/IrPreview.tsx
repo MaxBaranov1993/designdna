@@ -15,6 +15,7 @@ export function IrPreview({
   minHeight = 32,
   interactive = false,
   onClickCapture,
+  highlightSections = false,
 }: {
   ir: IRObject | null;
   height?: number;
@@ -25,6 +26,7 @@ export function IrPreview({
   minHeight?: number;
   interactive?: boolean;
   onClickCapture?: MouseEventHandler<HTMLDivElement>;
+  highlightSections?: boolean;
 }) {
   const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -58,9 +60,14 @@ export function IrPreview({
         : undefined
     );
     IRRenderer.renderIR(el, deepClone(ir), activeViewport ? { viewport: activeViewport } : undefined);
+    if (highlightSections) {
+      el.querySelectorAll<HTMLElement>("[data-ir-sec]").forEach((section) => {
+        section.classList.add("ir-preview-section-highlight");
+      });
+    }
     const frame = requestAnimationFrame(syncPreviewSize);
     return () => cancelAnimationFrame(frame);
-  }, [ir, viewport, fitHeight, height, minHeight]);
+  }, [ir, viewport, fitHeight, height, minHeight, highlightSections]);
 
   useEffect(() => {
     const outer = outerRef.current;

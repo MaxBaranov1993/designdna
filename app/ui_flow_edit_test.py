@@ -98,8 +98,13 @@ def main():
 
         pg.click('.dna-editor [data-act="save"]')
         pg.wait_for_timeout(300)
-        check("DNA-редактор: сохранение закрыло редактор", pg.evaluate("document.querySelector('.dna-editor').style.display === 'none'"))
+        check("DNA-редактор: сохранение оставляет редактор открытым", pg.evaluate("document.querySelector('.dna-editor').style.display === 'flex'"))
         check("DNA-редактор: IR остался в ноде", pg.evaluate(f"!!window.GraphDev.node({e1}).data.ir"))
+        pg.click('.dna-editor [data-act="close"]')
+        if pg.query_selector('[data-act="discard-close"]'):
+            pg.click('[data-act="discard-close"]')
+        pg.wait_for_timeout(200)
+        check("DNA-редактор: закрылся по кнопке Закрыть", pg.evaluate("document.querySelector('.dna-editor').style.display === 'none'"))
 
         browser.close()
 

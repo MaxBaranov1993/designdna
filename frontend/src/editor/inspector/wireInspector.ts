@@ -27,7 +27,7 @@ function wireActs(root: HTMLElement) {
       const map: Record<string, keyof GeoHandle> = {
         "align-left": "alignLeft", "align-center-h": "alignCenterH", "align-right": "alignRight",
         "align-top": "alignTop", "align-center-v": "alignCenterV", "align-bottom": "alignBottom",
-        "distribute-h": "distributeH", "distribute-v": "distributeV", "reset-frame": "resetFrame",
+        "distribute-h": "distributeH", "distribute-v": "distributeV", "stretch-width": "stretchWidth", "reset-frame": "resetFrame",
       };
       const fn = map[(btn as HTMLElement).dataset.act!];
       if (fn && typeof g[fn] === "function") (g[fn] as () => void)();
@@ -216,28 +216,34 @@ function wireSingle(root: HTMLElement) {
 function wireTypeGroups(root: HTMLElement) {
   // element props (text/size/align/level/variant)
   root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-el-prop]").forEach((inp) => {
+    const key = inp.dataset.elProp!;
+    if (key === "text") {
+      let armed = false;
+      inp.addEventListener("focus", () => {
+        if (!armed) { ctl.pushHistory(); armed = true; }
+      });
+      inp.addEventListener("input", () => {
+        ctl.mutateSelectedNodeLive((node) => { node[key] = inp.value; });
+      });
+      inp.addEventListener("blur", () => { armed = false; });
+      return;
+    }
     inp.addEventListener("change", () => {
-      const s = sess();
-      if (!s || !s.sel.length) return;
-      const node = s.sel[0].node;
-      if (!node) return;
-      ctl.pushHistory();
-      const key = inp.dataset.elProp!;
       let val: any = inp.value;
       if (key === "level") val = Number(val);
-      node[key] = val;
-      ctl.rerenderEditorCanvas();
+      ctl.mutateSelectedNode((node) => { node[key] = val; });
     });
   });
   // text content
   root.querySelectorAll<HTMLTextAreaElement>("[data-textprop]").forEach((ta) => {
-    ta.addEventListener("change", () => {
-      const s = sess();
-      if (!s || !s.sel.length) return;
-      ctl.pushHistory();
-      s.sel[0].node[ta.dataset.textprop!] = ta.value;
-      ctl.rerenderEditorCanvas();
+    let armed = false;
+    ta.addEventListener("focus", () => {
+      if (!armed) { ctl.pushHistory(); armed = true; }
     });
+    ta.addEventListener("input", () => {
+      ctl.mutateSelectedNodeLive((node) => { node[ta.dataset.textprop!] = ta.value; });
+    });
+    ta.addEventListener("blur", () => { armed = false; });
   });
   // token colors: снапшот ДО мутации (по первому input серии) —
   // pushHistory на change снимал бы уже изменённый цвет, и undo его не возвращал

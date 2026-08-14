@@ -9,6 +9,8 @@ from typing import Callable
 import imageio_ffmpeg
 from playwright.sync_api import sync_playwright
 
+from ir.motion import frame_comp_state
+
 
 RENDERER_JS = Path(__file__).resolve().parent / "static" / "flow" / "engine.js"
 MAX_RENDER_FRAMES = 10_800
@@ -91,10 +93,14 @@ def validate_render_input(motion: dict, scene_irs: list[dict]) -> tuple[int, str
         raise ValueError(f"render exceeds the {MAX_RENDER_FRAMES} frame limit")
     if int(composition.get("width") or 0) % 2 or int(composition.get("height") or 0) % 2:
         raise ValueError("video composition width and height must be even")
-    expected = [scene.get("id") for scene in scenes]
-    actual = [item.get("sceneId") for item in scene_irs]
-    if expected != actual:
-        raise ValueError("materialized scenes do not match Motion IR order")
+    if motion.get("layers"):
+        if len(scene_irs) != 1:
+            raise ValueError("layer composition expects a single Design IR")
+    else:
+        expected = [scene.get("id") for scene in scenes]
+        actual = [item.get("sceneId") for item in scene_irs]
+        if expected != actual:
+            raise ValueError("materialized scenes do not match Motion IR order")
     output_format = str(settings.get("format") or "mp4")
     return count, output_format
 
@@ -129,7 +135,8 @@ def render_video(
                     '<style>html,body,#stage{margin:0;width:100%;height:100%;overflow:hidden}'
                     'body{background:var(--motion-bg)}.motion-layer{position:absolute;inset:0;'
                     'overflow:hidden;transform-origin:center center;will-change:transform,opacity}'
-                    '.motion-ir{position:absolute;left:0;top:0;transform-origin:top left}</style>'
+                    '.motion-ir{position:absolute;left:0;top:0;transform-origin:top left}'
+                    '[data-ir-sec]{will-change:transform,opacity;transform-origin:center top}</style>'
                     '<div id="stage"></div>'
                 )
                 page.add_script_tag(path=str(RENDERER_JS))
@@ -137,6 +144,31 @@ def render_video(
                     """({motion, sceneIrs}) => {
                       document.body.style.setProperty('--motion-bg', motion.composition.background);
                       const stage = document.querySelector('#stage');
+                      const isComp = Array.isArray(motion.layers) && motion.layers.length;
+                      if (isComp) {
+                        const target = document.createElement('div');
+                        target.className = 'motion-ir';
+                        stage.appendChild(target);
+                        const viewport = motion.scenes?.[0]?.viewport;
+                        window.IRRenderer.renderIR(target, sceneIrs[0].ir, { fit: false, viewport });
+                        const inner = target.querySelector('[data-design-width]');
+                        const artWidth = Number(inner?.dataset.designWidth) || 1440;
+                        const baseScale = motion.composition.width / artWidth;
+                        target.style.width = `${artWidth}px`;
+                        window.__motionSetFrame = (state) => {
+                          const camera = state.camera || { x: 0, y: 0, scale: 1 };
+                          target.style.transform = `translate(${camera.x}px, ${camera.y}px) scale(${baseScale * (camera.scale || 1)})`;
+                          const bySection = {};
+                          (state.layers || []).forEach(layer => { bySection[layer.sectionIndex] = layer; });
+                          target.querySelectorAll('[data-ir-sec]').forEach(el => {
+                            const pose = bySection[Number(el.dataset.irSec)];
+                            if (!pose) { el.style.opacity = '1'; el.style.transform = 'none'; return; }
+                            el.style.opacity = String(pose.opacity);
+                            el.style.transform = `translate(${pose.x}px, ${pose.y}px) scale(${pose.scale}) rotate(${pose.rotate}deg)`;
+                          });
+                        };
+                        return;
+                      }
                       sceneIrs.forEach((item, index) => {
                         const layer = document.createElement('div');
                         layer.className = 'motion-layer';
@@ -198,7 +230,8 @@ def render_video(
                     }"""
                 )
                 for index in range(count):
-                    page.evaluate("state => window.__motionSetFrame(state)", frame_state(motion, index))
+                    state = frame_comp_state(motion, index) if motion.get("layers") else frame_state(motion, index)
+                    page.evaluate("state => window.__motionSetFrame(state)", state)
                     frame = page.screenshot(type="png", animations="disabled", caret="hide")
                     if not process.stdin:
                         raise RuntimeError("video encoder stdin is unavailable")

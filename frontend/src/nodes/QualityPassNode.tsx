@@ -4,6 +4,7 @@ import { useFlowStore } from "../flow/store";
 import type { QualityPassFlowNode } from "../flow/types";
 import { NodeShell, NodeStatus } from "./NodeShell";
 import { InPorts, OutPorts } from "./PortHandles";
+import { FloatingSelect } from "../components/ui/floating-select";
 
 /* Premium Quality Pass: независимый judge выдаёт scorecard, а backend при
  * необходимости выполняет адресный repair и повторно оценивает IR. */
@@ -26,10 +27,13 @@ export function QualityPassNode({ id, data, selected }: NodeProps<QualityPassFlo
         value={data.brief} onChange={(e) => setNodeData(Number(id), { brief: e.target.value })} />
       <div className="ctl-row qp-controls">
         <label className="qp-label nodrag">порог
-          <select className="f-count" value={String(data.minScore)}
-            onChange={(e) => setNodeData(Number(id), { minScore: Number(e.target.value), result: null })}>
-            <option value="75">75</option><option value="85">85</option><option value="95">95</option>
-          </select>
+          <FloatingSelect
+            className="f-count"
+            value={String(data.minScore)}
+            options={[75, 85, 95].map((score) => ({ value: String(score), label: String(score) }))}
+            onChange={(value) => setNodeData(Number(id), { minScore: Number(value), result: null })}
+            ariaLabel="Порог качества"
+          />
         </label>
         <label className="qp-label nodrag" title="Исправить замечания судьи и проверить результат повторно">
           <input type="checkbox" checked={data.repair}

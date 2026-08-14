@@ -25,19 +25,24 @@ function ResponsiveStatus() {
   const override = sess.viewport === "desktop" ? null : (canonical.responsive || {})[sess.viewport] || null;
   const frameSource = override && override.frame ? sess.viewport : "shared";
   const styleSource = override && override.style ? sess.viewport : "shared";
+  const frameLabel = frameSource === "shared" ? "Унаследовано" : "Переопределено";
+  const styleLabel = styleSource === "shared" ? "Унаследовано" : "Переопределено";
   return (
     <div className="fe-responsive-status">
       <div className="fe-responsive-status-head">
-        <span>{sess.viewport} · {sess.previewWidth} px</span>
-        <span><span className="fe-source-tag">frame {frameSource}</span> <span className="fe-source-tag">style {styleSource}</span></span>
+        <span>{sess.viewport === "desktop" ? "Компьютер" : sess.viewport === "tablet" ? "Планшет" : "Телефон"} · {sess.previewWidth} px</span>
+        <span className="fe-responsive-state"><span className={`fe-source-tag ${frameSource !== "shared" ? "override" : "inherited"}`}>Frame: {frameLabel}</span> <span className={`fe-source-tag ${styleSource !== "shared" ? "override" : "inherited"}`}>Style: {styleLabel}</span></span>
       </div>
-      <div className="fe-responsive-actions">
-        <button className="fe-btn" data-responsive-act="reset" disabled={sess.viewport === "desktop"}>Reset override</button>
-        <button className="fe-btn" data-responsive-act="all">Apply to all</button>
-        <button className="fe-btn" data-responsive-copy="mobile">Copy to M</button>
-        <button className="fe-btn" data-responsive-copy="tablet">Copy to T</button>
-        <button className="fe-btn" data-responsive-copy="desktop">Copy to D</button>
-      </div>
+      <details className="fe-responsive-advanced">
+        <summary>Дополнительно</summary>
+        <div className="fe-responsive-actions">
+          <button className="fe-btn" data-responsive-act="reset" disabled={sess.viewport === "desktop"}>Сбросить своё</button>
+          <button className="fe-btn" data-responsive-act="all">Применить ко всем</button>
+          <button className="fe-btn" data-responsive-copy="mobile">Копировать на телефон</button>
+          <button className="fe-btn" data-responsive-copy="tablet">Копировать на планшет</button>
+          <button className="fe-btn" data-responsive-copy="desktop">Копировать на компьютер</button>
+        </div>
+      </details>
     </div>
   );
 }
@@ -47,20 +52,20 @@ function TextGroup({ node }: { node: any }) {
     <div className="fe-insp-group"><span className="fe-glabel">Текст</span>
       <textarea data-textprop={node.text !== undefined ? "text" : "title"} defaultValue={node.text || node.title || ""} />
       <div className="fe-row" style={{ marginTop: 6 }}>
-        <div className="fe-field"><label>Sz</label>
+        <div className="fe-field fe-field-wide"><label>Размер</label>
           <select data-el-prop="size" defaultValue={node.size || "md"}>
             <option value="xs">XS</option><option value="sm">SM</option><option value="md">MD</option>
             <option value="lg">LG</option><option value="xl">XL</option><option value="display">Display</option>
           </select>
         </div>
-        <div className="fe-field"><label>≡</label>
+        <div className="fe-field fe-field-wide"><label>Выравнивание</label>
           <select data-el-prop="align" defaultValue={node.align || "left"}>
-            <option value="left">Left</option><option value="center">Center</option><option value="right">Right</option>
+            <option value="left">Слева</option><option value="center">По центру</option><option value="right">Справа</option>
           </select>
         </div>
       </div>
       {node.type === "heading" && (
-        <div className="fe-row"><div className="fe-field"><label>H</label>
+        <div className="fe-row"><div className="fe-field fe-field-wide"><label>Уровень</label>
           <select data-el-prop="level" defaultValue={node.level || 2}>
             <option value="1">H1</option><option value="2">H2</option><option value="3">H3</option><option value="4">H4</option>
           </select>
@@ -71,32 +76,14 @@ function TextGroup({ node }: { node: any }) {
 }
 
 function ButtonGroup({ node }: { node: any }) {
-  const st = node.style || {};
-  const fill = toFullHex(st.background || node.fill || "");
-  const textColor = toFullHex(st.color || "");
-  const radius = typeof st.borderRadius === "number" ? st.borderRadius : typeof node.radius === "number" ? node.radius : "";
-  const fontSize = typeof st.fontSize === "number" ? st.fontSize : "";
-  const fontWeight = typeof st.fontWeight === "number" ? st.fontWeight : "";
   return (
     <div className="fe-insp-group"><span className="fe-glabel">Кнопка</span>
-      <div className="fe-field" style={{ marginBottom: 6 }}><label>Txt</label><input type="text" data-el-prop="text" defaultValue={node.text || ""} /></div>
-      <div className="fe-field" style={{ marginBottom: 6 }}><label>Var</label>
+      <div className="fe-field fe-field-wide" style={{ marginBottom: 6 }}><label>Текст</label><input type="text" data-el-prop="text" defaultValue={node.text || ""} /></div>
+      <div className="fe-field fe-field-wide"><label>Вид</label>
         <select data-el-prop="variant" defaultValue={node.variant || "primary"}>
-          <option value="primary">Primary</option><option value="secondary">Secondary</option>
-          <option value="outline">Outline</option><option value="ghost">Ghost</option>
+          <option value="primary">Основная</option><option value="secondary">Вторая</option>
+          <option value="outline">Обводка</option><option value="ghost">Призрачная</option>
         </select>
-      </div>
-      <div className="fe-color-row"><label>Fill</label><input type="color" data-node-style-color="background" defaultValue={fill} /><span className="fe-hex">{st.background || ""}</span></div>
-      <div className="fe-color-row"><label>Text</label><input type="color" data-node-style-color="color" defaultValue={textColor} /><span className="fe-hex">{st.color || ""}</span></div>
-      <div className="fe-row">
-        <div className="fe-field"><label>Font</label><select data-node-style-select="fontFamily" defaultValue={st.fontFamily || ""}><FontOptions autoLabel="Auto" /></select></div>
-      </div>
-      <div className="fe-row">
-        <div className="fe-field"><label>Sz</label><input type="text" inputMode="decimal" data-node-style-num="fontSize" defaultValue={fontSize} placeholder="auto" /></div>
-        <div className="fe-field"><label>Wt</label><input type="text" inputMode="decimal" data-node-style-num="fontWeight" defaultValue={fontWeight} placeholder="auto" /></div>
-      </div>
-      <div className="fe-row">
-        <div className="fe-field"><label>R</label><input type="text" inputMode="decimal" data-node-style-num="borderRadius" defaultValue={radius} placeholder="auto" /></div>
       </div>
     </div>
   );
@@ -116,9 +103,9 @@ function ArtboardGroups({ t }: { t: any }) {
       )}
       {t.font && (
         <div className="fe-insp-group"><span className="fe-glabel">Шрифты</span>
-          <div className="fe-field" style={{ marginBottom: 4 }}><label>D</label><select data-font="display" defaultValue={t.font.display.family}><FontOptions /></select></div>
-          <div className="fe-field" style={{ marginBottom: 4 }}><label>B</label><select data-font="body" defaultValue={t.font.body.family}><FontOptions /></select></div>
-          <div className="fe-field"><label>Sc</label>
+          <div className="fe-field fe-field-wide" style={{ marginBottom: 4 }}><label>Заголовок</label><select data-font="display" defaultValue={t.font.display.family}><FontOptions /></select></div>
+          <div className="fe-field fe-field-wide" style={{ marginBottom: 4 }}><label>Текст</label><select data-font="body" defaultValue={t.font.body.family}><FontOptions /></select></div>
+          <div className="fe-field fe-field-wide"><label>Интервал</label>
             <select data-token="font.scale" defaultValue={t.font.scale || "default"}>
               <option value="compact">Compact</option><option value="default">Default</option><option value="spacious">Spacious</option>
             </select>
@@ -127,19 +114,19 @@ function ArtboardGroups({ t }: { t: any }) {
       )}
       <div className="fe-insp-group"><span className="fe-glabel">Форма и отступы</span>
         <div className="fe-row">
-          <div className="fe-field"><label>R</label>
+          <div className="fe-field fe-field-wide"><label>Скругление</label>
             <select data-token="radius.card" defaultValue={(t.radius && t.radius.card) || "md"}>
               <option value="none">None</option><option value="sm">SM</option><option value="md">MD</option>
               <option value="lg">LG</option><option value="xl">XL</option><option value="full">Full</option>
             </select>
           </div>
-          <div className="fe-field"><label>Sp</label>
+          <div className="fe-field fe-field-wide"><label>Отступы</label>
             <select data-token="spacing.section" defaultValue={(t.spacing && t.spacing.section) || "md"}>
               <option value="sm">SM</option><option value="md">MD</option><option value="lg">LG</option><option value="xl">XL</option>
             </select>
           </div>
         </div>
-        <div className="fe-field"><label>Sh</label>
+        <div className="fe-field fe-field-wide"><label>Тень</label>
           <select data-token="shadow" defaultValue={t.shadow || "sm"}>
             <option value="none">None</option><option value="sm">SM</option><option value="md">MD</option><option value="lg">LG</option>
           </select>

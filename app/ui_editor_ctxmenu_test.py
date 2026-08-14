@@ -167,6 +167,8 @@ def main():
         check("клик вне меню закрыл его", pg.query_selector(".geo-ctx-menu") is None)
 
         pg.click('.dna-editor [data-act="close"]')
+        if pg.query_selector('[data-act="discard-close"]'):
+            pg.click('[data-act="discard-close"]')
         pg.wait_for_timeout(400)
         browser.close()
 

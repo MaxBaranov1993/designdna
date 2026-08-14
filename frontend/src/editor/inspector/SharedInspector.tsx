@@ -58,7 +58,7 @@ function MultiInspector({ sels }: { sels: GeoSel[] }) {
   return (
     <div className="pi">
       <div className="pi-type">Выделено: {sels.length}</div>
-      <div className="pi-group"><span className="pi-glabel">Alignment</span><AlignButtons /></div>
+      <div className="pi-group"><span className="pi-glabel">Выравнивание</span><AlignButtons /></div>
       <div className="pi-group"><span className="pi-glabel">Элементы</span>
         <div className="pi-sel-list">
           {sels.map((s, i) => <div key={i}>{s.label}</div>)}
@@ -107,28 +107,30 @@ function SingleInspector({ sel, ir, geo }: { sel: GeoSel; ir: any; geo: GeoHandl
     <div className="pi">
       <div className="pi-type">{sel.label}</div>
 
-      <div className="pi-group"><span className="pi-glabel">Alignment</span><AlignButtons /></div>
+      <details className="pi-advanced">
+        <summary>Ещё: позиция и сетка</summary>
+        <div className="pi-group"><span className="pi-glabel">Выравнивание</span><AlignButtons /></div>
 
-      <div className="pi-group"><span className="pi-glabel">Position</span>
+      <div className="pi-group"><span className="pi-glabel">Позиция</span>
         <div className="pi-row">
           <div className="pi-field"><label title="Тяни горизонтально — scrub; можно выражения: 100*2">X</label><input type="text" inputMode="decimal" data-pi="x" defaultValue={x} disabled={isRoot} /></div>
           <div className="pi-field"><label title="Тяни горизонтально — scrub; можно выражения: 100*2">Y</label><input type="text" inputMode="decimal" data-pi="y" defaultValue={y} disabled={isRoot} /></div>
         </div>
         <div className="pi-row">
-          <div className="pi-field"><label>R</label><input type="text" inputMode="decimal" data-pi="rotation" defaultValue={rot} disabled={isRoot} /></div>
+          <div className="pi-field"><label>Поворот</label><input type="text" inputMode="decimal" data-pi="rotation" defaultValue={rot} disabled={isRoot} /></div>
           <div className="pi-field"></div>
         </div>
         {!isRoot && (
-          <div className="pi-row"><label className="pi-check"><input type="checkbox" data-pi="absolute" defaultChecked={!!f.absolute} /> Absolute Position</label></div>
+          <div className="pi-row"><label className="pi-check"><input type="checkbox" data-pi="absolute" defaultChecked={!!f.absolute} /> Свободная позиция</label></div>
         )}
         {!isRoot && (
           <div className="pi-row" title="Constraints: реакция на resize родителя">
-            <div className="pi-field"><label>CH</label>
+            <div className="pi-field"><label>По горизонтали</label>
               <select data-pi="constr-h" defaultValue={(f.constraints && f.constraints.h) || undefined}>
                 {["left", "center", "right", "scale"].map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
-            <div className="pi-field"><label>CV</label>
+            <div className="pi-field"><label>По вертикали</label>
               <select data-pi="constr-v" defaultValue={(f.constraints && f.constraints.v) || undefined}>
                 {["top", "center", "bottom", "scale"].map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
@@ -138,13 +140,13 @@ function SingleInspector({ sel, ir, geo }: { sel: GeoSel; ir: any; geo: GeoHandl
       </div>
 
       {cont && (
-        <div className="pi-group"><span className="pi-glabel">Flex Layout</span>
+        <div className="pi-group"><span className="pi-glabel">Сетка</span>
           <div className="pi-btnrow">
             <button className={`pi-ibtn ${dir === "free" ? "active" : ""}`} data-pi-dir="free" title="Без раскладки: дети по x/y (layout:none в pen.dev)">⊞</button>
             <button className={`pi-ibtn ${dir === "column" ? "active" : ""}`} data-pi-dir="column" title="Колонка (vertical)">↓</button>
             <button className={`pi-ibtn ${dir === "row" ? "active" : ""}`} data-pi-dir="row" title="Ряд (horizontal)">→</button>
           </div>
-          <div className="pi-row" style={{ marginTop: 6 }}><label style={{ fontSize: 10, color: "var(--muted,#6c7086)", fontWeight: 700 }}>Alignment</label></div>
+          <div className="pi-row" style={{ marginTop: 6 }}><label style={{ fontSize: 10, color: "var(--muted,#6c7086)", fontWeight: 700 }}>Выравнивание</label></div>
           <div className="pi-grid3">
             {["start", "center", "end"].map((a) =>
               ["start", "center", "end"].map((j) => (
@@ -155,69 +157,73 @@ function SingleInspector({ sel, ir, geo }: { sel: GeoSel; ir: any; geo: GeoHandl
           <div className="pi-row" style={{ marginTop: 6 }}>
             <div className="pi-field"><label>Gap</label><input type="text" inputMode="decimal" data-pi="gap" defaultValue={typeof f.gap === "number" ? f.gap : ""} /></div>
           </div>
-          <div className="pi-row"><label className="pi-radio"><input type="radio" name={radioName} data-pi-justify="space-between" defaultChecked={justify === "space-between"} /> Space Between</label></div>
-          <div className="pi-row"><label className="pi-radio"><input type="radio" name={radioName} data-pi-justify="space-around" defaultChecked={justify === "space-around"} /> Space Around</label></div>
+          <div className="pi-row"><label className="pi-radio"><input type="radio" name={radioName} data-pi-justify="space-between" defaultChecked={justify === "space-between"} /> По краям</label></div>
+          <div className="pi-row"><label className="pi-radio"><input type="radio" name={radioName} data-pi-justify="space-around" defaultChecked={justify === "space-around"} /> С промежутками</label></div>
           <div className="pi-row" style={{ marginTop: 6 }}>
-            <div className="pi-field"><label>Pad↕</label><input type="text" inputMode="decimal" data-pi="padv" defaultValue={padV} /></div>
-            <div className="pi-field"><label>Pad↔</label><input type="text" inputMode="decimal" data-pi="padh" defaultValue={padH} /></div>
+            <div className="pi-field"><label>Отступ ↕</label><input type="text" inputMode="decimal" data-pi="padv" defaultValue={padV} /></div>
+            <div className="pi-field"><label>Отступ ↔</label><input type="text" inputMode="decimal" data-pi="padh" defaultValue={padH} /></div>
           </div>
         </div>
       )}
+      </details>
 
-      <div className="pi-group"><span className="pi-glabel">Dimensions</span>
+      <div className="pi-group"><span className="pi-glabel">Размер</span>
         <div className="pi-row">
-          <div className="pi-field"><label title="Можно выражения: 960/3">W</label><input type="text" inputMode="decimal" data-pi="width" defaultValue={w} /></div>
-          <div className="pi-field"><label title="Можно выражения: 960/3">H</label><input type="text" inputMode="decimal" data-pi="height" defaultValue={h} /></div>
-        </div>
-        <div className="pi-checks" style={{ marginTop: 6 }}>
-          <label className="pi-check"><input type="checkbox" data-pi="fillw" defaultChecked={f.width === "fill"} /> Fill Width</label>
-          <label className="pi-check"><input type="checkbox" data-pi="fillh" defaultChecked={f.height === "fill"} /> Fill Height</label>
-          <label className="pi-check"><input type="checkbox" data-pi="hugw" defaultChecked={f.width === "hug"} /> Hug Width</label>
-          <label className="pi-check"><input type="checkbox" data-pi="hugh" defaultChecked={f.height === "hug"} /> Hug Height</label>
-          <label className="pi-check"><input type="checkbox" data-pi="clip" defaultChecked={!!f.clip} /> Clip Content</label>
+          <div className="pi-field"><label title="Можно выражения: 960/3">Ширина</label><input type="text" inputMode="decimal" data-pi="width" defaultValue={w} /></div>
+          <div className="pi-field"><label title="Можно выражения: 960/3">Высота</label><input type="text" inputMode="decimal" data-pi="height" defaultValue={h} /></div>
         </div>
       </div>
 
       {!isRoot && (
-        <div className="pi-group"><span className="pi-glabel">Appearance</span>
+        <div className="pi-group"><span className="pi-glabel">Вид</span>
           <div className="pi-row">
-            <ColorField styleKey="background" label="Fill" hex={fill}
+            <ColorField styleKey="background" label="Заливка" hex={fill}
               raw={st.background || node.fill || ""} transparent={isTransparent(st.background || node.fill)} />
           </div>
           {isText && (
             <div className="pi-row">
-              <ColorField styleKey="color" label="Text" hex={color}
+              <ColorField styleKey="color" label="Текст" hex={color}
                 raw={st.color || ""} transparent={isTransparent(st.color)} />
             </div>
           )}
           <div className="pi-row">
-            <ColorField styleKey="borderColor" label="Line" hex={stroke}
+            <ColorField styleKey="borderColor" label="Обводка" hex={stroke}
               raw={st.borderColor || ""} transparent={isTransparent(st.borderColor)} />
           </div>
           <div className="pi-row">
-            <div className="pi-field"><label>Opacity</label><input type="range" min={0} max={100} data-style-range="opacity" defaultValue={opacityVal} /><span data-opacity-label>{opacityVal}%</span></div>
+            <div className="pi-field"><label>Прозрачность</label><input type="range" min={0} max={100} data-style-range="opacity" defaultValue={opacityVal} /><span data-opacity-label>{opacityVal}%</span></div>
           </div>
           <div className="pi-row">
-            <div className="pi-field"><label>R</label><input type="text" inputMode="decimal" data-style-num="borderRadius" defaultValue={radius} placeholder="0" /></div>
-            <div className="pi-field"><label>BW</label><input type="text" inputMode="decimal" data-style-num="borderWidth" defaultValue={typeof st.borderWidth === "number" ? st.borderWidth : ""} placeholder="0" /></div>
+            <div className="pi-field"><label>Скругление</label><input type="text" inputMode="decimal" data-style-num="borderRadius" defaultValue={radius} placeholder="0" /></div>
+            <div className="pi-field"><label>Толщина линии</label><input type="text" inputMode="decimal" data-style-num="borderWidth" defaultValue={typeof st.borderWidth === "number" ? st.borderWidth : ""} placeholder="0" /></div>
           </div>
           {isText && (
             <>
               <div className="pi-row">
-                <div className="pi-field"><label>Font</label><select data-style-select="fontFamily" defaultValue={fontFamily}><FontOptions autoLabel="Auto" /></select></div>
+                <div className="pi-field"><label>Шрифт</label><select data-style-select="fontFamily" defaultValue={fontFamily}><FontOptions autoLabel="Авто" /></select></div>
               </div>
               <div className="pi-row">
-                <div className="pi-field"><label>Sz</label><input type="text" inputMode="decimal" data-style-num="fontSize" defaultValue={fontSize} placeholder="auto" /></div>
-                <div className="pi-field"><label>Wt</label><input type="text" inputMode="decimal" data-style-num="fontWeight" defaultValue={fontWeight} placeholder="auto" /></div>
+                <div className="pi-field"><label>Кегль</label><input type="text" inputMode="decimal" data-style-num="fontSize" defaultValue={fontSize} placeholder="auto" /></div>
+                <div className="pi-field"><label>Насыщенность</label><input type="text" inputMode="decimal" data-style-num="fontWeight" defaultValue={fontWeight} placeholder="auto" /></div>
               </div>
             </>
           )}
         </div>
       )}
 
-      {!isRoot && (
-        <div className="pi-group"><button className="pi-ibtn pi-wide" data-act="reset-frame">Сбросить frame</button></div>
-      )}
+      <details className="pi-advanced">
+        <summary>Ещё: ширина и обрезка</summary>
+        <div className="pi-checks" style={{ marginTop: 6 }}>
+          <label className="pi-check"><input type="checkbox" data-pi="fillw" defaultChecked={f.width === "fill"} /> На всю ширину</label>
+          <label className="pi-check"><input type="checkbox" data-pi="fillh" defaultChecked={f.height === "fill"} /> На всю высоту</label>
+          <label className="pi-check"><input type="checkbox" data-pi="hugw" defaultChecked={f.width === "hug"} /> По содержимому</label>
+          <label className="pi-check"><input type="checkbox" data-pi="hugh" defaultChecked={f.height === "hug"} /> Высота по содержимому</label>
+          <label className="pi-check"><input type="checkbox" data-pi="clip" defaultChecked={!!f.clip} /> Обрезать лишнее</label>
+        </div>
+        {!isRoot && (
+          <div className="pi-group"><button className="pi-ibtn pi-wide" data-act="reset-frame">Сбросить рамку</button></div>
+        )}
+      </details>
     </div>
   );
 }

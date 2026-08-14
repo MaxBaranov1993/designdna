@@ -27,7 +27,7 @@ from ir.style_dna import enrich_ir, extract_from_signals
 MAX_WORKERS = 4            # как EXECUTOR в server.py
 FRAGMENT_LIMIT = 12000     # HTML блока в промпте, символов
 STYLES_LIMIT = 6000        # CSS страницы в промпте, символов
-DEFAULT_PROVIDER = "openrouter"  # роль clone/repair выбирает модель из ROUTING
+DEFAULT_PROVIDER = "codex"  # роль clone/repair выбирает модель из Codex routing
 
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
