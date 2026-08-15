@@ -1,0 +1,256 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://designai.dev/design-ir/2.0",
+  "title": "DesignIR 2.0 Composition Contract",
+  "description": "Opt-in Design IR 2.0 contract for multi-source composition. It preserves the 1.1 render tree and adds a normalized Source Registry, responsive Layout Axes, facet-level provenance, locks, and revision identity.",
+  "type": "object",
+  "required": ["version", "tokens", "tree", "composition"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "2.0" },
+    "sourcePreview": { "$ref": "https://designai.dev/design-ir/1.1#/properties/sourcePreview" },
+    "responsive": { "$ref": "https://designai.dev/design-ir/1.1#/properties/responsive" },
+    "frame": { "$ref": "https://designai.dev/design-ir/1.1#/properties/frame" },
+    "meta": { "$ref": "https://designai.dev/design-ir/1.1#/properties/meta" },
+    "contentHash": { "$ref": "https://designai.dev/design-ir/1.1#/properties/contentHash" },
+    "provenance": { "$ref": "https://designai.dev/design-ir/1.1#/$defs/documentProvenance" },
+    "styleBindings": { "$ref": "https://designai.dev/design-ir/1.1#/$defs/styleBindings" },
+    "constraints": { "$ref": "https://designai.dev/design-ir/1.1#/$defs/constraints" },
+    "tokens": { "$ref": "https://designai.dev/design-ir/1.1#/$defs/tokens" },
+    "tree": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "https://designai.dev/design-ir/1.1#/$defs/section" }
+    },
+    "composition": { "$ref": "#/$defs/composition" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._:-]{0,127}$"
+    },
+    "nodeRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Stable section id or sourceKey. DOM paths and transient array indexes are not valid long-term identities."
+    },
+    "composition": {
+      "type": "object",
+      "required": ["schemaVersion", "revision", "sourceRegistry", "layoutAxes", "nodeStates"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "const": "composition/1.0" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "sourceRegistry": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Source records keyed by stable source id. Runtime validation requires each key to match record.id.",
+          "additionalProperties": { "$ref": "#/$defs/sourceRecord" }
+        },
+        "layoutAxes": {
+          "type": "object",
+          "description": "Responsive layout axes keyed by stable axis id. Runtime validation requires each key to match axis.id.",
+          "additionalProperties": { "$ref": "#/$defs/layoutAxis" }
+        },
+        "nodeStates": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Out-of-line composition metadata keyed by stable node reference, keeping the render tree backward-compatible.",
+          "additionalProperties": { "$ref": "#/$defs/nodeState" }
+        },
+        "documentLocks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/intentLock" }
+        }
+      }
+    },
+    "revision": {
+      "type": "object",
+      "required": ["id", "createdAt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "baseRevisionId": { "$ref": "#/$defs/identifier" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "actor": { "type": "string", "maxLength": 120 },
+        "message": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "sourceRecord": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "label",
+        "fingerprint",
+        "colorToken",
+        "symbol",
+        "capturedAt",
+        "parserVersion",
+        "confidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": {
+          "enum": ["url", "image", "figma", "code", "library", "manual", "ai"]
+        },
+        "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "ref": { "type": "string", "maxLength": 2048 },
+        "sourceNodeId": { "type": "string", "maxLength": 160 },
+        "fingerprint": { "type": "string", "minLength": 8, "maxLength": 256 },
+        "upstreamHash": { "type": "string", "maxLength": 256 },
+        "colorToken": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "symbol": { "type": "string", "minLength": 1, "maxLength": 8 },
+        "thumbnailAssetId": { "type": "string", "maxLength": 256 },
+        "capturedAt": { "type": "string", "format": "date-time" },
+        "parserVersion": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "license": { "type": "string", "maxLength": 160 }
+      }
+    },
+    "originRef": {
+      "type": "object",
+      "required": ["sourceId", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "sourceId": { "$ref": "#/$defs/identifier" },
+        "sourcePath": { "type": "string", "maxLength": 2048 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "transformationIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    },
+    "nodeProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "primarySourceId": { "$ref": "#/$defs/identifier" },
+        "facets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "structure": { "$ref": "#/$defs/originRef" },
+            "appearance": { "$ref": "#/$defs/originRef" },
+            "content": { "$ref": "#/$defs/originRef" },
+            "assets": { "$ref": "#/$defs/originRef" },
+            "interaction": { "$ref": "#/$defs/originRef" }
+          }
+        },
+        "propertyOverrides": {
+          "type": "object",
+          "propertyNames": { "pattern": "^/" },
+          "additionalProperties": { "$ref": "#/$defs/originRef" }
+        },
+        "transformations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    },
+    "responsiveLength": {
+      "oneOf": [
+        { "type": "number", "minimum": 0 },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "desktop": { "type": "number", "minimum": 0 },
+            "tablet": { "type": "number", "minimum": 0 },
+            "mobile": { "type": "number", "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "axisAnchor": {
+      "enum": ["outer", "inner-content", "text", "grid", "start", "center", "end"]
+    },
+    "layoutAxisMember": {
+      "type": "object",
+      "required": ["nodeRef", "anchor"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeRef": { "$ref": "#/$defs/nodeRef" },
+        "anchor": { "$ref": "#/$defs/axisAnchor" }
+      }
+    },
+    "layoutAxis": {
+      "type": "object",
+      "required": ["id", "role", "maxWidth", "inlineGutter", "alignment", "members"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "role": { "enum": ["page-content", "full-bleed", "text-column", "custom"] },
+        "maxWidth": { "$ref": "#/$defs/responsiveLength" },
+        "inlineGutter": { "$ref": "#/$defs/responsiveLength" },
+        "alignment": { "enum": ["start", "center", "end"] },
+        "members": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/layoutAxisMember" }
+        },
+        "locked": { "type": "boolean" }
+      }
+    },
+    "axisBinding": {
+      "type": "object",
+      "required": ["axisId", "anchor"],
+      "additionalProperties": false,
+      "properties": {
+        "axisId": { "$ref": "#/$defs/identifier" },
+        "anchor": { "$ref": "#/$defs/axisAnchor" }
+      }
+    },
+    "intentLock": {
+      "enum": [
+        "content",
+        "structure",
+        "appearance",
+        "assets",
+        "interaction",
+        "brand",
+        "layout",
+        "source-link"
+      ]
+    },
+    "nodeStatus": {
+      "enum": [
+        "linked",
+        "modified",
+        "generated",
+        "stale-source",
+        "conflict",
+        "low-confidence"
+      ]
+    },
+    "nodeState": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provenance": { "$ref": "#/$defs/nodeProvenance" },
+        "axisBindings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/axisBinding" }
+        },
+        "locks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/intentLock" }
+        },
+        "status": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nodeStatus" }
+        }
+      }
+    }
+  }
+}

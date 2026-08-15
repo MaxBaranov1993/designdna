@@ -10,7 +10,8 @@ ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve()
 SCHEMA_DIR = ROOT / "schema"
 
 CURRENT_SCHEMA_VERSION = "1.1"
-SUPPORTED_SCHEMA_VERSIONS = {"1.0", "1.1"}
+LATEST_SCHEMA_VERSION = "2.0"
+SUPPORTED_SCHEMA_VERSIONS = {"1.0", "1.1", "2.0"}
 
 
 @lru_cache(maxsize=4)
@@ -27,3 +28,14 @@ def load_schema(version: str = CURRENT_SCHEMA_VERSION) -> dict:
         return json.loads(dedicated.read_text(encoding="utf-8"))
     canonical = SCHEMA_DIR / "design-ir.schema.json"
     return json.loads(canonical.read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=8)
+def load_aux_schema(name: str) -> dict:
+    """Load a non-document contract schema from the shared schema directory."""
+    if not name or any(part in name for part in ("/", "\\", "..")):
+        raise ValueError(f"Invalid schema name: {name!r}")
+    path = SCHEMA_DIR / f"{name}.schema.json"
+    if not path.exists():
+        raise ValueError(f"Unknown auxiliary schema: {name!r}")
+    return json.loads(path.read_text(encoding="utf-8"))

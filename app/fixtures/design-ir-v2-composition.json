@@ -1,0 +1,121 @@
+{
+  "version": "2.0",
+  "tokens": {
+    "mode": "light",
+    "color": {
+      "primary": "#6d28d9",
+      "background": "#ffffff",
+      "surface": "#f8fafc",
+      "text": "#111827",
+      "textMuted": "#64748b",
+      "border": "#e2e8f0"
+    },
+    "font": {
+      "display": { "family": "Inter", "weight": 700 },
+      "body": { "family": "Inter", "weight": 400 },
+      "scale": "default"
+    },
+    "radius": { "card": "lg", "button": "md", "input": "md" },
+    "spacing": { "section": "lg", "container": "default" },
+    "shadow": "sm"
+  },
+  "tree": [
+    {
+      "id": "header-main",
+      "sourceKey": "source-a::header",
+      "type": "navbar",
+      "variant": "default",
+      "props": {
+        "logoText": "DesignDNA",
+        "links": [{ "label": "Product", "href": "#product" }],
+        "cta": { "text": "Start" }
+      }
+    },
+    {
+      "id": "hero-main",
+      "sourceKey": "source-b::hero",
+      "type": "hero",
+      "variant": "split",
+      "props": {
+        "heading": "Compose interfaces without visual seams",
+        "ctaPrimary": { "text": "Build" }
+      }
+    }
+  ],
+  "composition": {
+    "schemaVersion": "composition/1.0",
+    "revision": {
+      "id": "revision-1",
+      "createdAt": "2026-08-15T10:00:00Z",
+      "actor": "example"
+    },
+    "sourceRegistry": {
+      "source-a": {
+        "id": "source-a",
+        "kind": "url",
+        "label": "Imported header",
+        "ref": "https://example.com/header",
+        "fingerprint": "sha256:header",
+        "colorToken": "source-blue",
+        "symbol": "A",
+        "capturedAt": "2026-08-15T09:00:00Z",
+        "parserVersion": "2.0.0",
+        "confidence": 0.98
+      },
+      "source-b": {
+        "id": "source-b",
+        "kind": "manual",
+        "label": "Custom hero",
+        "fingerprint": "manual:hero",
+        "colorToken": "source-orange",
+        "symbol": "B",
+        "capturedAt": "2026-08-15T09:30:00Z",
+        "parserVersion": "manual/1",
+        "confidence": 1
+      }
+    },
+    "layoutAxes": {
+      "page-content": {
+        "id": "page-content",
+        "role": "page-content",
+        "maxWidth": { "desktop": 1200, "tablet": 960, "mobile": 640 },
+        "inlineGutter": { "desktop": 32, "tablet": 24, "mobile": 16 },
+        "alignment": "center",
+        "members": [
+          { "nodeRef": "header-main", "anchor": "inner-content" },
+          { "nodeRef": "hero-main", "anchor": "inner-content" }
+        ]
+      }
+    },
+    "nodeStates": {
+      "header-main": {
+        "provenance": {
+          "primarySourceId": "source-a",
+          "facets": {
+            "structure": { "sourceId": "source-a", "confidence": 0.98 },
+            "appearance": { "sourceId": "source-a", "confidence": 0.94 }
+          }
+        },
+        "axisBindings": [
+          { "axisId": "page-content", "anchor": "inner-content" }
+        ],
+        "locks": ["brand"],
+        "status": ["linked"]
+      },
+      "hero-main": {
+        "provenance": {
+          "primarySourceId": "source-b",
+          "facets": {
+            "structure": { "sourceId": "source-b", "confidence": 1 },
+            "content": { "sourceId": "source-b", "confidence": 1 }
+          }
+        },
+        "axisBindings": [
+          { "axisId": "page-content", "anchor": "inner-content" }
+        ],
+        "status": ["modified"]
+      }
+    },
+    "documentLocks": ["source-link"]
+  }
+}

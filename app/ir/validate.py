@@ -2,8 +2,15 @@
 from __future__ import annotations
 
 import jsonschema
+from referencing import Registry, Resource
 
-from .schema import CURRENT_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS, load_schema
+from .composition import validate_change_set_semantics, validate_v2_semantics
+from .schema import (
+    CURRENT_SCHEMA_VERSION,
+    SUPPORTED_SCHEMA_VERSIONS,
+    load_aux_schema,
+    load_schema,
+)
 
 
 class ValidationError(tuple):
@@ -29,13 +36,38 @@ class ValidationError(tuple):
 
 
 _validators: dict[str, jsonschema.Draft7Validator] = {}
+_change_set_validator: jsonschema.Draft7Validator | None = None
+
+
+def _get_registry() -> Registry:
+    registry = Registry()
+    for supported_version in SUPPORTED_SCHEMA_VERSIONS:
+        schema = load_schema(supported_version)
+        schema_id = schema.get("$id")
+        if schema_id:
+            registry = registry.with_resource(schema_id, Resource.from_contents(schema))
+    return registry
 
 
 def _get_validator(version: str = CURRENT_SCHEMA_VERSION) -> jsonschema.Draft7Validator:
     if version not in _validators:
         schema = load_schema(version)
-        _validators[version] = jsonschema.Draft7Validator(schema)
+        _validators[version] = jsonschema.Draft7Validator(
+            schema,
+            registry=_get_registry(),
+            format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
+        )
     return _validators[version]
+
+
+def _get_change_set_validator() -> jsonschema.Draft7Validator:
+    global _change_set_validator
+    if _change_set_validator is None:
+        _change_set_validator = jsonschema.Draft7Validator(
+            load_aux_schema("semantic-change-set"),
+            format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
+        )
+    return _change_set_validator
 
 
 def validate_ir(ir: dict, version: str | None = None) -> list[ValidationError]:
@@ -59,7 +91,7 @@ def validate_ir(ir: dict, version: str | None = None) -> list[ValidationError]:
 
     target_version = version or doc_version or CURRENT_SCHEMA_VERSION
     validator = _get_validator(target_version)
-    errors = [
+    errors: list[ValidationError] = [
         ValidationError(
             "/".join(str(p) for p in error.absolute_path) or "(root)",
             error.message,
@@ -67,6 +99,32 @@ def validate_ir(ir: dict, version: str | None = None) -> list[ValidationError]:
         )
         for error in validator.iter_errors(ir)
     ]
+    if target_version == "2.0" and not errors:
+        errors.extend(
+            ValidationError(f"composition/{message.split(':', 1)[0]}", message, "error")
+            for message in validate_v2_semantics(ir)
+        )
+    return sorted(errors, key=lambda e: (e.path, e.message))
+
+
+def validate_change_set(value: dict) -> list[ValidationError]:
+    """Validate a SemanticChangeSet with schema and typed invariants."""
+    if not isinstance(value, dict):
+        return [ValidationError("(root)", "Change set must be an object", "error")]
+    validator = _get_change_set_validator()
+    errors: list[ValidationError] = [
+        ValidationError(
+            "/".join(str(p) for p in error.absolute_path) or "(root)",
+            error.message,
+            "error",
+        )
+        for error in validator.iter_errors(value)
+    ]
+    if not errors:
+        errors.extend(
+            ValidationError(message.split(":", 1)[0], message, "error")
+            for message in validate_change_set_semantics(value)
+        )
     return sorted(errors, key=lambda e: (e.path, e.message))
 
 

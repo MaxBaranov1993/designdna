@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://designai.dev/semantic-change-set/1.0",
+  "title": "SemanticChangeSet",
+  "description": "Atomic, previewable and reversible semantic edit contract for AI and deterministic layout operations.",
+  "type": "object",
+  "required": [
+    "version",
+    "id",
+    "baseRevisionId",
+    "intent",
+    "scope",
+    "preconditions",
+    "operations",
+    "inverseOperations",
+    "validations",
+    "atomic",
+    "createdAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "semantic-change-set/1.0" },
+    "id": { "$ref": "#/$defs/identifier" },
+    "baseRevisionId": { "$ref": "#/$defs/identifier" },
+    "targetRevisionId": { "$ref": "#/$defs/identifier" },
+    "baseDocumentHash": { "type": "string", "minLength": 16, "maxLength": 256 },
+    "intent": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "scope": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "preconditions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/precondition" }
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/operation" }
+    },
+    "inverseOperations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/operation" }
+    },
+    "validations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/validation" }
+    },
+    "atomic": { "const": true },
+    "status": { "enum": ["draft", "validated", "applied", "rejected"] },
+    "actor": { "type": "string", "maxLength": 120 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "explanation": { "type": "string", "maxLength": 4000 }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._:-]{0,127}$"
+    },
+    "precondition": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["revision-match", "document-hash-match", "node-exists", "property-equals", "lock-absent"]
+        },
+        "target": { "type": "string", "maxLength": 500 },
+        "path": { "type": "string", "pattern": "^/" },
+        "expected": {}
+      }
+    },
+    "operation": {
+      "type": "object",
+      "required": ["id", "kind", "target"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "inverseOf": {
+          "$ref": "#/$defs/identifier",
+          "description": "Required by runtime validation for inverseOperations; references a forward operation id."
+        },
+        "kind": {
+          "enum": [
+            "bind-layout-axis",
+            "unbind-layout-axis",
+            "create-container",
+            "remove-container",
+            "set-responsive-constraint",
+            "apply-token",
+            "replace-style-facet",
+            "reorder-section",
+            "insert-node",
+            "remove-node",
+            "set-property",
+            "remove-property",
+            "generate-state",
+            "set-intent-lock",
+            "remove-intent-lock"
+          ]
+        },
+        "target": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "path": { "type": "string", "pattern": "^/" },
+        "value": {},
+        "payload": { "type": "object" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": ["kind", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["schema", "references", "locks", "responsive", "overflow", "visual", "accessibility", "export"]
+        },
+        "status": { "enum": ["pending", "passed", "failed", "warning"] },
+        "message": { "type": "string", "maxLength": 1000 },
+        "viewport": { "enum": ["desktop", "tablet", "mobile"] }
+      }
+    }
+  }
+}

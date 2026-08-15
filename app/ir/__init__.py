@@ -1,9 +1,18 @@
 """ir-core: Design IR schema, migration, validation and identity utilities."""
 from __future__ import annotations
 
-from .schema import CURRENT_SCHEMA_VERSION, load_schema
+from .schema import CURRENT_SCHEMA_VERSION, LATEST_SCHEMA_VERSION, load_aux_schema, load_schema
 from .migrate import migrate_ir, ensure_current, migrate_project_payload
-from .validate import validate_ir, ValidationError, format_errors
+from .validate import validate_change_set, validate_ir, ValidationError, format_errors
+from .composition import (
+    CompositionContract,
+    LayoutAxis,
+    NodeProvenance,
+    SemanticChangeSet,
+    SourceRecord,
+    validate_change_set_semantics,
+    validate_v2_semantics,
+)
 from .hash import content_hash, canonical_json
 from .source_key import stable_key, resolve_collision, prefix_block_key
 from .style_dna import (
@@ -40,13 +49,23 @@ from .motion import (
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
+    "LATEST_SCHEMA_VERSION",
+    "load_aux_schema",
     "load_schema",
     "migrate_ir",
     "ensure_current",
     "migrate_project_payload",
     "validate_ir",
+    "validate_change_set",
     "ValidationError",
     "format_errors",
+    "CompositionContract",
+    "LayoutAxis",
+    "NodeProvenance",
+    "SemanticChangeSet",
+    "SourceRecord",
+    "validate_change_set_semantics",
+    "validate_v2_semantics",
     "content_hash",
     "canonical_json",
     "stable_key",
