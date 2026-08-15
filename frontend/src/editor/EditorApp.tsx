@@ -15,6 +15,7 @@ import { SmartAxisPanel } from "./SmartAxisPanel";
 import { QualityGatePanel } from "./QualityGatePanel";
 import { HarmonizerPanel } from "./HarmonizerPanel";
 import { ResponsiveAutopilotPanel } from "./ResponsiveAutopilotPanel";
+import { IntentLocksPanel } from "./IntentLocksPanel";
 
 export function EditorApp() {
   const isOpen = useEditorStore((s) => s.isOpen);
@@ -49,6 +50,7 @@ export function EditorApp() {
       <QualityGatePanel />
       <HarmonizerPanel />
       <ResponsiveAutopilotPanel />
+      <IntentLocksPanel />
     </div>
   );
 }

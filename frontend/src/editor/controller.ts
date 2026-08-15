@@ -96,6 +96,8 @@ export type ResponsiveAutopilotProposal = {
   error?: string;
 };
 
+export type IntentLock = "brand" | "content" | "geometry" | "appearance" | "responsive" | "source-link";
+
 let state: Session | null = null;
 let dnaPanelState: {
   tokens: any;
@@ -105,7 +107,7 @@ let dnaPanelState: {
 } | null = null;
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void } = {
+let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void } = {
   setTool: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
@@ -114,6 +116,7 @@ let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspe
   setQualityProposal: () => {},
   setHarmonizerProposal: () => {},
   setResponsiveProposal: () => {},
+  setIntentLocksOpen: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -218,6 +221,88 @@ function applySourceLens() {
   });
 }
 
+const ALL_INTENT_LOCKS: IntentLock[] = ["brand", "content", "geometry", "appearance", "responsive", "source-link"];
+
+function nodeLocks(node: any): IntentLock[] {
+  return Array.isArray(node?.constraints?.intentLocks) ? node.constraints.intentLocks.filter((lock: string) => ALL_INTENT_LOCKS.includes(lock as IntentLock)) : [];
+}
+
+function hasIntentLock(node: any, lock: IntentLock): boolean {
+  return nodeLocks(state?.ir).includes(lock) || nodeLocks(node).includes(lock);
+}
+
+function selectedLockTargets(): any[] {
+  if (!state) return [];
+  const indices = [...new Set(state.sel.map((selection) => selection.ref.secIdx).filter((index): index is number => typeof index === "number"))];
+  return indices.length ? indices.map((index) => state!.ir.tree?.[index]).filter(Boolean) : [state.ir];
+}
+
+export function getIntentLockView() {
+  const targets = selectedLockTargets();
+  return {
+    scope: state?.sel.length ? `${targets.length} выбранн. блок(а)` : "Весь документ",
+    locks: ALL_INTENT_LOCKS.filter((lock) => targets.length > 0 && targets.every((target) => nodeLocks(target).includes(lock))),
+  };
+}
+
+export function setIntentLocks(locks: IntentLock[]) {
+  if (!state) return;
+  const targets = selectedLockTargets();
+  pushHistory();
+  targets.forEach((target) => {
+    target.constraints = target.constraints || {};
+    target.constraints.intentLocks = [...new Set(locks)].filter((lock) => ALL_INTENT_LOCKS.includes(lock));
+  });
+  state.node.data.ir = state.ir;
+  ui.setIntentLocksOpen(false);
+  rerenderEditorCanvas();
+  updateUndoBtn();
+}
+
+export function closeIntentLocks() {
+  ui.setIntentLocksOpen(false);
+}
+
+function applyIntentLockBadges() {
+  if (!state || !dom.canvasInner) return;
+  dom.canvasInner.querySelectorAll<HTMLElement>(".intent-locked").forEach((element) => {
+    element.classList.remove("intent-locked");
+    delete element.dataset.intentLocks;
+  });
+  (state.ir.tree || []).forEach((section: any, index: number) => {
+    const locks = [...new Set([...nodeLocks(state!.ir), ...nodeLocks(section)])];
+    const element = domAtCanvas({ secIdx: index, path: null });
+    if (!element || !locks.length) return;
+    element.classList.add("intent-locked");
+    element.dataset.intentLocks = `🔒 ${locks.length}`;
+  });
+}
+
+function preserveLockedFacets(original: any, candidate: any) {
+  if (!original || !candidate) return candidate;
+  const preserveNode = (before: any, after: any) => {
+    if (!before || !after) return;
+    if (hasIntentLock(before, "geometry")) after.frame = deepClone(before.frame);
+    if (hasIntentLock(before, "responsive")) after.responsive = deepClone(before.responsive);
+    if (hasIntentLock(before, "appearance") || hasIntentLock(before, "brand")) {
+      after.style = deepClone(before.style);
+      after.styleBindings = deepClone(before.styleBindings);
+    }
+    if (hasIntentLock(before, "content")) {
+      after.props = deepClone(before.props);
+      for (const key of ["text", "title", "label", "placeholder", "src", "alt"]) if (key in before) after[key] = deepClone(before[key]);
+    }
+    if (hasIntentLock(before, "source-link")) {
+      after.sourceKey = before.sourceKey;
+      after.provenance = deepClone(before.provenance);
+    }
+    (before.children || []).forEach((child: any, index: number) => preserveNode(child, after.children?.[index]));
+  };
+  if (hasIntentLock(original, "brand") || hasIntentLock(original, "appearance")) candidate.tokens = deepClone(original.tokens);
+  (original.tree || []).forEach((section: any, index: number) => preserveNode(section, candidate.tree?.[index]));
+  return candidate;
+}
+
 function getByPath(obj: any, path: string) {
   return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
 }
@@ -319,6 +404,7 @@ export function handleAct(act: string) {
   else if (act === "quality-gate") void planQualityGate();
   else if (act === "harmonize") void planHarmonizer();
   else if (act === "responsive-autopilot") void planResponsiveAutopilot();
+  else if (act === "intent-locks") ui.setIntentLocksOpen(true);
   else if (act === "close-style-dna") closeStyleDnaInspector();
   else if (act === "reset-style-dna") resetStyleDnaInspector();
   else if (act === "apply-style-dna") void applyStyleDnaFromInspector();
@@ -366,6 +452,7 @@ export function planSmartAxis() {
     .map((section: any, sectionIndex: number) => ({ section, sectionIndex }))
     .filter(({ section, sectionIndex }: any) => {
       if (selected.size && !selected.has(sectionIndex)) return false;
+      if (hasIntentLock(section, "geometry") || hasIntentLock(section, "responsive")) return false;
       return !(section.type === "source-block" || section.variant === "dom-capture" || (section.frame?.layout === "free" && section.children?.length));
     });
   if (!candidates.length) {
@@ -475,7 +562,7 @@ export function dismissQualityProposal() {
 export function applyQualityProposal(proposal: EditorQualityProposal) {
   if (!state || proposal.status !== "ready" || !proposal.fixedIr) return;
   pushHistory();
-  state.ir = deepClone(proposal.fixedIr);
+  state.ir = preserveLockedFacets(state.ir, deepClone(proposal.fixedIr));
   state.node.data.ir = state.ir;
   ui.setQualityProposal(null);
   rerenderEditorCanvas();
@@ -502,7 +589,8 @@ export async function planHarmonizer() {
     });
     const applied = await applyResponse.json();
     if (!applyResponse.ok) throw new Error(applied.detail || `HTTP ${applyResponse.status}`);
-    ui.setHarmonizerProposal({ status: "ready", sourceCount, tokens: extracted.tokens || {}, harmonizedIr: applied.ir || null });
+    const harmonizedIr = applied.ir ? preserveLockedFacets(state.ir, deepClone(applied.ir)) : null;
+    ui.setHarmonizerProposal({ status: "ready", sourceCount, tokens: extracted.tokens || {}, harmonizedIr });
   } catch (error) {
     ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, error: (error as Error).message });
   }
@@ -568,6 +656,10 @@ export async function planResponsiveAutopilot() {
       (node.children || []).forEach((child: any) => adaptNode(child, allowStructural));
     };
     (candidate.tree || []).forEach((section: any) => {
+      if (hasIntentLock(section, "responsive") || hasIntentLock(section, "geometry")) {
+        counters.untouched += 1;
+        return;
+      }
       const reproduction = section.type === "source-block" || section.variant === "dom-capture" || (section.frame?.layout === "free" && section.children?.length);
       if (reproduction) {
         counters.untouched += 1;
@@ -1385,6 +1477,7 @@ function renderCanvas() {
   applyTransform();
   attachGeoEdit();
   applySourceLens();
+  applyIntentLockBadges();
 }
 
 /* ---------- флаги слоёв (hide/lock): сессия редактора, вне IR ---------- */
@@ -1621,6 +1714,7 @@ function attachGeoEdit() {
         state.geo.selectMulti(savedRefs);
       }
       applySourceLens();
+      applyIntentLockBadges();
       // во время drag-scrub инспектор не перестраиваем — иначе умрёт pointer capture
       if (!inspScrubbing) renderInspector();
     },
@@ -1632,6 +1726,7 @@ function attachGeoEdit() {
       renderLayers();
       updateAlignVisibility();
       applySourceLens();
+      applyIntentLockBadges();
     },
   });
   // инструмент переживает ре-аттач после мутаций
@@ -1873,6 +1968,7 @@ export function rerenderEditorCanvas() {
   applyTransform();
   attachGeoEdit();
   applySourceLens();
+  applyIntentLockBadges();
   renderLayers();
   if (state.sel.length && state.geo) state.geo.selectMulti(state.sel.map((s) => s.ref));
   renderInspector();

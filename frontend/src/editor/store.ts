@@ -20,6 +20,7 @@ interface EditorUIState {
   qualityProposal: ctl.EditorQualityProposal | null;
   harmonizerProposal: ctl.HarmonizerProposal | null;
   responsiveProposal: ctl.ResponsiveAutopilotProposal | null;
+  intentLocksOpen: boolean;
   /** Открыть React-редактор для ноды. false — движки недоступны, зовите legacy fallback. */
   openEditor: (nodeId: number) => boolean;
 }
@@ -34,6 +35,7 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
   qualityProposal: null,
   harmonizerProposal: null,
   responsiveProposal: null,
+  intentLocksOpen: false,
 
   openEditor: (nodeId) => {
     const st = useFlowStore.getState();
@@ -83,7 +85,7 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
       { registry: sourceRegistry, nodeSources, layoutEvidence },
     );
     if (!ok) return false;
-    set({ isOpen: true, nodeId, tool: "select", smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null });
+    set({ isOpen: true, nodeId, tool: "select", smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false });
     return true;
   },
 }));
@@ -91,11 +93,12 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
 /* Связываем контроллер со стором (без циклического импорта controller → store) */
 ctl.bindUi({
   setTool: (t) => useEditorStore.setState({ tool: t }),
-  setOpen: (v) => useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null }) }),
+  setOpen: (v) => useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false }) }),
   bumpInspector: () => useEditorStore.setState((s) => ({ inspectorTick: s.inspectorTick + 1 })),
   bumpSources: () => useEditorStore.setState((s) => ({ sourceTick: s.sourceTick + 1 })),
   setSmartAxisProposal: (smartAxisProposal) => useEditorStore.setState({ smartAxisProposal }),
   setQualityProposal: (qualityProposal) => useEditorStore.setState({ qualityProposal }),
   setHarmonizerProposal: (harmonizerProposal) => useEditorStore.setState({ harmonizerProposal }),
   setResponsiveProposal: (responsiveProposal) => useEditorStore.setState({ responsiveProposal }),
+  setIntentLocksOpen: (intentLocksOpen) => useEditorStore.setState({ intentLocksOpen }),
 });

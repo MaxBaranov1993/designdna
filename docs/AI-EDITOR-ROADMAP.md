@@ -42,8 +42,10 @@ Current reference material:
    for colors, typography, radius and shadows; facet controls follow.
 5. **Responsive Autopilot — shipped foundation:** tablet/mobile constraints,
    safe reflow, overflow protection and Quality Gate preview.
-6. **Intent layer:** semantic selection, locks and generated states.
-7. **Production loop:** code contracts, taste memory and outcome branches.
+6. **Intent Locks — shipped foundation:** document/selection locks for brand,
+   content, geometry, appearance, responsive behavior and source linkage.
+7. **Intent layer:** semantic selection and generated states.
+8. **Production loop:** code contracts, taste memory and outcome branches.
 
 ## Non-negotiable interaction rule
 

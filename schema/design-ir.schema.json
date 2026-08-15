@@ -225,7 +225,13 @@
         "allowedColors": { "type": "array", "items": { "type": "string" } },
         "maxTextLength": { "type": "integer", "minimum": 0 },
         "requiredContrast": { "type": "number", "minimum": 1 },
-        "allowedTypes": { "type": "array", "items": { "type": "string" } }
+        "allowedTypes": { "type": "array", "items": { "type": "string" } },
+        "intentLocks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["brand", "content", "geometry", "appearance", "responsive", "source-link"] },
+          "description": "User intent facets that AI and deterministic repair operations must preserve."
+        }
       }
     },
 
