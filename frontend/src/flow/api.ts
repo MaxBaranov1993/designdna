@@ -1,4 +1,4 @@
-import type { IRObject, SourceViewport } from "./types";
+import type { IRObject, ParserSourceEnvelope, SourceViewport } from "./types";
 
 /* Зеркало api() (nodes.js:61-71): JSON-вызов к бэкенду, Error с data.detail при !ok */
 export async function api<T>(path: string, body: unknown): Promise<T> {
@@ -41,6 +41,7 @@ export type ReproduceResp = {
   icons_count?: number;
   cached?: boolean;
   provider_used?: string;
+  parserContract?: ParserSourceEnvelope;
 };
 /* BlockParse/Reskin (решение владельца 11, server.py /api/block-parse, /api/reskin):
  * ошибка отдельного блока — в его записи (error), остальные работают */
@@ -63,6 +64,7 @@ export type BlockParseBlockResp = {
   fidelity?: Partial<Record<SourceViewport, number>>;
   warnings?: string[];
   repeat?: { count?: number; kind?: string } | null;
+  parserContract?: ParserSourceEnvelope;
 };
 export type BlockParseResp = {
   url: string;

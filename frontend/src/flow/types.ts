@@ -24,6 +24,38 @@ export type NodeType =
 
 export type IRObject = Record<string, unknown>;
 export type SourceViewport = "desktop" | "tablet" | "mobile";
+export type ParserDiagnostic = {
+  code: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+  nodeRef?: string;
+  viewport?: SourceViewport;
+};
+export type ParserLayoutEvidence = {
+  id: string;
+  nodeRef: string;
+  role: "page-content" | "full-bleed" | "text-column" | "custom";
+  anchor: "outer" | "inner-content" | "text" | "grid" | "start" | "center" | "end";
+  viewport: SourceViewport;
+  maxWidth: number;
+  inlineGutter: number;
+  confidence: number;
+  basis: "measured" | "inferred";
+};
+export type ParserSourceEnvelope = {
+  version: "parser-source-envelope/1.0";
+  sourceRecord: Record<string, unknown> & { id: string; confidence: number };
+  nodeStates: Record<string, Record<string, unknown>>;
+  layoutEvidence: ParserLayoutEvidence[];
+  viewports: Partial<Record<SourceViewport, {
+    width: number;
+    height?: number;
+    layers?: number;
+    coverage?: number;
+    fidelity?: number;
+  }>>;
+  diagnostics: ParserDiagnostic[];
+};
 export type FeatureFlags = {
   irV11?: boolean;
   tailwindProjection?: boolean;
@@ -78,6 +110,7 @@ export type BlockParseBlock = {
   fidelity?: Partial<Record<SourceViewport, number>>;
   warnings?: string[];
   repeat?: { count?: number; kind?: string } | null;
+  parserContract?: ParserSourceEnvelope;
   lit: boolean;
 };
 export type SourceImportNodeData = {

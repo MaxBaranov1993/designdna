@@ -23,6 +23,7 @@ import ir
 from ir import ensure_current as ensure_current_ir
 from scraper import fetch_html, detect_blocks, rendered_html, capture_block_irs
 from ir.style_dna import enrich_ir, extract_from_signals
+from ir.parser_contract import build_parser_envelope
 
 MAX_WORKERS = 4            # как EXECUTOR в server.py
 FRAGMENT_LIMIT = 12000     # HTML блока в промпте, символов
@@ -37,7 +38,7 @@ _SEMANTIC_ROLES = {
     "gallery", "section",
 }
 
-SOURCE_COMPILER_VERSION = "dom-v21"
+SOURCE_COMPILER_VERSION = "dom-v22"
 
 
 def _validate(doc: dict) -> list[str]:
@@ -218,8 +219,26 @@ def parse_blocks(url: str, blocks: list | None = None,
         _clean_text_nodes(ir)
         ir = enrich_ir(ir, source=url)
         ir = ensure_current_ir(ir, source=f"source-import:{url}")
-        cache_store.put("clone_block", _block_cache_key(url, b["name"], b["selector"]), {"ir": ir})
+        parser_contract = build_parser_envelope(
+            ir,
+            url=url,
+            selector=b["selector"],
+            label=head["label"],
+            parser_version=SOURCE_COMPILER_VERSION,
+            capture={
+                **item,
+                "size": {"width": item.get("width"), "height": item.get("height")},
+                "layers": item.get("layer_count", 0),
+                "layersByViewport": item.get("layers_by_viewport", {}),
+            },
+        )
+        cache_store.put(
+            "clone_block",
+            _block_cache_key(url, b["name"], b["selector"]),
+            {"ir": ir, "parserContract": parser_contract},
+        )
         results.append({**head, "ir": ir, "cached": False, "source": "dom",
+                        "parserContract": parser_contract,
                         "layers": item.get("layer_count", 0), "size": {
                             "width": item.get("width"), "height": item.get("height")},
                         "preview": item.get("preview"), "previews": item.get("previews", {}),

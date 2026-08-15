@@ -791,6 +791,34 @@ def scrape(req: ScrapeReq):
     }
 
 
+def _with_reproduce_parser_contract(payload: dict, source_ref: str, source_kind: str) -> dict:
+    """Attach Parser v2 metadata to cached and fresh screenshot reproductions."""
+    if isinstance(payload.get("parserContract"), dict):
+        return payload
+    document = payload.get("ir")
+    if not isinstance(document, dict) or not document:
+        return payload
+    diff = payload.get("diff") if isinstance(payload.get("diff"), dict) else {}
+    fidelity = diff.get("overall_pct")
+    capture = {
+        "preview": payload.get("repro_png") or "",
+        "fidelity": fidelity,
+        "warnings": [diff["error"]] if diff.get("error") else [],
+    }
+    return {
+        **payload,
+        "parserContract": ir.build_parser_envelope(
+            document,
+            url=source_ref,
+            selector="screenshot",
+            label="Website screenshot" if source_kind == "url" else "Uploaded screenshot",
+            parser_version="vision-v2",
+            kind=source_kind,
+            capture=capture,
+        ),
+    }
+
+
 @app.post("/api/reproduce")
 def reproduce(req: ReproduceReq):
     """Pixel-perfect reproduction: скриншот → VLM-структура → Python-измерения → HTML → diff.
@@ -809,7 +837,7 @@ def reproduce(req: ReproduceReq):
         url_key = cache_store.key_url(url)
         hit = cache_store.get("reproduce_url", url_key)
         if hit:
-            return {**hit, "cached": True}
+            return {**_with_reproduce_parser_contract(hit, url, "url"), "cached": True}
         # скриншот сайта снимаем один раз — дальше он же и кэшируется
         try:
             page = analyze_url(url, use_playwright=True)
@@ -825,7 +853,9 @@ def reproduce(req: ReproduceReq):
     img_key = cache_store.key_image(image)
     hit = cache_store.get("reproduce_img", img_key)
     if hit:
-        return {**hit, "cached": True}
+        source_ref = url or f"image-sha256:{img_key}"
+        source_kind = "url" if url else "image"
+        return {**_with_reproduce_parser_contract(hit, source_ref, source_kind), "cached": True}
 
     provider = normalize_provider(req.provider)
 
@@ -856,6 +886,9 @@ def reproduce(req: ReproduceReq):
         "repro_png": f"data:image/png;base64,{result['repro_png_b64']}" if result.get("repro_png_b64") else "",
         "provider_used": provider,
     }
+    source_ref = url or f"image-sha256:{img_key}"
+    source_kind = "url" if url else "image"
+    payload = _with_reproduce_parser_contract(payload, source_ref, source_kind)
     cache_store.put("reproduce_img", img_key, payload)
     if url_key:
         cache_store.put("reproduce_url", url_key, payload)

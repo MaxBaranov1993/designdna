@@ -5,6 +5,7 @@ import jsonschema
 from referencing import Registry, Resource
 
 from .composition import validate_change_set_semantics, validate_v2_semantics
+from .parser_contract import validate_parser_envelope_semantics
 from .schema import (
     CURRENT_SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
@@ -36,7 +37,7 @@ class ValidationError(tuple):
 
 
 _validators: dict[str, jsonschema.Draft7Validator] = {}
-_change_set_validator: jsonschema.Draft7Validator | None = None
+_aux_validators: dict[str, jsonschema.Draft7Validator] = {}
 
 
 def _get_registry() -> Registry:
@@ -60,14 +61,14 @@ def _get_validator(version: str = CURRENT_SCHEMA_VERSION) -> jsonschema.Draft7Va
     return _validators[version]
 
 
-def _get_change_set_validator() -> jsonschema.Draft7Validator:
-    global _change_set_validator
-    if _change_set_validator is None:
-        _change_set_validator = jsonschema.Draft7Validator(
-            load_aux_schema("semantic-change-set"),
+def _get_aux_validator(name: str) -> jsonschema.Draft7Validator:
+    if name not in _aux_validators:
+        _aux_validators[name] = jsonschema.Draft7Validator(
+            load_aux_schema(name),
+            registry=_get_registry(),
             format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
         )
-    return _change_set_validator
+    return _aux_validators[name]
 
 
 def validate_ir(ir: dict, version: str | None = None) -> list[ValidationError]:
@@ -111,7 +112,7 @@ def validate_change_set(value: dict) -> list[ValidationError]:
     """Validate a SemanticChangeSet with schema and typed invariants."""
     if not isinstance(value, dict):
         return [ValidationError("(root)", "Change set must be an object", "error")]
-    validator = _get_change_set_validator()
+    validator = _get_aux_validator("semantic-change-set")
     errors: list[ValidationError] = [
         ValidationError(
             "/".join(str(p) for p in error.absolute_path) or "(root)",
@@ -124,6 +125,27 @@ def validate_change_set(value: dict) -> list[ValidationError]:
         errors.extend(
             ValidationError(message.split(":", 1)[0], message, "error")
             for message in validate_change_set_semantics(value)
+        )
+    return sorted(errors, key=lambda e: (e.path, e.message))
+
+
+def validate_parser_envelope(value: dict) -> list[ValidationError]:
+    """Validate the persisted Parser v2 sidecar contract."""
+    if not isinstance(value, dict):
+        return [ValidationError("(root)", "Parser envelope must be an object", "error")]
+    validator = _get_aux_validator("parser-source-envelope")
+    errors = [
+            ValidationError(
+                "/".join(str(p) for p in error.absolute_path) or "(root)",
+                error.message,
+                "error",
+            )
+            for error in validator.iter_errors(value)
+        ]
+    if not errors:
+        errors.extend(
+            ValidationError(message.split(":", 1)[0], message, "error")
+            for message in validate_parser_envelope_semantics(value)
         )
     return sorted(errors, key=lambda e: (e.path, e.message))
 

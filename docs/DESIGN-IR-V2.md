@@ -82,8 +82,20 @@ replacement, section reordering, node insertion/removal and intent locks.
 - Parser migration must populate stable identities before 2.0 becomes the
   runtime default.
 
+## Parser v2 sidecar
+
+Parser v2 keeps its render payload on IR 1.1 and emits a strict
+`parser-source-envelope/1.0` sidecar per block. The sidecar contains a stable
+URL + selector source id, source fingerprint and upstream hash, facet-level
+node provenance, per-viewport measurements, full-bleed/content-axis evidence,
+confidence and structured diagnostics. This boundary avoids silently
+downgrading a live IR 2.0 document through legacy `ensure_current` paths.
+
+`SOURCE_COMPILER_VERSION` is bumped whenever the envelope or deterministic DOM
+compiler changes, so cached parse results cannot hide a contract migration.
+
 ## Next implementation boundary
 
-The next P0 phase is Parser v2. It must emit Source Registry records, stable
-node references, facet-level provenance, inner/full-bleed container evidence,
-responsive constraints and confidence warnings.
+The next P1 phase consumes parser sidecars during page composition and adds
+Source Lens highlighting, source filters and conflict/status affordances to the
+Edit node. It is the first phase that changes the visible editing workflow.

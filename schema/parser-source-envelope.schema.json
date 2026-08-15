@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://designai.dev/parser-source-envelope/1.0",
+  "title": "ParserSourceEnvelope",
+  "description": "Parser v2 sidecar metadata for one render-compatible Design IR block.",
+  "type": "object",
+  "required": ["version", "sourceRecord", "nodeStates", "layoutEvidence", "viewports", "diagnostics"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "parser-source-envelope/1.0" },
+    "sourceRecord": { "$ref": "https://designai.dev/design-ir/2.0#/$defs/sourceRecord" },
+    "nodeStates": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "https://designai.dev/design-ir/2.0#/$defs/nodeState" }
+    },
+    "layoutEvidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/layoutEvidence" }
+    },
+    "viewports": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "desktop": { "$ref": "#/$defs/viewportMeasurement" },
+        "tablet": { "$ref": "#/$defs/viewportMeasurement" },
+        "mobile": { "$ref": "#/$defs/viewportMeasurement" }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    }
+  },
+  "$defs": {
+    "viewport": { "enum": ["desktop", "tablet", "mobile"] },
+    "viewportMeasurement": {
+      "type": "object",
+      "required": ["width"],
+      "additionalProperties": false,
+      "properties": {
+        "width": { "type": "number", "minimum": 0 },
+        "height": { "type": "number", "minimum": 0 },
+        "layers": { "type": "integer", "minimum": 0 },
+        "coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "fidelity": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "layoutEvidence": {
+      "type": "object",
+      "required": ["id", "nodeRef", "role", "anchor", "viewport", "maxWidth", "inlineGutter", "confidence", "basis"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "https://designai.dev/design-ir/2.0#/$defs/identifier" },
+        "nodeRef": { "$ref": "https://designai.dev/design-ir/2.0#/$defs/nodeRef" },
+        "role": { "enum": ["page-content", "full-bleed", "text-column", "custom"] },
+        "anchor": { "$ref": "https://designai.dev/design-ir/2.0#/$defs/axisAnchor" },
+        "viewport": { "$ref": "#/$defs/viewport" },
+        "maxWidth": { "type": "number", "minimum": 0 },
+        "inlineGutter": { "type": "number", "minimum": 0 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "basis": { "enum": ["measured", "inferred"] }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": ["code", "severity", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "$ref": "https://designai.dev/design-ir/2.0#/$defs/identifier" },
+        "severity": { "enum": ["info", "warning", "error"] },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "nodeRef": { "$ref": "https://designai.dev/design-ir/2.0#/$defs/nodeRef" },
+        "viewport": { "$ref": "#/$defs/viewport" }
+      }
+    }
+  }
+}

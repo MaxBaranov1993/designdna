@@ -3,7 +3,13 @@ from __future__ import annotations
 
 from .schema import CURRENT_SCHEMA_VERSION, LATEST_SCHEMA_VERSION, load_aux_schema, load_schema
 from .migrate import migrate_ir, ensure_current, migrate_project_payload
-from .validate import validate_change_set, validate_ir, ValidationError, format_errors
+from .validate import (
+    validate_change_set,
+    validate_ir,
+    validate_parser_envelope,
+    ValidationError,
+    format_errors,
+)
 from .composition import (
     CompositionContract,
     LayoutAxis,
@@ -12,6 +18,17 @@ from .composition import (
     SourceRecord,
     validate_change_set_semantics,
     validate_v2_semantics,
+)
+from .parser_contract import (
+    PARSER_CONTRACT_VERSION,
+    LayoutEvidence,
+    ParserDiagnostic,
+    ParserSourceEnvelope,
+    ViewportMeasurement,
+    build_parser_envelope,
+    normalize_source_ref,
+    stable_source_id,
+    validate_parser_envelope_semantics,
 )
 from .hash import content_hash, canonical_json
 from .source_key import stable_key, resolve_collision, prefix_block_key
@@ -57,6 +74,7 @@ __all__ = [
     "migrate_project_payload",
     "validate_ir",
     "validate_change_set",
+    "validate_parser_envelope",
     "ValidationError",
     "format_errors",
     "CompositionContract",
@@ -66,6 +84,15 @@ __all__ = [
     "SourceRecord",
     "validate_change_set_semantics",
     "validate_v2_semantics",
+    "PARSER_CONTRACT_VERSION",
+    "LayoutEvidence",
+    "ParserDiagnostic",
+    "ParserSourceEnvelope",
+    "ViewportMeasurement",
+    "build_parser_envelope",
+    "normalize_source_ref",
+    "stable_source_id",
+    "validate_parser_envelope_semantics",
     "content_hash",
     "canonical_json",
     "stable_key",

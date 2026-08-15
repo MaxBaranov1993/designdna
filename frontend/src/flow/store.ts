@@ -544,7 +544,14 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
         const ir = res.ir || null;
         const dna = extractStyleDna(ir, null);
         const blocks = ir
-          ? [{ name: "capture", selector: "screenshot", ir, source: "vision" as const, lit: true }]
+          ? [{
+              name: "capture",
+              selector: "screenshot",
+              ir,
+              source: "vision" as const,
+              parserContract: res.parserContract,
+              lit: true,
+            }]
           : [];
         get().setNodeData(id, { blocks, tokens: dna.tokens });
         get().setStatus(id, ir ? "Готово: capture + Style DNA" : "Не удалось получить IR из скриншота", ir ? "ok" : "err");
