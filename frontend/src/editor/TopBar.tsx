@@ -45,6 +45,7 @@ export function TopBar() {
       <button className="fe-tbtn" data-act="undo" title="Отменить (Ctrl+Z)" ref={(el) => { ctl.dom.undoBtn = el; }} onClick={() => ctl.handleAct("undo")}>↩</button>
       <button className="fe-tbtn" data-act="redo" title="Повторить (Ctrl+Shift+Z)" ref={(el) => { ctl.dom.redoBtn = el; }} onClick={() => ctl.handleAct("redo")}>↪</button>
       <button className="fe-tbtn" data-act="style-dna" title="Style DNA" onClick={() => ctl.handleAct("style-dna")}>🧬</button>
+      <button className="fe-btn fe-smart-axis-trigger" data-act="smart-axis" title="AI найдёт общую ось контента и покажет безопасный патч" onClick={() => ctl.handleAct("smart-axis")}>✦ Выровнять ширину</button>
       <span className="fe-spacer"></span>
       <button className="fe-btn danger" data-act="close" onClick={() => ctl.handleAct("close")}>Закрыть</button>
       <button className="fe-btn primary" data-act="save" onClick={() => ctl.handleAct("save")}>💾 Сохранить</button>

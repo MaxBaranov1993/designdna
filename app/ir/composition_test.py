@@ -40,6 +40,7 @@ def valid_ir() -> dict:
                 "sourceKey": "source-a::header",
                 "type": "navbar",
                 "variant": "default",
+                "frame": {"width": "fill", "contentMaxWidth": 1200, "contentGutter": 32},
                 "props": {
                     "logoText": "DesignDNA",
                     "links": [{"label": "Product", "href": "#product"}],

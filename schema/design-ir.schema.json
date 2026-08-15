@@ -238,6 +238,16 @@
         "height": { "$ref": "#/$defs/frameSize" },
         "minWidth": { "type": "number", "minimum": 0 },
         "maxWidth": { "type": "number", "minimum": 0 },
+        "contentMaxWidth": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Semantic inner content rail width. The section background may remain full-bleed."
+        },
+        "contentGutter": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum inline gutter around the semantic inner content rail."
+        },
         "minHeight": { "type": "number", "minimum": 0 },
         "maxHeight": { "type": "number", "minimum": 0 },
         "x": { "type": "number", "description": "Отступ от левого края родителя (только если у родителя frame.layout:free)" },

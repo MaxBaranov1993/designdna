@@ -94,6 +94,7 @@ export type SourceRecordView = {
 export type SourceAwareNodeData = {
   sourceRegistry?: Record<string, SourceRecordView>;
   nodeSources?: Record<string, string>;
+  layoutEvidence?: ParserLayoutEvidence[];
 };
 export type EditNodeData = SourceAwareNodeData & {
   inputs: string[];

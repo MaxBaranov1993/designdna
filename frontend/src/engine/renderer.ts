@@ -181,7 +181,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
       .ir-${uid} .sec-source.with-underlay > [data-ir-frame].editing > * { opacity:.92 !important; }
       .dna-editor .ir-${uid} .sec-source.with-underlay .source-underlay { opacity:0 !important; }
       .dna-editor .ir-${uid} .sec-source.with-underlay > [data-ir-frame] > * { opacity:1 !important; }
-      .ir-${uid} .wrap { max-width:var(--container); margin:0 auto; }
+      .ir-${uid} .wrap { max-width:var(--content-max-width,var(--container)) !important; width:calc(100% - (var(--content-gutter,0px) * 2)); margin-left:auto; margin-right:auto; }
       .ir-${uid} .muted { color:var(--c-muted); }
       .ir-${uid} .btn { display:inline-flex; align-items:center; gap:8px; padding:12px 22px; border-radius:var(--r-btn);
         font-weight:600; font-size:calc(14px * var(--fs)); cursor:pointer; border:1px solid transparent; text-decoration:none; }
@@ -468,7 +468,10 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     const secStyle = visualCss(sec.style);
     // обёртка — якорь hoisted absolute-детей: position:relative без flex-раскладки
     // (extraCss гарантирует и саму обёртку, даже если у секции пустой frame)
-    const extraCss = [secStyle, absChildren ? "position:relative" : ""].filter(Boolean).join(";");
+    const railCss = sec.frame && typeof sec.frame.contentMaxWidth === "number"
+      ? `--content-max-width:${sec.frame.contentMaxWidth}px;--content-gutter:${typeof sec.frame.contentGutter === "number" ? sec.frame.contentGutter : 0}px`
+      : "";
+    const extraCss = [secStyle, railCss, absChildren ? "position:relative" : ""].filter(Boolean).join(";");
     // free-секция рендерится без .sec-внутренностей — класс sec-free сохраняет
     // дефолтный padding секции, иначе при конверсии в free дети «уплывают»
     return withFrame(combined, sec.frame, parentFree, isStructuredSource || isFree, null,

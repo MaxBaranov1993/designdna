@@ -11,6 +11,7 @@ import { CanvasStage } from "./CanvasStage";
 import { InspectorPanel } from "./InspectorPanel";
 import { DnaPanel } from "./DnaPanel";
 import { SourceLensBar } from "./SourceLensBar";
+import { SmartAxisPanel } from "./SmartAxisPanel";
 
 export function EditorApp() {
   const isOpen = useEditorStore((s) => s.isOpen);
@@ -41,6 +42,7 @@ export function EditorApp() {
         <InspectorPanel />
       </div>
       <DnaPanel />
+      <SmartAxisPanel />
     </div>
   );
 }

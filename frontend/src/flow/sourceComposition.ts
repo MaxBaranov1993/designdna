@@ -5,6 +5,7 @@ import type {
   FlowNode,
   IRObject,
   ParserSourceEnvelope,
+  ParserLayoutEvidence,
   SourceRecordView,
   SourceViewport,
 } from "./types";
@@ -12,6 +13,7 @@ import type {
 export type SourceCompositionMeta = {
   sourceRegistry: Record<string, SourceRecordView>;
   nodeSources: Record<string, string>;
+  layoutEvidence: ParserLayoutEvidence[];
 };
 
 export type SourceInputBlock = SourceCompositionMeta & {
@@ -36,17 +38,19 @@ function walkPair(
   composed: Record<string, unknown>,
   input: SourceInputBlock,
   output: Record<string, string>,
+  refMap: Record<string, string>,
   inheritedSourceId?: string,
 ): void {
   const sourceRef = nodeRef(source);
   const sourceId = (sourceRef && input.nodeSources[sourceRef]) || inheritedSourceId;
   const composedRef = nodeRef(composed);
   if (sourceId && composedRef) output[composedRef] = sourceId;
+  if (sourceRef && composedRef) refMap[sourceRef] = composedRef;
   const sourceChildren = Array.isArray(source.children) ? source.children : [];
   const composedChildren = Array.isArray(composed.children) ? composed.children : [];
   sourceChildren.forEach((child, index) => {
     if (isRecord(child) && isRecord(composedChildren[index])) {
-      walkPair(child, composedChildren[index], input, output, sourceId);
+      walkPair(child, composedChildren[index], input, output, refMap, sourceId);
     }
   });
 }
@@ -56,23 +60,29 @@ export function composeSourceInputs(
   tokensOverride: IRObject | null = null,
   activeViewport: SourceViewport = "desktop",
   forcePage = true,
-): { ir: IRObject; sourceRegistry: Record<string, SourceRecordView>; nodeSources: Record<string, string> } {
+): { ir: IRObject; sourceRegistry: Record<string, SourceRecordView>; nodeSources: Record<string, string>; layoutEvidence: ParserLayoutEvidence[] } {
   const ir = !forcePage && blocks.length === 1
     ? deepClone(blocks[0].ir)
     : composePage(blocks.map(({ name, ir: blockIr }) => ({ name, ir: blockIr })), tokensOverride, activeViewport);
   const sourceRegistry: Record<string, SourceRecordView> = {};
   const nodeSources: Record<string, string> = {};
+  const layoutEvidence: ParserLayoutEvidence[] = [];
   const outputTree = Array.isArray(ir.tree) ? ir.tree.filter(isRecord) : [];
   let sectionIndex = 0;
   for (const block of blocks) {
     Object.assign(sourceRegistry, block.sourceRegistry);
+    const refMap: Record<string, string> = {};
     const sourceTree = Array.isArray(block.ir.tree) ? block.ir.tree.filter(isRecord) : [];
     for (const sourceSection of sourceTree) {
       const composedSection = outputTree[sectionIndex++];
-      if (composedSection) walkPair(sourceSection, composedSection, block, nodeSources);
+      if (composedSection) walkPair(sourceSection, composedSection, block, nodeSources, refMap);
     }
+    block.layoutEvidence.forEach((item) => {
+      const nextRef = refMap[item.nodeRef];
+      if (nextRef) layoutEvidence.push({ ...item, nodeRef: nextRef });
+    });
   }
-  return { ir, sourceRegistry, nodeSources };
+  return { ir, sourceRegistry, nodeSources, layoutEvidence };
 }
 
 function sourceMapFromContract(contract: ParserSourceEnvelope): SourceCompositionMeta {
@@ -80,6 +90,7 @@ function sourceMapFromContract(contract: ParserSourceEnvelope): SourceCompositio
   return {
     sourceRegistry: { [record.id]: record },
     nodeSources: Object.fromEntries(Object.keys(contract.nodeStates).map((ref) => [ref, record.id])),
+    layoutEvidence: deepClone(contract.layoutEvidence),
   };
 }
 
@@ -107,7 +118,7 @@ function syntheticSource(node: FlowNode, handle: string, ir: IRObject): SourceCo
     if (Array.isArray(value.children)) value.children.forEach((child) => walk(child, inherited));
   };
   if (Array.isArray(ir.tree)) ir.tree.forEach((section) => walk(section));
-  return { sourceRegistry: { [id]: record }, nodeSources };
+  return { sourceRegistry: { [id]: record }, nodeSources, layoutEvidence: [] };
 }
 
 export function sourceInputForPort(
@@ -129,8 +140,11 @@ export function sourceInputForPort(
   const existingNodeSources = isRecord(sourceData.nodeSources)
     ? sourceData.nodeSources as Record<string, string>
     : null;
+  const existingLayoutEvidence = Array.isArray(sourceData.layoutEvidence)
+    ? sourceData.layoutEvidence as ParserLayoutEvidence[]
+    : [];
   let meta: SourceCompositionMeta | null = existingRegistry && existingNodeSources
-    ? { sourceRegistry: deepClone(existingRegistry), nodeSources: deepClone(existingNodeSources) }
+    ? { sourceRegistry: deepClone(existingRegistry), nodeSources: deepClone(existingNodeSources), layoutEvidence: deepClone(existingLayoutEvidence) }
     : null;
   if (!meta && sourceNode.type === "sourceimport") {
     const block = sourceNode.data.blocks.find((item) => item.name === edge.sourceHandle);

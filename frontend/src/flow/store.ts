@@ -523,7 +523,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       .map((name) => sourceInputForPort(st.nodes, st.edges, n, name))
       .filter((block): block is SourceInputBlock => block !== null);
     if (!blocks.length) {
-      get().setNodeData(id, { ir: null, sourceRegistry: {}, nodeSources: {} });
+      get().setNodeData(id, { ir: null, sourceRegistry: {}, nodeSources: {}, layoutEvidence: [] });
       get().setStatus(id, "Подключите хотя бы один компонент", "err");
       return;
     }

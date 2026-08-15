@@ -107,7 +107,20 @@ section rails, source-aware layer rows, strong selection outlines and an
 Inspector origin card with source kind and confidence. Color is never the only
 signal.
 
+## AI Smart Axis and safe patches
+
+The fullscreen editor exposes **Выровнять ширину** as a high-level AI action.
+The Layout Director ranks parser `page-content` evidence by confidence, derives
+one centered content rail and prepares a `SemanticChangeSet` instead of
+mutating the document immediately. The preview names the reference source,
+target width, gutter and affected blocks. Apply is atomic, responsive values
+are generated for tablet/mobile, and the normal editor history provides Undo.
+
+`frame.contentMaxWidth` and `frame.contentGutter` describe the inner semantic
+rail while section backgrounds remain full-bleed. Imported reproduction blocks
+are not rescaled; the alignment is applied to editable generic section wraps.
+
 ## Next implementation boundary
 
-The next P1 phase applies `SemanticChangeSet` through a safe preview/commit
-pipeline and implements Smart Axis width alignment from parser evidence.
+The next P2 phase adds the cross-source Harmonizer, visual quality gates and
+the remaining designer/vibecoder AI advantages from the product roadmap.

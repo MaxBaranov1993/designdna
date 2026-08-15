@@ -57,8 +57,19 @@ interface Session {
     nodeSources: Record<string, string>;
     lensEnabled: boolean;
     activeSourceIds: Set<string>;
+    layoutEvidence: Array<{ nodeRef: string; role: string; anchor: string; viewport: string; maxWidth: number; inlineGutter: number; confidence: number; basis: string }>;
   };
 }
+
+export type SmartAxisProposal = {
+  id: string;
+  targetWidth: number;
+  gutter: number;
+  referenceLabel: string;
+  affectedLabels: string[];
+  changeSet: Record<string, any>;
+  patches: Array<{ sectionIndex: number; beforeFrame: any; afterFrame: any; beforeResponsive: any; afterResponsive: any }>;
+};
 
 let state: Session | null = null;
 let dnaPanelState: {
@@ -69,11 +80,12 @@ let dnaPanelState: {
 } | null = null;
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void } = {
+let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void } = {
   setTool: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
   bumpSources: () => {},
+  setSmartAxisProposal: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -275,6 +287,7 @@ export function handleAct(act: string) {
   else if (act === "undo") undo();
   else if (act === "redo") redo();
   else if (act === "style-dna") openStyleDnaInspector();
+  else if (act === "smart-axis") planSmartAxis();
   else if (act === "close-style-dna") closeStyleDnaInspector();
   else if (act === "reset-style-dna") resetStyleDnaInspector();
   else if (act === "apply-style-dna") void applyStyleDnaFromInspector();
@@ -297,6 +310,110 @@ export function handleAct(act: string) {
   else if (act === "ungroup") state.geo && state.geo.ungroupSelection();
 }
 
+function stableRevisionId(ir: any): string {
+  const raw = String(ir?.meta?.revisionId || "current").toLowerCase().replace(/[^a-z0-9._:-]+/g, "-");
+  return `revision.${raw || "current"}`.slice(0, 128);
+}
+
+function sectionLabel(section: any, index: number): string {
+  return section?.props?.heading || section?.semantic?.label || section?.id || `Блок ${index + 1}`;
+}
+
+/** AI Layout Director: evidence chooses the axis; the mutation stays deterministic,
+ * previewable and reversible through SemanticChangeSet + normal editor history. */
+export function planSmartAxis() {
+  if (!state) return;
+  const viewport = state.viewport || "desktop";
+  const evidence = state.sourceContext.layoutEvidence
+    .filter((item) => item && Number(item.maxWidth) > 0 && (item.viewport === viewport || item.viewport === "desktop"))
+    .sort((a, b) => Number(b.role === "page-content") - Number(a.role === "page-content") || Number(b.confidence || 0) - Number(a.confidence || 0));
+  const best = evidence[0];
+  const targetWidth = Math.max(320, Math.min(1920, Math.round(Number(best?.maxWidth || 1120))));
+  const gutter = Math.max(0, Math.round(Number(best?.inlineGutter || 24)));
+  const selected = new Set(state.sel.map((item) => item.ref.secIdx).filter((value) => value != null));
+  const candidates = (state.ir.tree || [])
+    .map((section: any, sectionIndex: number) => ({ section, sectionIndex }))
+    .filter(({ section, sectionIndex }: any) => {
+      if (selected.size && !selected.has(sectionIndex)) return false;
+      return !(section.type === "source-block" || section.variant === "dom-capture" || (section.frame?.layout === "free" && section.children?.length));
+    });
+  if (!candidates.length) {
+    ui.setSmartAxisProposal(null);
+    return;
+  }
+  const stamp = Date.now();
+  const patches = candidates.map(({ section, sectionIndex }: any) => {
+    const afterFrame = { ...(section.frame || {}), contentMaxWidth: targetWidth, contentGutter: gutter };
+    const afterResponsive = deepClone(section.responsive || {});
+    for (const [name, width, safeGutter] of [["tablet", 768, 24], ["mobile", 390, 16]] as Array<[string, number, number]>) {
+      const override = afterResponsive[name] || {};
+      override.frame = { ...(override.frame || {}), contentMaxWidth: Math.min(targetWidth, width - safeGutter * 2), contentGutter: safeGutter };
+      afterResponsive[name] = override;
+    }
+    return { sectionIndex, beforeFrame: deepClone(section.frame || null), afterFrame, beforeResponsive: deepClone(section.responsive || null), afterResponsive };
+  });
+  const operations: Array<Record<string, any>> = patches.map((patch: SmartAxisProposal["patches"][number], index: number) => ({
+    id: `axis.bind.${index + 1}`,
+    kind: "bind-layout-axis",
+    target: state!.ir.tree[patch.sectionIndex].sourceKey || state!.ir.tree[patch.sectionIndex].id,
+    path: "/frame/contentMaxWidth",
+    payload: { axis: "content-width", maxWidth: targetWidth, gutter, viewport },
+  }));
+  const inverseOperations: Array<Record<string, any>> = patches.map((patch: SmartAxisProposal["patches"][number], index: number) => ({
+    id: `axis.unbind.${index + 1}`,
+    inverseOf: operations[index].id,
+    kind: "unbind-layout-axis",
+    target: operations[index].target,
+    path: "/frame/contentMaxWidth",
+    payload: { frame: patch.beforeFrame, responsive: patch.beforeResponsive },
+  }));
+  const sourceId = best ? state.sourceContext.nodeSources[best.nodeRef] : null;
+  const referenceLabel = sourceId ? state.sourceContext.registry[sourceId]?.label : null;
+  ui.setSmartAxisProposal({
+    id: `change.smart-axis.${stamp}`,
+    targetWidth,
+    gutter,
+    referenceLabel: referenceLabel || (best ? "лучшее найденное ограничение" : "безопасная дизайн-сетка"),
+    affectedLabels: candidates.map(({ section, sectionIndex }: any) => sectionLabel(section, sectionIndex)),
+    patches,
+    changeSet: {
+      version: "semantic-change-set/1.0",
+      id: `change.smart-axis.${stamp}`,
+      baseRevisionId: stableRevisionId(state.ir),
+      intent: "Выровнять внутреннюю ширину выбранных блоков по общей смысловой оси",
+      scope: operations.map((operation: Record<string, any>) => operation.target),
+      preconditions: [{ kind: "revision-match", expected: stableRevisionId(state.ir) }],
+      operations,
+      inverseOperations,
+      validations: ["schema", "references", "responsive", "overflow", "visual"].map((kind) => ({ kind, status: "pending" })),
+      atomic: true,
+      status: "draft",
+      actor: "ai-layout-director",
+      createdAt: new Date().toISOString(),
+      explanation: `Единая ось ${targetWidth}px получена из ${referenceLabel || "layout evidence"}; фон секций остаётся full-bleed.`,
+    },
+  });
+}
+
+export function dismissSmartAxisProposal() {
+  ui.setSmartAxisProposal(null);
+}
+
+export function applySmartAxisProposal(proposal: SmartAxisProposal) {
+  if (!state || !proposal || proposal.changeSet.baseRevisionId !== stableRevisionId(state.ir)) return;
+  pushHistory();
+  proposal.patches.forEach((patch) => {
+    const section = state!.ir.tree?.[patch.sectionIndex];
+    if (!section) return;
+    section.frame = deepClone(patch.afterFrame);
+    section.responsive = deepClone(patch.afterResponsive);
+  });
+  state.node.data.ir = state.ir;
+  ui.setSmartAxisProposal(null);
+  rerenderEditorCanvas();
+  updateUndoBtn();
+}
+
 /* ---------- открытие / закрытие ---------- */
 
 /** Фаза 1 открытия: состояние + не-layout части (вызывается из store.openEditor). */
@@ -304,7 +421,7 @@ export function open(
   node: NodeShim,
   onSave: (ir: any) => void,
   onClose: (saved: boolean) => void,
-  sourceContext?: { registry?: Record<string, any>; nodeSources?: Record<string, string> },
+  sourceContext?: { registry?: Record<string, any>; nodeSources?: Record<string, string>; layoutEvidence?: any[] },
 ) {
   upgradeSourceNesting(node.data.ir);
   state = {
@@ -329,6 +446,7 @@ export function open(
       nodeSources: sourceContext?.nodeSources || {},
       lensEnabled: Object.keys(sourceContext?.registry || {}).length > 1,
       activeSourceIds: new Set(),
+      layoutEvidence: sourceContext?.layoutEvidence || [],
     },
   };
   const st = state;
