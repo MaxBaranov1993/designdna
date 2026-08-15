@@ -44,8 +44,10 @@ Current reference material:
    safe reflow, overflow protection and Quality Gate preview.
 6. **Intent Locks — shipped foundation:** document/selection locks for brand,
    content, geometry, appearance, responsive behavior and source linkage.
-7. **Intent layer:** semantic selection and generated states.
-8. **Production loop:** code contracts, taste memory and outcome branches.
+7. **Semantic Selection — shipped foundation:** natural-language selection by
+   element role, content and source provenance.
+8. **Intent layer:** generated component states.
+9. **Production loop:** code contracts, taste memory and outcome branches.
 
 ## Non-negotiable interaction rule
 

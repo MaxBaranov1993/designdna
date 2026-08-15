@@ -50,6 +50,7 @@ export function TopBar() {
       <button className="fe-btn fe-harmonize-trigger" data-act="harmonize" title="Свести цвета, типографику, радиусы и тени разных источников в одну Style DNA" onClick={() => ctl.handleAct("harmonize")}>✦ Сделать цельно</button>
       <button className="fe-btn fe-responsive-trigger" data-act="responsive-autopilot" title="AI подготовит tablet/mobile constraints и проверит их до применения" onClick={() => ctl.handleAct("responsive-autopilot")}>▣ Адаптировать</button>
       <button className="fe-btn fe-locks-trigger" data-act="intent-locks" title="Защитить выбранные блоки от изменений AI" onClick={() => ctl.handleAct("intent-locks")}>🔒 Не менять</button>
+      <button className="fe-btn fe-semantic-trigger" data-act="semantic-select" title="Выделить элементы обычным текстовым запросом" onClick={() => ctl.handleAct("semantic-select")}>⌘ Умное выделение</button>
       <span className="fe-spacer"></span>
       <button className="fe-btn danger" data-act="close" onClick={() => ctl.handleAct("close")}>Закрыть</button>
       <button className="fe-btn primary" data-act="save" onClick={() => ctl.handleAct("save")}>💾 Сохранить</button>

@@ -16,6 +16,7 @@ import { QualityGatePanel } from "./QualityGatePanel";
 import { HarmonizerPanel } from "./HarmonizerPanel";
 import { ResponsiveAutopilotPanel } from "./ResponsiveAutopilotPanel";
 import { IntentLocksPanel } from "./IntentLocksPanel";
+import { SemanticSelectPanel } from "./SemanticSelectPanel";
 
 export function EditorApp() {
   const isOpen = useEditorStore((s) => s.isOpen);
@@ -51,6 +52,7 @@ export function EditorApp() {
       <HarmonizerPanel />
       <ResponsiveAutopilotPanel />
       <IntentLocksPanel />
+      <SemanticSelectPanel />
     </div>
   );
 }

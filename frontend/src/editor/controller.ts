@@ -107,7 +107,7 @@ let dnaPanelState: {
 } | null = null;
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void } = {
+let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void } = {
   setTool: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
@@ -117,6 +117,7 @@ let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspe
   setHarmonizerProposal: () => {},
   setResponsiveProposal: () => {},
   setIntentLocksOpen: () => {},
+  setSemanticSelectOpen: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -303,6 +304,72 @@ function preserveLockedFacets(original: any, candidate: any) {
   return candidate;
 }
 
+function searchableNodeText(node: any): string {
+  const values = [node?.type, node?.id, node?.text, node?.title, node?.label, node?.props?.heading, node?.props?.subheading, node?.props?.text];
+  return values.filter(Boolean).join(" ").toLowerCase();
+}
+
+export function semanticSelect(query: string): number {
+  if (!state || !state.geo) return 0;
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return 0;
+  const sourceIds = Object.values(state.sourceContext.registry)
+    .filter((source) => [source.id, source.label, source.symbol].filter(Boolean).some((value) => normalized.includes(String(value).toLowerCase())))
+    .map((source) => source.id);
+  const wantsButton = /cta|кноп|button|действи/.test(normalized);
+  const wantsHeading = /заголов|heading|title|headline/.test(normalized);
+  const wantsImage = /изображ|картин|фото|image|media/.test(normalized);
+  const wantsCard = /карточ|card/.test(normalized);
+  const wantsText = /текст|text|copy/.test(normalized);
+  const semanticRequested = wantsButton || wantsHeading || wantsImage || wantsCard || wantsText;
+  const refs: GeoRef[] = [];
+  const add = (ref: GeoRef) => {
+    if (refs.length >= 200 || refs.some((item) => item.secIdx === ref.secIdx && item.path === ref.path)) return;
+    refs.push(ref);
+  };
+  (state.ir.tree || []).forEach((section: any, secIdx: number) => {
+    const sectionSource = sourceIdForNode(section);
+    if (sourceIds.length && (!sectionSource || !sourceIds.includes(sectionSource))) return;
+    const props = section.props || {};
+    if (wantsButton) {
+      if (props.cta) add({ secIdx, path: "props.cta" });
+      if (props.ctaPrimary) add({ secIdx, path: "props.ctaPrimary" });
+      if (props.ctaSecondary) add({ secIdx, path: "props.ctaSecondary" });
+    }
+    if (wantsHeading && props.heading) add({ secIdx, path: "props.heading" });
+    if (wantsImage && props.media) add({ secIdx, path: "props.media" });
+    if (wantsText) {
+      if (props.text) add({ secIdx, path: "props.text" });
+      if (props.subheading) add({ secIdx, path: "props.subheading" });
+    }
+    const visit = (node: any, path: string) => {
+      const sourceId = sourceIdForNode(node) || sectionSource;
+      if (sourceIds.length && (!sourceId || !sourceIds.includes(sourceId))) return;
+      const type = String(node?.type || "").toLowerCase();
+      const semanticMatch = (wantsButton && type === "button") || (wantsHeading && type === "heading") ||
+        (wantsImage && ["image", "media"].includes(type)) || (wantsCard && type === "card") ||
+        (wantsText && ["text", "heading"].includes(type));
+      if (semanticMatch || (!semanticRequested && !sourceIds.length && searchableNodeText(node).includes(normalized))) add({ secIdx, path });
+      (node.children || []).forEach((child: any, index: number) => visit(child, `${path}.children.${index}`));
+    };
+    (section.children || []).forEach((child: any, index: number) => visit(child, `children.${index}`));
+    if (!semanticRequested && sourceIds.length) add({ secIdx, path: null });
+    if (!semanticRequested && !sourceIds.length && searchableNodeText(section).includes(normalized)) add({ secIdx, path: null });
+  });
+  state.geo.selectMulti(refs);
+  state.sel = refs.map((ref) => ({ ref, node: canonicalNode(ref), label: searchableNodeText(canonicalNode(ref)).slice(0, 60) })) as GeoSel[];
+  renderLayers();
+  renderInspector();
+  updateAlignVisibility();
+  applySourceLens();
+  applyIntentLockBadges();
+  return refs.length;
+}
+
+export function closeSemanticSelect() {
+  ui.setSemanticSelectOpen(false);
+}
+
 function getByPath(obj: any, path: string) {
   return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
 }
@@ -405,6 +472,7 @@ export function handleAct(act: string) {
   else if (act === "harmonize") void planHarmonizer();
   else if (act === "responsive-autopilot") void planResponsiveAutopilot();
   else if (act === "intent-locks") ui.setIntentLocksOpen(true);
+  else if (act === "semantic-select") ui.setSemanticSelectOpen(true);
   else if (act === "close-style-dna") closeStyleDnaInspector();
   else if (act === "reset-style-dna") resetStyleDnaInspector();
   else if (act === "apply-style-dna") void applyStyleDnaFromInspector();

@@ -452,3 +452,22 @@
 .fe-locks-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
 .intent-locked { position:relative; box-shadow:inset 0 0 0 2px #d4a72c66; }
 .intent-locked::before { content:attr(data-intent-locks); position:absolute; z-index:31; top:8px; right:8px; padding:5px 7px; border:1px solid #fcd34d88; border-radius:7px; background:#29220f; color:#fde68a; font:800 9px/1 Inter,sans-serif; pointer-events:none; box-shadow:0 3px 10px #0007; }
+
+/* Natural-language semantic selection. */
+.fe-semantic-trigger { border-color:#3d4f74; background:#20273a; color:#dbeafe; white-space:nowrap; }
+.fe-semantic-trigger:hover { border-color:#6684bd; color:#fff; }
+.fe-semantic-backdrop { position:absolute; inset:0; z-index:145; display:grid; place-items:center; padding:24px; background:rgba(7,7,10,.7); backdrop-filter:blur(5px); }
+.fe-semantic-card { width:min(580px,calc(100vw - 48px)); padding:22px; border:1px solid #465d8c; border-radius:16px; background:#171a22; color:#f4f4f5; box-shadow:0 24px 80px #000b; }
+.fe-semantic-kicker { margin-bottom:7px; color:#93c5fd; font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+.fe-semantic-card h2 { margin:0 0 12px; font-size:20px; }
+.fe-semantic-input { display:flex; gap:8px; }
+.fe-semantic-input input { flex:1; min-width:0; padding:10px 12px; border:1px solid #3f4c68; border-radius:9px; outline:none; background:#10131a; color:#fff; font-size:12px; }
+.fe-semantic-input input:focus { border-color:#60a5fa; box-shadow:0 0 0 3px #3b82f622; }
+.fe-semantic-examples { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+.fe-semantic-examples button { padding:5px 8px; border:1px solid #343b4c; border-radius:999px; background:#222633; color:#aeb8d0; cursor:pointer; font-size:9px; }
+.fe-semantic-examples button:hover { border-color:#5873a8; color:#fff; }
+.fe-semantic-result { margin-top:12px; padding:10px; border-radius:8px; font-size:11px; }
+.fe-semantic-result.found { background:#064e3b55; color:#a7f3d0; }
+.fe-semantic-result.empty { background:#78350f55; color:#fde68a; }
+.fe-semantic-card > p { margin:12px 0 0; color:#8f94a3; font-size:10px; line-height:1.5; }
+.fe-semantic-actions { display:flex; justify-content:flex-end; margin-top:16px; }
