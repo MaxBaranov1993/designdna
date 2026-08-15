@@ -71,6 +71,15 @@ export type SmartAxisProposal = {
   patches: Array<{ sectionIndex: number; beforeFrame: any; afterFrame: any; beforeResponsive: any; afterResponsive: any }>;
 };
 
+export type EditorQualityProposal = {
+  status: "loading" | "ready" | "error";
+  passed: boolean;
+  violations: Array<{ rule?: string; path?: string; message?: string; severity?: string }>;
+  journal: Array<Record<string, any> | string>;
+  fixedIr: any | null;
+  error?: string;
+};
+
 let state: Session | null = null;
 let dnaPanelState: {
   tokens: any;
@@ -80,12 +89,13 @@ let dnaPanelState: {
 } | null = null;
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void } = {
+let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void } = {
   setTool: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
   bumpSources: () => {},
   setSmartAxisProposal: () => {},
+  setQualityProposal: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -288,6 +298,7 @@ export function handleAct(act: string) {
   else if (act === "redo") redo();
   else if (act === "style-dna") openStyleDnaInspector();
   else if (act === "smart-axis") planSmartAxis();
+  else if (act === "quality-gate") void planQualityGate();
   else if (act === "close-style-dna") closeStyleDnaInspector();
   else if (act === "reset-style-dna") resetStyleDnaInspector();
   else if (act === "apply-style-dna") void applyStyleDnaFromInspector();
@@ -410,6 +421,43 @@ export function applySmartAxisProposal(proposal: SmartAxisProposal) {
   });
   state.node.data.ir = state.ir;
   ui.setSmartAxisProposal(null);
+  rerenderEditorCanvas();
+  updateUndoBtn();
+}
+
+export async function planQualityGate() {
+  if (!state) return;
+  ui.setQualityProposal({ status: "loading", passed: false, violations: [], journal: [], fixedIr: null });
+  try {
+    const response = await fetch("/api/quality-gate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ir: sanitizeIrForPost(state.ir), fix: true }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    ui.setQualityProposal({
+      status: "ready",
+      passed: Boolean(data.passed),
+      violations: Array.isArray(data.violations) ? data.violations : [],
+      journal: Array.isArray(data.journal) ? data.journal : [],
+      fixedIr: data.fixed_ir || null,
+    });
+  } catch (error) {
+    ui.setQualityProposal({ status: "error", passed: false, violations: [], journal: [], fixedIr: null, error: (error as Error).message });
+  }
+}
+
+export function dismissQualityProposal() {
+  ui.setQualityProposal(null);
+}
+
+export function applyQualityProposal(proposal: EditorQualityProposal) {
+  if (!state || proposal.status !== "ready" || !proposal.fixedIr) return;
+  pushHistory();
+  state.ir = deepClone(proposal.fixedIr);
+  state.node.data.ir = state.ir;
+  ui.setQualityProposal(null);
   rerenderEditorCanvas();
   updateUndoBtn();
 }

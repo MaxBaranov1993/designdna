@@ -12,6 +12,7 @@ import { InspectorPanel } from "./InspectorPanel";
 import { DnaPanel } from "./DnaPanel";
 import { SourceLensBar } from "./SourceLensBar";
 import { SmartAxisPanel } from "./SmartAxisPanel";
+import { QualityGatePanel } from "./QualityGatePanel";
 
 export function EditorApp() {
   const isOpen = useEditorStore((s) => s.isOpen);
@@ -43,6 +44,7 @@ export function EditorApp() {
       </div>
       <DnaPanel />
       <SmartAxisPanel />
+      <QualityGatePanel />
     </div>
   );
 }

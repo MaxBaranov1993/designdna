@@ -17,6 +17,7 @@ interface EditorUIState {
   inspectorTick: number;
   sourceTick: number;
   smartAxisProposal: ctl.SmartAxisProposal | null;
+  qualityProposal: ctl.EditorQualityProposal | null;
   /** Открыть React-редактор для ноды. false — движки недоступны, зовите legacy fallback. */
   openEditor: (nodeId: number) => boolean;
 }
@@ -28,6 +29,7 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
   inspectorTick: 0,
   sourceTick: 0,
   smartAxisProposal: null,
+  qualityProposal: null,
 
   openEditor: (nodeId) => {
     const st = useFlowStore.getState();
@@ -77,7 +79,7 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
       { registry: sourceRegistry, nodeSources, layoutEvidence },
     );
     if (!ok) return false;
-    set({ isOpen: true, nodeId, tool: "select", smartAxisProposal: null });
+    set({ isOpen: true, nodeId, tool: "select", smartAxisProposal: null, qualityProposal: null });
     return true;
   },
 }));
@@ -85,8 +87,9 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
 /* Связываем контроллер со стором (без циклического импорта controller → store) */
 ctl.bindUi({
   setTool: (t) => useEditorStore.setState({ tool: t }),
-  setOpen: (v) => useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null }) }),
+  setOpen: (v) => useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null }) }),
   bumpInspector: () => useEditorStore.setState((s) => ({ inspectorTick: s.inspectorTick + 1 })),
   bumpSources: () => useEditorStore.setState((s) => ({ sourceTick: s.sourceTick + 1 })),
   setSmartAxisProposal: (smartAxisProposal) => useEditorStore.setState({ smartAxisProposal }),
+  setQualityProposal: (qualityProposal) => useEditorStore.setState({ qualityProposal }),
 });
