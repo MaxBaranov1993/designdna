@@ -10,6 +10,7 @@ import { LayersPanel } from "./LayersPanel";
 import { CanvasStage } from "./CanvasStage";
 import { InspectorPanel } from "./InspectorPanel";
 import { DnaPanel } from "./DnaPanel";
+import { SourceLensBar } from "./SourceLensBar";
 
 export function EditorApp() {
   const isOpen = useEditorStore((s) => s.isOpen);
@@ -33,6 +34,7 @@ export function EditorApp() {
       style={{ display: isOpen ? "flex" : "none" }}
     >
       <TopBar />
+      <SourceLensBar />
       <div className="fe-body">
         <LayersPanel />
         <CanvasStage />

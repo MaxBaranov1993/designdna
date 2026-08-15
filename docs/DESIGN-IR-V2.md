@@ -94,8 +94,20 @@ downgrading a live IR 2.0 document through legacy `ensure_current` paths.
 `SOURCE_COMPILER_VERSION` is bumped whenever the envelope or deterministic DOM
 compiler changes, so cached parse results cannot hide a contract migration.
 
+## Multi-source Edit and Source Lens
+
+The Edit node accepts ordered dynamic component inputs directly. Composition
+preserves the parser registry and remaps provenance across prefixed
+`sourceKey`s. Page nodes use the same deterministic path, so provenance also
+survives Page → Edit workflows.
+
+The fullscreen editor exposes Source Lens by default when more than one source
+is present. It provides color plus symbol identification, source filters,
+section rails, source-aware layer rows, strong selection outlines and an
+Inspector origin card with source kind and confidence. Color is never the only
+signal.
+
 ## Next implementation boundary
 
-The next P1 phase consumes parser sidecars during page composition and adds
-Source Lens highlighting, source filters and conflict/status affordances to the
-Edit node. It is the first phase that changes the visible editing workflow.
+The next P1 phase applies `SemanticChangeSet` through a safe preview/commit
+pipeline and implements Smart Axis width alignment from parser evidence.

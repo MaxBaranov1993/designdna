@@ -83,8 +83,27 @@ export type GeneratorNodeData = {
   variants: IRObject[];
   active: number;
 };
-export type EditNodeData = { ir: IRObject | null };
-export type PageNodeData = { inputs: string[]; ir: IRObject | null; activeViewport: SourceViewport };
+export type SourceRecordView = {
+  id: string;
+  kind: string;
+  label: string;
+  colorToken?: string;
+  symbol?: string;
+  confidence?: number;
+};
+export type SourceAwareNodeData = {
+  sourceRegistry?: Record<string, SourceRecordView>;
+  nodeSources?: Record<string, string>;
+};
+export type EditNodeData = SourceAwareNodeData & {
+  inputs: string[];
+  ir: IRObject | null;
+};
+export type PageNodeData = SourceAwareNodeData & {
+  inputs: string[];
+  ir: IRObject | null;
+  activeViewport: SourceViewport;
+};
 export type MixNodeData = {
   inputs: string[];
   weights: Record<string, number>;

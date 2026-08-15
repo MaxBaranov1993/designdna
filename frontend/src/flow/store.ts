@@ -12,8 +12,9 @@ import type {
   QualityPassResp,
 } from "./api";
 import { NODE_DEFS, defaultData, portsOfNode } from "./ports";
-import { composePage } from "./compose";
 import { deepClone, outValue, pullInput, reachable } from "./dataflow";
+import { composeSourceInputs, sourceInputForPort } from "./sourceComposition";
+import type { SourceInputBlock } from "./sourceComposition";
 import {
   DEFAULT_VIEW,
   buildPagesProjectPayload,
@@ -43,6 +44,7 @@ import type {
   ReskinNodeData,
   SourceImportNodeData,
   DeriveNodeData,
+  EditNodeData,
   QualityPassNodeData,
   PageBridgeNodeData,
   RecorderNodeData,
@@ -83,6 +85,7 @@ export interface FlowStoreState {
   runGenerator: (id: number) => Promise<void>;
   runMix: (id: number) => Promise<void>;
   runPage: (id: number) => void;
+  refreshEdit: (id: number) => void;
   runSourceImport: (id: number) => Promise<void>;
   runStyleDna: (id: number) => Promise<void>;
   runDerive: (id: number) => Promise<void>;
@@ -95,6 +98,9 @@ export interface FlowStoreState {
   sendToNode: (id: number, targetType: "edit" | "reference") => void;
   addMixInput: (id: number) => void;
   removeMixInput: (id: number, name: string) => void;
+  addEditInput: (id: number) => void;
+  removeEditInput: (id: number, name: string) => void;
+  reorderEditInputs: (id: number, from: number, to: number) => void;
   addPageInput: (id: number) => void;
   removePageInput: (id: number, name: string) => void;
   reorderPageInputs: (id: number, from: number, to: number) => void;
@@ -309,7 +315,15 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
   },
 
   deleteEdge: (edgeId) => {
-    set({ edges: get().edges.filter((e) => e.id !== edgeId) });
+    const removed = get().edges.find((edge) => edge.id === edgeId);
+    set({ edges: get().edges.filter((edge) => edge.id !== edgeId) });
+    if (removed) {
+      const target = get().nodes.find((node) => node.id === removed.target);
+      if (target?.type === "edit") {
+        get().refreshEdit(Number(target.id));
+        get().propagate(Number(target.id));
+      }
+    }
   },
 
   /* Точечное обновление data ноды (аналог записи n.data.* в legacy + save()) */
@@ -342,11 +356,8 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       const cons = nodes.find((n) => Number(n.id) === consId);
       if (!cons) continue;
       if (cons.type === "edit") {
-        const ir = pullInput(nodes, edges, cons, "ir");
-        if (ir) {
-          get().setNodeData(consId, { ir: deepClone(ir) });
-          get().propagate(consId, visited);
-        }
+        get().refreshEdit(consId);
+        get().propagate(consId, visited);
       } else if (cons.type === "reference") {
         const ir = pullInput(nodes, edges, cons, "ir");
         if (ir) {
@@ -502,24 +513,41 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
 
   /* Page: сборка страницы из подключённых блоков — детерминированно, без LLM.
    * Порядок inputs = порядок секций; tokens — style DNA с провода > первый блок. */
+  refreshEdit: (id) => {
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || n.type !== "edit") return;
+    const data = n.data as EditNodeData;
+    const inputs = data.inputs || ["ir"];
+    const blocks = inputs
+      .map((name) => sourceInputForPort(st.nodes, st.edges, n, name))
+      .filter((block): block is SourceInputBlock => block !== null);
+    if (!blocks.length) {
+      get().setNodeData(id, { ir: null, sourceRegistry: {}, nodeSources: {} });
+      get().setStatus(id, "Подключите хотя бы один компонент", "err");
+      return;
+    }
+    const result = composeSourceInputs(blocks, null, "desktop", blocks.length > 1);
+    get().setNodeData(id, result);
+    get().setStatus(id, `${blocks.length} компонент(а) · ${Object.keys(result.sourceRegistry).length} источн.`, "ok");
+  },
+
   runPage: (id) => {
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
     if (!n || n.type !== "page") return;
     const data = n.data as PageNodeData;
-    const blocks: { name: string; ir: IRObject }[] = [];
-    for (const name of data.inputs) {
-      const ir = pullInput(st.nodes, st.edges, n, name);
-      if (ir && typeof ir === "object") blocks.push({ name, ir: ir as IRObject });
-    }
+    const blocks = data.inputs
+      .map((name) => sourceInputForPort(st.nodes, st.edges, n, name))
+      .filter((block): block is SourceInputBlock => block !== null);
     if (!blocks.length) {
       get().setStatus(id, "Подключите хотя бы один IR-вход", "err");
       return;
     }
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
     const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as IRObject) : null;
-    const ir = composePage(blocks, tokens, data.activeViewport || "desktop");
-    get().setNodeData(id, { ir });
+    const result = composeSourceInputs(blocks, tokens, data.activeViewport || "desktop", true);
+    get().setNodeData(id, result);
     get().setStatus(id, `Собрана: блоков ${blocks.length}`, "ok");
     get().propagate(id);
   },
@@ -890,7 +918,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     const target = get().addNode(targetType, n.position.x + (def ? def.w : 270) + 60, n.position.y);
     get().setNodeData(target.id, { ir: deepClone(ir) });
     if (targetType === "reference") get().setStatus(target.id, "IR получен от генератора", "ok");
-    get().connect({ node: id, port: "ir" }, { node: target.id, port: "ir" });
+    get().connect({ node: id, port: "ir" }, { node: target.id, port: targetType === "edit" ? "a" : "ir" });
     toast(`→ ${NODE_DEFS[targetType].title}`, "ok");
   },
 
@@ -938,6 +966,56 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       const edges = state.edges.filter((e) => !(e.target === sid && e.targetHandle === name));
       return { nodes, edges };
     });
+  },
+
+  /* Edit принимает компоненты напрямую: порядок входов становится порядком секций. */
+  addEditInput: (id) => {
+    const sid = String(id);
+    const n = get().nodes.find((x) => x.id === sid);
+    if (!n || n.type !== "edit") return;
+    const inputs = (n.data as EditNodeData).inputs || ["ir"];
+    const candidates = "abcdefghijkl".split("");
+    if (inputs.length >= candidates.length) {
+      toast("Максимум 12 компонентов", "error");
+      return;
+    }
+    const name = candidates.find((candidate) => !inputs.includes(candidate));
+    if (!name) return;
+    set((state) => ({
+      nodes: state.nodes.map((item) => item.id === sid && item.type === "edit"
+        ? ({ ...item, data: { ...item.data, inputs: [...inputs, name] } } as FlowNode)
+        : item),
+    }));
+  },
+
+  removeEditInput: (id, name) => {
+    const sid = String(id);
+    set((state) => ({
+      nodes: state.nodes.map((item) => {
+        if (item.id !== sid || item.type !== "edit") return item;
+        const inputs = (item.data.inputs || ["ir"]).filter((input) => input !== name);
+        return { ...item, data: { ...item.data, inputs } } as FlowNode;
+      }),
+      edges: state.edges.filter((edge) => !(edge.target === sid && edge.targetHandle === name)),
+    }));
+    get().refreshEdit(id);
+    get().propagate(id);
+  },
+
+  reorderEditInputs: (id, from, to) => {
+    const sid = String(id);
+    set((state) => ({
+      nodes: state.nodes.map((item) => {
+        if (item.id !== sid || item.type !== "edit") return item;
+        const inputs = [...(item.data.inputs || ["ir"] )];
+        if (from < 0 || from >= inputs.length || to < 0 || to >= inputs.length || from === to) return item;
+        const [moved] = inputs.splice(from, 1);
+        inputs.splice(to, 0, moved);
+        return { ...item, data: { ...item.data, inputs } } as FlowNode;
+      }),
+    }));
+    get().refreshEdit(id);
+    get().propagate(id);
   },
 
 

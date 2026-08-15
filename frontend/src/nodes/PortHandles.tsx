@@ -16,7 +16,7 @@ function kindClass(kind: string) {
  * и рендерятся прямо в MixNode вместе со слайдерами весов; у page —
  * тоже динамические, с drag-порядком прямо в PageNode. */
 export function InPorts({ type, data }: { type: NodeType; data?: AnyNodeData }) {
-  if (type === "mix" || type === "page") return null;
+  if (type === "mix" || type === "page" || type === "edit") return null;
   return (
     <>
       {portsOfNode({ type, data }).in.map((p) => (

@@ -52,6 +52,12 @@ interface Session {
   layerFlags: Record<string, { hidden?: boolean; locked?: boolean }>;
   layerQuery: string;
   dragLayerKey?: string | null;
+  sourceContext: {
+    registry: Record<string, { id: string; label: string; kind?: string; symbol?: string; confidence?: number }>;
+    nodeSources: Record<string, string>;
+    lensEnabled: boolean;
+    activeSourceIds: Set<string>;
+  };
 }
 
 let state: Session | null = null;
@@ -63,10 +69,11 @@ let dnaPanelState: {
 } | null = null;
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void } = {
+let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void } = {
   setTool: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
+  bumpSources: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -74,6 +81,101 @@ export function bindUi(hooks: typeof ui) {
 
 export function isActive() {
   return !!state;
+}
+
+const SOURCE_COLORS = ["#4F7CFF", "#F97316", "#10B981", "#A855F7", "#EC4899", "#06B6D4", "#EAB308", "#EF4444"];
+
+function sourceColor(sourceId: string): string {
+  if (!state) return SOURCE_COLORS[0];
+  const ids = Object.keys(state.sourceContext.registry).sort();
+  const index = Math.max(0, ids.indexOf(sourceId));
+  return SOURCE_COLORS[index % SOURCE_COLORS.length];
+}
+
+function sourceIdForNode(node: any): string | null {
+  if (!state || !node || typeof node !== "object") return null;
+  const ref = node.sourceKey || node.id;
+  return ref ? state.sourceContext.nodeSources[ref] || null : null;
+}
+
+export function sourceForRef(ref: GeoRef | null) {
+  if (!state || !ref) return null;
+  const node = canonicalNode(ref);
+  let sourceId = sourceIdForNode(node);
+  if (!sourceId && ref.secIdx != null) sourceId = sourceIdForNode((state.ir.tree || [])[ref.secIdx]);
+  const record = sourceId ? state.sourceContext.registry[sourceId] : null;
+  return record && sourceId ? { ...record, id: sourceId, color: sourceColor(sourceId) } : null;
+}
+
+export function sourceForSelection() {
+  return state?.sel.length ? sourceForRef(state.sel[0].ref) : null;
+}
+
+export function getSourceLensView() {
+  if (!state) return { enabled: false, sources: [] as any[] };
+  const counts: Record<string, number> = {};
+  Object.values(state.sourceContext.nodeSources).forEach((id) => { counts[id] = (counts[id] || 0) + 1; });
+  const allVisible = state.sourceContext.activeSourceIds.size === 0;
+  return {
+    enabled: state.sourceContext.lensEnabled,
+    sources: Object.values(state.sourceContext.registry)
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map((source) => ({
+        ...source,
+        color: sourceColor(source.id),
+        count: counts[source.id] || 0,
+        active: allVisible || state!.sourceContext.activeSourceIds.has(source.id),
+      })),
+  };
+}
+
+export function toggleSourceLens() {
+  if (!state) return;
+  state.sourceContext.lensEnabled = !state.sourceContext.lensEnabled;
+  applySourceLens();
+  ui.bumpSources();
+}
+
+export function toggleSourceFilter(sourceId: string) {
+  if (!state || !state.sourceContext.registry[sourceId]) return;
+  const active = state.sourceContext.activeSourceIds;
+  if (active.has(sourceId)) active.delete(sourceId); else active.add(sourceId);
+  if (active.size === Object.keys(state.sourceContext.registry).length) active.clear();
+  applySourceLens();
+  ui.bumpSources();
+}
+
+function applySourceLens() {
+  if (!state || !dom.canvasInner) return;
+  const inner = dom.canvasInner;
+  inner.querySelectorAll<HTMLElement>(".source-lens-section,.source-lens-selected,.source-lens-dim").forEach((element) => {
+    element.classList.remove("source-lens-section", "source-lens-selected", "source-lens-dim");
+    element.style.removeProperty("--source-color");
+    delete element.dataset.sourceLabel;
+    delete element.dataset.sourceSymbol;
+  });
+  if (!state.sourceContext.lensEnabled) return;
+  const active = state.sourceContext.activeSourceIds;
+  (state.ir.tree || []).forEach((section: any, index: number) => {
+    const sourceId = sourceIdForNode(section);
+    const record = sourceId ? state!.sourceContext.registry[sourceId] : null;
+    const element = domAtCanvas({ secIdx: index, path: null });
+    if (!element || !sourceId || !record) return;
+    element.classList.add("source-lens-section");
+    if (active.size && !active.has(sourceId)) element.classList.add("source-lens-dim");
+    element.style.setProperty("--source-color", sourceColor(sourceId));
+    element.dataset.sourceLabel = record.label;
+    element.dataset.sourceSymbol = record.symbol || "S";
+  });
+  state.sel.forEach((selection) => {
+    const source = sourceForRef(selection.ref);
+    const element = domAtCanvas(selection.ref);
+    if (!source || !element) return;
+    element.classList.add("source-lens-selected");
+    element.style.setProperty("--source-color", source.color);
+    element.dataset.sourceLabel = source.label;
+    element.dataset.sourceSymbol = source.symbol || "S";
+  });
 }
 
 function getByPath(obj: any, path: string) {
@@ -198,7 +300,12 @@ export function handleAct(act: string) {
 /* ---------- открытие / закрытие ---------- */
 
 /** Фаза 1 открытия: состояние + не-layout части (вызывается из store.openEditor). */
-export function open(node: NodeShim, onSave: (ir: any) => void, onClose: (saved: boolean) => void) {
+export function open(
+  node: NodeShim,
+  onSave: (ir: any) => void,
+  onClose: (saved: boolean) => void,
+  sourceContext?: { registry?: Record<string, any>; nodeSources?: Record<string, string> },
+) {
   upgradeSourceNesting(node.data.ir);
   state = {
     ir: node.data.ir,
@@ -217,6 +324,12 @@ export function open(node: NodeShim, onSave: (ir: any) => void, onClose: (saved:
     activeIR: null,
     layerFlags: {}, // refKey -> {hidden, locked}; сессия редактора, не часть IR
     layerQuery: "",
+    sourceContext: {
+      registry: sourceContext?.registry || {},
+      nodeSources: sourceContext?.nodeSources || {},
+      lensEnabled: Object.keys(sourceContext?.registry || {}).length > 1,
+      activeSourceIds: new Set(),
+    },
   };
   const st = state;
   const responsive = !!(st.ir && st.ir.responsive && st.ir.responsive.viewports);
@@ -952,6 +1065,7 @@ function renderCanvas() {
   applyLayerFlags();
   applyTransform();
   attachGeoEdit();
+  applySourceLens();
 }
 
 /* ---------- флаги слоёв (hide/lock): сессия редактора, вне IR ---------- */
@@ -1187,6 +1301,7 @@ function attachGeoEdit() {
       if (savedRefs.length && state.geo) {
         state.geo.selectMulti(savedRefs);
       }
+      applySourceLens();
       // во время drag-scrub инспектор не перестраиваем — иначе умрёт pointer capture
       if (!inspScrubbing) renderInspector();
     },
@@ -1197,6 +1312,7 @@ function attachGeoEdit() {
       if (!inspScrubbing) renderInspector();
       renderLayers();
       updateAlignVisibility();
+      applySourceLens();
     },
   });
   // инструмент переживает ре-аттач после мутаций
@@ -1313,7 +1429,14 @@ function addLayerItem(
     badge: "•", pricing: "$", faq: "?", footer: "⊥",
   };
   const icon = iconOverride || (irNode.type === "card" && irNode.role ? "◇" : icons[irNode.type]) || "◇";
-  div.innerHTML = `<span class="fe-li">${icon}</span><span class="fe-ln">${esc(label)}</span>` +
+  const source = sourceForRef(ref);
+  if (source) {
+    div.classList.add("fe-layer-sourced");
+    div.style.setProperty("--source-color", source.color);
+    div.title = `Источник: ${source.label}`;
+  }
+  div.innerHTML = (source ? `<span class="fe-source-dot" title="${esc(source.label)}"></span>` : "") +
+    `<span class="fe-li">${icon}</span><span class="fe-ln">${esc(label)}</span>` +
     `<button class="fe-lbtn" data-flag="hidden" title="Скрыть/показать слой">${fl.hidden ? "🚫" : "👁"}</button>` +
     `<button class="fe-lbtn" data-flag="locked" title="Залочить/разлочить">${fl.locked ? "🔒" : "🔓"}</button>`;
   div.addEventListener("click", (e) => {
@@ -1430,6 +1553,7 @@ export function rerenderEditorCanvas() {
   applyLayerFlags();
   applyTransform();
   attachGeoEdit();
+  applySourceLens();
   renderLayers();
   if (state.sel.length && state.geo) state.geo.selectMulti(state.sel.map((s) => s.ref));
   renderInspector();
@@ -1471,4 +1595,3 @@ function esc(s: any) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
-

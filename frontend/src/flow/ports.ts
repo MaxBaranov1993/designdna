@@ -1,4 +1,4 @@
-import type { AnyNodeData, MixNodeData, NodeType, PageNodeData, PortKind, SourceImportNodeData } from "./types";
+import type { AnyNodeData, EditNodeData, MixNodeData, NodeType, PageNodeData, PortKind, SourceImportNodeData } from "./types";
 
 export type PortDecl = { name: string; label: string; kind: PortKind };
 
@@ -103,6 +103,13 @@ export function portsOfNode(n: {
       out: PORTS.mix.out,
     };
   }
+  if (n.type === "edit") {
+    const inputs = (n.data as EditNodeData | undefined)?.inputs || ["ir"];
+    return {
+      in: inputs.map((name) => ({ name, label: name, kind: "ir" as PortKind })),
+      out: PORTS.edit.out,
+    };
+  }
   if (n.type === "page") {
     const inputs = (n.data as PageNodeData | undefined)?.inputs || [];
     return {
@@ -138,7 +145,7 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "generator":
       return { provider: "openrouter", count: 2, ownPrompt: "", preset: "", variants: [], active: 0 };
     case "edit":
-      return { ir: null };
+      return { inputs: ["a", "b"], ir: null, sourceRegistry: {}, nodeSources: {} };
     case "mix":
       return { inputs: ["a", "b"], weights: { a: 70, b: 30 }, ir: null };
     case "page":
