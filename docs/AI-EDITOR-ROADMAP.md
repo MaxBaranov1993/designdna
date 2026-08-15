@@ -36,10 +36,10 @@ Current reference material:
    provenance/layout evidence, multi-source Edit and Source Lens.
 2. **Safe AI editing — shipped:** Smart Axis preview/apply/undo through a
    `SemanticChangeSet`.
-3. **Quality Copilot — in progress:** editor-native deterministic gate first;
+3. **Quality Copilot — shipped foundation:** editor-native deterministic gate;
    visual/accessibility judges and export blocking follow.
-4. **Harmonizer:** facet-level colors, typography, radius, shadow and spacing;
-   never flatten all sources into one style blindly.
+4. **Harmonizer — shipped foundation:** source-aware Style DNA preview/apply/undo
+   for colors, typography, radius and shadows; facet controls follow.
 5. **Autopilot and intent:** responsive decisions, semantic selection, locks and
    generated states.
 6. **Production loop:** code contracts, taste memory and outcome branches.

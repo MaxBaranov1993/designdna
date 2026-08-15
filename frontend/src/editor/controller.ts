@@ -80,6 +80,14 @@ export type EditorQualityProposal = {
   error?: string;
 };
 
+export type HarmonizerProposal = {
+  status: "loading" | "ready" | "error";
+  sourceCount: number;
+  tokens: any | null;
+  harmonizedIr: any | null;
+  error?: string;
+};
+
 let state: Session | null = null;
 let dnaPanelState: {
   tokens: any;
@@ -89,13 +97,14 @@ let dnaPanelState: {
 } | null = null;
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void } = {
+let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void } = {
   setTool: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
   bumpSources: () => {},
   setSmartAxisProposal: () => {},
   setQualityProposal: () => {},
+  setHarmonizerProposal: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -299,6 +308,7 @@ export function handleAct(act: string) {
   else if (act === "style-dna") openStyleDnaInspector();
   else if (act === "smart-axis") planSmartAxis();
   else if (act === "quality-gate") void planQualityGate();
+  else if (act === "harmonize") void planHarmonizer();
   else if (act === "close-style-dna") closeStyleDnaInspector();
   else if (act === "reset-style-dna") resetStyleDnaInspector();
   else if (act === "apply-style-dna") void applyStyleDnaFromInspector();
@@ -458,6 +468,46 @@ export function applyQualityProposal(proposal: EditorQualityProposal) {
   state.ir = deepClone(proposal.fixedIr);
   state.node.data.ir = state.ir;
   ui.setQualityProposal(null);
+  rerenderEditorCanvas();
+  updateUndoBtn();
+}
+
+export async function planHarmonizer() {
+  if (!state) return;
+  const sourceCount = Object.keys(state.sourceContext.registry).length || 1;
+  ui.setHarmonizerProposal({ status: "loading", sourceCount, tokens: null, harmonizedIr: null });
+  try {
+    const cleanIr = sanitizeIrForPost(state.ir);
+    const extractResponse = await fetch("/api/style-dna/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ir: cleanIr }),
+    });
+    const extracted = await extractResponse.json();
+    if (!extractResponse.ok) throw new Error(extracted.detail || `HTTP ${extractResponse.status}`);
+    const applyResponse = await fetch("/api/style-dna/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ir: cleanIr, tokens: extracted.tokens }),
+    });
+    const applied = await applyResponse.json();
+    if (!applyResponse.ok) throw new Error(applied.detail || `HTTP ${applyResponse.status}`);
+    ui.setHarmonizerProposal({ status: "ready", sourceCount, tokens: extracted.tokens || {}, harmonizedIr: applied.ir || null });
+  } catch (error) {
+    ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, error: (error as Error).message });
+  }
+}
+
+export function dismissHarmonizerProposal() {
+  ui.setHarmonizerProposal(null);
+}
+
+export function applyHarmonizerProposal(proposal: HarmonizerProposal) {
+  if (!state || proposal.status !== "ready" || !proposal.harmonizedIr) return;
+  pushHistory();
+  state.ir = deepClone(proposal.harmonizedIr);
+  state.node.data.ir = state.ir;
+  ui.setHarmonizerProposal(null);
   rerenderEditorCanvas();
   updateUndoBtn();
 }

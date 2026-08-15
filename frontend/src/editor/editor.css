@@ -385,3 +385,25 @@
 .fe-quality-issues small { display:block; margin-top:3px; color:#71717a; }
 .fe-quality-pass { padding:14px; border-radius:9px; background:#064e3b55; color:#a7f3d0; font-size:11px; }
 .fe-quality-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+
+/* Cross-source Style DNA Harmonizer. */
+.fe-harmonize-trigger { border-color:#68448b; background:#2b1c3b; color:#ead5ff; white-space:nowrap; }
+.fe-harmonize-trigger:hover { border-color:#9b6bc7; color:#fff; }
+.fe-harmonize-backdrop { position:absolute; inset:0; z-index:142; display:grid; place-items:center; padding:24px; background:rgba(7,7,10,.68); backdrop-filter:blur(5px); }
+.fe-harmonize-card { width:min(560px,calc(100vw - 48px)); padding:22px; border:1px solid #604777; border-radius:16px; background:#1b1720; color:#f4f4f5; box-shadow:0 24px 80px #000b; }
+.fe-harmonize-kicker { margin-bottom:7px; color:#d8b4fe; font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+.fe-harmonize-card h2 { margin:0 0 12px; font-size:20px; }
+.fe-harmonize-card > p { margin:0 0 14px; color:#a1a1aa; font-size:11px; line-height:1.5; }
+.fe-harmonize-loader { display:flex; align-items:center; gap:10px; padding:18px; border-radius:10px; background:#281a36; color:#e9d5ff; font-size:11px; }
+.fe-harmonize-loader i { width:18px; height:18px; border:2px solid #61417d; border-top-color:#d8b4fe; border-radius:50%; animation:fe-quality-spin .8s linear infinite; }
+.fe-harmonize-error { padding:12px; border:1px solid #7f1d1d; border-radius:10px; background:#450a0a55; color:#fecaca; font-size:11px; }
+.fe-harmonize-preview { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.fe-harmonize-preview > div { min-height:78px; display:flex; flex-direction:column; gap:5px; padding:11px; border:1px solid #44354f; border-radius:10px; background:#141117; }
+.fe-harmonize-preview > div:last-child { grid-column:1/-1; min-height:auto; }
+.fe-harmonize-preview small { color:#9f7ab8; font-size:9px; font-weight:800; text-transform:uppercase; }
+.fe-harmonize-preview b { color:#f3e8ff; font-size:12px; }
+.fe-harmonize-preview span { color:#a1a1aa; font-size:10px; }
+.fe-harmonize-palette { display:flex; gap:5px; margin-top:4px; }
+.fe-harmonize-palette i { width:25px; height:25px; border:1px solid #ffffff33; border-radius:7px; box-shadow:inset 0 0 0 1px #0003; }
+.fe-harmonize-note { margin-top:12px; padding:9px 10px; border-left:3px solid #a855f7; background:#a855f712; color:#b9a9c2; font-size:10px; }
+.fe-harmonize-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }

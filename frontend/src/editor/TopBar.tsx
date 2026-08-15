@@ -47,6 +47,7 @@ export function TopBar() {
       <button className="fe-tbtn" data-act="style-dna" title="Style DNA" onClick={() => ctl.handleAct("style-dna")}>🧬</button>
       <button className="fe-btn fe-smart-axis-trigger" data-act="smart-axis" title="AI найдёт общую ось контента и покажет безопасный патч" onClick={() => ctl.handleAct("smart-axis")}>✦ Выровнять ширину</button>
       <button className="fe-btn fe-quality-trigger" data-act="quality-gate" title="Проверить сетку, overflow и ограничения; показать исправления до применения" onClick={() => ctl.handleAct("quality-gate")}>✓ AI‑проверка</button>
+      <button className="fe-btn fe-harmonize-trigger" data-act="harmonize" title="Свести цвета, типографику, радиусы и тени разных источников в одну Style DNA" onClick={() => ctl.handleAct("harmonize")}>✦ Сделать цельно</button>
       <span className="fe-spacer"></span>
       <button className="fe-btn danger" data-act="close" onClick={() => ctl.handleAct("close")}>Закрыть</button>
       <button className="fe-btn primary" data-act="save" onClick={() => ctl.handleAct("save")}>💾 Сохранить</button>
