@@ -88,6 +88,14 @@ export type HarmonizerProposal = {
   error?: string;
 };
 
+export type ResponsiveAutopilotProposal = {
+  status: "loading" | "ready" | "error";
+  candidateIr: any | null;
+  decisions: Array<{ kind: string; label: string; count: number }>;
+  warnings: Array<{ rule?: string; path?: string; message?: string }>;
+  error?: string;
+};
+
 let state: Session | null = null;
 let dnaPanelState: {
   tokens: any;
@@ -97,7 +105,7 @@ let dnaPanelState: {
 } | null = null;
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void } = {
+let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void } = {
   setTool: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
@@ -105,6 +113,7 @@ let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspe
   setSmartAxisProposal: () => {},
   setQualityProposal: () => {},
   setHarmonizerProposal: () => {},
+  setResponsiveProposal: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -309,6 +318,7 @@ export function handleAct(act: string) {
   else if (act === "smart-axis") planSmartAxis();
   else if (act === "quality-gate") void planQualityGate();
   else if (act === "harmonize") void planHarmonizer();
+  else if (act === "responsive-autopilot") void planResponsiveAutopilot();
   else if (act === "close-style-dna") closeStyleDnaInspector();
   else if (act === "reset-style-dna") resetStyleDnaInspector();
   else if (act === "apply-style-dna") void applyStyleDnaFromInspector();
@@ -508,6 +518,99 @@ export function applyHarmonizerProposal(proposal: HarmonizerProposal) {
   state.ir = deepClone(proposal.harmonizedIr);
   state.node.data.ir = state.ir;
   ui.setHarmonizerProposal(null);
+  rerenderEditorCanvas();
+  updateUndoBtn();
+}
+
+function responsiveOverride(node: any, viewport: "tablet" | "mobile") {
+  node.responsive = node.responsive || {};
+  node.responsive[viewport] = node.responsive[viewport] || {};
+  node.responsive[viewport].frame = { ...(node.responsive[viewport].frame || {}) };
+  return node.responsive[viewport];
+}
+
+export async function planResponsiveAutopilot() {
+  if (!state) return;
+  ui.setResponsiveProposal({ status: "loading", candidateIr: null, decisions: [], warnings: [] });
+  try {
+    const candidate = deepClone(sanitizeIrForPost(state.ir));
+    const counters = { rails: 0, stacks: 0, widths: 0, type: 0, untouched: 0 };
+    candidate.responsive = candidate.responsive || { viewports: {} };
+    candidate.responsive.viewports = {
+      ...(candidate.responsive.viewports || {}),
+      desktop: { width: 1440, height: 900, ...(candidate.responsive.viewports?.desktop || {}) },
+      tablet: { width: 768, height: 1024, ...(candidate.responsive.viewports?.tablet || {}) },
+      mobile: { width: 390, height: 844, ...(candidate.responsive.viewports?.mobile || {}) },
+    };
+    const adaptNode = (node: any, allowStructural = true) => {
+      if (!node || typeof node !== "object") return;
+      const frame = node.frame || {};
+      for (const [viewport, width, gutter] of [["tablet", 768, 24], ["mobile", 390, 16]] as Array<["tablet" | "mobile", number, number]>) {
+        const override = responsiveOverride(node, viewport);
+        const nextFrame = override.frame;
+        if (typeof frame.width === "number" && frame.width > width - gutter * 2) {
+          nextFrame.width = "fill";
+          nextFrame.maxWidth = width - gutter * 2;
+          counters.widths += 1;
+        }
+        if (allowStructural && viewport === "mobile" && frame.layout === "auto" && frame.direction === "row" && (node.children || []).length > 1) {
+          nextFrame.direction = "column";
+          nextFrame.wrap = false;
+          nextFrame.gap = Math.min(Number(frame.gap || 16), 24);
+          counters.stacks += 1;
+        }
+        const fontSize = Number(node.style?.fontSize || 0);
+        if (viewport === "mobile" && fontSize > 30) {
+          override.style = { ...(override.style || {}), fontSize: Math.max(28, Math.round(fontSize * .82)) };
+          counters.type += 1;
+        }
+      }
+      (node.children || []).forEach((child: any) => adaptNode(child, allowStructural));
+    };
+    (candidate.tree || []).forEach((section: any) => {
+      const reproduction = section.type === "source-block" || section.variant === "dom-capture" || (section.frame?.layout === "free" && section.children?.length);
+      if (reproduction) {
+        counters.untouched += 1;
+        return;
+      }
+      for (const [viewport, width, gutter] of [["tablet", 768, 24], ["mobile", 390, 16]] as Array<["tablet" | "mobile", number, number]>) {
+        const override = responsiveOverride(section, viewport);
+        override.frame.contentMaxWidth = Math.min(Number(section.frame?.contentMaxWidth || 1120), width - gutter * 2);
+        override.frame.contentGutter = gutter;
+        counters.rails += 1;
+      }
+      adaptNode(section);
+    });
+    const response = await fetch("/api/quality-gate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ir: candidate, fix: false }),
+    });
+    const quality = await response.json();
+    if (!response.ok) throw new Error(quality.detail || `HTTP ${response.status}`);
+    const decisions = [
+      { kind: "rails", label: "Контентные оси", count: counters.rails },
+      { kind: "stacks", label: "Row → column", count: counters.stacks },
+      { kind: "widths", label: "Защита от overflow", count: counters.widths },
+      { kind: "type", label: "Мобильная типографика", count: counters.type },
+      { kind: "preserve", label: "Импорт без изменений", count: counters.untouched },
+    ].filter((item) => item.count > 0);
+    ui.setResponsiveProposal({ status: "ready", candidateIr: candidate, decisions, warnings: Array.isArray(quality.violations) ? quality.violations : [] });
+  } catch (error) {
+    ui.setResponsiveProposal({ status: "error", candidateIr: null, decisions: [], warnings: [], error: (error as Error).message });
+  }
+}
+
+export function dismissResponsiveProposal() {
+  ui.setResponsiveProposal(null);
+}
+
+export function applyResponsiveProposal(proposal: ResponsiveAutopilotProposal) {
+  if (!state || proposal.status !== "ready" || !proposal.candidateIr) return;
+  pushHistory();
+  state.ir = deepClone(proposal.candidateIr);
+  state.node.data.ir = state.ir;
+  ui.setResponsiveProposal(null);
   rerenderEditorCanvas();
   updateUndoBtn();
 }

@@ -40,9 +40,10 @@ Current reference material:
    visual/accessibility judges and export blocking follow.
 4. **Harmonizer — shipped foundation:** source-aware Style DNA preview/apply/undo
    for colors, typography, radius and shadows; facet controls follow.
-5. **Autopilot and intent:** responsive decisions, semantic selection, locks and
-   generated states.
-6. **Production loop:** code contracts, taste memory and outcome branches.
+5. **Responsive Autopilot — shipped foundation:** tablet/mobile constraints,
+   safe reflow, overflow protection and Quality Gate preview.
+6. **Intent layer:** semantic selection, locks and generated states.
+7. **Production loop:** code contracts, taste memory and outcome branches.
 
 ## Non-negotiable interaction rule
 

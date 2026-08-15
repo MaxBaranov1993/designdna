@@ -14,6 +14,7 @@ import { SourceLensBar } from "./SourceLensBar";
 import { SmartAxisPanel } from "./SmartAxisPanel";
 import { QualityGatePanel } from "./QualityGatePanel";
 import { HarmonizerPanel } from "./HarmonizerPanel";
+import { ResponsiveAutopilotPanel } from "./ResponsiveAutopilotPanel";
 
 export function EditorApp() {
   const isOpen = useEditorStore((s) => s.isOpen);
@@ -47,6 +48,7 @@ export function EditorApp() {
       <SmartAxisPanel />
       <QualityGatePanel />
       <HarmonizerPanel />
+      <ResponsiveAutopilotPanel />
     </div>
   );
 }
