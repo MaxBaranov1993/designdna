@@ -42,6 +42,7 @@ run([
   "--onedir",
   "--clean",
   "--noconfirm",
+  "--specpath", workRoot,
   "--distpath", outputRoot,
   "--workpath", workRoot,
   "--paths", path.join(projectRoot, "app"),

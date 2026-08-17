@@ -1,6 +1,7 @@
 """Focused regressions for URL fetching, browser egress and lifecycle cleanup."""
 from __future__ import annotations
 
+import asyncio
 import socket
 import sys
 from pathlib import Path
@@ -340,3 +341,25 @@ def test_inbound_host_guard_allows_testclient_and_rejects_untrusted_host():
     assert allowed.status_code == 307
     assert localhost.status_code == 307
     assert rejected.status_code == 400
+
+
+def test_desktop_asgi_bridge_supplies_loopback_host_when_browser_omits_it():
+    import desktop_worker
+
+    response = asyncio.run(desktop_worker.asgi_request({
+        "method": "GET",
+        "path": "/api/config",
+    }))
+    assert response["status"] == 200
+    assert "application/json" in response["headers"]["content-type"]
+
+
+def test_desktop_asgi_bridge_does_not_override_an_explicit_untrusted_host():
+    import desktop_worker
+
+    response = asyncio.run(desktop_worker.asgi_request({
+        "method": "GET",
+        "path": "/api/config",
+        "headers": {"Host": "evil.example"},
+    }))
+    assert response["status"] == 400

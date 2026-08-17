@@ -33,7 +33,14 @@ try {
   if (health?.ok !== true || health?.transport !== "stdio") {
     throw new Error(`Unexpected runtime health payload: ${JSON.stringify(health)}`);
   }
-  console.log(JSON.stringify(health));
+  const config = await worker.request("http.request", {
+    method: "GET",
+    path: "/api/config",
+  });
+  if (config?.status !== 200 || !String(config?.headers?.["content-type"] || "").includes("application/json")) {
+    throw new Error(`Packaged ASGI request failed: ${JSON.stringify(config)}`);
+  }
+  console.log(JSON.stringify({ ...health, apiStatus: config.status }));
 } finally {
   await worker.stop();
   rmSync(temporaryData, { recursive: true, force: true });

@@ -52,8 +52,20 @@ async def asgi_request(params: dict[str, Any]) -> dict[str, Any]:
     else:
         body_bytes = str(body or "").encode("utf-8")
 
-    request_headers = params.get("headers") or {}
-    headers = [(str(key).lower().encode("latin-1"), str(value).encode("latin-1")) for key, value in request_headers.items()]
+    request_headers = {
+        str(key).lower(): str(value)
+        for key, value in (params.get("headers") or {}).items()
+    }
+    # Browser fetch intentionally omits the forbidden ``Host`` header when the
+    # renderer request is serialized over IPC.  The ASGI app still runs behind
+    # TrustedHostMiddleware, so identify this internal transport as loopback.
+    # An explicitly supplied Host is preserved and remains subject to the
+    # middleware's rejection policy.
+    request_headers.setdefault("host", "127.0.0.1")
+    headers = [
+        (key.encode("latin-1"), value.encode("latin-1"))
+        for key, value in request_headers.items()
+    ]
     sent_request = False
     response_status = 500
     response_headers: list[tuple[bytes, bytes]] = []
@@ -86,7 +98,7 @@ async def asgi_request(params: dict[str, Any]) -> dict[str, Any]:
         "root_path": "",
         "headers": headers,
         "client": ("desktop", 0),
-        "server": ("designdna", 0),
+        "server": ("127.0.0.1", 8420),
     }
     with contextlib.redirect_stdout(sys.stderr):
         await ASGI_APP(scope, receive, send)
