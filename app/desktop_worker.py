@@ -12,6 +12,7 @@ import base64
 import contextlib
 import io
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,13 @@ async def asgi_request(params: dict[str, Any]) -> dict[str, Any]:
 async def dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
     if method == "health":
         return {"ok": True, "transport": "stdio", "backend": "asgi"}
+    if method == "runtime.configure":
+        key = str(params.get("openrouterApiKey") or "").strip()
+        if key:
+            os.environ["OPENROUTER_API_KEY"] = key
+        else:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+        return {"ok": True, "openrouterConfigured": bool(key)}
     if method == "http.request":
         return await asgi_request(params)
     if method == "shutdown":

@@ -19,8 +19,8 @@ declare global {
       repoCanvas: { snapshot(): Promise<RepoCanvasSnapshot>; check(): Promise<Record<string, unknown>>; refresh(options?: Record<string, unknown>): Promise<Record<string, unknown>> };
       providers: {
         status(): Promise<Record<string, any>>; credentials(): Promise<Record<string, any>>;
-        setCredential(provider: "openai" | "kimi", value: string): Promise<Record<string, unknown>>;
-        deleteCredential(provider: "openai" | "kimi"): Promise<Record<string, unknown>>;
+        setCredential(provider: "openai" | "kimi" | "openrouter", value: string): Promise<Record<string, unknown>>;
+        deleteCredential(provider: "openai" | "kimi" | "openrouter"): Promise<Record<string, unknown>>;
         chat(provider: "codex" | "kimi", messages: Array<{ role: string; content: string }>, temperature?: number): Promise<{ content: string }>;
       };
       codex: {

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import sys
 from pathlib import Path
@@ -363,3 +364,21 @@ def test_desktop_asgi_bridge_does_not_override_an_explicit_untrusted_host():
         "headers": {"Host": "evil.example"},
     }))
     assert response["status"] == 400
+
+
+def test_desktop_worker_configures_openrouter_without_echoing_the_secret(monkeypatch):
+    import desktop_worker
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    configured = asyncio.run(desktop_worker.dispatch(
+        "runtime.configure", {"openrouterApiKey": "test-openrouter-secret"},
+    ))
+    assert configured == {"ok": True, "openrouterConfigured": True}
+    assert "test-openrouter-secret" not in str(configured)
+    assert os.environ["OPENROUTER_API_KEY"] == "test-openrouter-secret"
+
+    cleared = asyncio.run(desktop_worker.dispatch(
+        "runtime.configure", {"openrouterApiKey": ""},
+    ))
+    assert cleared == {"ok": True, "openrouterConfigured": False}
+    assert "OPENROUTER_API_KEY" not in os.environ

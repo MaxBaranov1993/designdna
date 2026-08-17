@@ -130,7 +130,15 @@ function registerIpc() {
     platform: process.platform,
     productionTransport: "ipc+stdio",
   }));
-  handleTrusted("api:request", (_event, request) => pythonWorker.request("http.request", validateApiRequest(request)));
+  handleTrusted("api:request", async (_event, request) => {
+    // Keep the OpenRouter credential inside the trusted main/sidecar boundary.
+    // Reconfigure before every API call so credential rotation and worker
+    // restarts take effect without exposing the secret to the renderer.
+    await pythonWorker.request("runtime.configure", {
+      openrouterApiKey: credentials.get("openrouter") || "",
+    });
+    return pythonWorker.request("http.request", validateApiRequest(request));
+  });
   handleTrusted("repo-canvas:snapshot", () => repoCanvasWorker.request("snapshot"));
   handleTrusted("repo-canvas:check", () => repoCanvasWorker.request("check"));
   handleTrusted("repo-canvas:refresh", (_event, options) => repoCanvasWorker.request("architect.refresh", options || {}));

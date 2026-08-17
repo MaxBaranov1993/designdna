@@ -20,6 +20,7 @@ export function AgentWorkspace() {
   const [codexAccount, setCodexAccount] = useState<Record<string, any> | null>(null);
   const [openaiKey, setOpenaiKey] = useState("");
   const [kimiKey, setKimiKey] = useState("");
+  const [openrouterKey, setOpenrouterKey] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -83,10 +84,12 @@ export function AgentWorkspace() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   }
 
-  async function saveKey(provider: "openai" | "kimi", value: string) {
+  async function saveKey(provider: "openai" | "kimi" | "openrouter", value: string) {
     if (!desktop || !value.trim()) return;
     await desktop.providers.setCredential(provider, value.trim());
-    if (provider === "openai") setOpenaiKey(""); else setKimiKey("");
+    if (provider === "openai") setOpenaiKey("");
+    else if (provider === "kimi") setKimiKey("");
+    else setOpenrouterKey("");
     setProviderState(await desktop.providers.status());
   }
 
@@ -117,6 +120,8 @@ export function AgentWorkspace() {
           <Button variant="outline" onClick={() => void saveKey("openai", openaiKey)}>Сохранить OpenAI key</Button>
           <label><span>Kimi API key {providerState.credentials?.kimi ? "· saved" : ""}</span><input type="password" value={kimiKey} onChange={(event) => setKimiKey(event.target.value)} placeholder="Moonshot key" /></label>
           <Button variant="outline" onClick={() => void saveKey("kimi", kimiKey)}>Сохранить Kimi key</Button>
+          <label><span>OpenRouter API key {providerState.credentials?.openrouter ? "· saved" : ""}</span><input type="password" value={openrouterKey} onChange={(event) => setOpenrouterKey(event.target.value)} placeholder="sk-or-…" /></label>
+          <Button variant="outline" onClick={() => void saveKey("openrouter", openrouterKey)}>Сохранить OpenRouter key</Button>
         </div>
         <div className="agent-thread"><span>Thread</span><code>{threadId || "not started"}</code></div>
         <h2>MCP servers</h2>
