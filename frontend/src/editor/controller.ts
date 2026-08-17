@@ -1640,6 +1640,16 @@ function syncSharedStructure() {
 function syncActiveIR() {
   if (!state || !state.activeIR || state.activeIR === state.ir || !state.ir.responsive) return;
   syncSharedStructure();
+  // Moving a top-level section converts the artboard from flow to free layout
+  // before writing section x/y coordinates. Responsive editing happens on a
+  // materialized clone, so persist that structural parent change as well;
+  // otherwise the numeric x/y values are ignored and the section snaps back.
+  if (state.activeIR.frame && state.activeIR.frame.layout &&
+      state.activeIR.frame.layout !== state.ir.frame?.layout) {
+    state.ir.frame = Object.assign({}, state.ir.frame || {}, {
+      layout: state.activeIR.frame.layout,
+    });
+  }
   const source = sourceNodeMap(state.activeIR);
   const target = sourceNodeMap(state.ir);
   const sharedKeys = ["text", "title", "placeholder", "value", "label", "src", "alt", "href"];

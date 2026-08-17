@@ -1419,6 +1419,17 @@
       const parent = parentOf(d.ref);
       if (!parent || !parent.node.frame || parent.node.frame.layout !== "free") { tx = 0; ty = 0; }
       d.wLive = w; d.hLive = h; d.txLive = tx; d.tyLive = ty;
+      // Direct manipulation is authoritative. Generated/imported frames may
+      // carry min/max constraints (for example hero.minHeight) that otherwise
+      // keep the DOM visually frozen even while the pointer is moving.
+      if (dir.includes("e") || dir.includes("w")) {
+        d.el.style.minWidth = "0px";
+        d.el.style.maxWidth = "none";
+      }
+      if (dir.includes("n") || dir.includes("s")) {
+        d.el.style.minHeight = "0px";
+        d.el.style.maxHeight = "none";
+      }
       d.el.style.width = w + "px";
       d.el.style.height = h + "px";
       d.el.style.transform = (tx || ty) ? `translate(${tx}px, ${ty}px)` : "";
@@ -1474,6 +1485,18 @@
       const oldH = (typeof f.height === "number") ? f.height : d.h0;
       f.width = Math.round(d.wLive);
       f.height = Math.round(d.hLive);
+      if ((d.dir.includes("e") || d.dir.includes("w")) &&
+          ((typeof f.minWidth === "number" && f.minWidth > f.width) ||
+           (typeof f.maxWidth === "number" && f.maxWidth < f.width))) {
+        delete f.minWidth;
+        delete f.maxWidth;
+      }
+      if ((d.dir.includes("n") || d.dir.includes("s")) &&
+          ((typeof f.minHeight === "number" && f.minHeight > f.height) ||
+           (typeof f.maxHeight === "number" && f.maxHeight < f.height))) {
+        delete f.minHeight;
+        delete f.maxHeight;
+      }
       const parent = parentOf(d.ref);
       if (parent && parent.node.frame && parent.node.frame.layout === "free" && (d.txLive || d.tyLive)) {
         f.x = Math.round((typeof f.x === "number" ? f.x : 0) + d.txLive);
@@ -1581,7 +1604,27 @@
 
       // 2) Геометрический hit-test по элементам
       const deep = !!(e.ctrlKey || e.metaKey);
-      const ref = hitTest(e.clientX, e.clientY, deep);
+      const hitRef = hitTest(e.clientX, e.clientY, deep);
+      let ref = hitRef;
+      let clickRef = null;
+
+      // A selected semantic section owns a drag that starts anywhere inside
+      // its box. Otherwise props.heading/cta/etc. win the fresh hit-test and
+      // silently replace the section before the move gesture is created.
+      // Preserve ordinary click-to-select-child behavior by deferring that
+      // nested selection until pointer-up when the gesture did not move.
+      if (!deep && !e.shiftKey && selections.length === 1) {
+        const selectedRef = selections[0].ref;
+        if (selectedRef.secIdx != null && selectedRef.path == null) {
+          const selectedEl = domAt(selectedRef);
+          const r = selectedEl && selectedEl.getBoundingClientRect();
+          if (r && e.clientX >= r.left && e.clientX <= r.right &&
+              e.clientY >= r.top && e.clientY <= r.bottom) {
+            ref = selectedRef;
+            if (hitRef && refKey(hitRef) !== refKey(selectedRef)) clickRef = hitRef;
+          }
+        }
+      }
 
       if (!ref) {
         // клик по пустому месту → marquee или deselect
@@ -1617,7 +1660,7 @@
 
       // 5) Готовим drag (move); Alt+drag на drop создаст копию (как в Figma)
       drag = { startX: e.clientX, startY: e.clientY, moved: false, type: "move", els: [],
-               altKey: e.altKey };
+               altKey: e.altKey, clickRef };
       // pointer capture для непрерывности drag
       overlay().setPointerCapture(e.pointerId);
       overlay().addEventListener("pointermove", onDragMove);
@@ -1773,6 +1816,7 @@
       if (!d.moved) {
         clearGuides();
         if (d.type === "padding") renderSelectionBoxes();
+        else if (d.type === "move" && d.clickRef) select(d.clickRef);
         return;
       }
       // очищаем CSS transform ДО commit чтобы relPos не включал drag offset
