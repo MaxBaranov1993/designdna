@@ -142,6 +142,10 @@ function adaptNodeStyle(node: IRNode, source: Partial<Record<ColorRole, string>>
 
 function adaptSectionToStyleDna(section: IRNode, blockTokens: unknown, targetTokens: IRObject | null): void {
   if (!targetTokens) return;
+  // Imported DOM/source blocks are literal captures. Page-level Style DNA may
+  // style generated content around them, but must never recolor the source
+  // component itself (especially navigation/header chrome).
+  if (section.type === "source-block" || section.variant === "dom-capture") return;
   const source = colorTokens(blockTokens);
   const target = colorTokens(targetTokens);
   const bg = target.background || "#ffffff";

@@ -103,16 +103,24 @@ def main() -> None:
             json.dumps(generate_requests[-1] if generate_requests else {}),
         )
 
-        page.evaluate("""(ids) => {
-          window.GraphDev.connect(ids.source, 'Header', ids.page, 'a');
-          window.GraphDev.connect(ids.content, 'ir', ids.page, 'b');
-          window.GraphDev.run(ids.page);
-        }""", ids)
+        page.evaluate("""(v) => {
+          window.GraphDev.patchData(v.ids.source, {
+            blocks: [{name:'Header', selector:'header', ir:v.header, lit:true}],
+          });
+          window.GraphDev.connect(v.ids.source, 'Header', v.ids.page, 'a');
+          window.GraphDev.connect(v.ids.content, 'ir', v.ids.page, 'b');
+          window.GraphDev.run(v.ids.page);
+        }""", {"ids": ids, "header": header_ir})
         assembled = page.evaluate("id => window.GraphDev.node(id).data.ir", ids["page"])
         check(
             "Page fallback DNA comes from main content, not first Header input",
             assembled["tokens"]["color"]["primary"] == "#2563eb",
             json.dumps(assembled["tokens"]),
+        )
+        check(
+            "Page Style DNA does not recolor imported Header",
+            assembled["tree"][0]["children"][2]["style"]["background"] == "#dc2626",
+            json.dumps(assembled["tree"][0]),
         )
         browser.close()
 
