@@ -10,6 +10,7 @@ fetch — scraper.fetch_html, детекция границ — scraper.detect_b
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import hashlib
 import json
 import traceback
@@ -38,12 +39,28 @@ _SEMANTIC_ROLES = {
     "gallery", "section",
 }
 
-SOURCE_COMPILER_VERSION = "dom-v22"
+SOURCE_COMPILER_VERSION = "dom-v23"
 
 
 def _validate(doc: dict) -> list[str]:
     """Список ошибок валидации IR по схеме (пустой = ок)."""
     return ir.format_errors(ir.validate_ir(doc))
+
+
+def _normalize_captured_page_tokens(value: dict | None, source: str) -> dict | None:
+    """Accept the current scraper token contract without re-parsing it.
+
+    `capture_block_irs` already converts DOM signals into schema-compatible
+    tokens. Passing that result through `extract_from_signals` again looked for
+    obsolete bodyBg/buttonBg keys and replaced the real brand palette with the
+    black/white defaults.
+    """
+    if not isinstance(value, dict):
+        return None
+    public_keys = {"mode", "color", "font", "radius", "spacing", "shadow"}
+    if public_keys.issubset(value):
+        return copy.deepcopy(value)
+    return extract_from_signals(value, source=source)
 
 
 def _clean_text_nodes(node: dict) -> None:
@@ -192,7 +209,7 @@ def parse_blocks(url: str, blocks: list | None = None,
     # LLM о том, к какому из 19 шаблонов отнести произвольный компонент.
     try:
         captured, rendered_tokens = capture_block_irs(url, wanted, return_tokens=True, viewports=viewports)
-        tokens = extract_from_signals(rendered_tokens, source=url)
+        tokens = _normalize_captured_page_tokens(rendered_tokens, source=url)
     except Exception as e:
         traceback.print_exc()
         captured = {b["selector"]: {"error": f"не удалось снять DOM-слепок: {e}"}

@@ -32,12 +32,20 @@ export const dom = {
 
 /* ---------- сессия редактора (зеркало state в editor.js) ---------- */
 
-export type NodeShim = { data: { ir: any } };
+export type EditorDraft = { baseRevision: number; draftRevision: number; ir: any };
+export type NodeShim = {
+  data: { ir: any };
+  draft?: EditorDraft | null;
+  currentRevision?: () => number;
+  persistDraft?: (draft: EditorDraft) => void;
+  clearDraft?: () => void;
+  commitDraft?: (expectedRevision: number, ir: any) => boolean;
+};
 
 interface Session {
   ir: any;
   node: NodeShim;
-  onSave: ((ir: any) => void) | null;
+  onSave: ((ir: any, expectedRevision: number) => boolean) | null;
   onClose: ((saved: boolean) => void) | null;
   geo: GeoHandle | null;
   history: IRHistoryHandle;
@@ -49,6 +57,10 @@ interface Session {
   viewport: string;
   previewWidth: number;
   activeIR: any;
+  baseUpstreamRevision: number;
+  draftRevision: number;
+  persistedFingerprint: string;
+  sessionId: number;
   layerFlags: Record<string, { hidden?: boolean; locked?: boolean }>;
   layerQuery: string;
   dragLayerKey?: string | null;
@@ -67,6 +79,8 @@ export type SmartAxisProposal = {
   gutter: number;
   referenceLabel: string;
   affectedLabels: string[];
+  baseDraftRevision: number;
+  baseSessionId: number;
   changeSet: Record<string, any>;
   patches: Array<{ sectionIndex: number; beforeFrame: any; afterFrame: any; beforeResponsive: any; afterResponsive: any }>;
 };
@@ -77,6 +91,8 @@ export type EditorQualityProposal = {
   violations: Array<{ rule?: string; path?: string; message?: string; severity?: string }>;
   journal: Array<Record<string, any> | string>;
   fixedIr: any | null;
+  baseDraftRevision: number;
+  baseSessionId: number;
   error?: string;
 };
 
@@ -85,6 +101,8 @@ export type HarmonizerProposal = {
   sourceCount: number;
   tokens: any | null;
   harmonizedIr: any | null;
+  baseDraftRevision: number;
+  baseSessionId: number;
   error?: string;
 };
 
@@ -93,12 +111,15 @@ export type ResponsiveAutopilotProposal = {
   candidateIr: any | null;
   decisions: Array<{ kind: string; label: string; count: number }>;
   warnings: Array<{ rule?: string; path?: string; message?: string }>;
+  baseDraftRevision: number;
+  baseSessionId: number;
   error?: string;
 };
 
 export type IntentLock = "brand" | "content" | "geometry" | "appearance" | "responsive" | "source-link";
 
 let state: Session | null = null;
+let nextSessionId = 1;
 let dnaPanelState: {
   tokens: any;
   originalTokens: any;
@@ -254,7 +275,7 @@ export function setIntentLocks(locks: IntentLock[]) {
     target.constraints = target.constraints || {};
     target.constraints.intentLocks = [...new Set(locks)].filter((lock) => ALL_INTENT_LOCKS.includes(lock));
   });
-  state.node.data.ir = state.ir;
+  persistDraft();
   ui.setIntentLocksOpen(false);
   rerenderEditorCanvas();
   updateUndoBtn();
@@ -380,14 +401,14 @@ const FONT_FAMILIES = FONT_CATALOG
   : ["Inter", "Sora", "Manrope", "Playfair Display", "Space Grotesk", "DM Sans", "IBM Plex Mono", "Montserrat"];
 
 function fontOptionsHtml(selected?: string, autoLabel?: string | null) {
-  const auto = autoLabel == null ? "" : `<option value="">${autoLabel}</option>`;
+  const auto = autoLabel == null ? "" : `<option value="">${esc(autoLabel)}</option>`;
   if (!FONT_CATALOG || !FONT_CATALOG.groups) {
-    return auto + FONT_FAMILIES.map((ff) => `<option value="${ff}" ${ff === selected ? "selected" : ""}>${ff}</option>`).join("");
+    return auto + FONT_FAMILIES.map((ff) => `<option value="${esc(ff)}" ${ff === selected ? "selected" : ""}>${esc(ff)}</option>`).join("");
   }
   return auto + FONT_CATALOG.groups
     .map((group) =>
       `<optgroup label="${esc(group.label)}">${group.fonts
-        .map((ff) => `<option value="${ff}" ${ff === selected ? "selected" : ""}>${ff}</option>`)
+        .map((ff) => `<option value="${esc(ff)}" ${ff === selected ? "selected" : ""}>${esc(ff)}</option>`)
         .join("")}</optgroup>`,
     )
     .join("");
@@ -495,9 +516,31 @@ export function handleAct(act: string) {
   else if (act === "ungroup") state.geo && state.geo.ungroupSelection();
 }
 
-function stableRevisionId(ir: any): string {
-  const raw = String(ir?.meta?.revisionId || "current").toLowerCase().replace(/[^a-z0-9._:-]+/g, "-");
-  return `revision.${raw || "current"}`.slice(0, 128);
+function stableRevisionId(): string {
+  return `revision.editor-${state?.baseUpstreamRevision ?? 0}-${state?.draftRevision ?? 0}`;
+}
+
+function proposalStillCurrent(baseSessionId: number, baseDraftRevision: number): boolean {
+  return !!state && state.sessionId === baseSessionId && state.draftRevision === baseDraftRevision;
+}
+
+function persistDraft(clearProposals = true) {
+  if (!state) return;
+  const fingerprint = JSON.stringify(state.ir);
+  if (fingerprint === state.persistedFingerprint) return;
+  state.draftRevision += 1;
+  state.persistedFingerprint = fingerprint;
+  state.node.persistDraft?.({
+    baseRevision: state.baseUpstreamRevision,
+    draftRevision: state.draftRevision,
+    ir: deepClone(state.ir),
+  });
+  if (clearProposals) {
+    ui.setSmartAxisProposal(null);
+    ui.setQualityProposal(null);
+    ui.setHarmonizerProposal(null);
+    ui.setResponsiveProposal(null);
+  }
 }
 
 function sectionLabel(section: any, index: number): string {
@@ -561,14 +604,16 @@ export function planSmartAxis() {
     gutter,
     referenceLabel: referenceLabel || (best ? "лучшее найденное ограничение" : "безопасная дизайн-сетка"),
     affectedLabels: candidates.map(({ section, sectionIndex }: any) => sectionLabel(section, sectionIndex)),
+    baseDraftRevision: state.draftRevision,
+    baseSessionId: state.sessionId,
     patches,
     changeSet: {
       version: "semantic-change-set/1.0",
       id: `change.smart-axis.${stamp}`,
-      baseRevisionId: stableRevisionId(state.ir),
+      baseRevisionId: stableRevisionId(),
       intent: "Выровнять внутреннюю ширину выбранных блоков по общей смысловой оси",
       scope: operations.map((operation: Record<string, any>) => operation.target),
-      preconditions: [{ kind: "revision-match", expected: stableRevisionId(state.ir) }],
+      preconditions: [{ kind: "revision-match", expected: stableRevisionId() }],
       operations,
       inverseOperations,
       validations: ["schema", "references", "responsive", "overflow", "visual"].map((kind) => ({ kind, status: "pending" })),
@@ -586,7 +631,7 @@ export function dismissSmartAxisProposal() {
 }
 
 export function applySmartAxisProposal(proposal: SmartAxisProposal) {
-  if (!state || !proposal || proposal.changeSet.baseRevisionId !== stableRevisionId(state.ir)) return;
+  if (!state || !proposal || proposal.baseSessionId !== state.sessionId || proposal.baseDraftRevision !== state.draftRevision || proposal.changeSet.baseRevisionId !== stableRevisionId()) return;
   pushHistory();
   proposal.patches.forEach((patch) => {
     const section = state!.ir.tree?.[patch.sectionIndex];
@@ -594,7 +639,7 @@ export function applySmartAxisProposal(proposal: SmartAxisProposal) {
     section.frame = deepClone(patch.afterFrame);
     section.responsive = deepClone(patch.afterResponsive);
   });
-  state.node.data.ir = state.ir;
+  persistDraft(false);
   ui.setSmartAxisProposal(null);
   rerenderEditorCanvas();
   updateUndoBtn();
@@ -602,24 +647,33 @@ export function applySmartAxisProposal(proposal: SmartAxisProposal) {
 
 export async function planQualityGate() {
   if (!state) return;
-  ui.setQualityProposal({ status: "loading", passed: false, violations: [], journal: [], fixedIr: null });
+  const baseDraftRevision = state.draftRevision;
+  const baseSessionId = state.sessionId;
+  const baseIr = deepClone(state.ir);
+  ui.setQualityProposal({ status: "loading", passed: false, violations: [], journal: [], fixedIr: null, baseDraftRevision, baseSessionId });
   try {
     const response = await fetch("/api/quality-gate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ir: sanitizeIrForPost(state.ir), fix: true }),
+      body: JSON.stringify({ ir: sanitizeIrForPost(baseIr), fix: true }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
+      if (state?.sessionId === baseSessionId) ui.setQualityProposal({ status: "error", passed: false, violations: [], journal: [], fixedIr: null, baseDraftRevision, baseSessionId, error: "Макет изменился во время проверки. Запустите проверку ещё раз." });
+      return;
+    }
     ui.setQualityProposal({
       status: "ready",
       passed: Boolean(data.passed),
       violations: Array.isArray(data.violations) ? data.violations : [],
       journal: Array.isArray(data.journal) ? data.journal : [],
-      fixedIr: data.fixed_ir || null,
+      fixedIr: data.fixed_ir ? preserveLockedFacets(baseIr, deepClone(data.fixed_ir)) : null,
+      baseDraftRevision,
+      baseSessionId,
     });
   } catch (error) {
-    ui.setQualityProposal({ status: "error", passed: false, violations: [], journal: [], fixedIr: null, error: (error as Error).message });
+    if (state?.sessionId === baseSessionId) ui.setQualityProposal({ status: "error", passed: false, violations: [], journal: [], fixedIr: null, baseDraftRevision, baseSessionId, error: (error as Error).message });
   }
 }
 
@@ -628,10 +682,10 @@ export function dismissQualityProposal() {
 }
 
 export function applyQualityProposal(proposal: EditorQualityProposal) {
-  if (!state || proposal.status !== "ready" || !proposal.fixedIr) return;
+  if (!state || proposal.status !== "ready" || !proposal.fixedIr || proposal.baseSessionId !== state.sessionId || proposal.baseDraftRevision !== state.draftRevision) return;
   pushHistory();
-  state.ir = preserveLockedFacets(state.ir, deepClone(proposal.fixedIr));
-  state.node.data.ir = state.ir;
+  state.ir = deepClone(proposal.fixedIr);
+  persistDraft(false);
   ui.setQualityProposal(null);
   rerenderEditorCanvas();
   updateUndoBtn();
@@ -639,10 +693,13 @@ export function applyQualityProposal(proposal: EditorQualityProposal) {
 
 export async function planHarmonizer() {
   if (!state) return;
+  const baseDraftRevision = state.draftRevision;
+  const baseSessionId = state.sessionId;
+  const baseIr = deepClone(state.ir);
   const sourceCount = Object.keys(state.sourceContext.registry).length || 1;
-  ui.setHarmonizerProposal({ status: "loading", sourceCount, tokens: null, harmonizedIr: null });
+  ui.setHarmonizerProposal({ status: "loading", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId });
   try {
-    const cleanIr = sanitizeIrForPost(state.ir);
+    const cleanIr = sanitizeIrForPost(baseIr);
     const extractResponse = await fetch("/api/style-dna/extract", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -650,6 +707,10 @@ export async function planHarmonizer() {
     });
     const extracted = await extractResponse.json();
     if (!extractResponse.ok) throw new Error(extracted.detail || `HTTP ${extractResponse.status}`);
+    if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
+      if (state?.sessionId === baseSessionId) ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId, error: "Макет изменился во время анализа. Запустите Harmonizer ещё раз." });
+      return;
+    }
     const applyResponse = await fetch("/api/style-dna/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -657,10 +718,14 @@ export async function planHarmonizer() {
     });
     const applied = await applyResponse.json();
     if (!applyResponse.ok) throw new Error(applied.detail || `HTTP ${applyResponse.status}`);
-    const harmonizedIr = applied.ir ? preserveLockedFacets(state.ir, deepClone(applied.ir)) : null;
-    ui.setHarmonizerProposal({ status: "ready", sourceCount, tokens: extracted.tokens || {}, harmonizedIr });
+    if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
+      if (state?.sessionId === baseSessionId) ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId, error: "Макет изменился во время применения Style DNA. Запустите Harmonizer ещё раз." });
+      return;
+    }
+    const harmonizedIr = applied.ir ? preserveLockedFacets(baseIr, deepClone(applied.ir)) : null;
+    ui.setHarmonizerProposal({ status: "ready", sourceCount, tokens: extracted.tokens || {}, harmonizedIr, baseDraftRevision, baseSessionId });
   } catch (error) {
-    ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, error: (error as Error).message });
+    if (state?.sessionId === baseSessionId) ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId, error: (error as Error).message });
   }
 }
 
@@ -669,10 +734,10 @@ export function dismissHarmonizerProposal() {
 }
 
 export function applyHarmonizerProposal(proposal: HarmonizerProposal) {
-  if (!state || proposal.status !== "ready" || !proposal.harmonizedIr) return;
+  if (!state || proposal.status !== "ready" || !proposal.harmonizedIr || proposal.baseSessionId !== state.sessionId || proposal.baseDraftRevision !== state.draftRevision) return;
   pushHistory();
   state.ir = deepClone(proposal.harmonizedIr);
-  state.node.data.ir = state.ir;
+  persistDraft(false);
   ui.setHarmonizerProposal(null);
   rerenderEditorCanvas();
   updateUndoBtn();
@@ -687,9 +752,12 @@ function responsiveOverride(node: any, viewport: "tablet" | "mobile") {
 
 export async function planResponsiveAutopilot() {
   if (!state) return;
-  ui.setResponsiveProposal({ status: "loading", candidateIr: null, decisions: [], warnings: [] });
+  const baseDraftRevision = state.draftRevision;
+  const baseSessionId = state.sessionId;
+  const baseIr = deepClone(state.ir);
+  ui.setResponsiveProposal({ status: "loading", candidateIr: null, decisions: [], warnings: [], baseDraftRevision, baseSessionId });
   try {
-    const candidate = deepClone(sanitizeIrForPost(state.ir));
+    const candidate = deepClone(sanitizeIrForPost(baseIr));
     const counters = { rails: 0, stacks: 0, widths: 0, type: 0, untouched: 0 };
     candidate.responsive = candidate.responsive || { viewports: {} };
     candidate.responsive.viewports = {
@@ -717,7 +785,7 @@ export async function planResponsiveAutopilot() {
         }
         const fontSize = Number(node.style?.fontSize || 0);
         if (viewport === "mobile" && fontSize > 30) {
-          override.style = { ...(override.style || {}), fontSize: Math.max(28, Math.round(fontSize * .82)) };
+          override.style = { ...(override.style || {}), fontSize: Math.max(28, Math.min(34, Math.round(fontSize * .82))) };
           counters.type += 1;
         }
       }
@@ -728,15 +796,37 @@ export async function planResponsiveAutopilot() {
         counters.untouched += 1;
         return;
       }
-      const reproduction = section.type === "source-block" || section.variant === "dom-capture" || (section.frame?.layout === "free" && section.children?.length);
-      if (reproduction) {
+      const sourceReproduction = section.type === "source-block" || section.variant === "dom-capture";
+      if (sourceReproduction) {
         counters.untouched += 1;
         return;
       }
+      const freeComposition = section.frame?.layout === "free" && section.children?.length;
       for (const [viewport, width, gutter] of [["tablet", 768, 24], ["mobile", 390, 16]] as Array<["tablet" | "mobile", number, number]>) {
         const override = responsiveOverride(section, viewport);
         override.frame.contentMaxWidth = Math.min(Number(section.frame?.contentMaxWidth || 1120), width - gutter * 2);
         override.frame.contentGutter = gutter;
+        if (freeComposition) {
+          override.frame.direction = "column";
+          override.frame.wrap = false;
+          override.frame.height = "hug";
+          override.frame.gap = viewport === "mobile" ? 20 : 28;
+          override.frame.padding = viewport === "mobile" ? [48, gutter, 56, gutter] : [64, gutter, 72, gutter];
+          (section.children || []).forEach((child: any) => {
+            const childOverride = responsiveOverride(child, viewport);
+            childOverride.frame.absolute = false;
+            childOverride.frame.width = ["button", "badge", "icon"].includes(child.type) ? "hug" : "fill";
+            childOverride.frame.maxWidth = width - gutter * 2;
+            if (["heading", "text", "badge", "button", "icon"].includes(child.type)) {
+              childOverride.frame.height = "hug";
+            } else if (["image", "video", "media"].includes(child.type)
+              && typeof child.frame?.width === "number" && typeof child.frame?.height === "number") {
+              const proportionalHeight = Math.round((width - gutter * 2) * child.frame.height / child.frame.width);
+              childOverride.frame.height = Math.max(180, Math.min(viewport === "mobile" ? 280 : 440, proportionalHeight));
+            }
+          });
+          counters.stacks += 1;
+        }
         counters.rails += 1;
       }
       adaptNode(section);
@@ -748,6 +838,10 @@ export async function planResponsiveAutopilot() {
     });
     const quality = await response.json();
     if (!response.ok) throw new Error(quality.detail || `HTTP ${response.status}`);
+    if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
+      if (state?.sessionId === baseSessionId) ui.setResponsiveProposal({ status: "error", candidateIr: null, decisions: [], warnings: [], baseDraftRevision, baseSessionId, error: "Макет изменился во время адаптации. Запустите Autopilot ещё раз." });
+      return;
+    }
     const decisions = [
       { kind: "rails", label: "Контентные оси", count: counters.rails },
       { kind: "stacks", label: "Row → column", count: counters.stacks },
@@ -755,9 +849,9 @@ export async function planResponsiveAutopilot() {
       { kind: "type", label: "Мобильная типографика", count: counters.type },
       { kind: "preserve", label: "Импорт без изменений", count: counters.untouched },
     ].filter((item) => item.count > 0);
-    ui.setResponsiveProposal({ status: "ready", candidateIr: candidate, decisions, warnings: Array.isArray(quality.violations) ? quality.violations : [] });
+    ui.setResponsiveProposal({ status: "ready", candidateIr: candidate, decisions, warnings: Array.isArray(quality.violations) ? quality.violations : [], baseDraftRevision, baseSessionId });
   } catch (error) {
-    ui.setResponsiveProposal({ status: "error", candidateIr: null, decisions: [], warnings: [], error: (error as Error).message });
+    if (state?.sessionId === baseSessionId) ui.setResponsiveProposal({ status: "error", candidateIr: null, decisions: [], warnings: [], baseDraftRevision, baseSessionId, error: (error as Error).message });
   }
 }
 
@@ -766,10 +860,10 @@ export function dismissResponsiveProposal() {
 }
 
 export function applyResponsiveProposal(proposal: ResponsiveAutopilotProposal) {
-  if (!state || proposal.status !== "ready" || !proposal.candidateIr) return;
+  if (!state || proposal.status !== "ready" || !proposal.candidateIr || proposal.baseSessionId !== state.sessionId || proposal.baseDraftRevision !== state.draftRevision) return;
   pushHistory();
   state.ir = deepClone(proposal.candidateIr);
-  state.node.data.ir = state.ir;
+  persistDraft(false);
   ui.setResponsiveProposal(null);
   rerenderEditorCanvas();
   updateUndoBtn();
@@ -780,13 +874,16 @@ export function applyResponsiveProposal(proposal: ResponsiveAutopilotProposal) {
 /** Фаза 1 открытия: состояние + не-layout части (вызывается из store.openEditor). */
 export function open(
   node: NodeShim,
-  onSave: (ir: any) => void,
+  onSave: (ir: any, expectedRevision: number) => boolean,
   onClose: (saved: boolean) => void,
   sourceContext?: { registry?: Record<string, any>; nodeSources?: Record<string, string>; layoutEvidence?: any[] },
 ) {
-  upgradeSourceNesting(node.data.ir);
+  const restoredDraft = node.draft && node.draft.ir ? node.draft : null;
+  const upstreamRevision = node.currentRevision ? node.currentRevision() : 0;
+  const startingIr = deepClone(restoredDraft ? restoredDraft.ir : node.data.ir);
+  if (!startingIr) return false;
   state = {
-    ir: node.data.ir,
+    ir: startingIr,
     node,
     onSave,
     onClose,
@@ -800,6 +897,10 @@ export function open(
     viewport: "desktop",
     previewWidth: 1440,
     activeIR: null,
+    baseUpstreamRevision: restoredDraft ? restoredDraft.baseRevision : upstreamRevision,
+    draftRevision: restoredDraft ? restoredDraft.draftRevision : 0,
+    persistedFingerprint: JSON.stringify(startingIr),
+    sessionId: nextSessionId++,
     layerFlags: {}, // refKey -> {hidden, locked}; сессия редактора, не часть IR
     layerQuery: "",
     sourceContext: {
@@ -810,6 +911,8 @@ export function open(
       layoutEvidence: sourceContext?.layoutEvidence || [],
     },
   };
+  const upgraded = upgradeSourceNesting(state.ir);
+  if (upgraded) persistDraft();
   const st = state;
   const responsive = !!(st.ir && st.ir.responsive && st.ir.responsive.viewports);
   // вьюпорт из графа: Page/Source Import прокидывают meta.activeViewport вниз —
@@ -979,19 +1082,23 @@ async function extractStyleDnaFromServer() {
 
 async function applyStyleDnaFromInspector() {
   if (!state || !dnaPanelState) return;
+  const baseDraftRevision = state.draftRevision;
+  const baseSessionId = state.sessionId;
+  const baseIr = deepClone(state.ir);
   const foot = dom.dnaFoot;
   if (foot) foot.textContent = "Применение…";
   try {
     const resp = await fetch("/api/style-dna/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ir: sanitizeIrForPost(state.ir), tokens: dnaPanelState.tokens }),
+      body: JSON.stringify({ ir: sanitizeIrForPost(baseIr), tokens: deepClone(dnaPanelState.tokens) }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "HTTP " + resp.status);
+    if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) throw new Error("Макет изменился во время применения Style DNA. Повторите операцию.");
     pushHistory();
     state.ir = data.ir || state.ir;
-    state.node.data.ir = state.ir;
+    persistDraft();
     dnaPanelState.originalTokens = deepClone(dnaPanelState.tokens);
     rerenderEditorCanvas();
     if (foot) foot.textContent = "Токены применены";
@@ -1060,7 +1167,7 @@ function renderStyleDnaPanel() {
   if ((primitives.colors || []).length) {
     html += `<div class="fe-dna-meta">Colors (${primitives.colors.length})</div>`;
     for (const c of primitives.colors.slice(0, 24)) {
-      html += `<div class="fe-dna-row"><span class="fe-dna-primitive" style="color:${esc(c)}">■</span><span class="fe-dna-primitive">${esc(c)}</span></div>`;
+      html += `<div class="fe-dna-row"><span class="fe-dna-primitive" style="color:${colorHex(c)}">■</span><span class="fe-dna-primitive">${esc(c)}</span></div>`;
     }
   }
   if ((primitives.fonts || []).length) {
@@ -1071,11 +1178,11 @@ function renderStyleDnaPanel() {
   }
   if ((primitives.radii || []).length) {
     html += `<div class="fe-dna-meta" style="margin-top:8px">Radii</div>`;
-    html += `<div class="fe-dna-primitive">${primitives.radii.join(", ")}</div>`;
+    html += `<div class="fe-dna-primitive">${primitives.radii.map((value: any) => esc(value)).join(", ")}</div>`;
   }
   if ((primitives.spacings || []).length) {
     html += `<div class="fe-dna-meta" style="margin-top:8px">Spacings</div>`;
-    html += `<div class="fe-dna-primitive">${primitives.spacings.join(", ")}</div>`;
+    html += `<div class="fe-dna-primitive">${primitives.spacings.map((value: any) => esc(value)).join(", ")}</div>`;
   }
   html += `</div>`;
 
@@ -1099,7 +1206,7 @@ function dnaNumberRow(label: string, value: any, token: string, counts: Record<s
   const count = counts[token] || 0;
   return `<div class="fe-dna-row" data-token="${esc(token)}">
     <label>${esc(label)}</label>
-    <input type="number" value="${value == null ? "" : value}" data-kind="number" data-token="${esc(token)}">
+    <input type="number" value="${value == null ? "" : esc(value)}" data-kind="number" data-token="${esc(token)}">
     <button class="fe-dna-highlight" data-highlight="${esc(token)}" title="Подсветить связанные">${count}</button>
   </div>`;
 }
@@ -1111,7 +1218,7 @@ function dnaFontRow(label: string, font: any, counts: Record<string, number>) {
   return `<div class="fe-dna-row" data-token="${esc(token)}">
     <label>${esc(label)}</label>
     <select data-kind="font-family" data-token="${esc(token)}" class="fe-dna-fontsel">${fontOptionsHtml(f.family)}</select>
-    <input type="number" value="${f.weight}" data-kind="font-weight" data-token="${esc(token)}" style="width:55px">
+    <input type="number" value="${esc(f.weight)}" data-kind="font-weight" data-token="${esc(token)}" style="width:55px">
     <button class="fe-dna-highlight" data-highlight="${esc(token)}" title="Подсветить связанные">${count}</button>
   </div>`;
 }
@@ -1239,7 +1346,7 @@ function applyNormalizationPreview() {
   const changed = (dnaPanelState.normalization.patch || []).length;
   pushHistory();
   state.ir = deepClone(dnaPanelState.normalization.normalizedIr);
-  state.node.data.ir = state.ir;
+  persistDraft();
   dnaPanelState.tokens = deepClone(state.ir.tokens || dnaPanelState.tokens);
   dnaPanelState.originalTokens = deepClone(dnaPanelState.tokens);
   dnaPanelState.normalization = null;
@@ -1354,6 +1461,7 @@ function withAlpha(hex: string, alpha: number) {
 }
 
 function deepClone(obj: any) {
+  if (obj === undefined) return undefined;
   return JSON.parse(JSON.stringify(obj));
 }
 
@@ -1363,6 +1471,24 @@ function deepClone(obj: any) {
  *  но серверная schema их отклоняет (422) — чистим только копию на провод. */
 function sanitizeIrForPost(ir: any) {
   const clone = deepClone(ir);
+  const viewportDefaults: Record<string, { width: number; height: number }> = {
+    desktop: { width: 1440, height: 900 },
+    tablet: { width: 768, height: 1024 },
+    mobile: { width: 390, height: 844 },
+  };
+  const viewports = clone && clone.responsive && clone.responsive.viewports;
+  if (viewports && typeof viewports === "object") {
+    Object.entries(viewportDefaults).forEach(([name, fallback]) => {
+      if (!viewports[name] || typeof viewports[name] !== "object") return;
+      const viewport = viewports[name];
+      if (!(Number.isFinite(viewport.width) && viewport.width > 0)) viewport.width = fallback.width;
+      if (!(Number.isFinite(viewport.height) && viewport.height > 0)) {
+        const documentHeight = name === "desktop" && Number.isFinite(clone.frame && clone.frame.height)
+          && clone.frame.height > 0 ? clone.frame.height : fallback.height;
+        viewport.height = documentHeight;
+      }
+    });
+  }
   const walk = (node: any) => {
     if (!node || typeof node !== "object") return;
     delete node.__path;
@@ -1378,8 +1504,8 @@ function sanitizeIrForPost(ir: any) {
 function save() {
   if (!state) return;
   syncActiveIR();
-  if (state.onSave) state.onSave(state.ir);
-  close(true);
+  const saved = state.onSave ? state.onSave(deepClone(state.ir), state.baseUpstreamRevision) : false;
+  if (saved) close(true);
 }
 
 export function close(saved?: boolean) {
@@ -1405,7 +1531,7 @@ function undo() {
   const snap = state.history.undo(() => state!.ir);
   if (!snap) return;
   state.ir = snap;
-  state.node.data.ir = state.ir;
+  persistDraft();
   if (state.geo) { state.geo.destroy(); state.geo = null; }
   renderCanvas();
   renderLayers();
@@ -1420,7 +1546,7 @@ function redo() {
   const snap = state.history.redo(() => state!.ir);
   if (!snap) return;
   state.ir = snap;
-  state.node.data.ir = state.ir;
+  persistDraft();
   if (state.geo) { state.geo.destroy(); state.geo = null; }
   renderCanvas();
   renderLayers();
@@ -1526,6 +1652,14 @@ function syncActiveIR() {
     if (state!.viewport === "desktop") {
       if (active.frame) node.frame = JSON.parse(JSON.stringify(active.frame));
       if (active.style) node.style = JSON.parse(JSON.stringify(active.style));
+      // Imported responsive sources may carry an explicit desktop override.
+      // Keeping only the base frame makes the stale override win immediately
+      // after rerender, so direct canvas edits appear to snap back on drop.
+      const desktop = node.responsive && node.responsive.desktop;
+      if (desktop) {
+        if (active.frame) desktop.frame = JSON.parse(JSON.stringify(active.frame));
+        if (active.style) desktop.style = JSON.parse(JSON.stringify(active.style));
+      }
     } else {
       node.responsive = node.responsive || {};
       const override = node.responsive[state!.viewport] || {};
@@ -1533,6 +1667,48 @@ function syncActiveIR() {
       if (active.frame) override.frame = JSON.parse(JSON.stringify(active.frame));
       if (active.style) override.style = JSON.parse(JSON.stringify(active.style));
       node.responsive[state!.viewport] = override;
+    }
+  });
+}
+
+/** Persist geometry/style for the exact refs being edited on the canvas.
+ * Source-key reconciliation handles broad/structural changes, while this
+ * direct path prevents viewport materialization from restoring an older
+ * responsive frame immediately after pointer-up. */
+function syncSelectedActiveGeometry() {
+  if (!state || !state.activeIR || state.activeIR === state.ir || !state.ir.responsive) return;
+
+  function at(ir: any, ref: GeoRef) {
+    if (ref.secIdx == null) return ir;
+    const section = ir && ir.tree && ir.tree[ref.secIdx];
+    if (!section || ref.path == null) return section;
+    if (ref.path.startsWith("props.")) return null;
+    return getByPath(section, ref.path);
+  }
+
+  state.sel.forEach((sel) => {
+    const active = at(state!.activeIR, sel.ref);
+    const target = at(state!.ir, sel.ref);
+    if (!active || !target) return;
+    if (sel.ref.secIdx == null) {
+      if (active.frame) target.frame = deepClone(active.frame);
+      return;
+    }
+    if (state!.viewport === "desktop") {
+      if (active.frame) target.frame = deepClone(active.frame);
+      if (active.style) target.style = deepClone(active.style);
+      const desktop = target.responsive && target.responsive.desktop;
+      if (desktop) {
+        if (active.frame) desktop.frame = deepClone(active.frame);
+        if (active.style) desktop.style = deepClone(active.style);
+      }
+    } else {
+      target.responsive = target.responsive || {};
+      const override = target.responsive[state!.viewport] || {};
+      override.visible = true;
+      if (active.frame) override.frame = deepClone(active.frame);
+      if (active.style) override.style = deepClone(active.style);
+      target.responsive[state!.viewport] = override;
     }
   });
 }
@@ -1772,6 +1948,8 @@ function attachGeoEdit() {
     onMutated: () => {
       if (!state) return;
       syncActiveIR();
+      syncSelectedActiveGeometry();
+      persistDraft();
       const savedRefs = state.sel.map((s) => s.ref);
       IRRenderer.renderIR(inner, buildActiveIR(), { fit: false });
       applyLayerFlags();
@@ -2030,6 +2208,9 @@ export function copyResponsiveTo(sel: GeoSel, viewport: string) {
 
 export function rerenderEditorCanvas() {
   if (!state || !dom.canvasInner) return;
+  // Legacy token controls mutate their object before requesting a redraw.
+  // Fingerprint-gated persistence converts that into a new Zustand identity.
+  persistDraft();
   const inner = dom.canvasInner;
   IRRenderer.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
   applyLayerFlags();
@@ -2040,6 +2221,15 @@ export function rerenderEditorCanvas() {
   renderLayers();
   if (state.sel.length && state.geo) state.geo.selectMulti(state.sel.map((s) => s.ref));
   renderInspector();
+}
+
+/** Persist direct inspector edits made against the materialized viewport IR.
+ * Geometry/style mutations already flow through GeoEdit.onMutated; text and
+ * type-specific controls mutate the selected active node directly. */
+export function commitActiveIrEdits() {
+  if (!state) return;
+  syncActiveIR();
+  persistDraft();
 }
 
 /* ---------- клавиатура ---------- */

@@ -24,6 +24,8 @@ export function GeneratorNode({ id, data, selected }: NodeProps<GeneratorFlowNod
   const sendToNode = useFlowStore((s) => s.sendToNode);
   const busy = useFlowStore((s) => !!s.busy[Number(id)]);
   const activeIr = data.variants.length ? data.variants[data.active] || null : null;
+  const provider = data.provider === "kimi" ? "kimi" : "codex";
+  const count = Math.max(1, Math.min(2, Number(data.count) || 1));
   return (
     <NodeShell id={id} type="generator" selected={selected}>
       <InPorts type="generator" />
@@ -34,21 +36,24 @@ export function GeneratorNode({ id, data, selected }: NodeProps<GeneratorFlowNod
         onChange={(e) => setNodeData(Number(id), { ownPrompt: e.target.value })}
       />
       <div className="generator-model-row">
-        <span className="f-provider" title="Primary: anthropic/claude-opus-5 through OpenRouter; fallbacks are automatic">
-          Opus 5 · OpenRouter
-        </span>
+        <select
+          className="f-provider-select nodrag"
+          value={provider}
+          onChange={(event) => setNodeData(Number(id), { provider: event.target.value })}
+          aria-label="Модель генератора"
+        >
+          <option value="codex">GPT Codex · ChatGPT</option>
+          <option value="kimi">Kimi K2.5 · API key</option>
+        </select>
       </div>
       <div className="ctl-row">
         <select
           className="f-count nodrag"
-          value={String(data.count)}
+          value={String(count)}
           onChange={(e) => setNodeData(Number(id), { count: Number(e.target.value) })}
         >
           <option value="1">1</option>
           <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
-          <option value="5">5</option>
         </select>
         <button
           className="btn-node primary small f-run nodrag"

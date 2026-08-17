@@ -2,7 +2,6 @@
  * Тяжёлая сессия (IR, geo-хендл, история, pan/zoom) живёт в controller.ts —
  * здесь только то, что рендерит React. */
 import { create } from "zustand";
-import { deepClone } from "../flow/dataflow";
 import { useFlowStore } from "../flow/store";
 import { toast } from "../flow/toast";
 import type { IRObject } from "../flow/types";
@@ -51,11 +50,9 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
       return true; // ошибка показана
     }
 
-    // DNA Editor мутирует IR in-place. Write-through shim держит граф и редактор
-    // на одном объекте, чтобы undo/redo и инспектор сразу отражались в ноде.
-    // Для «Закрыть без сохранения» делаем снапшот до открытия и восстанавливаем.
-    const snapshot = deepClone(ir);
-    let saved = false;
+    const persistedDraft = (n!.data as Record<string, unknown>)._editorDraft as
+      | { baseRevision?: number; draftRevision?: number; ir?: IRObject }
+      | undefined;
     const nodeLike: ctl.NodeShim = {
       data: {
         get ir(): IRObject | null {
@@ -66,23 +63,34 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
           useFlowStore.getState().setNodeData(nodeId, { ir: v });
         },
       },
+      draft: persistedDraft?.ir
+        ? {
+            baseRevision: Number(persistedDraft.baseRevision) || 0,
+            draftRevision: Number(persistedDraft.draftRevision) || 0,
+            ir: persistedDraft.ir,
+          }
+        : null,
+      currentRevision: () => useFlowStore.getState().getNodeIrRevision(nodeId),
+      persistDraft: (draft) => useFlowStore.getState().persistEditorDraft(nodeId, draft),
+      clearDraft: () => useFlowStore.getState().clearEditorDraft(nodeId),
+      commitDraft: (expectedRevision, draftIr) =>
+        useFlowStore.getState().commitEditorDraft(nodeId, expectedRevision, draftIr),
     } as ctl.NodeShim;
 
     const ok = ctl.open(
       nodeLike,
-      (savedIr: IRObject) => {
-        saved = true;
+      (savedIr: IRObject, expectedRevision: number) => {
         const fst = useFlowStore.getState();
-        fst.setNodeData(nodeId, { ir: savedIr });
+        if (!fst.commitEditorDraft(nodeId, expectedRevision, savedIr)) {
+          toast("IR изменился во входном графе. Черновик сохранён; обновите или перенесите правки вручную.", "error");
+          return false;
+        }
         fst.propagate(nodeId);
         toast("IR сохранён из редактора", "ok");
+        return true;
       },
-      () => {
-        if (!saved && snapshot) {
-          const fst = useFlowStore.getState();
-          fst.setNodeData(nodeId, { ir: snapshot });
-          fst.propagate(nodeId);
-        }
+      (saved) => {
+        if (!saved) useFlowStore.getState().clearEditorDraft(nodeId);
       },
       { registry: sourceRegistry, nodeSources, layoutEvidence },
     );

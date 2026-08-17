@@ -15,8 +15,11 @@ export function pythonWorkerSpec({
       args: [],
     };
   }
+  const projectPython = platform === "win32"
+    ? targetPath.join(sourceRoot, ".venv", "Scripts", "python.exe")
+    : targetPath.join(sourceRoot, ".venv", "bin", "python");
   return {
-    command: pythonOverride || (platform === "win32" ? "python" : "python3"),
+    command: pythonOverride || projectPython,
     args: [targetPath.join(sourceRoot, "app", "desktop_worker.py")],
   };
 }
@@ -24,6 +27,7 @@ export function pythonWorkerSpec({
 export function pythonWorkerEnvironment({ isPackaged, runtimeRoot, userDataPath }) {
   return {
     PYTHONUNBUFFERED: "1",
+    PYTHONUTF8: "1",
     DESIGNDNA_RUNTIME_ROOT: runtimeRoot,
     DESIGNDNA_APP_DIR: path.join(runtimeRoot, "app"),
     DESIGNDNA_DATA_DIR: path.join(userDataPath, "data"),

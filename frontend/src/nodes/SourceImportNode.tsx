@@ -66,6 +66,12 @@ export function SourceImportNode({ id, data, selected }: NodeProps<SourceImportF
             placeholder="https://site.com/page"
             value={data.url}
             onChange={(e) => setNodeData(Number(id), { url: e.target.value })}
+            onBlur={(e) => {
+              const value = e.target.value.trim();
+              if (value && !/^[a-z][a-z\d+.-]*:\/\//i.test(value)) {
+                setNodeData(Number(id), { url: value.startsWith("//") ? `https:${value}` : `https://${value}` });
+              }
+            }}
           />
           <label className="bp-mine nodrag" title="Импортируйте только свои страницы или страницы, на которые есть право">
             <input

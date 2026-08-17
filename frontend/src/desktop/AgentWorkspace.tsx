@@ -17,6 +17,7 @@ export function AgentWorkspace() {
   const [mcpStatus, setMcpStatus] = useState<Array<Record<string, any>>>([]);
   const [tools, setTools] = useState<Array<Record<string, any>>>([]);
   const [providerState, setProviderState] = useState<Record<string, any>>({});
+  const [codexAccount, setCodexAccount] = useState<Record<string, any> | null>(null);
   const [openaiKey, setOpenaiKey] = useState("");
   const [kimiKey, setKimiKey] = useState("");
   const [error, setError] = useState("");
@@ -26,6 +27,7 @@ export function AgentWorkspace() {
     if (!desktop) return;
     void desktop.mcp.list().then((servers) => setMcpConfig(JSON.stringify(servers, null, 2)));
     void desktop.providers.status().then(setProviderState);
+    void desktop.codex.account().then(setCodexAccount).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
     const offEvent = desktop.codex.onEvent(({ method, params }) => {
       if (method === "turn/started") setTurnId(String(params.turn?.id || ""));
       if (method === "turn/completed") setTurnId("");
@@ -34,6 +36,9 @@ export function AgentWorkspace() {
         setItems((value) => ({ ...value, [params.item.id]: params.item }));
       }
       if (method === "desktop/error" || method === "error") setError(String(params.message || params.error?.message || "Codex error"));
+      if (method === "account/updated" || method === "account/login/completed") {
+        void desktop.codex.account().then(setCodexAccount).catch(() => undefined);
+      }
     });
     const offRequest = desktop.codex.onRequest((request) => setRequests((value) => [...value, request]));
     const offMcp = desktop.mcp.onApproval((request) => setMcpApproval(request));
@@ -85,6 +90,16 @@ export function AgentWorkspace() {
     setProviderState(await desktop.providers.status());
   }
 
+  async function loginWithChatGPT() {
+    if (!desktop) return;
+    setBusy(true); setError("");
+    try {
+      await desktop.codex.login("chatgpt");
+      setCodexAccount(await desktop.codex.account());
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  }
+
   if (!desktop) return <div className="agent-empty">Agents доступны в desktop-приложении.</div>;
 
   return (
@@ -94,7 +109,10 @@ export function AgentWorkspace() {
         <Button variant="outline" onClick={() => { setThreadId(""); setStream(""); setItems({}); }}>Новая сессия</Button>
         <div className="agent-connections">
           <h2>Connections</h2>
-          <Button variant="outline" onClick={() => void desktop.codex.login("chatgpt")}>Войти через ChatGPT</Button>
+          <Button variant="outline" onClick={() => void loginWithChatGPT()} disabled={busy}>
+            {codexAccount?.account?.type === "chatgpt" ? "ChatGPT подключён" : "Войти через ChatGPT"}
+          </Button>
+          {codexAccount?.account ? <span className="agent-connection-status">Codex: {codexAccount.account.email || codexAccount.account.type}{codexAccount.account.planType ? ` · ${codexAccount.account.planType}` : ""}</span> : null}
           <label><span>OpenAI API key {providerState.credentials?.openai ? "· saved" : ""}</span><input type="password" value={openaiKey} onChange={(event) => setOpenaiKey(event.target.value)} placeholder="sk-…" /></label>
           <Button variant="outline" onClick={() => void saveKey("openai", openaiKey)}>Сохранить OpenAI key</Button>
           <label><span>Kimi API key {providerState.credentials?.kimi ? "· saved" : ""}</span><input type="password" value={kimiKey} onChange={(event) => setKimiKey(event.target.value)} placeholder="Moonshot key" /></label>
@@ -129,7 +147,7 @@ export function AgentWorkspace() {
 }
 
 function Timeline({ item }: { item: TimelineItem }) {
-  if (item.type === "agentMessage" || item.type === "reasoning") return null;
+  if (item.type === "agentMessage" || item.type === "reasoning" || item.type === "userMessage") return null;
   return <article className="agent-event"><header><strong>{item.type}</strong><span>{item.status || "running"}</span></header>{item.command ? <code>{item.command}</code> : null}{item.aggregatedOutput ? <pre>{item.aggregatedOutput}</pre> : null}{item.changes?.map((change) => <code key={change.path}>{change.kind}: {change.path}</code>)}</article>;
 }
 

@@ -21,6 +21,7 @@ declare global {
         status(): Promise<Record<string, any>>; credentials(): Promise<Record<string, any>>;
         setCredential(provider: "openai" | "kimi", value: string): Promise<Record<string, unknown>>;
         deleteCredential(provider: "openai" | "kimi"): Promise<Record<string, unknown>>;
+        chat(provider: "codex" | "kimi", messages: Array<{ role: string; content: string }>, temperature?: number): Promise<{ content: string }>;
       };
       codex: {
         account(): Promise<Record<string, any>>; login(type?: "chatgpt" | "apiKey"): Promise<Record<string, any>>;

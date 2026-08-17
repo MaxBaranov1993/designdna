@@ -8,6 +8,7 @@
 Все измерения — из пикселей, VLM даёт только структуру (какие элементы, layout).
 """
 import base64
+import contextlib
 import io
 import json
 import re
@@ -17,6 +18,8 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageChops
+
+from urlguard import install_playwright_offline_guard
 
 
 # ---------- извлечение цветов ----------
@@ -395,30 +398,39 @@ def screenshot_html(html: str, viewport_w: int = 2400, viewport_h: int = 1400) -
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch()
-            ctx = browser.new_context(
-                viewport={"width": viewport_w, "height": viewport_h},
-                device_scale_factor=1,
-            )
-            page = ctx.new_page()
-            page.goto(f"file:///{html_path.as_posix()}")
-            page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(2000)
+            browser = None
+            ctx = None
+            try:
+                browser = p.chromium.launch()
+                ctx = browser.new_context(
+                    viewport={"width": viewport_w, "height": viewport_h},
+                    device_scale_factor=1,
+                    service_workers="block",
+                )
+                install_playwright_offline_guard(ctx)
+                page = ctx.new_page()
+                page.goto(f"file:///{html_path.as_posix()}")
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(2000)
 
-            # отключить любой CSS transform
-            page.evaluate("""
-                const r = document.querySelector('.repro');
-                if (r) { r.style.transform = 'none'; }
-            """)
-            page.wait_for_timeout(500)
+                # отключить любой CSS transform
+                page.evaluate("""
+                    const r = document.querySelector('.repro');
+                    if (r) { r.style.transform = 'none'; }
+                """)
+                page.wait_for_timeout(500)
 
-            el = page.query_selector(".repro")
-            if el:
-                png = el.screenshot()
-            else:
-                png = page.screenshot()
-            browser.close()
-            return png
+                el = page.query_selector(".repro")
+                if el:
+                    return el.screenshot()
+                return page.screenshot()
+            finally:
+                if ctx is not None:
+                    with contextlib.suppress(Exception):
+                        ctx.close()
+                if browser is not None:
+                    with contextlib.suppress(Exception):
+                        browser.close()
     finally:
         html_path.unlink(missing_ok=True)
 

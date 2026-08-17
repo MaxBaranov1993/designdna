@@ -87,6 +87,22 @@ def main():
         check("Reset override removes current device patch", mobile_override is None, str(mobile_override))
 
         select_find_button(page)
+        page.click('.fe-shared-insp [data-act="stretch-width"]')
+        widths = page.evaluate("""id => ({
+          shared: window.GraphDev.node(id).data.ir.tree[0].children[2].frame.width,
+          mobile: window.GraphDev.node(id).data.ir.tree[0].children[2].responsive?.mobile?.frame?.width,
+        })""", node_id)
+        check("Stretch writes a mobile-only fluid width", widths["shared"] == 100 and widths["mobile"] == "fill", str(widths))
+
+        text_input = page.locator('[data-el-prop="text"]')
+        text_input.fill("Buy now")
+        text_input.press("Tab")
+        edited_text = page.evaluate("id => window.GraphDev.node(id).data.ir.tree[0].children[2].text", node_id)
+        check("Mobile inspector text edit persists in canonical content", edited_text == "Buy now", str(edited_text))
+
+        page.click('[data-responsive-act="reset"]')
+
+        select_find_button(page)
         page.click('[data-responsive-copy="tablet"]')
         tablet_frame = page.evaluate("id => window.GraphDev.node(id).data.ir.tree[0].children[2].responsive?.tablet?.frame || null", node_id)
         check("Copy to breakpoint writes explicit tablet frame", isinstance(tablet_frame, dict) and tablet_frame.get("width") == 100, str(tablet_frame))

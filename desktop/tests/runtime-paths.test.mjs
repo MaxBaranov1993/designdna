@@ -38,6 +38,17 @@ test("development keeps the source worker and explicit Python override", () => {
   assert.equal(spec.args[0], "/workspace/designdna/app/desktop_worker.py");
 });
 
+test("Windows development uses the repository virtual environment", () => {
+  const spec = pythonWorkerSpec({
+    isPackaged: false,
+    platform: "win32",
+    resourcesPath: "ignored",
+    sourceRoot: "C:\\workspace\\designdna",
+  });
+  assert.equal(spec.command, "C:\\workspace\\designdna\\.venv\\Scripts\\python.exe");
+  assert.equal(spec.args[0], "C:\\workspace\\designdna\\app\\desktop_worker.py");
+});
+
 test("packaged environment separates read-only runtime from writable data", () => {
   const environment = pythonWorkerEnvironment({
     isPackaged: true,
@@ -46,6 +57,7 @@ test("packaged environment separates read-only runtime from writable data", () =
   });
   assert.equal(environment.DESIGNDNA_APP_DIR, path.join("/Applications/DesignDNA.app/Contents/Resources", "app"));
   assert.equal(environment.DESIGNDNA_DATA_DIR, path.join("/Users/max/Library/Application Support/DesignDNA", "data"));
+  assert.equal(environment.PYTHONUTF8, "1");
   assert.equal(
     environment.PLAYWRIGHT_BROWSERS_PATH,
     path.join("/Applications/DesignDNA.app/Contents/Resources", "runtime", "playwright"),

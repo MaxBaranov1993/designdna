@@ -23,6 +23,27 @@
       "properties": {
         "name": { "type": "string" },
         "description": { "type": "string" },
+        "qaWarnings": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Deterministic Source Import layout diagnostics."
+        },
+        "fontFaces": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "required": ["family", "weight", "style", "url"],
+            "additionalProperties": false,
+            "properties": {
+              "family": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[A-Za-z0-9 ._-]+$" },
+              "weight": { "enum": ["100", "200", "300", "400", "500", "600", "700", "800", "900", "normal", "bold"] },
+              "style": { "enum": ["normal", "italic", "oblique"] },
+              "url": { "type": "string", "maxLength": 136, "pattern": "^/fonts/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
+            }
+          },
+          "description": "Locally captured font faces used by Source Import rendering."
+        },
         "activeViewport": {
           "enum": ["desktop", "tablet", "mobile"],
           "description": "Активный вьюпорт предпросмотра (заполняет UI, не генератор)"

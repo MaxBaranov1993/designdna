@@ -83,7 +83,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     const lh = Number(style.lineHeight); if (Number.isFinite(lh) && lh >= .5 && lh <= 10) s.push(`line-height:${lh}`);
     const ls = Number(style.letterSpacing); if (Number.isFinite(ls) && ls >= -20 && ls <= 100) s.push(`letter-spacing:${ls}px`);
     const radius = Number(style.borderRadius); if (Number.isFinite(radius) && radius >= 0 && radius <= 1000) s.push(`border-radius:${radius}px`);
-    if (typeof style.boxShadow === "string" && style.boxShadow.length <= 300 && !/[;{}<>]/.test(style.boxShadow)) s.push(`box-shadow:${style.boxShadow}`);
+    if (typeof style.boxShadow === "string" && style.boxShadow.length <= 300 && !/[;{}<>"'\\\r\n]/.test(style.boxShadow)) s.push(`box-shadow:${style.boxShadow}`);
     if (["none", "underline", "line-through", "overline"].includes(style.textDecoration)) s.push(`text-decoration:${style.textDecoration}`);
     if (["normal", "nowrap", "pre", "pre-wrap", "pre-line", "break-spaces"].includes(style.whiteSpace)) s.push(`white-space:${style.whiteSpace}`);
     if (["visible", "hidden", "clip", "scroll", "auto"].includes(style.overflow)) s.push(`overflow:${style.overflow}`);
@@ -210,6 +210,19 @@ import { DesignAIFontCatalog } from "./fontCatalog";
         display:inline-flex; align-items:center; justify-content:center; font-weight:700; flex:none; }
       .ir-${uid} .stars { color:var(--c-accent); letter-spacing:2px; }
       .ir-${uid} [data-ir-path].editing { outline:2px dashed var(--c-primary); outline-offset:2px; cursor:text; }
+      .ir-${uid}.ir-mobile { font-size:calc(16px * var(--fs)); line-height:1.55; }
+      .ir-${uid}.ir-mobile h1 { font-size:calc(34px * var(--fs)); line-height:1.08; letter-spacing:-.025em; }
+      .ir-${uid}.ir-mobile h2 { font-size:calc(26px * var(--fs)); line-height:1.12; }
+      .ir-${uid}.ir-mobile .sec:not(.sec-source), .ir-${uid}.ir-mobile .sec-free { padding-left:16px; padding-right:16px; }
+      .ir-${uid}.ir-mobile .sec-free { display:flex !important; flex-direction:column; gap:20px; height:auto !important; }
+      .ir-${uid}.ir-mobile .sec-free > [data-ir-path] { position:relative !important; inset:auto !important; transform:none !important; }
+      .ir-${uid}.ir-mobile .sec:not(.sec-source) .wrap { width:100%; }
+      .ir-${uid}.ir-mobile .sec:not(.sec-source) [data-ir-path],
+      .ir-${uid}.ir-mobile .sec-free [data-ir-path] { max-width:100%; overflow-wrap:anywhere; }
+      .ir-${uid}.ir-mobile .btn { min-height:44px; padding:11px 18px; justify-content:center; }
+      .ir-${uid}.ir-tablet .sec:not(.sec-source), .ir-${uid}.ir-tablet .sec-free { padding-left:24px; padding-right:24px; }
+      .ir-${uid}.ir-tablet .sec-free { display:flex !important; flex-direction:column; gap:28px; height:auto !important; }
+      .ir-${uid}.ir-tablet .sec-free > [data-ir-path] { position:relative !important; inset:auto !important; transform:none !important; }
     `;
   }
 
@@ -733,26 +746,38 @@ import { DesignAIFontCatalog } from "./fontCatalog";
       styleEl.rel = "stylesheet";
       document.head.appendChild(styleEl);
     }
-    if (tokens.font) {
-      const href = fontsUrl(tokens, ir);
-      if (href) styleEl.href = href;
-    }
+    const href = tokens.font ? fontsUrl(tokens, ir) : "";
+    if (href) styleEl.href = href;
+    else styleEl.removeAttribute("href");
 
     // кастомные шрифты источника (база /fonts из Source Import): инжект
     // @font-face + preload, чтобы метрики текста совпали с исходным сайтом
-    const customFaces = (ir.meta && ir.meta.fontFaces) || [];
+    const requestedFaces = Array.isArray(ir.meta && ir.meta.fontFaces) ? ir.meta.fontFaces : [];
+    const customFaces = requestedFaces.filter((face) => {
+      if (!face || typeof face !== "object") return false;
+      const family = String(face.family || "");
+      const weight = String(face.weight || "");
+      const style = String(face.style || "");
+      const url = String(face.url || "");
+      return /^[A-Za-z0-9 ._-]{1,80}$/.test(family) &&
+        /^(?:[1-9]00|normal|bold)$/.test(weight) &&
+        /^(?:normal|italic|oblique)$/.test(style) &&
+        /^\/fonts\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(url);
+    });
+    let ffEl = document.getElementById("ir-fontfaces");
+    if (!ffEl) {
+      ffEl = document.createElement("style");
+      ffEl.id = "ir-fontfaces";
+      document.head.appendChild(ffEl);
+    }
+    ffEl.textContent = customFaces.map((f) => {
+      const url = String(f.url);
+      const format = /\.woff2$/i.test(url) ? "woff2" : /\.woff$/i.test(url) ? "woff" : "truetype";
+      return "@font-face{font-family:'" + String(f.family) + "';" +
+        "font-style:" + String(f.style) + ";font-weight:" + String(f.weight) + ";" +
+        "src:url('" + url + "') format('" + format + "');font-display:swap;}";
+    }).join("\n");
     if (customFaces.length) {
-      let ffEl = document.getElementById("ir-fontfaces");
-      if (!ffEl) {
-        ffEl = document.createElement("style");
-        ffEl.id = "ir-fontfaces";
-        document.head.appendChild(ffEl);
-      }
-      ffEl.textContent = customFaces.map((f) =>
-        "@font-face{font-family:'" + String(f.family).replace(/['\\\\]/g, "") + "';" +
-        "font-style:" + (f.style || "normal") + ";font-weight:" + (f.weight || "400") + ";" +
-        "src:url('" + f.url + "') format('woff2'),url('" + f.url + "') format('truetype');" +
-        "font-display:swap;}").join("\n");
       try {
         customFaces.forEach((f) => {
           const w = parseInt(String(f.weight), 10) || 400;
@@ -792,7 +817,8 @@ import { DesignAIFontCatalog } from "./fontCatalog";
       return renderSection(sec, uid, rootFree).replace(/^<(\w+)/, `<$1 data-ir-sec="${i}"`);
     }).join("");
 
-    container.innerHTML = `<style>${css}</style><div class="ir-${uid}" data-design-width="${artW}" style="${artStyle.join(";")}">${body}</div>`;
+    const viewportClass = artW <= 639 ? "ir-mobile" : artW <= 1023 ? "ir-tablet" : "ir-desktop";
+    container.innerHTML = `<style>${css}</style><div class="ir-${uid} ${viewportClass}" data-design-width="${artW}" style="${artStyle.join(";")}">${body}</div>`;
     const inner = container.firstElementChild ? container.querySelector(".ir-" + uid) : null;
     applyFrameOverrides(container, tree);
     // fitPreview сжимает артборд под ширину контейнера — нужно только в превью нод;

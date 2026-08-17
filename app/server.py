@@ -13,8 +13,6 @@ import re
 import sys
 import threading
 import traceback
-import urllib.request
-import urllib.error
 import uuid
 import webbrowser
 from pathlib import Path
@@ -27,6 +25,7 @@ mimetypes.add_type("font/woff2", ".woff2")
 mimetypes.add_type("font/woff", ".woff")
 
 from fastapi import FastAPI
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -42,7 +41,7 @@ import llm_client as llm  # chat, chat_vision, build_system_prompt, extract_json
 from colorutils import mix_hex_colors
 from scraper import analyze_url
 from reproduce import run_pipeline as reproduce_pipeline
-from urlguard import validate_public_url
+from urlguard import fetch_public_bytes, validate_public_url
 import cache_store
 import blockparse
 import mergeback
@@ -53,6 +52,8 @@ import designkb
 import video_client
 
 import ir
+from ir import apply_tokens as apply_ir_tokens
+from ir import bind_element_styles as bind_ir_element_styles
 from ir import ensure_current as ensure_current_ir
 from config import FEATURE_FLAGS
 
@@ -71,9 +72,60 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="DesignAI Web", docs_url=None, redoc_url=None, lifespan=lifespan)
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["127.0.0.1", "localhost", "testserver", "[::1]"],
+)
 
 COLOR_TOKEN_KEYS = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"]
 PRODUCT_PROVIDER = "openrouter"
+MAX_CLONE_HTML_BYTES = 2_000_000
+
+
+def _locked_generation_dna(tokens: dict | None) -> tuple[dict | None, dict | None]:
+    """Return prompt-safe public DNA and a complete DNA used to style output IR.
+
+    Older callers may provide only the schema-level color/font/radius fields,
+    while Source Import also provides semantic/primitives.  Generation needs
+    both forms: compact public tokens in the LLM prompt and semantic values for
+    deterministic application to inline styles returned by the model.
+    """
+    if not isinstance(tokens, dict):
+        return None, None
+    public_keys = ("mode", "color", "font", "radius", "spacing", "shadow")
+    public = {key: copy.deepcopy(tokens[key]) for key in public_keys if key in tokens}
+    if not public:
+        return None, None
+    complete = copy.deepcopy(public)
+    for key in ("primitives", "semantic", "provenance"):
+        if key in tokens:
+            complete[key] = copy.deepcopy(tokens[key])
+    if not isinstance(complete.get("semantic"), dict):
+        colors = complete.get("color") if isinstance(complete.get("color"), dict) else {}
+        fonts = complete.get("font") if isinstance(complete.get("font"), dict) else {}
+        radii = complete.get("radius") if isinstance(complete.get("radius"), dict) else {}
+        spacing = complete.get("spacing") if isinstance(complete.get("spacing"), dict) else {}
+        radius_px = {"none": 0, "xs": 2, "sm": 4, "md": 8, "lg": 16, "xl": 24, "full": 1000}
+        section_px = {"sm": 64, "md": 80, "lg": 96, "xl": 128}
+        complete["semantic"] = {
+            **copy.deepcopy(colors),
+            "displayFont": copy.deepcopy(fonts.get("display") or {"family": "Inter", "weight": 700}),
+            "bodyFont": copy.deepcopy(fonts.get("body") or {"family": "Inter", "weight": 400}),
+            "buttonRadius": radius_px.get(str(radii.get("button") or "md"), 8),
+            "cardRadius": radius_px.get(str(radii.get("card") or "lg"), 16),
+            "inputRadius": radius_px.get(str(radii.get("input") or "md"), 8),
+            "sectionGap": section_px.get(str(spacing.get("section") or "lg"), 96),
+            "containerWidth": 1200,
+        }
+    else:
+        # DOM capture represents pill radii as 9999px, while the IR semantic
+        # contract caps numeric radii at 1000. Preserve the pill result without
+        # emitting an invalid generated document.
+        for key in ("buttonRadius", "cardRadius", "inputRadius"):
+            value = complete["semantic"].get(key)
+            if isinstance(value, (int, float)):
+                complete["semantic"][key] = min(1000, max(0, value))
+    return public, complete
 
 # роли вызовов для роутинга OpenRouter — см. таблицу llm_client.ROUTING
 # (generate/edit/repair/clone/reference/...)
@@ -126,6 +178,8 @@ class GenerateReq(BaseModel):
     seedTag: str | None = None
     tokens: dict | None = None  # Style DNA: залоченные design-токены
     preset: str = ""  # стилевой пресет: minimal|bento|editorial|brutal|glass
+    prepareOnly: bool = False
+    rawOutputs: list[str] | None = None
 
 
 class MixReq(BaseModel):
@@ -278,18 +332,14 @@ def generate(req: GenerateReq):
     if not brief:
         return err(422, "Пустой бриф: опишите, что нужно сгенерировать.")
     count = max(1, min(int(req.count or 1), 5))
+    if req.rawOutputs is not None and len(req.rawOutputs) < count:
+        return err(422, "Модель вернула меньше ответов, чем запрошено вариантов.")
     has_style = bool(req.styleHint and req.styleHint.strip())
     style = f"\n\n## Reference / style context\n{req.styleHint.strip()}" if has_style else ""
     memory_hint = project_store.build_prompt_memory_hint()
     memory = f"\n\n{memory_hint}" if memory_hint else ""
     mode = "edit" if has_style else "generate"
-    dna_keys = ("mode", "color", "font", "radius", "spacing", "shadow")
-    if isinstance(req.tokens, dict):
-        dna = {k: v for k, v in req.tokens.items() if k in dna_keys}
-        if not dna:
-            dna = None
-    else:
-        dna = None
+    dna, complete_dna = _locked_generation_dna(req.tokens)
     preset = typography.PRESETS.get(req.preset or "")
     ptype, pinfo = designkb.detect_product(brief)
     # Шрифт из Style DNA — без подбора своей пары; иначе — библиотека typography.
@@ -343,12 +393,18 @@ def generate(req: GenerateReq):
             else:
                 user += ("\n\nАнти-паттерны — НИКОГДА так не делай:\n"
                          + "\n".join("- " + a for a in designkb.ANTI_AI))
-        ir, error = call_llm_ir(provider, user, 0.8 if mode == "generate" else 0.3, mode)
+        if req.prepareOnly:
+            return user, None, None
+        if req.rawOutputs is not None:
+            ir, error = parse_ir_response(req.rawOutputs[n - 1])
+        else:
+            ir, error = call_llm_ir(provider, user, 0.8 if mode == "generate" else 0.3, mode)
         qa = None
         if ir is not None:
             if dna:
-                # DNA залочена: токены — не предмет вариативности, фиксируем детерминированно
-                ir["tokens"] = copy.deepcopy(dna)
+                # Give QA the locked palette first; inline styles are applied
+                # after autofix so QA cannot silently overwrite the DNA lock.
+                ir["tokens"] = copy.deepcopy(complete_dna or dna)
             elif isinstance(ir.get("tokens"), dict):
                 # без DNA: шрифтовая пара и кураторская палитра из design KB — лок
                 if pair:
@@ -358,13 +414,33 @@ def generate(req: GenerateReq):
             # сгенерированный IR — responsive-документ: вьюпорты артборда, чтобы
             # Page/редактор переключали устройства и per-device правки имели куда писаться
             ir.setdefault("responsive", {"viewports": {
-                "desktop": {"width": 1440}, "tablet": {"width": 768}, "mobile": {"width": 390}}})
+                "desktop": {"width": 1440, "height": 900},
+                "tablet": {"width": 768, "height": 1024},
+                "mobile": {"width": 390, "height": 844}}})
             # авто quality-gate: детерминированный autofix (контраст/сетка/overflow)
             ir, fixlog = qualitygate.autofix(ir)
+            if dna:
+                # Deterministically update model-provided inline styles. Without
+                # this, a black button from the LLM overrides primary in renderer.
+                ir = bind_ir_element_styles(ir, complete_dna or dna)
+                ir = apply_ir_tokens(ir, complete_dna or dna)
             qa = {"index": n, "fixed": len(fixlog),
                   "violations": [v["rule"] for v in qualitygate.check(ir)]}
             ir = ensure_current_ir(ir, source="generate")
         return ir, error, qa
+
+    if req.prepareOnly:
+        system = llm.build_system_prompt(mode)
+        return {
+            "prompts": [
+                {"messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": gen_one(i + 1)[0]},
+                ]}
+                for i in range(count)
+            ],
+            "design": {"type": ptype, "label": pinfo["label"]},
+        }
 
     futures = [EXECUTOR.submit(gen_one, i + 1) for i in range(count)]
     variants, errors, qa = [], [], []
@@ -434,15 +510,19 @@ def clone(req: CloneReq):
     if hit:
         return {**hit, "cached": True}
 
-    # fetch страницы
+    # fetch страницы: redirect-ы валидируются пошагово, body ограничен
     try:
-        req_obj = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "ru,en;q=0.9",
-        })
-        with urllib.request.urlopen(req_obj, timeout=15) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
+        response = fetch_public_bytes(
+            url,
+            timeout=15,
+            max_bytes=MAX_CLONE_HTML_BYTES,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "ru,en;q=0.9",
+            },
+        )
+        html = response.content.decode("utf-8", errors="replace")
     except Exception as e:
         return err(502, f"Не удалось загрузить {url}: {e}")
 
@@ -936,10 +1016,11 @@ def app_config():
 @app.post("/api/style-dna/extract")
 def style_dna_extract(req: StyleDnaReq):
     """Extract primitives + semantic Style DNA from an IR document."""
-    schema_errors = validate_ir(req.ir)
+    current = ensure_current_ir(req.ir)
+    schema_errors = validate_ir(current)
     if schema_errors:
         return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    return {"tokens": ir.build_style_dna(req.ir)}
+    return {"tokens": ir.build_style_dna(current)}
 
 
 @app.post("/api/style-dna/apply")
@@ -949,10 +1030,11 @@ def style_dna_apply(req: StyleDnaApplyReq):
     First re-binds element styles to the new token set so semantic changes
     propagate even to documents that did not yet carry styleBindings.
     """
-    schema_errors = validate_ir(req.ir)
+    current = ensure_current_ir(req.ir)
+    schema_errors = validate_ir(current)
     if schema_errors:
         return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    bound = ir.bind_element_styles(req.ir, req.tokens)
+    bound = ir.bind_element_styles(current, req.tokens)
     updated = ir.apply_tokens(bound, req.tokens)
     return {"ir": updated}
 

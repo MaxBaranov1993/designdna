@@ -33,7 +33,7 @@
   .geo-overlay[data-tool="hand"] { cursor:grab; }
   .geo-overlay.geo-handling { cursor:grabbing; }
   .geo-overlay * { pointer-events:none; }
-  .geo-overlay .geo-h { pointer-events:auto; }
+  .geo-overlay .geo-h, .geo-overlay .geo-pad { pointer-events:auto; }
   .geo-box { position:absolute; border:calc(1.5px * var(--geo-inv,1)) solid transparent; pointer-events:none; }
   .geo-box.hover { border-color:rgba(120,120,160,.55); border-style:dashed; }
   .geo-box.selected { border-color:#0D99FF; }
@@ -53,6 +53,27 @@
   .geo-h.h-s  { bottom:calc(-4px * var(--geo-inv,1)); left:calc(50% - 4px * var(--geo-inv,1)); cursor:ns-resize; }
   .geo-h.h-sw { bottom:calc(-4px * var(--geo-inv,1)); left:calc(-4px * var(--geo-inv,1)); cursor:nesw-resize; }
   .geo-h.h-w  { top:calc(50% - 4px * var(--geo-inv,1)); left:calc(-4px * var(--geo-inv,1)); cursor:ew-resize; }
+  .geo-pad-guide { position:absolute; pointer-events:none; z-index:1; background:rgba(151,71,255,.72); }
+  .geo-pad-guide.pad-top, .geo-pad-guide.pad-bottom { height:calc(1px * var(--geo-inv,1)); }
+  .geo-pad-guide.pad-left, .geo-pad-guide.pad-right { width:calc(1px * var(--geo-inv,1)); }
+  .geo-pad { position:absolute; z-index:4; box-sizing:border-box; pointer-events:auto;
+    background:#9747ff; border:calc(1px * var(--geo-inv,1)) solid #fff;
+    box-shadow:0 0 0 calc(1px * var(--geo-inv,1)) rgba(151,71,255,.45); }
+  .geo-pad.pad-top, .geo-pad.pad-bottom { width:calc(34px * var(--geo-inv,1)); height:calc(7px * var(--geo-inv,1));
+    margin-left:calc(-17px * var(--geo-inv,1)); margin-top:calc(-3.5px * var(--geo-inv,1));
+    border-radius:calc(4px * var(--geo-inv,1)); cursor:ns-resize; }
+  .geo-pad.pad-left, .geo-pad.pad-right { width:calc(7px * var(--geo-inv,1)); height:calc(34px * var(--geo-inv,1));
+    margin-left:calc(-3.5px * var(--geo-inv,1)); margin-top:calc(-17px * var(--geo-inv,1));
+    border-radius:calc(4px * var(--geo-inv,1)); cursor:ew-resize; }
+  .geo-pad::after { content:attr(data-value); position:absolute; opacity:0; pointer-events:none; transition:opacity 80ms linear;
+    min-width:calc(22px * var(--geo-inv,1)); padding:calc(2px * var(--geo-inv,1)) calc(5px * var(--geo-inv,1));
+    border-radius:calc(4px * var(--geo-inv,1)); background:#9747ff; color:#fff;
+    font:600 calc(10px * var(--geo-inv,1))/1.2 'Inter',system-ui,sans-serif; text-align:center; white-space:nowrap; }
+  .geo-pad:hover::after, .geo-pad.active::after { opacity:1; }
+  .geo-pad.pad-top::after, .geo-pad.pad-bottom::after { left:50%; transform:translateX(-50%); top:calc(9px * var(--geo-inv,1)); }
+  .geo-pad.pad-bottom::after { top:auto; bottom:calc(9px * var(--geo-inv,1)); }
+  .geo-pad.pad-left::after, .geo-pad.pad-right::after { top:50%; transform:translateY(-50%); left:calc(9px * var(--geo-inv,1)); }
+  .geo-pad.pad-right::after { left:auto; right:calc(9px * var(--geo-inv,1)); }
   .geo-marquee { position:absolute; border:calc(1px * var(--geo-inv,1)) solid #0D99FF; background:rgba(13,153,255,.08);
     pointer-events:none; z-index:60; }
   .geo-guide { position:absolute; pointer-events:none; z-index:58; }
@@ -840,6 +861,75 @@
       });
     }
 
+    function canEditPadding(ref) {
+      if (ref.path && ref.path.startsWith("props.")) return false;
+      if (ref.secIdx == null || ref.path == null) return true;
+      const node = irNodeAt(ref);
+      return !!(node && (node.type === "card" || (Array.isArray(node.children) && node.children.length)));
+    }
+
+    function padding4(ref, el) {
+      const p = getFrame(ref).padding;
+      if (typeof p === "number") {
+        const v = Math.max(0, finiteNum(p));
+        return [v, v, v, v];
+      }
+      if (Array.isArray(p)) {
+        if (p.length >= 4) return p.slice(0, 4).map(v => Math.max(0, finiteNum(v)));
+        if (p.length >= 2) {
+          const v = Math.max(0, finiteNum(p[0])), h = Math.max(0, finiteNum(p[1]));
+          return [v, h, v, h];
+        }
+        if (p.length === 1) {
+          const v = Math.max(0, finiteNum(p[0]));
+          return [v, v, v, v];
+        }
+      }
+      const cs = el ? getComputedStyle(el) : null;
+      return cs ? [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft]
+        .map(v => Math.max(0, finiteNum(v))) : [0, 0, 0, 0];
+    }
+
+    function positionPaddingHandles(box, pads) {
+      const [top, right, bottom, left] = pads;
+      const values = { top, right, bottom, left };
+      ["top", "right", "bottom", "left"].forEach(side => {
+        const guide = box.querySelector(`.geo-pad-guide.pad-${side}`);
+        const handle = box.querySelector(`.geo-pad.pad-${side}`);
+        const value = Math.max(0, values[side]);
+        if (!guide || !handle) return;
+        handle.dataset.value = `${Math.round(value)} px`;
+        if (side === "top") {
+          guide.style.cssText = `top:${value}px;left:${left}px;right:${right}px`;
+          handle.style.top = value + "px"; handle.style.left = "50%";
+        } else if (side === "bottom") {
+          guide.style.cssText = `bottom:${value}px;left:${left}px;right:${right}px`;
+          handle.style.bottom = value + "px"; handle.style.left = "50%";
+        } else if (side === "left") {
+          guide.style.cssText = `left:${value}px;top:${top}px;bottom:${bottom}px`;
+          handle.style.left = value + "px"; handle.style.top = "50%";
+        } else {
+          guide.style.cssText = `right:${value}px;top:${top}px;bottom:${bottom}px`;
+          handle.style.right = value + "px"; handle.style.top = "50%";
+        }
+      });
+    }
+
+    function addPaddingHandles(box, ref, el) {
+      if (!canEditPadding(ref)) return;
+      ["top", "right", "bottom", "left"].forEach(side => {
+        const guide = document.createElement("span");
+        guide.className = `geo-pad-guide pad-${side}`;
+        box.appendChild(guide);
+        const handle = document.createElement("span");
+        handle.className = `geo-pad pad-${side}`;
+        handle.dataset.side = side;
+        handle.title = "Drag to change padding";
+        box.appendChild(handle);
+      });
+      positionPaddingHandles(box, padding4(ref, el));
+    }
+
     /** Объединяющий прямоугольник выделения в координатах оверлея (или null). */
     function selectionUnionBox() {
       let u = null;
@@ -870,7 +960,10 @@
         chip.className = "geo-chip";
         chip.textContent = chipText(sel.ref);
         box.appendChild(chip);
-        if (!multi && i === selections.length - 1) addHandles(box);
+        if (!multi && i === selections.length - 1) {
+          addHandles(box);
+          addPaddingHandles(box, sel.ref, el);
+        }
         placeBox(box, boxRect(el));
         cont.appendChild(box);
       });
@@ -1333,6 +1426,45 @@
       if (chip) chip.textContent = `${Math.round(w)}×${Math.round(h)}`;
     }
 
+    function livePadding(d, dx, dy, e) {
+      const pads = d.padding0.slice();
+      const index = { top: 0, right: 1, bottom: 2, left: 3 }[d.side];
+      const opposite = [2, 3, 0, 1][index];
+      const axisDelta = index === 0 ? dy : index === 1 ? -dx : index === 2 ? -dy : dx;
+      let value = d.padding0[index] + axisDelta;
+      if (e && e.shiftKey) value = Math.round(value / 4) * 4;
+      const dimension = (index === 0 || index === 2) ? d.h0 : d.w0;
+      value = Math.max(0, Math.min(value, Math.max(0, dimension - pads[opposite] - 8)));
+      pads[index] = Math.round(value);
+      d.paddingLive = pads;
+      d.el.style.padding = `${pads[0]}px ${pads[1]}px ${pads[2]}px ${pads[3]}px`;
+      if (d.box) {
+        positionPaddingHandles(d.box, pads);
+        const active = d.box.querySelector(`.geo-pad.pad-${d.side}`);
+        if (active) active.classList.add("active");
+      }
+      const chip = d.box && d.box.querySelector(".geo-chip");
+      if (chip) chip.textContent = `Padding ${pads.map(v => Math.round(v)).join(" · ")}`;
+    }
+
+    function restoreInlinePadding(d) {
+      if (!d.el || !d.inlinePadding) return;
+      ["padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft"].forEach(key => {
+        d.el.style[key] = d.inlinePadding[key];
+      });
+    }
+
+    function commitPadding(d) {
+      restoreInlinePadding(d);
+      if (!d.paddingLive) { renderSelectionBoxes(); return; }
+      const p = d.paddingLive.map(v => Math.max(0, Math.round(v)));
+      onCommit();
+      const frame = Object.assign({}, getFrame(d.ref));
+      frame.padding = p.every(v => v === p[0]) ? p[0] : p;
+      setFrameData(d.ref, frame);
+      onMutated();
+    }
+
     function commitResize(d) {
       const node = irNodeAt(d.ref);
       if (!node || d.wLive == null) { onMutated(); return; }
@@ -1434,6 +1566,12 @@
       if (tool === "hand") { startHand(e); return; }
       if (["rect", "text", "frame", "ellipse", "line", "image"].includes(tool)) { startCreate(e); return; }
 
+      const paddingHandle = e.target instanceof Element ? e.target.closest(".geo-pad") : null;
+      if (paddingHandle && overlay().contains(paddingHandle)) {
+        startPadding(paddingHandle.dataset.side, e, paddingHandle.closest(".geo-box"));
+        return;
+      }
+
       // 1) Проверяем resize-хендлы (геометрически)
       const handleDir = hitTestHandle(e.clientX, e.clientY);
       if (handleDir) {
@@ -1519,6 +1657,28 @@
       overlay().addEventListener("pointerup", onDragUp, { once: true });
     }
 
+    function startPadding(side, e, box) {
+      if (selections.length !== 1 || !side) return;
+      const primary = selections[0];
+      if (!canEditPadding(primary.ref)) return;
+      const el = domAt(primary.ref);
+      if (!el) return;
+      const rect = boxRect(el);
+      drag = {
+        ref: primary.ref, type: "padding", side, startX: e.clientX, startY: e.clientY,
+        moved: false, el, box, w0: rect.width, h0: rect.height, padding0: padding4(primary.ref, el),
+        inlinePadding: {
+          padding: el.style.padding, paddingTop: el.style.paddingTop, paddingRight: el.style.paddingRight,
+          paddingBottom: el.style.paddingBottom, paddingLeft: el.style.paddingLeft,
+        },
+      };
+      const active = box && box.querySelector(`.geo-pad.pad-${side}`);
+      if (active) active.classList.add("active");
+      overlay().setPointerCapture(e.pointerId);
+      overlay().addEventListener("pointermove", onDragMove);
+      overlay().addEventListener("pointerup", onDragUp, { once: true });
+    }
+
     function onDragMove(e) {
       if (!drag) return;
       pendingPointer = e;
@@ -1582,6 +1742,8 @@
         });
         const chip = overlay().querySelector(".geo-box.selected:last-child .geo-chip");
         if (chip) chip.textContent = `Δ ${Math.round(tx)} · ${Math.round(ty)}`;
+      } else if (drag.type === "padding") {
+        livePadding(drag, dx / s, dy / s, e);
       } else if (drag.type === "resize-multi") {
         if (drag.el) liveResizeMulti(drag, dx / s, dy / s);
       } else {
@@ -1600,11 +1762,19 @@
       if (!d) return;
       const s = scale();
       let dx = (e.clientX - d.startX) / s, dy = (e.clientY - d.startY) / s;
+      if (d.type === "padding" && Math.hypot(dx, dy) >= 3) {
+        d.moved = true;
+        livePadding(d, dx, dy, e);
+      }
       // Shift-constrain применяется и к коммиту, не только к визуальному transform
       if (e.shiftKey && d.type === "move") {
         if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0;
       }
-      if (!d.moved) { clearGuides(); return; }
+      if (!d.moved) {
+        clearGuides();
+        if (d.type === "padding") renderSelectionBoxes();
+        return;
+      }
       // очищаем CSS transform ДО commit чтобы relPos не включал drag offset
       if (d.type === "move") {
         d.els && d.els.forEach(de => { if (de.el) de.el.style.transform = ""; });
@@ -1612,6 +1782,7 @@
         if (d.altKey) commitDuplicateMove(dx, dy);
         else commitMoveAll(dx, dy);
       }
+      else if (d.type === "padding") commitPadding(d);
       else if (d.type === "resize-multi") { if (d.el) d.el.style.transform = ""; commitResizeMulti(d); }
       else { d.el.style.transform = ""; commitResize(d); }
     }
@@ -1916,6 +2087,28 @@
         const maxX = Math.max(...rects.map(q => q.x + q.w));
         f.x = Math.round(maxX - r.w);
       }, (f, r, pc) => { f.x = Math.round(pc.w - r.w); });
+    }
+
+    /** Stretch a selected element without baking a desktop pixel width into
+     * responsive auto-layout. Free-layout parents still need explicit geometry. */
+    function stretchWidth() {
+      if (!selections.length) return;
+      onCommit();
+      selections.forEach(sel => {
+        const parent = parentOf(sel.ref);
+        const pc = parentBox(sel.ref);
+        if (!parent || !pc) return;
+        const f = Object.assign({}, getFrame(sel.ref));
+        if (parent.node && parent.node.frame && parent.node.frame.layout === "free") {
+          f.x = 0;
+          f.width = Math.max(8, Math.round(pc.w));
+        } else {
+          delete f.x;
+          f.width = "fill";
+        }
+        setFrameData(sel.ref, f);
+      });
+      onMutated();
     }
 
     function alignTop() {
@@ -2618,6 +2811,7 @@
       getTool: () => tool,
       syncZoom: () => syncZoom(),
       resetFrame,
+      stretchWidth,
       alignLeft,
       alignCenterH,
       alignRight,

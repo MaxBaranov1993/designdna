@@ -1,11 +1,12 @@
 """Deterministic Chromium runner for hybrid Interaction IR capture."""
 from __future__ import annotations
 
+import contextlib
 import copy
 from urllib.parse import urljoin, urlsplit
 
 from ir.interaction import build
-from urlguard import validate_public_url
+from urlguard import install_playwright_url_guard, validate_public_url
 
 ALLOWED_ACTIONS = {"click", "type", "scroll", "navigate", "focus", "submit"}
 MAX_ACTIONS = 50
@@ -111,21 +112,14 @@ def capture_live_flow(base_ir: dict, url: str, actions: list[dict], viewport: st
     cumulative_patch: list[dict] = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context(viewport=viewport_sizes[viewport])
-
-        def guard_navigation(route, request):
-            if request.resource_type == "document":
-                try:
-                    candidate = validate_public_url(request.url)
-                    if not _same_origin(safe_url, candidate):
-                        route.abort()
-                        return
-                except ValueError:
-                    route.abort()
-                    return
-            route.continue_()
-
-        context.route("**/*", guard_navigation)
+        context = browser.new_context(
+            viewport=viewport_sizes[viewport], service_workers="block",
+        )
+        install_playwright_url_guard(
+            context,
+            validate_public_url,
+            allow_document_url=lambda candidate: _same_origin(safe_url, candidate),
+        )
         page = context.new_page()
         try:
             page.goto(safe_url, wait_until="domcontentloaded", timeout=timeout_ms)
@@ -177,6 +171,8 @@ def capture_live_flow(base_ir: dict, url: str, actions: list[dict], viewport: st
                     "payload": payload, "resultingSceneId": scene_id,
                 })
         finally:
+            with contextlib.suppress(Exception):
+                context.close()
             browser.close()
 
     return build(base_ir, {"kind": "hybrid", "url": safe_url}, scenes, events, {})

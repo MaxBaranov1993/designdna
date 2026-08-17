@@ -23,9 +23,9 @@ export class SettingsStore {
     return this.read().mcpServers || [];
   }
 
-  saveMcpServers(input) {
+  validateMcpServers(input) {
     if (!Array.isArray(input)) throw new Error("mcpServers must be an array");
-    const mcpServers = input.map((server, index) => {
+    return input.map((server, index) => {
       const name = String(server?.name || "").trim();
       const transport = String(server?.transport || "");
       if (!name) throw new Error(`MCP server ${index + 1} needs a name`);
@@ -48,6 +48,10 @@ export class SettingsStore {
         credentialEnv,
       };
     });
+  }
+
+  saveMcpServers(input) {
+    const mcpServers = this.validateMcpServers(input);
     this.#write({ ...this.read(), mcpServers });
     return mcpServers;
   }

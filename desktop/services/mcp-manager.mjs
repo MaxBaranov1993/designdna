@@ -1,14 +1,34 @@
 import { McpStdioClient } from "./mcp-client.mjs";
+import { canonicalMcpSpec } from "./mcp-activation-approval.mjs";
 const safeId = (value) => String(value).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48);
 
 export class McpManager {
-  constructor({ settings, credentials, cwd, approve }) {
-    Object.assign(this, { settings, credentials, cwd, approve });
+  constructor({ settings, credentials, cwd, approve, approveActivation }) {
+    Object.assign(this, { settings, credentials, cwd, approve, approveActivation });
     this.clients = new Map(); this.tools = new Map();
+    this.refreshQueue = Promise.resolve();
   }
   async refresh() {
+    const pending = this.refreshQueue.then(() => this.refreshNow(), () => this.refreshNow());
+    this.refreshQueue = pending.catch(() => undefined);
+    return pending;
+  }
+  async refreshNow() {
     this.stop(); const statuses = [];
-    for (const server of this.settings.listMcpServers().filter((item) => item.enabled)) {
+    const servers = this.settings.listMcpServers();
+    // Единая точка активации исполняемого MCP-конфига (mcp:save, mcp:refresh,
+    // ленивый refresh из listTools/callTool, codex:start-thread): прежде чем
+    // запустить хоть один процесс, канонический спек конфига должен быть
+    // подтверждён нативным диалогом в main-процессе.
+    if (this.approveActivation) {
+      const accepted = await this.approveActivation(canonicalMcpSpec(servers));
+      if (!accepted) {
+        return servers.filter((item) => item.enabled).map((server) => ({
+          id: server.id, name: server.name, connected: false, error: "MCP activation declined by user",
+        }));
+      }
+    }
+    for (const server of servers.filter((item) => item.enabled)) {
       if (server.transport !== "stdio") { statuses.push({ id: server.id, name: server.name, connected: false, error: "Only stdio MCP is enabled in desktop v0.3" }); continue; }
       try {
         const env = {};

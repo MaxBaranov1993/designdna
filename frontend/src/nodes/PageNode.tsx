@@ -11,8 +11,8 @@ import { OutPorts } from "./PortHandles";
  * Import/Редактор) в одну страницу. Детерминированно, без LLM (composePage).
  * Входы динамические из data.inputs (паттерн MixNode): drag-порядок строк =
  * порядок секций на странице, «+ вход» (макс. 8), «✕» снимает провода входа.
- * Вход tokens (style DNA) задаёт токены страницы; без него — токены первого
- * блока. Артборд 1440, секции width:"fill", responsive-override'ы сохраняются. */
+ * Вход tokens (style DNA) задаёт токены страницы; без него — токены последнего
+ * стилизованного блока (main content, а не Header). Артборд 1440, секции width:"fill", responsive-override'ы сохраняются. */
 export function PageNode({ id, data, selected }: NodeProps<PageFlowNode>) {
   const setNodeData = useFlowStore((s) => s.setNodeData);
   const propagate = useFlowStore((s) => s.propagate);

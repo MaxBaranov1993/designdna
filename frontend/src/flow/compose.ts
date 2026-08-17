@@ -11,7 +11,7 @@ export const PAGE_VIEWPORT_WIDTHS: Record<SourceViewport, number> = {
 /* Сборка страницы из блоков (нода Page): детерминированно, без LLM.
  * Порядок blocks = порядок секций на странице. id секций и sourceKey
  * дедуплицируются между блоками (у Source Import все секции — "imported-block");
- * токены: style DNA с провода > токены первого блока; секции получают
+ * токены: style DNA с провода > токены последнего стилизованного блока; секции получают
  * width:"fill" внутрь артборда 1440; per-section responsive-override'ы
  * хранятся в самих узлах и переживают сборку как есть. */
 
@@ -192,6 +192,11 @@ export function composePage(
   tokensOverride: IRObject | null,
   activeViewport: SourceViewport = "desktop",
 ): IRObject {
+  // Pages are assembled top-to-bottom (Header first, generated/main content
+  // later). Without an explicit DNA wire, the last styled input owns the page
+  // look; choosing the first input made Header silently own the whole page.
+  const fallbackTokens = [...blocks].reverse().find(({ ir }) => isRecord(ir?.tokens))?.ir.tokens;
+  const effectiveTokens = tokensOverride || (isRecord(fallbackTokens) ? fallbackTokens : null);
   const usedIds = new Set<string>();
   const usedKeys = new Set<string>();
   const tree: IRNode[] = [];
@@ -199,7 +204,7 @@ export function composePage(
     const sections = Array.isArray(ir?.tree) ? (ir.tree as IRNode[]) : [];
     for (const sec of sections) {
       const s = deepClone(sec) as IRNode;
-      adaptSectionToStyleDna(s, ir?.tokens, tokensOverride);
+      adaptSectionToStyleDna(s, ir?.tokens, effectiveTokens);
       const baseId = String(s.id || "section");
       let id = baseId;
       if (usedIds.has(id)) id = `${baseId}--${name}`;
@@ -235,7 +240,6 @@ export function composePage(
       tree.push(s);
     }
   }
-  const first = blocks[0]?.ir;
   return {
     version: "1.1",
     meta: {
@@ -250,12 +254,12 @@ export function composePage(
     // override'ы (visible/frame/style) и мобильные слои дублируются на десктопе
     responsive: {
       viewports: {
-        desktop: { width: PAGE_VIEWPORT_WIDTHS.desktop },
-        tablet: { width: PAGE_VIEWPORT_WIDTHS.tablet },
-        mobile: { width: PAGE_VIEWPORT_WIDTHS.mobile },
+        desktop: { width: PAGE_VIEWPORT_WIDTHS.desktop, height: 900 },
+        tablet: { width: PAGE_VIEWPORT_WIDTHS.tablet, height: 1024 },
+        mobile: { width: PAGE_VIEWPORT_WIDTHS.mobile, height: 844 },
       },
     },
-    tokens: deepClone(tokensOverride || first?.tokens || {}),
+    tokens: deepClone(effectiveTokens || {}),
     tree,
   };
 }

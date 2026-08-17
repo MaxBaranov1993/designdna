@@ -73,8 +73,8 @@ function CtxMenu({ menu, onClose }: { menu: CtxMenuState; onClose: () => void })
       id="ctx-menu"
       style={{
         display: "block",
-        left: Math.min(menu.x, window.innerWidth - 210),
-        top: Math.min(menu.y, window.innerHeight - 260),
+        left: Math.max(12, Math.min(menu.x, window.innerWidth - 312)),
+        top: Math.max(12, Math.min(menu.y, window.innerHeight - 480)),
       }}
     >
       <div className="ctx-cap">Создать ноду</div>
@@ -199,6 +199,7 @@ function FlowCanvas() {
         onConnect={onConnect}
         isValidConnection={isValidConnection}
         nodeTypes={nodeTypes}
+        minZoom={0.1}
         onConnectStart={(_, params) => {
           if (params.handleType === "source" && params.nodeId && params.handleId) {
             didConnectRef.current = false;

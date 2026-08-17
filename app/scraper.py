@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import hashlib
 import io
@@ -20,11 +21,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import httpx
 from bs4 import BeautifulSoup, Tag
 from PIL import Image
 
-from urlguard import validate_public_url
+from urlguard import fetch_public_bytes, install_playwright_url_guard, validate_public_url
 
 # ---------- data ----------
 
@@ -48,15 +48,21 @@ _HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "ru,en;q=0.9",
 }
+_MAX_HTML_BYTES = 5_000_000
 
 
 def fetch_html(url: str, timeout: float = 20.0) -> str:
     """Быстрый fetch HTML через httpx (без JS-рендера)."""
-    validate_public_url(url)  # SSRF-гард
-    with httpx.Client(follow_redirects=True, timeout=timeout, headers=_HEADERS) as client:
-        resp = client.get(url)
-        resp.raise_for_status()
-        return resp.text
+    response = fetch_public_bytes(
+        url, timeout=timeout, headers=_HEADERS, max_bytes=_MAX_HTML_BYTES,
+    )
+    content_type = response.headers.get("content-type", "")
+    match = re.search(r"charset=([^;\s]+)", content_type, re.I)
+    encoding = match.group(1).strip("\"'") if match else "utf-8"
+    try:
+        return response.content.decode(encoding, errors="replace")
+    except LookupError:
+        return response.content.decode("utf-8", errors="replace")
 
 
 # ---------- parse (beautifulsoup4 + trafilatura) ----------
@@ -444,32 +450,43 @@ def image_dimensions(data_url: str) -> tuple[int, int]:
 
 # ---------- Playwright: JS-render + screenshot + computed styles ----------
 
+def _guarded_browser_page(browser, viewport: dict):
+    context = browser.new_context(viewport=viewport, service_workers="block")
+    install_playwright_url_guard(context, validate_public_url)
+    return context, context.new_page()
+
 def render_page_sync(url: str, viewport_w: int = 1440, viewport_h: int = 900,
                      screenshot: bool = True, timeout_ms: int = 15000) -> PageData:
     """Рендер страницы в headless Chromium: HTML после JS + скриншот + computed styles."""
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
     validate_public_url(url)  # SSRF-гард: headless Chromium тоже не ходит во внутреннюю сеть
     result = PageData(url=url, viewport={"width": viewport_w, "height": viewport_h})
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": viewport_w, "height": viewport_h})
+        browser = None
+        context = None
         try:
-            page.goto(url, wait_until="networkidle", timeout=timeout_ms)
-        except Exception:
-            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            browser = p.chromium.launch(headless=True)
+            context, page = _guarded_browser_page(
+                browser, {"width": viewport_w, "height": viewport_h},
+            )
+            try:
+                page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+            except PlaywrightTimeoutError:
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            validate_public_url(page.url)
 
-        page.wait_for_timeout(1000)  # доп. время для анимаций/ленивой загрузки
-        result.html = page.content()
-        result.title = page.title()
+            page.wait_for_timeout(1000)  # доп. время для анимаций/ленивой загрузки
+            result.html = page.content()
+            result.title = page.title()
 
-        if screenshot:
-            png_bytes = page.screenshot(full_page=True, type="png")
-            result.screenshot_b64 = base64.b64encode(png_bytes).decode()
+            if screenshot:
+                png_bytes = page.screenshot(full_page=True, type="png")
+                result.screenshot_b64 = base64.b64encode(png_bytes).decode()
 
-        # извлекаем computed styles ключевых элементов
-        result.tokens = page.evaluate("""() => {
+            # извлекаем computed styles ключевых элементов
+            result.tokens = page.evaluate("""() => {
             const tokens = {colors: [], fonts: [], sizes: []};
             const els = document.querySelectorAll('body, h1, h2, h3, a, button, .btn, nav, header, footer, .card, [class*="hero"]');
             const seen = new Set();
@@ -488,8 +505,13 @@ def render_page_sync(url: str, viewport_w: int = 1440, viewport_h: int = 900,
             });
             return tokens;
         }""")
-
-        browser.close()
+        finally:
+            if context is not None:
+                with contextlib.suppress(Exception):
+                    context.close()
+            if browser is not None:
+                with contextlib.suppress(Exception):
+                    browser.close()
 
     result.text_content = extract_text_content(result.html)
     result.css_text = extract_css(result.html)
@@ -509,10 +531,13 @@ def rendered_html(url: str, timeout_ms: int = 20000) -> str:
 
     validate_public_url(url)  # SSRF-гард
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        browser = None
+        context = None
         try:
+            browser = p.chromium.launch(headless=True)
+            context, page = _guarded_browser_page(browser, {"width": 1440, "height": 900})
             page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            validate_public_url(page.url)
             page.wait_for_timeout(900)
             page.add_style_tag(content="""
               *, *::before, *::after { animation:none !important; transition:none !important; }
@@ -520,7 +545,12 @@ def rendered_html(url: str, timeout_ms: int = 20000) -> str:
             """)
             return page.content()
         finally:
-            browser.close()
+            if context is not None:
+                with contextlib.suppress(Exception):
+                    context.close()
+            if browser is not None:
+                with contextlib.suppress(Exception):
+                    browser.close()
 
 
 # ---------- BlockParse: точный редактируемый DOM-слепок ----------
@@ -557,16 +587,22 @@ _PAGE_TOKEN_SIGNALS_JS = """() => {
   };
   const tally = (map,key) => { if(key) map[key]=(map[key]||0)+1; };
   const top = (map) => { const e=Object.entries(map).sort((a,b)=>b[1]-a[1]); return e.length?e[0][0]:null; };
+  const saturation = (color) => {
+    if(!color || !/^#[0-9a-f]{6}$/i.test(color)) return 0;
+    const rgb=[1,3,5].map(i=>parseInt(color.slice(i,i+2),16)/255), hi=Math.max(...rgb), lo=Math.min(...rgb);
+    return hi ? (hi-lo)/hi : 0;
+  };
   const bodyCs=getComputedStyle(document.body);
   const sig={bodyBg:hex(bodyCs.backgroundColor)||hex(getComputedStyle(document.documentElement).backgroundColor)||'#ffffff',
-    bodyColor:hex(bodyCs.color),buttonBg:{},linkColor:{},borderColor:{},mutedColor:{},
+    bodyColor:hex(bodyCs.color),buttonBg:{},linkColor:{},borderColor:{},mutedColor:{},brandColor:{},
     buttonRadius:[],cardRadius:[],inputRadius:[],cardShadowBlur:[],sectionPadding:[],containerWidth:[]};
   const radiusOf=(cs,r)=>{ const rad=num(cs.borderTopLeftRadius); const side=Math.min(r.width,r.height);
     return side>0 && rad*2>=side ? 9999 : rad; };
   for(const el of [...document.body.querySelectorAll('*')].slice(0,800)){
     if(!visible(el)) continue;
     const cs=getComputedStyle(el), r=el.getBoundingClientRect();
-    const bg=hex(cs.backgroundColor);
+    const bg=hex(cs.backgroundColor), fg=hex(cs.color), border=hex(cs.borderTopColor);
+    for(const color of [bg,fg,border]) if(saturation(color)>=.28) tally(sig.brandColor,color);
     const isButton=el.matches('button,[role="button"]') || (el.tagName==='A' && (bg || num(cs.borderTopWidth)>0));
     if(isButton && bg){ sig.buttonRadius.push(radiusOf(cs,r)); if(bg!==sig.bodyBg) tally(sig.buttonBg,bg); }
     if(el.tagName==='A') tally(sig.linkColor,hex(cs.color));
@@ -594,6 +630,8 @@ _PAGE_TOKEN_SIGNALS_JS = """() => {
   sig.bodyFont=fontOf(para||document.body);
   sig.buttonBg=top(sig.buttonBg); sig.linkColor=top(sig.linkColor);
   sig.borderColor=top(sig.borderColor); sig.mutedColor=top(sig.mutedColor);
+  sig.brandColors=Object.entries(sig.brandColor).sort((a,b)=>b[1]-a[1]).map(([color])=>color).slice(0,4);
+  delete sig.brandColor;
   return sig;
 }"""
 
@@ -612,6 +650,18 @@ def _luminance(hex_color: str) -> float:
     except (ValueError, IndexError):
         return 1.0
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+
+
+def _color_saturation(hex_color: str) -> float:
+    value = str(hex_color or "").lstrip("#")
+    if len(value) != 6:
+        return 0.0
+    try:
+        channels = [int(value[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    except ValueError:
+        return 0.0
+    high, low = max(channels), min(channels)
+    return (high - low) / high if high else 0.0
 
 
 def _median(values: list) -> float | None:
@@ -701,7 +751,17 @@ def _page_tokens_from_signals(signals: dict | None) -> dict | None:
         bg = _css_color_to_hex(str(signals.get("bodyBg") or ""), "#ffffff")
         text = _css_color_to_hex(str(signals.get("bodyColor") or ""), "#171717")
         mode = "dark" if _luminance(bg) < 0.5 else "light"
-        primary = _css_color_to_hex(str(signals.get("buttonBg") or ""), text)
+        button = _css_color_to_hex(str(signals.get("buttonBg") or ""), text)
+        link = _css_color_to_hex(str(signals.get("linkColor") or ""), button)
+        brand_colors = [
+            _css_color_to_hex(str(value), "")
+            for value in signals.get("brandColors", [])
+            if isinstance(value, str)
+        ]
+        brand_colors = [value for value in brand_colors if value]
+        primary = button if _color_saturation(button) >= 0.2 else (brand_colors[0] if brand_colors else button)
+        accent_candidates = [value for value in [link, *brand_colors] if value != primary and _color_saturation(value) >= 0.2]
+        accent = accent_candidates[0] if accent_candidates else primary
         display = signals.get("displayFont") or {}
         body_font = signals.get("bodyFont") or {}
         return {
@@ -709,7 +769,7 @@ def _page_tokens_from_signals(signals: dict | None) -> dict | None:
             "color": {
                 "primary": primary,
                 "secondary": primary,
-                "accent": _css_color_to_hex(str(signals.get("linkColor") or ""), primary),
+                "accent": accent,
                 "background": bg,
                 "surface": bg,
                 "text": text,
@@ -750,16 +810,10 @@ _FONT_MAGIC = ((b"wOF2", ".woff2"), (b"wOFF", ".woff"), (b"OTTO", ".otf"), (b"\x
 def _download_font(url: str, timeout: float = 15.0) -> Optional[bytes]:
     """Скачивает файл шрифта с публичного URL (SSRF-гард + проверка magic bytes)."""
     try:
-        validate_public_url(url)
-    except Exception:
-        return None
-    if not url.startswith(("http://", "https://")):
-        return None
-    try:
-        with httpx.Client(follow_redirects=True, timeout=timeout, headers=_HEADERS) as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            data = resp.content
+        response = fetch_public_bytes(
+            url, timeout=timeout, headers=_HEADERS, max_bytes=3_000_000,
+        )
+        data = response.content
     except Exception:
         return None
     if not data or len(data) > 3_000_000:
@@ -1183,9 +1237,14 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
     captures: dict[str, dict[str, dict]] = {}
     token_signals = None
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": viewport_defs[0]["width"], "height": viewport_defs[0]["height"]})
+        browser = None
+        context = None
         try:
+            browser = p.chromium.launch(headless=True)
+            context, page = _guarded_browser_page(
+                browser,
+                {"width": viewport_defs[0]["width"], "height": viewport_defs[0]["height"]},
+            )
             for index, viewport in enumerate(viewport_defs):
                 if index:
                     page.set_viewport_size({"width": viewport["width"], "height": viewport["height"]})
@@ -1194,6 +1253,7 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                 # DOMContentLoaded plus a short render settle is deterministic and
                 # still measures the final Svelte/React layout used by the block.
                 page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                validate_public_url(page.url)
                 page.wait_for_timeout(900)
                 page.add_style_tag(content="""
                   *, *::before, *::after { animation:none !important; transition:none !important; }
@@ -1528,7 +1588,12 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                         pass
                 captures[viewport["name"]] = by_selector
         finally:
-            browser.close()
+            if context is not None:
+                with contextlib.suppress(Exception):
+                    context.close()
+            if browser is not None:
+                with contextlib.suppress(Exception):
+                    browser.close()
 
     page_tokens = _page_tokens_from_signals(token_signals)
     result: dict[str, dict] = {}

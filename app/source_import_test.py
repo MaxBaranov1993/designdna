@@ -204,6 +204,13 @@ def main() -> None:
           scraper._page_tokens_from_signals(None) is None and
           scraper._page_tokens_from_signals({"bodyBg": "not-a-color"})["color"]["background"] == "#ffffff",
           "")
+    branded = scraper._page_tokens_from_signals({
+        "bodyBg": "#ffffff", "bodyColor": "#171717", "buttonBg": "#2b2b2b",
+        "linkColor": "#2b2b2b", "brandColors": ["#ff691d", "#7018e6"],
+    })
+    check("saturated reference colors beat neutral header controls",
+          branded["color"]["primary"] == "#ff691d" and branded["color"]["accent"] == "#7018e6",
+          str(branded["color"]))
 
     fixture_dir = ROOT / "app" / "fixtures"
     server = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(fixture_dir)))

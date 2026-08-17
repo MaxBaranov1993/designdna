@@ -28,6 +28,7 @@ function wireActs(root: HTMLElement) {
         "align-left": "alignLeft", "align-center-h": "alignCenterH", "align-right": "alignRight",
         "align-top": "alignTop", "align-center-v": "alignCenterV", "align-bottom": "alignBottom",
         "distribute-h": "distributeH", "distribute-v": "distributeV", "reset-frame": "resetFrame",
+        "stretch-width": "stretchWidth",
       };
       const fn = map[(btn as HTMLElement).dataset.act!];
       if (fn && typeof g[fn] === "function") (g[fn] as () => void)();
@@ -61,10 +62,6 @@ function wireSingle(root: HTMLElement) {
         const constraints = cur.constraints || {};
         const axis = key === "constr-h" ? "h" : "v";
         g2.setFrameProps({ constraints: Object.assign({}, constraints, { [axis]: inp.value }) });
-      } else if (key === "padv" || key === "padh") {
-        const v = Math.max(0, readNumInput(root.querySelector('[data-pi="padv"]')!) || 0);
-        const h = Math.max(0, readNumInput(root.querySelector('[data-pi="padh"]')!) || 0);
-        g2.setFrameProps({ padding: v === h ? v : [v, h, v, h] });
       } else if (key === "absolute") {
         if ((inp as HTMLInputElement).checked) {
           const extra: Record<string, number> = {};
@@ -226,6 +223,7 @@ function wireTypeGroups(root: HTMLElement) {
       let val: any = inp.value;
       if (key === "level") val = Number(val);
       node[key] = val;
+      ctl.commitActiveIrEdits();
       ctl.rerenderEditorCanvas();
     });
   });
@@ -236,6 +234,7 @@ function wireTypeGroups(root: HTMLElement) {
       if (!s || !s.sel.length) return;
       ctl.pushHistory();
       s.sel[0].node[ta.dataset.textprop!] = ta.value;
+      ctl.commitActiveIrEdits();
       ctl.rerenderEditorCanvas();
     });
   });

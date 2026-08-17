@@ -32,6 +32,18 @@ def document() -> dict:
                 {"type": "card", "frame": {"width": 520, "layout": "auto", "direction": "column"}, "children": []},
                 {"type": "card", "frame": {"width": 520, "layout": "auto", "direction": "column"}, "children": []},
             ],
+        }, {
+            "id": "generated-hero",
+            "type": "generated-section",
+            "variant": "hero",
+            "frame": {"width": "fill", "height": 520, "layout": "free"},
+            "children": [
+                {"type": "badge", "text": "Тысячи продавцов — один умный выбор", "frame": {"x": 64, "y": 52, "width": 370, "height": 32}},
+                {"type": "heading", "level": 1, "text": "Всё, что нужно, уже на одной витрине", "style": {"fontSize": 54}, "frame": {"x": 64, "y": 104, "width": 620, "height": 130}},
+                {"type": "text", "text": "Сравнивайте предложения, находите честные цены и заказывайте у проверенных продавцов.", "frame": {"x": 64, "y": 254, "width": 560, "height": 72}},
+                {"type": "button", "text": "Найти товар", "frame": {"x": 64, "y": 354, "width": 150, "height": 44}},
+                {"type": "image", "alt": "Подборка популярных товаров", "frame": {"x": 760, "y": 64, "width": 560, "height": 340}},
+            ],
         }],
     }
 
@@ -63,12 +75,37 @@ def main() -> None:
         check("responsive preview leaves canonical IR untouched", before is None, json.dumps(before))
         page.click('[data-act="apply-responsive-autopilot"]')
         applied = page.evaluate("""(id) => {
-          const ir=window.GraphDev.node(id).data.ir, sec=ir.tree[0];
+          const ir=window.GraphDev.node(id).data._editorDraft.ir, sec=ir.tree[0];
           return {mobile:ir.responsive.viewports.mobile.width,direction:sec.responsive.mobile.frame.direction,child:sec.children[0].responsive.mobile.frame.width};
         }""", edit_id)
         check("Autopilot applies viewport, reflow and width constraints", applied == {"mobile": 390, "direction": "column", "child": "fill"}, json.dumps(applied))
+        page.locator('[data-viewport="mobile"]').evaluate("el => el.click()")
+        page.wait_for_timeout(250)
+        visual = page.evaluate("""() => {
+          const root=document.querySelector('.fe-canvas-inner [data-design-width="390"]');
+          const section=root && root.querySelector('[data-ir-sec="1"]');
+          const nodes=section ? [...section.querySelectorAll(':scope > [data-ir-path]')] : [];
+          const bounds=section && section.getBoundingClientRect();
+          const heading=section && section.querySelector('h1');
+          const button=section && section.querySelector('.btn');
+          return {
+            root:!!root, section:!!section,
+            overflow:bounds ? nodes.filter(node => {
+              const r=node.getBoundingClientRect();
+              return r.left < bounds.left - 1 || r.right > bounds.right + 1;
+            }).length : -1,
+            positions:nodes.map(node => getComputedStyle(node).position),
+            headingSize:heading ? parseFloat(getComputedStyle(heading).fontSize) : 0,
+            buttonMinHeight:button ? parseFloat(getComputedStyle(button).minHeight) : 0,
+            sectionHeight:section ? section.getBoundingClientRect().height : 0,
+          };
+        }""")
+        check("mobile free hero reflows without horizontal clipping", visual["root"] and visual["section"] and visual["overflow"] == 0, json.dumps(visual))
+        check("mobile free hero leaves absolute desktop positioning", all(value != "absolute" for value in visual["positions"]), json.dumps(visual))
+        check("mobile heading and CTA remain readable", visual["headingSize"] <= 34 and visual["buttonMinHeight"] >= 44 and visual["sectionHeight"] > 500, json.dumps(visual))
+        page.locator('.fe-canvas').screenshot(path=r'C:\Users\iamma\AppData\Local\Temp\designai-mobile-adaptation-after.png')
         page.click('[data-act="undo"]')
-        undone = page.evaluate("(id) => window.GraphDev.node(id).data.ir.responsive || null", edit_id)
+        undone = page.evaluate("(id) => window.GraphDev.node(id).data._editorDraft.ir.responsive || null", edit_id)
         check("responsive patch is reversible with Undo", undone is None, json.dumps(undone))
         browser.close()
 

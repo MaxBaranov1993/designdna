@@ -1,13 +1,16 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
 import { JsonlProcess } from "./lib/jsonl-process.mjs";
+import { isAllowedRendererUrl } from "./lib/renderer-policy.mjs";
 import { pythonWorkerEnvironment, pythonWorkerSpec } from "./lib/runtime-paths.mjs";
 import { CredentialStore } from "./services/credential-store.mjs";
 import { SettingsStore } from "./services/settings-store.mjs";
 import { getProviderStatus } from "./services/provider-status.mjs";
+import { chatWithKimi } from "./services/provider-chat.mjs";
 import { CodexAppServer } from "./services/codex-app-server.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
+import { canonicalMcpSpec, createMcpActivationApprover } from "./services/mcp-activation-approval.mjs";
 
 const desktopDirectory = path.dirname(fileURLToPath(import.meta.url));
 const sourceRoot = path.resolve(desktopDirectory, "..");
@@ -25,9 +28,34 @@ let codex;
 let credentials;
 let settings;
 let mcp;
+let mcpActivation;
 let approvalSequence = 0;
 const mcpApprovals = new Map();
 const codexRequests = new Map();
+
+/* Точная политика доверенного renderer-URL: dev-сервер (когда задан
+ * DESIGNDNA_RENDERER_URL) или ровно файл собранного renderer'а. Используется и
+ * will-navigate, и проверкой IPC-отправителя — обе проверяют один список. */
+const rendererDevUrl = process.env.DESIGNDNA_RENDERER_URL || "";
+const rendererPolicy = { devUrl: rendererDevUrl, rendererEntry };
+
+/* IPC принимаем только от главного фрейма нашего окна с доверенным URL:
+ * iframe/гостевой фрейм или подменённая страница не должны дёргать привилегированные
+ * каналы (mcp/codex/providers/api). */
+function isTrustedSender(event) {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return false;
+  const frame = event.senderFrame;
+  if (!frame || frame !== window.webContents.mainFrame) return false;
+  return isAllowedRendererUrl(frame.url, rendererPolicy);
+}
+
+function handleTrusted(channel, handler) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!isTrustedSender(event)) throw new Error(`Untrusted IPC sender: ${channel}`);
+    return handler(event, ...args);
+  });
+}
 
 function broadcast(channel, payload) {
   for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, payload);
@@ -95,36 +123,52 @@ function validateApiRequest(request) {
 }
 
 function registerIpc() {
-  ipcMain.handle("app:info", () => ({
+  let mcpSaveQueue = Promise.resolve();
+  handleTrusted("app:info", () => ({
     name: "DesignDNA",
     version: app.getVersion(),
     platform: process.platform,
     productionTransport: "ipc+stdio",
   }));
-  ipcMain.handle("api:request", (_event, request) => pythonWorker.request("http.request", validateApiRequest(request)));
-  ipcMain.handle("repo-canvas:snapshot", () => repoCanvasWorker.request("snapshot"));
-  ipcMain.handle("repo-canvas:check", () => repoCanvasWorker.request("check"));
-  ipcMain.handle("repo-canvas:refresh", (_event, options) => repoCanvasWorker.request("architect.refresh", options || {}));
-  ipcMain.handle("providers:status", async () => ({
+  handleTrusted("api:request", (_event, request) => pythonWorker.request("http.request", validateApiRequest(request)));
+  handleTrusted("repo-canvas:snapshot", () => repoCanvasWorker.request("snapshot"));
+  handleTrusted("repo-canvas:check", () => repoCanvasWorker.request("check"));
+  handleTrusted("repo-canvas:refresh", (_event, options) => repoCanvasWorker.request("architect.refresh", options || {}));
+  handleTrusted("providers:status", async () => ({
     runtimes: await getProviderStatus(),
     credentials: credentials.status(),
     encryptedStorage: credentials.available(),
   }));
-  ipcMain.handle("providers:credentials", () => ({ configured: credentials.status(), encryptedStorage: credentials.available() }));
-  ipcMain.handle("providers:set-credential", (_event, { provider, value }) => credentials.set(provider, value));
-  ipcMain.handle("providers:delete-credential", (_event, { provider }) => credentials.delete(provider));
-  ipcMain.handle("codex:account", () => codex.account());
-  ipcMain.handle("codex:login", (_event, { type }) => codex.login({ type, apiKey: type === "apiKey" ? credentials.get("openai") : undefined }));
-  ipcMain.handle("codex:threads", (_event, params) => codex.listThreads(params || {}));
-  ipcMain.handle("codex:start-thread", async (_event, params) => {
+  handleTrusted("providers:credentials", () => ({ configured: credentials.status(), encryptedStorage: credentials.available() }));
+  handleTrusted("providers:set-credential", (_event, { provider, value }) => credentials.set(provider, value));
+  handleTrusted("providers:delete-credential", (_event, { provider }) => credentials.delete(provider));
+  handleTrusted("providers:chat", async (_event, { provider, messages, temperature }) => {
+    if (provider === "codex") return { content: await codex.chat(messages, { timeoutMs: 180_000 }) };
+    if (provider === "kimi") {
+      return { content: await chatWithKimi({ apiKey: credentials.get("kimi"), messages, temperature }) };
+    }
+    throw new Error(`Unsupported generator provider: ${provider}`);
+  });
+  handleTrusted("codex:account", () => codex.account());
+  handleTrusted("codex:login", async (_event, { type }) => {
+    const result = await codex.login({ type, apiKey: type === "apiKey" ? credentials.get("openai") : undefined });
+    if (type === "chatgpt" && result?.authUrl) {
+      const authUrl = new URL(result.authUrl);
+      if (authUrl.protocol !== "https:") throw new Error("Codex returned an unsafe authentication URL");
+      await shell.openExternal(authUrl.toString());
+    }
+    return result;
+  });
+  handleTrusted("codex:threads", (_event, params) => codex.listThreads(params || {}));
+  handleTrusted("codex:start-thread", async (_event, params) => {
     await mcp.refresh();
     return codex.startThread({ cwd: repositoryRoot, ...params, dynamicTools: mcp.dynamicTools() });
   });
-  ipcMain.handle("codex:resume-thread", (_event, { threadId }) => codex.resumeThread(String(threadId)));
-  ipcMain.handle("codex:start-turn", (_event, params) => codex.startTurn(params));
-  ipcMain.handle("codex:steer-turn", (_event, params) => codex.steerTurn(params));
-  ipcMain.handle("codex:interrupt-turn", (_event, { threadId, turnId }) => codex.interruptTurn(String(threadId), String(turnId)));
-  ipcMain.handle("codex:respond", (_event, { id, result }) => {
+  handleTrusted("codex:resume-thread", (_event, { threadId }) => codex.resumeThread(String(threadId)));
+  handleTrusted("codex:start-turn", (_event, params) => codex.startTurn(params));
+  handleTrusted("codex:steer-turn", (_event, params) => codex.steerTurn(params));
+  handleTrusted("codex:interrupt-turn", (_event, { threadId, turnId }) => codex.interruptTurn(String(threadId), String(turnId)));
+  handleTrusted("codex:respond", (_event, { id, result }) => {
     const method = codexRequests.get(String(id));
     if (!method) throw new Error("Unknown or resolved Codex request");
     if (method.endsWith("requestApproval")) {
@@ -135,12 +179,25 @@ function registerIpc() {
     codex.respond(id, result);
     return { ok: true };
   });
-  ipcMain.handle("mcp:list", () => settings.listMcpServers());
-  ipcMain.handle("mcp:save", async (_event, servers) => { const saved = settings.saveMcpServers(servers); return { servers: saved, statuses: await mcp.refresh() }; });
-  ipcMain.handle("mcp:refresh", () => mcp.refresh());
-  ipcMain.handle("mcp:tools", () => mcp.listTools());
-  ipcMain.handle("mcp:call", (_event, { name, arguments: args }) => mcp.callTool(String(name), args || {}, { source: "user" }));
-  ipcMain.handle("mcp:approval-response", (_event, { id, accepted }) => {
+  handleTrusted("mcp:list", () => settings.listMcpServers());
+  handleTrusted("mcp:save", (_event, servers) => {
+    const save = async () => {
+    // Нативный approval ДО persist/запуска: диалог показывает канонический спек
+    // исполняемого конфига (команды/args), и сохраняется ровно одобренное.
+    const normalized = settings.validateMcpServers(servers);
+    const accepted = await mcpActivation.ensureApproved(canonicalMcpSpec(normalized));
+    if (!accepted) throw new Error("MCP configuration save declined by user");
+    const saved = settings.saveMcpServers(normalized);
+    return { servers: saved, statuses: await mcp.refresh() };
+    };
+    const pending = mcpSaveQueue.then(save, save);
+    mcpSaveQueue = pending.catch(() => undefined);
+    return pending;
+  });
+  handleTrusted("mcp:refresh", () => mcp.refresh());
+  handleTrusted("mcp:tools", () => mcp.listTools());
+  handleTrusted("mcp:call", (_event, { name, arguments: args }) => mcp.callTool(String(name), args || {}, { source: "user" }));
+  handleTrusted("mcp:approval-response", (_event, { id, accepted }) => {
     const pending = mcpApprovals.get(String(id));
     if (!pending) return { ok: false };
     clearTimeout(pending.timer); mcpApprovals.delete(String(id)); pending.resolve(accepted === true); return { ok: true };
@@ -168,20 +225,28 @@ function createWindow() {
     if (new Set(["https:", "http:"]).has(new URL(url).protocol)) void shell.openExternal(url);
     return { action: "deny" };
   });
-  window.webContents.on("will-navigate", (event, url) => {
-    const current = window.webContents.getURL();
-    if (url !== current && !url.startsWith("file:")) event.preventDefault();
-  });
+  const enforceRendererNavigation = (event, url) => {
+    // Точная политика: разрешена только навигация на доверенный renderer-URL
+    // (dev-сервер или файл entry); любые прочие file:/http(s) переходы блокируем.
+    if (!isAllowedRendererUrl(url, rendererPolicy)) event.preventDefault();
+  };
+  window.webContents.on("will-navigate", enforceRendererNavigation);
+  window.webContents.on("will-redirect", enforceRendererNavigation);
   window.once("ready-to-show", () => window.show());
-  const devUrl = process.env.DESIGNDNA_RENDERER_URL;
-  if (devUrl) void window.loadURL(devUrl);
+  if (rendererDevUrl) void window.loadURL(rendererDevUrl);
   else void window.loadFile(rendererEntry);
 }
 
 app.whenReady().then(() => {
   credentials = new CredentialStore({ userDataPath: app.getPath("userData"), safeStorage });
   settings = new SettingsStore(app.getPath("userData"));
-  mcp = new McpManager({ settings, credentials, cwd: repositoryRoot, approve: requestMcpApproval });
+  mcpActivation = createMcpActivationApprover({
+    showMessageBox: (options) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      return window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options);
+    },
+  });
+  mcp = new McpManager({ settings, credentials, cwd: repositoryRoot, approve: requestMcpApproval, approveActivation: (spec) => mcpActivation.ensureApproved(spec) });
   createWorkers();
   registerIpc();
   createWindow();

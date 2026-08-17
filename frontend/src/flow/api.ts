@@ -30,7 +30,13 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 /* Формы ответов бэкенда — по server.py и контрактам docs/NODES.md */
-export type GenerateResp = { variants?: IRObject[]; errors?: string[]; qa?: { index: number; fixed: number; violations: string[] }[]; design?: { type: string; label: string } };
+export type GenerateResp = {
+  variants?: IRObject[];
+  errors?: string[];
+  qa?: { index: number; fixed: number; violations: string[] }[];
+  design?: { type: string; label: string };
+  prompts?: Array<{ messages: Array<{ role: string; content: string }> }>;
+};
 export type MixResp = { ir?: IRObject | null };
 export type ReproduceResp = {
   ir?: IRObject | null;

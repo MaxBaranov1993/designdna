@@ -19,6 +19,7 @@ export interface GeoHandle {
   getTool: () => string;
   syncZoom: () => void;
   resetFrame: () => void;
+  stretchWidth: () => void;
   alignLeft: () => void;
   alignCenterH: () => void;
   alignRight: () => void;

@@ -143,7 +143,7 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "reference":
       return { brief: "", image: null, fileName: "", decomposed: false };
     case "generator":
-      return { provider: "openrouter", count: 2, ownPrompt: "", preset: "", variants: [], active: 0 };
+      return { provider: "codex", count: 2, ownPrompt: "", preset: "", variants: [], active: 0 };
     case "edit":
       return { inputs: ["a", "b"], ir: null, sourceRegistry: {}, nodeSources: {} };
     case "mix":

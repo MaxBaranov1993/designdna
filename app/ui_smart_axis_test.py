@@ -95,12 +95,12 @@ def main() -> None:
         check("preview does not mutate IR", before is None, json.dumps(before))
         page.click('[data-act="apply-smart-axis"]')
         applied = page.evaluate("""(id) => {
-          const sec=window.GraphDev.node(id).data.ir.tree[1];
+          const sec=window.GraphDev.node(id).data._editorDraft.ir.tree[1];
           return {desktop:sec.frame.contentMaxWidth, tablet:sec.responsive.tablet.frame.contentMaxWidth, mobile:sec.responsive.mobile.frame.contentMaxWidth};
         }""", ids["edit"])
         check("apply binds desktop and responsive axes", applied == {"desktop": 960, "tablet": 720, "mobile": 358}, json.dumps(applied))
         page.click('[data-act="undo"]')
-        undone = page.evaluate("(id) => window.GraphDev.node(id).data.ir.tree[1].frame.contentMaxWidth || null", ids["edit"])
+        undone = page.evaluate("(id) => window.GraphDev.node(id).data._editorDraft.ir.tree[1].frame.contentMaxWidth || null", ids["edit"])
         check("normal Undo reverses the atomic patch", undone is None, json.dumps(undone))
         browser.close()
 

@@ -113,7 +113,9 @@ async def dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
 
 
 def write_frame(frame: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(frame, ensure_ascii=False, separators=(",", ":")) + "\n")
+    # Keep the JSONL transport ASCII-only. Windows may give a hidden Python
+    # worker a legacy stdout code page; escaped JSON still restores Unicode.
+    sys.stdout.write(json.dumps(frame, ensure_ascii=True, separators=(",", ":")) + "\n")
     sys.stdout.flush()
 
 

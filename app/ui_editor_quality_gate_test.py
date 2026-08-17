@@ -69,10 +69,10 @@ def main() -> None:
         before = page.evaluate("(id) => window.GraphDev.node(id).data.ir.tree[0].frame.gap", edit_id)
         check("quality preview leaves IR untouched", before == 13, str(before))
         page.click('[data-act="apply-quality-fixes"]')
-        applied = page.evaluate("(id) => window.GraphDev.node(id).data.ir.tree[0].frame.gap", edit_id)
+        applied = page.evaluate("(id) => window.GraphDev.node(id).data._editorDraft.ir.tree[0].frame.gap", edit_id)
         check("prepared fix applies atomically", applied == 16, str(applied))
         page.click('[data-act="undo"]')
-        undone = page.evaluate("(id) => window.GraphDev.node(id).data.ir.tree[0].frame.gap", edit_id)
+        undone = page.evaluate("(id) => window.GraphDev.node(id).data._editorDraft.ir.tree[0].frame.gap", edit_id)
         check("quality fix is reversible with Undo", undone == 13, str(undone))
         browser.close()
 

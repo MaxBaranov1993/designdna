@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import type { EdgeChange, NodeChange } from "@xyflow/react";
 
-import { api } from "./api";
+import { api, extractStyleDna as extractStyleDnaApi } from "./api";
 import type {
   BlockParseResp,
   GenerateResp,
@@ -55,6 +55,12 @@ import type {
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
 export type NodeStatus = { text: string; kind?: "ok" | "err" };
 
+export type PersistedEditorDraft = {
+  baseRevision: number;
+  draftRevision: number;
+  ir: IRObject;
+};
+
 export interface FlowStoreState {
   /* состояние графа в типах RF (id строковые); конвертация в legacy — в serialize.ts */
   nodes: FlowNode[];
@@ -78,6 +84,10 @@ export interface FlowStoreState {
   deleteNode: (id: number) => void;
   deleteEdge: (edgeId: string) => void;
   setNodeData: (id: number, patch: Record<string, unknown>) => void;
+  getNodeIrRevision: (id: number) => number;
+  persistEditorDraft: (id: number, draft: PersistedEditorDraft) => void;
+  clearEditorDraft: (id: number) => void;
+  commitEditorDraft: (id: number, expectedRevision: number, ir: IRObject) => boolean;
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void;
   setBusy: (id: number, v: boolean) => void;
   propagate: (startId: number, visited?: Set<number>) => void;
@@ -180,7 +190,9 @@ function uniqueValues(values: unknown[], limit = 12): string[] {
 
 function extractStyleDna(irRaw: unknown, tokensRaw: unknown): { tokens: Record<string, unknown>; summary: string } {
   const ir = asRecord(irRaw);
-  const explicit = asRecord(tokensRaw) || asRecord(ir?.tokens);
+  // A tokens wire is an intentional pass-through. For an IR wire the rendered
+  // tree is authoritative: ir.tokens may have been inherited from a Header.
+  const explicit = asRecord(tokensRaw);
   if (explicit) {
     return { tokens: deepClone(explicit), summary: summarizeStyleDna(explicit) };
   }
@@ -207,6 +219,10 @@ function extractStyleDna(irRaw: unknown, tokensRaw: unknown): { tokens: Record<s
     radius: { sampled: uniqueValues(radii, 6) },
     spacing: { measured: uniqueValues(spacing, 10) },
   };
+  if (!colors.some((value) => value != null) && !fonts.some((value) => value != null)) {
+    const inherited = asRecord(ir?.tokens);
+    if (inherited) return { tokens: deepClone(inherited), summary: summarizeStyleDna(inherited) };
+  }
   return { tokens, summary: summarizeStyleDna(tokens) };
 }
 
@@ -331,9 +347,62 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     const sid = String(id);
     set((state) => ({
       nodes: state.nodes.map((n) =>
-        n.id === sid ? (({ ...n, data: { ...n.data, ...patch } }) as FlowNode) : n,
+        n.id === sid ? (() => {
+          const nextPatch = { ...patch } as Record<string, unknown>;
+          if (Object.prototype.hasOwnProperty.call(nextPatch, "ir")) {
+            const currentRevision = Number((n.data as Record<string, unknown>)._irRevision) || 0;
+            nextPatch._irRevision = currentRevision + 1;
+          }
+          return ({ ...n, data: { ...n.data, ...nextPatch } }) as FlowNode;
+        })() : n,
       ),
     }));
+  },
+
+  getNodeIrRevision: (id) => {
+    const node = get().nodes.find((item) => Number(item.id) === id);
+    return node ? Number((node.data as Record<string, unknown>)._irRevision) || 0 : -1;
+  },
+
+  persistEditorDraft: (id, draft) => {
+    const sid = String(id);
+    const persisted = deepClone(draft);
+    set((state) => ({
+      nodes: state.nodes.map((node) =>
+        node.id === sid
+          ? ({ ...node, data: { ...node.data, _editorDraft: persisted } } as unknown as FlowNode)
+          : node,
+      ),
+    }));
+  },
+
+  clearEditorDraft: (id) => {
+    const sid = String(id);
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id !== sid) return node;
+        const data = { ...node.data } as Record<string, unknown>;
+        delete data._editorDraft;
+        return { ...node, data } as FlowNode;
+      }),
+    }));
+  },
+
+  commitEditorDraft: (id, expectedRevision, ir) => {
+    const sid = String(id);
+    const node = get().nodes.find((item) => item.id === sid);
+    if (!node) return false;
+    const currentRevision = Number((node.data as Record<string, unknown>)._irRevision) || 0;
+    if (currentRevision !== expectedRevision) return false;
+    set((state) => ({
+      nodes: state.nodes.map((item) => {
+        if (item.id !== sid) return item;
+        const data = { ...item.data, ir: deepClone(ir), _irRevision: currentRevision + 1 } as Record<string, unknown>;
+        delete data._editorDraft;
+        return { ...item, data } as FlowNode;
+      }),
+    }));
+    return true;
   },
 
   setStatus: (id, text, kind) => {
@@ -371,10 +440,15 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
         const ir = pullInput(nodes, edges, cons, "ir");
         const tokensRaw = pullInput(nodes, edges, cons, "tokens");
         if (ir || tokensRaw) {
-          const dna = extractStyleDna(ir, tokensRaw);
-          get().setNodeData(consId, { tokens: dna.tokens, summary: dna.summary });
-          get().setStatus(consId, "Style DNA обновлён", "ok");
-          get().propagate(consId, visited);
+          if (ir) {
+            // Wait for exact IR extraction before updating downstream nodes.
+            void get().runStyleDna(consId);
+          } else {
+            const dna = extractStyleDna(null, tokensRaw);
+            get().setNodeData(consId, { tokens: dna.tokens, summary: dna.summary });
+            get().setStatus(consId, "Style DNA обновлён", "ok");
+            get().propagate(consId, visited);
+          }
         }
       } else if (cons.type === "derive") {
         get().setStatus(consId, "Входы обновлены — нажмите Derive");
@@ -444,17 +518,34 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     const styleHint = styleRaw ? String(styleRaw) : undefined;
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
     const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as Record<string, unknown>) : undefined;
-    get().setStatus(id, `Генерация (OpenRouter, ${data.count})… 20–120 сек`);
+    const provider = data.provider === "kimi" ? "kimi" : "codex";
+    const count = Math.max(1, Math.min(2, Number(data.count) || 1));
+    const providerLabel = provider === "kimi" ? "Kimi K2.5" : "GPT Codex";
+    get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
     get().setBusy(id, true);
     try {
-      const res = await api<GenerateResp>("/api/generate", {
+      const desktop = window.designDNA;
+      const request = {
         brief,
-        count: data.count,
-        provider: "openrouter",
+        count,
+        provider,
         styleHint,
         tokens,
         preset: data.preset || undefined,
-      });
+      };
+      let res: GenerateResp;
+      if (!desktop) {
+        res = await api<GenerateResp>("/api/generate", { ...request, provider: "openrouter" });
+      } else {
+        const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true });
+        if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы генератора");
+        const rawOutputs: string[] = [];
+        for (const prompt of prepared.prompts) {
+          const answer = await desktop.providers.chat(provider, prompt.messages, styleHint ? 0.3 : 0.8);
+          rawOutputs.push(answer.content);
+        }
+        res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs });
+      }
       const variants = Array.isArray(res.variants) ? res.variants : [];
       get().setNodeData(id, { variants, active: 0 });
       const errNote = res.errors && res.errors.length ? `, ошибок: ${res.errors.length}` : "";
@@ -584,7 +675,10 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
         get().setNodeData(id, { blocks, tokens: dna.tokens });
         get().setStatus(id, ir ? "Готово: capture + Style DNA" : "Не удалось получить IR из скриншота", ir ? "ok" : "err");
       } else {
-        const url = (data.url || "").trim();
+        const rawUrl = (data.url || "").trim();
+        const url = rawUrl && !/^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl)
+          ? rawUrl.startsWith("//") ? `https:${rawUrl}` : `https://${rawUrl}`
+          : rawUrl;
         if (!url) {
           get().setStatus(id, "Введите URL сайта", "err");
           return;
@@ -593,6 +687,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
           get().setStatus(id, "Отметьте «это мой сайт/есть право»", "err");
           return;
         }
+        if (url !== data.url) get().setNodeData(id, { url });
         get().setStatus(id, `Импортирую ${url.slice(0, 30)}…`);
         const res = await api<BlockParseResp>("/api/block-parse", {
           url,
@@ -626,17 +721,36 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
   runStyleDna: async (id) => {
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
-    if (!n || n.type !== "styledna") return;
+    if (!n || n.type !== "styledna" || st.busy[id]) return;
     const ir = pullInput(st.nodes, st.edges, n, "ir");
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
     if (!ir && !tokensRaw) {
       get().setStatus(id, "Подключите IR или tokens", "err");
       return;
     }
-    const dna = extractStyleDna(ir, tokensRaw);
-    get().setNodeData(id, { tokens: dna.tokens, summary: dna.summary });
-    get().setStatus(id, "Style DNA собран", "ok");
-    get().propagate(id);
+    if (!ir) {
+      const dna = extractStyleDna(null, tokensRaw);
+      get().setNodeData(id, { tokens: dna.tokens, summary: dna.summary });
+      get().setStatus(id, "Style DNA собран из tokens", "ok");
+      get().propagate(id);
+      return;
+    }
+    get().setBusy(id, true);
+    get().setStatus(id, "Style DNA: извлекаю из входного IR…");
+    try {
+      const response = await extractStyleDnaApi(ir as IRObject);
+      const tokens = asRecord(response.tokens);
+      if (!tokens) throw new Error("сервер не вернул Style DNA");
+      get().setNodeData(id, { tokens: deepClone(tokens), summary: summarizeStyleDna(tokens) });
+      get().setStatus(id, "Style DNA собран из входного IR", "ok");
+      get().propagate(id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      get().setStatus(id, "Style DNA: " + message, "err");
+      toast("Style DNA: " + message, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
   },
 
   runDerive: async (id) => {

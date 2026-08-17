@@ -83,10 +83,6 @@ function SingleInspector({ sel, ir, geo }: { sel: GeoSel; ir: any; geo: GeoHandl
   const w = typeof f.width === "number" ? f.width : size ? size.w : "";
   const h = typeof f.height === "number" ? f.height : size ? size.h : "";
 
-  let padV: any = "", padH: any = "";
-  if (typeof f.padding === "number") { padV = f.padding; padH = f.padding; }
-  else if (Array.isArray(f.padding) && f.padding.length >= 2) { padV = f.padding[0]; padH = f.padding[1]; }
-
   const dir = f.layout === "free" ? "free" : f.direction === "row" ? "row" : "column";
   const justify = f.justify || "start";
   const align = f.align || "start";
@@ -157,10 +153,6 @@ function SingleInspector({ sel, ir, geo }: { sel: GeoSel; ir: any; geo: GeoHandl
           </div>
           <div className="pi-row"><label className="pi-radio"><input type="radio" name={radioName} data-pi-justify="space-between" defaultChecked={justify === "space-between"} /> Space Between</label></div>
           <div className="pi-row"><label className="pi-radio"><input type="radio" name={radioName} data-pi-justify="space-around" defaultChecked={justify === "space-around"} /> Space Around</label></div>
-          <div className="pi-row" style={{ marginTop: 6 }}>
-            <div className="pi-field"><label>Pad↕</label><input type="text" inputMode="decimal" data-pi="padv" defaultValue={padV} /></div>
-            <div className="pi-field"><label>Pad↔</label><input type="text" inputMode="decimal" data-pi="padh" defaultValue={padH} /></div>
-          </div>
         </div>
       )}
 
@@ -176,6 +168,7 @@ function SingleInspector({ sel, ir, geo }: { sel: GeoSel; ir: any; geo: GeoHandl
           <label className="pi-check"><input type="checkbox" data-pi="hugh" defaultChecked={f.height === "hug"} /> Hug Height</label>
           <label className="pi-check"><input type="checkbox" data-pi="clip" defaultChecked={!!f.clip} /> Clip Content</label>
         </div>
+        {!isRoot && <button className="pi-ibtn pi-wide" data-act="stretch-width" style={{ marginTop: 8 }}>Растянуть по ширине родителя</button>}
       </div>
 
       {!isRoot && (
