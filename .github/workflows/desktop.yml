@@ -4,22 +4,24 @@ on:
   push:
     paths:
       - "desktop/**"
-      - "app/desktop_worker.py"
+      - "app/**"
+      - "schema/**"
       - "desktop/lib/runtime-paths.mjs"
       - "frontend/**"
       - "tools/repo-canvas/**"
       - "package.json"
-      - "requirements-desktop-build.txt"
+      - "requirements*.txt"
       - ".github/workflows/desktop.yml"
   pull_request:
     paths:
       - "desktop/**"
-      - "app/desktop_worker.py"
+      - "app/**"
+      - "schema/**"
       - "desktop/lib/runtime-paths.mjs"
       - "frontend/**"
       - "tools/repo-canvas/**"
       - "package.json"
-      - "requirements-desktop-build.txt"
+      - "requirements*.txt"
       - ".github/workflows/desktop.yml"
 
 jobs:
@@ -46,3 +48,23 @@ jobs:
       - run: npm --prefix frontend run build:desktop
       - run: npm --prefix desktop test
       - run: python -m py_compile app/desktop_worker.py
+
+  python-ui-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: npm --prefix frontend ci
+      - run: npm --prefix frontend run build:desktop
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - run: python -m playwright install --with-deps --only-shell chromium
+      - run: python -m pytest -q app
+      - run: python app/ui_smoke.py

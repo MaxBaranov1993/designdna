@@ -13,10 +13,16 @@ npm --prefix tools/repo-canvas ci
 npm --prefix desktop ci
 python -m pip install -r requirements.txt -r requirements-desktop-build.txt
 npm --prefix frontend run build:desktop
+npm --prefix desktop test
+python -m pytest -q app
+python app/ui_smoke.py
 npm --prefix desktop run runtime:build
 npm --prefix desktop run runtime:smoke
 npm run desktop:make
 ```
+
+`runtime:build` automatically prefers the repository `.venv` when it exists.
+Set `DESIGNDNA_BUILD_PYTHON` only when a different build interpreter is required.
 
 Artifacts are written to `desktop/out/make/`. GitHub Actions can run the same pipeline from **Desktop release artifacts** or automatically for tags matching `desktop-v*`.
 
