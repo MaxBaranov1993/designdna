@@ -51,7 +51,8 @@ IR = {
     ],
 }
 
-NODE_IR = ("window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir")
+NODE_IR = ("(() => { const d = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data;"
+           " return d._editorDraft?.ir || d.ir; })()")
 
 
 def check(name, cond, extra=""):

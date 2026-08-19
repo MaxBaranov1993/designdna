@@ -2,6 +2,7 @@ import { rmSync, mkdirSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveBuildPython } from "../lib/build-python.mjs";
 
 const desktopDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const projectRoot = path.resolve(desktopDirectory, "..");
@@ -10,7 +11,7 @@ const outputRoot = path.join(runtimeRoot, "python");
 const browserRoot = path.join(runtimeRoot, "playwright");
 const workRoot = path.join(desktopDirectory, ".runtime-build");
 const workerEntry = path.join(projectRoot, "app", "desktop_worker.py");
-const python = process.env.DESIGNDNA_BUILD_PYTHON || (process.platform === "win32" ? "python" : "python3");
+const python = resolveBuildPython({ projectRoot });
 const buildEnvironment = {
   ...process.env,
   PLAYWRIGHT_BROWSERS_PATH: browserRoot,

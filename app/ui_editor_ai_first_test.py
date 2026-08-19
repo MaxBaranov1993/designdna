@@ -43,6 +43,23 @@ def main():
                     ops.append({"op": "add", "path": path + "/style/opacity", "after": 0.8, "reason": "UI test"})
                 for index, child in enumerate(node.get("children") or []): visit(child, f"{path}/children/{index}")
             for index, section in enumerate(candidate["tree"]): visit(section, f"/tree/{index}")
+            for source_key in selected:
+                if not source_key.startswith("editor:/"):
+                    continue
+                parts = source_key.removeprefix("editor:/").split("/")
+                parent = candidate
+                for part in parts[:-1]:
+                    parent = parent[int(part)] if isinstance(parent, list) else parent[part]
+                last = parts[-1]
+                before_value = parent[int(last)] if isinstance(parent, list) else parent[last]
+                if isinstance(before_value, str):
+                    after_value = "Заголовок от AI"
+                    if isinstance(parent, list): parent[int(last)] = after_value
+                    else: parent[last] = after_value
+                    ops.append({"op": "replace", "path": source_key.removeprefix("editor:"), "before": before_value, "after": after_value, "reason": "UI scalar test"})
+            if "много" in payload["prompt"].lower() and ops:
+                seed = ops[0]
+                ops = [{**seed, "path": seed["path"], "after": round(0.71 + index / 100, 2), "reason": f"UI test {index + 1}"} for index in range(9)]
             route.fulfill(status=200, content_type="application/json", body=json.dumps({
                 "summary": "Выделение обновлено", "ops": ops, "previewIr": candidate,
                 "changedViewports": [], "warnings": [],
@@ -84,22 +101,28 @@ def main():
         def click_path(path):
             target = page.locator(f'.fe-layer[data-key="0:{path}"]')
             assert target.count() == 1, f"missing layer {path}"
-            for _ in range(15):
-                target.click()
-                page.wait_for_timeout(100)
-                if page.locator("[data-ai-inspector]").count(): break
-                # Layer rows are draggable; headless Chromium can swallow the
-                # pointer click as the beginning of a drag gesture.
-                target.dispatch_event("click")
-                page.wait_for_timeout(100)
-                if page.locator("[data-ai-inspector]").count(): break
-            assert page.locator("[data-ai-inspector]").count() == 1, path
+            target.click()
+            page.wait_for_selector("[data-ai-inspector]")
 
         # Every concrete element kind exposes the same clear AI entry point.
         for path in ["children.0", "children.0.children.0", "children.0.children.1", "children.0.children.2", "children.0.children.3", "children.0.children.4.children.1"]:
             click_path(path)
             assert page.locator("[data-ai-inspector]").count() == 1, path
             assert page.get_by_text("Что изменить?", exact=True).count() == 1, path
+
+        # Semantic scalar props are honestly text-only and remain AI-editable.
+        click_path("props.heading")
+        assert page.locator(".ai-quick-row").count() == 0
+        for label in ["Стиль", "Размеры", "Цвета"]:
+            assert page.get_by_label(label, exact=True).is_disabled()
+        page.locator(".ai-command-card textarea").fill("Замени заголовок")
+        page.locator(".ai-run").click()
+        page.wait_for_selector('[data-ai-preview="ready"]')
+        assert page.locator(".ai-diff li").count() == 1
+        page.locator("[data-ai-apply]").click()
+        page.wait_for_timeout(150)
+        scalar_draft = page.evaluate("(id) => { const d=window.GraphDev.node(id).data; return d._editorDraft?.ir || d.ir; }", edit_id)
+        assert scalar_draft["tree"][0]["props"]["heading"] == "Заголовок от AI"
 
         inspector_text = page.locator(".fe-inspector").inner_text()
         for removed in ["Position", "Flex Layout", "Dimensions", "Appearance"]:
@@ -167,6 +190,13 @@ def main():
 
         # Multi-selection makes the scope explicit and sends all selected source keys.
         click_path("children.0.children.0")
+        page.locator('.fe-layer[data-key="0:children.0.children.1"]').evaluate(
+            "el => el.dispatchEvent(new MouseEvent('click', {bubbles:true, shiftKey:true}))")
+        page.wait_for_timeout(200)
+        assert page.locator(".fe-layer.selected").count() == 2
+        assert page.locator(".ai-scope-chip").count() == 2
+        assert "Shift/Ctrl/Cmd — группа" in page.locator(".fe-layers-hint").inner_text()
+        click_path("children.0.children.0")
         badge_box = page.locator('.fe-canvas [data-ir-path="children.0.children.1"]').first.bounding_box()
         page.keyboard.down("Control")
         page.keyboard.down("Shift")
@@ -179,6 +209,21 @@ def main():
         selected_layers = page.locator(".fe-layer.selected").evaluate_all("els => els.map(el => el.dataset.key)")
         assert selected_layers == ["0:children.0.children.0", "0:children.0.children.1"], selected_layers
         assert page.locator(".ai-scope-switch").count() == 1
+        assert page.locator(".ai-scope-chip").count() == 2
+
+        # Parent + child is normalized to the specific child before AI runs.
+        click_path("children.0")
+        page.locator('.fe-layer[data-key="0:children.0.children.0"]').evaluate(
+            "el => el.dispatchEvent(new MouseEvent('click', {bubbles:true, shiftKey:true}))")
+        page.wait_for_timeout(200)
+        assert page.locator(".ai-scope-chip").count() == 1
+        assert "исключён" in page.locator(".ai-scope-warning").inner_text()
+        click_path("children.0.children.0")
+        badge_box = page.locator('.fe-canvas [data-ir-path="children.0.children.1"]').first.bounding_box()
+        page.keyboard.down("Control"); page.keyboard.down("Shift")
+        page.mouse.click(badge_box["x"] + badge_box["width"] / 2, badge_box["y"] + badge_box["height"] / 2)
+        page.keyboard.up("Shift"); page.keyboard.up("Control")
+        page.wait_for_timeout(200)
 
         # Merge and unmerge preserve the two independently editable children.
         page.locator(".manual-controls summary").click()
@@ -207,9 +252,14 @@ def main():
         selected_count = 2
         before = page.evaluate("(id) => JSON.stringify((window.GraphDev.node(id).data._editorDraft?.ir || window.GraphDev.node(id).data.ir))", edit_id)
         page.locator(".ai-command-card textarea").fill("Сделай группу спокойнее")
+        page.get_by_label("Цвета").uncheck()
         page.locator(".ai-run").click()
         page.wait_for_selector('[data-ai-preview="ready"]')
+        assert page.get_by_label("Цвета").is_checked() is False
         assert len(requests[-1]["scope"]["sourceKeys"]) == selected_count
+        assert requests[-1]["constraints"]["allowColor"] is False
+        assert page.locator(".ai-diff li").count() == selected_count
+        assert page.locator(".ai-changed-node").count() == selected_count
         during = page.evaluate("(id) => JSON.stringify((window.GraphDev.node(id).data._editorDraft?.ir || window.GraphDev.node(id).data.ir))", edit_id)
         assert during == before
         page.locator("[data-ai-cancel]").click()
@@ -229,6 +279,16 @@ def main():
         node_selected = selected_keys.intersection(changed)
         assert len(node_selected) > 1
         assert all(changed[key]["style"]["opacity"] == 0.8 for key in node_selected)
+
+        # Large previews cannot be applied accidentally.
+        click_path("children.0.children.2")
+        page.locator(".ai-command-card textarea").fill("Сделай много безопасных изменений")
+        page.locator(".ai-run").click()
+        page.wait_for_selector(".ai-impact")
+        assert page.locator("[data-ai-apply]").is_disabled()
+        page.get_by_label("Я проверил изменения").check()
+        assert page.locator("[data-ai-apply]").is_enabled()
+        page.locator("[data-ai-cancel]").click()
         browser.close()
     print("ALL AI-FIRST INSPECTOR CHECKS PASSED")
 

@@ -189,7 +189,7 @@ def main():
         # ---------- Р Р†РЎвЂ№РЎвЂ¦Р С•Р Т‘ page РІвЂ вЂ™ edit ----------
         edit3 = int(pg.evaluate("window.GraphDev.add('edit', 700, 60).id"))
         check("connect page.ir РІвЂ вЂ™ edit.ir",
-              pg.evaluate("([f, t]) => window.GraphDev.connect(f, 'ir', t, 'ir')", [page_id, edit3]))
+              pg.evaluate("([f, t]) => window.GraphDev.connect(f, 'ir', t, 'a')", [page_id, edit3]))
         pg.wait_for_timeout(300)
         downstream = pg.evaluate(f"(() => {{ const ir = window.GraphDev.node({edit3}).data.ir; return ir ? ir.tree.length : 0; }})()")
         check("РЎРѓРЎвЂљРЎР‚Р В°Р Р…Р С‘РЎвЂ Р В° Р С—РЎР‚Р С•РЎвЂљР ВµР С”Р В»Р В° Р Р† edit-Р Р…Р С•Р Т‘РЎС“", downstream == 2, str(downstream))
@@ -290,7 +290,8 @@ def main():
         pg.click('.dna-editor [data-viewport="tablet"]')
         pg.wait_for_timeout(400)
         sec_idx = pg.evaluate(f"""(() => {{
-            const ir = window.GraphDev.node({edit3}).data.ir;
+            const data = window.GraphDev.node({edit3}).data;
+            const ir = data._editorDraft?.ir || data.ir;
             return ir.tree.findIndex(s => (s.id || '').startsWith('grid'));
         }})()""")
         card_pt = pg.evaluate(f"""(() => {{
@@ -306,7 +307,8 @@ def main():
         pg.mouse.up()
         pg.wait_for_timeout(400)
         ov = pg.evaluate(f"""(() => {{
-            const ir = window.GraphDev.node({edit3}).data.ir;
+            const data = window.GraphDev.node({edit3}).data;
+            const ir = data._editorDraft?.ir || data.ir;
             const card = ir.tree[{sec_idx}].children[0];
             return {{ tab: (card.responsive || {{}}).tablet || null, base: card.frame,
                       rootW: ir.frame.width }};
@@ -320,7 +322,8 @@ def main():
         pg.keyboard.press("Control+z")
         pg.wait_for_timeout(300)
         und = pg.evaluate(f"""(() => {{
-            const ir = window.GraphDev.node({edit3}).data.ir;
+            const data = window.GraphDev.node({edit3}).data;
+            const ir = data._editorDraft?.ir || data.ir;
             const card = ir.tree[{sec_idx}].children[0];
             return {{ resp: card.responsive || null, rootW: ir.frame.width }};
         }})()""")

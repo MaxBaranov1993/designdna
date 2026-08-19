@@ -2041,10 +2041,10 @@
       });
       parent.siblings.splice(idx, 1, ...kids);
       // выделение переходит на раскрытых детей
-      const base = ref.path.split(".").slice(0, -1);
+      const parentPath = ref.path.split(".").slice(0, -2).join(".");
       selectMulti(kids.map((_, k) => ({
         secIdx: ref.secIdx,
-        path: (base.length ? base.join(".") + ".children." : "children.") + (idx + k),
+        path: (parentPath ? parentPath + ".children." : "children.") + (idx + k),
       })));
       onMutated();
     }

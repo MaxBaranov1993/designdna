@@ -36,7 +36,8 @@ def main():
     ir = json.loads(IR_PATH.read_text(encoding="utf-8"))
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        pg = browser.new_page(viewport={"width": 1700, "height": 1000})
+        context = browser.new_context(viewport={"width": 1700, "height": 1000})
+        pg = context.new_page()
         for _ in range(30):
             try:
                 pg.goto(BASE + "/flow", timeout=2000)
@@ -187,6 +188,8 @@ def main():
 
         pg.click('.dna-editor [data-act="close"]')
         pg.wait_for_timeout(400)
+        pg.close(run_before_unload=False)
+        context.close()
         browser.close()
 
     if FAILS:

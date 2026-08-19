@@ -14,8 +14,10 @@
 
 <div class="fe-layers">
   <div class="fe-layers-head">Слои</div>
+  <div class="fe-layers-hint">Клик — объект · Shift/Ctrl/Cmd — группа</div>
   <input
     class="fe-search"
+    aria-label="Поиск слоёв"
     placeholder="Поиск слоёв…"
     bind:this={search}
     oninput={(e) => ctl.setLayerQuery(e.currentTarget.value)}
