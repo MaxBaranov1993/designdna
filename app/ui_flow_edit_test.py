@@ -69,14 +69,14 @@ def main():
 
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.wait_for_function("window.GraphDev && window.IRRenderer && window.DNAEditor")
 
         e1 = pg.evaluate("window.GraphDev.add('edit', 80, 60).id")
         e2 = pg.evaluate("window.GraphDev.add('edit', 620, 60).id")
-        n1 = f'.react-flow__node[data-id="{e1}"]'
-        pg.evaluate(f"window.GraphDev.connect({e1}, 'ir', {e2}, 'ir')")
+        n1 = f'.svelte-flow__node[data-id="{e1}"]'
+        pg.evaluate(f"window.GraphDev.connect({e1}, 'ir', {e2}, 'a')")
         pg.evaluate(f"window.GraphDev.setIR({e1}, {json.dumps(SMALL_IR)})")
 
         pg.wait_for_selector(f'{n1} .f-preview .ir-preview-inner div[class^="ir-"]', timeout=5000)

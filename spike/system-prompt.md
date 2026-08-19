@@ -1,7 +1,8 @@
 # System prompt для Generator-ноды (v2 — редактор + генератор)
 
-Используется как system message при вызове через OpenRouter.
+Используется как system message при вызове через подключённый LLM-аккаунт (OpenAI или Kimi).
 Плейсхолдеры: `{{SCHEMA}}` — schema/design-ir.schema.json, `{{BLOCKS}}` — app/prompts/BLOCKS.md,
+`{{DESIGN}}` — app/prompts/DESIGN.md (анти-слоп craft-правила, только режим generate),
 `{{BRIEF}}` — инструкция пользователя (правка или задача), `{{STYLE_HINT}}` — описание референса / стиль,
 `{{MODE}}` — "edit" или "generate".
 
@@ -35,8 +36,10 @@ When a reference description, screenshot analysis, or style hint is given:
 ### MODE: generate (NO reference — creative generation from brief)
 When no reference is provided and the brief is a free-form task:
 - You may create structure and content freely.
-- Follow the design quality bar below.
+- Follow the design quality bar below and the design craft rules.
 - Pick ONE visual direction and commit to it.
+
+{{DESIGN}}
 
 ## Output contract
 - Respond with a single JSON object conforming to this JSON Schema:

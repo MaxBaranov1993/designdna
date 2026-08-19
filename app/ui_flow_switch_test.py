@@ -30,7 +30,7 @@ def check(name, cond, extra=""):
 
 
 def wait_flow_ready(pg):
-    pg.wait_for_selector(".react-flow__pane")
+    pg.wait_for_selector(".svelte-flow__pane")
     pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
 
@@ -73,7 +73,7 @@ def main():
         pg.evaluate("localStorage.clear()")
         pg.reload()
         wait_flow_ready(pg)
-        check("/flow renders React Flow", pg.is_visible(".react-flow__pane"))
+        check("/flow renders React Flow", pg.is_visible(".svelte-flow__pane"))
         check("/flow has GraphDev shim", pg.evaluate("typeof window.GraphDev.add === 'function'"))
         check("/flow has no legacy nodes.html markers", no_legacy_markers(pg))
 

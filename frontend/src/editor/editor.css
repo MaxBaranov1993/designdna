@@ -32,7 +32,9 @@
 
 /* тулбар */
 .fe-toolbar { display:flex; align-items:center; gap:6px; padding:6px 12px;
-  background:var(--fe-panel); border-bottom:1px solid hsl(var(--border)); flex:none; height:42px; }
+  background:var(--fe-panel); border-bottom:1px solid hsl(var(--border)); flex:none; height:42px;
+  overflow-x:auto; overflow-y:hidden; }
+.fe-toolbar > * { flex-shrink:0; }
 .fe-toolbar .fe-logo { font-weight:800; font-size:13px; color:hsl(var(--foreground)); margin-right:8px; letter-spacing:-.02em; }
 .fe-tbtn { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px;
   border-radius:6px; border:none; background:transparent; color:hsl(var(--foreground));
@@ -43,7 +45,9 @@
 .fe-sep { width:1px; height:20px; background:hsl(var(--border)); margin:0 4px; }
 .fe-zoom { font-size:11px; color:hsl(var(--muted-foreground)); width:44px; text-align:center; font-variant-numeric:tabular-nums; }
 .fe-viewports { display:inline-flex; gap:2px; padding:2px; border:1px solid hsl(var(--border)); border-radius:6px; }
-.fe-viewports .fe-tbtn { width:30px; height:24px; font-size:10px; font-weight:700; }
+.fe-viewports .fe-viewport-btn { width:auto; height:26px; gap:5px; padding:0 8px; font-size:10px; font-weight:700; }
+.fe-device-icon { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.75;
+  stroke-linecap:round; stroke-linejoin:round; }
 .fe-viewport-width { width:62px; height:24px; border:0; border-left:1px solid hsl(var(--border));
   background:var(--fe-input); color:hsl(var(--foreground)); padding:2px 5px;
   font:10px 'IBM Plex Mono',monospace; outline:none; }
@@ -144,7 +148,7 @@
   box-shadow:0 4px 16px rgba(0,0,0,.4); }
 
 /* инспектор */
-.fe-inspector { width:260px; flex:none; background:var(--fe-panel); border-left:1px solid hsl(var(--border));
+.fe-inspector { width:304px; flex:none; background:var(--fe-panel); border-left:1px solid hsl(var(--border));
   overflow-y:auto; padding:12px; }
 .fe-insp-empty { color:hsl(var(--muted-foreground)); font-size:12px; text-align:center; padding:40px 12px; }
 .fe-insp-group { margin-bottom:14px; }
@@ -271,6 +275,68 @@
 .pi .pi-wide { width:100%; }
 .pi .pi-sel-list { font-size:11px; color:var(--muted); }
 .pi .pi-sel-list div { padding:1px 0; }
+
+/* AI-first inspector: the default path is one explicit request and a guarded preview.
+ * Manual controls remain available as a compact precision fallback. */
+.ai-inspector { display:flex; flex-direction:column; gap:10px; color:var(--text); }
+.ai-scope { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px;
+  border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:10px;
+  background:color-mix(in srgb,var(--accent) 8%,var(--fe-input)); }
+.ai-scope-copy { display:flex; flex-direction:column; min-width:0; }
+.ai-scope-copy strong { font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ai-scope-kicker { color:var(--muted); font-size:9px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
+.ai-scope-lock { color:var(--muted); font-size:10px; white-space:nowrap; }
+.ai-scope-switch { display:flex; padding:2px; border-radius:7px; background:var(--fe-input); }
+.ai-scope-switch button { border:0; border-radius:5px; background:transparent; color:var(--muted); padding:4px 7px; font-size:10px; cursor:pointer; }
+.ai-scope-switch button.active { background:var(--accent); color:hsl(var(--primary-foreground)); }
+.ai-command-card { padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--fe-input); box-shadow:0 8px 24px rgba(0,0,0,.12); }
+.ai-command-title { display:flex; align-items:flex-start; gap:8px; margin-bottom:10px; }
+.ai-command-title > div { display:flex; flex-direction:column; gap:2px; }
+.ai-command-title strong { font-size:13px; }
+.ai-command-title small { color:var(--muted); font-size:10px; line-height:1.4; }
+.ai-spark { display:grid; place-items:center; width:22px; height:22px; flex:none; border-radius:7px; background:var(--accent); color:hsl(var(--primary-foreground)); }
+.ai-command-card textarea { min-height:78px; margin:0 0 8px; padding:9px; border-radius:8px; line-height:1.45; resize:vertical; }
+.ai-quick-row { display:flex; gap:5px; margin-bottom:8px; }
+.ai-quick-row button,.merge-row button,.align-grid button,.ai-preview-actions button { border:1px solid var(--border); border-radius:7px; background:var(--fe-panel); color:var(--text); font-size:10px; cursor:pointer; }
+.ai-quick-row button { flex:1; padding:5px 3px; }
+.ai-run { width:100%; min-height:32px; border:0; border-radius:8px; background:var(--accent); color:hsl(var(--primary-foreground)); font-size:11px; font-weight:750; cursor:pointer; }
+.ai-run:disabled,.ai-quick-row button:disabled,.merge-row button:disabled { opacity:.42; cursor:not-allowed; }
+.ai-error { margin-top:8px; color:var(--fe-err); font-size:10px; line-height:1.4; }
+.ai-preview { margin-top:10px; padding:9px; border-radius:8px; border:1px solid color-mix(in srgb,var(--accent) 50%,var(--border)); background:color-mix(in srgb,var(--accent) 7%,var(--fe-panel)); }
+.ai-preview-head { display:flex; justify-content:space-between; font-size:10px; color:var(--muted); }
+.ai-preview p { margin:6px 0 3px; font-size:11px; line-height:1.4; }
+.ai-preview > small { display:block; color:var(--muted); font-size:9.5px; line-height:1.4; }
+.ai-preview-actions { display:flex; gap:6px; margin-top:9px; }
+.ai-preview-actions button { flex:1; min-height:28px; }
+.ai-preview-actions .primary { background:var(--accent); color:hsl(var(--primary-foreground)); border-color:var(--accent); }
+.dna-editor.ai-previewing .geo-overlay { pointer-events:none; }
+.manual-controls { border-top:1px solid var(--border-soft); padding-top:8px; }
+.manual-controls summary { display:flex; flex-direction:column; gap:1px; cursor:pointer; list-style:none; padding:5px 2px; }
+.manual-controls summary::-webkit-details-marker { display:none; }
+.manual-controls summary span { font-size:11px; font-weight:700; }
+.manual-controls summary small { color:var(--muted); font-size:9px; }
+.manual-body { padding-top:6px; }
+.manual-group { padding:9px 0; border-top:1px solid var(--border-soft); }
+.manual-label { display:block; margin-bottom:7px; color:var(--muted); font-size:9px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
+.align-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:5px; }
+.align-grid button { height:28px; font-size:15px; }
+.merge-row { display:grid; grid-template-columns:1fr 1fr; gap:5px; }
+.merge-row button { min-height:28px; }
+.padding-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:5px; }
+.padding-grid label,.font-pair label,.font-family { display:flex; flex-direction:column; gap:4px; color:var(--muted); font-size:9px; }
+.padding-grid input,.font-pair input { width:100%; min-width:0; text-align:center; }
+.field-content { display:grid; gap:7px; }
+.field-content .manual-label { margin-bottom:0; }
+.field-content label { display:flex; flex-direction:column; gap:4px; color:var(--muted); font-size:9px; }
+.field-content input { width:100%; min-width:0; border:1px solid var(--border); border-radius:7px; background:var(--fe-input); color:var(--text); padding:7px 8px; font-size:11px; outline:none; }
+.field-content input:focus { border-color:var(--accent); }
+.manual-color { margin-bottom:6px; }
+.font-family select { margin:0 0 7px; }
+.font-pair { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.fe-insp-empty span,.fe-insp-empty strong,.fe-insp-empty p { display:block; }
+.fe-insp-empty span { color:var(--accent); font-size:20px; margin-bottom:8px; }
+.fe-insp-empty strong { color:var(--text); margin-bottom:4px; }
+.fe-insp-empty p { margin:0; line-height:1.45; }
 
 /* ---------- color picker (по мотивам OpenPencil: SV-поле + hue + HEX + токены) ---------- */
 .pi-cp-native { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }

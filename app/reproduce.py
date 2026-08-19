@@ -489,7 +489,7 @@ STRUCTURE_SYSTEM = """Ты — UI-аналитик. Тебе дают скрин
 
 
 def analyze_structure(image_b64: str, provider: str, llm_module) -> dict:
-    """VLM-анализ структуры скриншота через OpenRouter роль reproduce."""
+    """VLM-анализ структуры скриншота (прямой vision-вызов, роль reproduce)."""
     prompt = (
         "Проанализируй этот UI-скриншот. Опиши структуру: какие компоненты видны, "
         "их тип и расположение. Верни JSON по схеме."
@@ -504,11 +504,11 @@ def analyze_structure(image_b64: str, provider: str, llm_module) -> dict:
 
 # ---------- полный пайплайн ----------
 
-def run_pipeline(image_b64: str, provider: str = "openrouter", llm_module=None,
+def run_pipeline(image_b64: str, provider: str = "auto", llm_module=None,
                  regions: list | None = None) -> dict:
     """Полный пайплайн pixel-perfect reproduction.
 
-    1. VLM-анализ структуры через OpenRouter
+    1. VLM-анализ структуры (прямой вызов OpenAI/Kimi)
     2. Python-измерения: цвета, bounding boxes
     3. Извлечение иконок/контента как PNG base64
     4. Сборка HTML с absolute positioning

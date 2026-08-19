@@ -29,7 +29,7 @@ from ir.parser_contract import build_parser_envelope
 MAX_WORKERS = 4            # как EXECUTOR в server.py
 FRAGMENT_LIMIT = 12000     # HTML блока в промпте, символов
 STYLES_LIMIT = 6000        # CSS страницы в промпте, символов
-DEFAULT_PROVIDER = "openrouter"  # роль clone/repair выбирает модель из ROUTING
+DEFAULT_PROVIDER = "auto"  # роль clone/repair выбирает модель из ROUTING
 
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
 

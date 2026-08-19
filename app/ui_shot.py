@@ -23,7 +23,7 @@ def main():
         pg.goto(BASE + "/flow")
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))

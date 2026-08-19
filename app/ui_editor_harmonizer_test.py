@@ -77,7 +77,7 @@ def main() -> None:
           sourceRegistry:{a:{id:'a',kind:'url',label:'Header'},b:{id:'b',kind:'manual',label:'Hero'}},
           nodeSources:{hero:'b'}
         })""", {"id": edit_id, "ir": original})
-        page.click(f'.react-flow__node[data-id="{edit_id}"] .f-open-editor')
+        page.click(f'.svelte-flow__node[data-id="{edit_id}"] .f-open-editor')
         page.click('[data-act="harmonize"]')
         page.wait_for_selector('[data-act="apply-harmonizer"]')
         text = page.locator(".fe-harmonize-card").inner_text()

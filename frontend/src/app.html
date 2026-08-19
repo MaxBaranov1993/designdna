@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DesignAI — нодовый редактор</title>
+    <script>
+      // Web: FastAPI отдаёт приложение с /flow, а assets лежат в /static/flow/.
+      // Относительные пути ./_app/... (нужны Electron, который грузит тот же
+      // билд с file://) резолвим через <base>; на file:// base не добавляем —
+      // там резолв идёт от каталога index.html.
+      if (location.protocol !== "file:" && !document.querySelector("base")) {
+        const base = document.createElement("base");
+        base.href = "/static/flow/";
+        document.currentScript.before(base);
+      }
+    </script>
+    %sveltekit.head%
+  </head>
+  <body>
+    <div id="root">%sveltekit.body%</div>
+    <!-- Движки (IRRenderer/GeoEdit/IRHistory/fontCatalog) — TS-модули в
+         frontend/src/engine, входят в бандл приложения. Для headless-рендера на
+         стороне Python app/static/flow/engine.js собирается отдельно
+         (vite.engine.config.ts) и восстанавливает window-глобалы. -->
+  </body>
+</html>

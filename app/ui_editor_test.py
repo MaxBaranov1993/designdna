@@ -42,7 +42,7 @@ def main():
             print("server not ready"); sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
@@ -83,10 +83,14 @@ def main():
         pg.wait_for_timeout(500)
         check("редактор открыт", pg.evaluate("document.querySelector('.dna-editor').style.display === 'flex'"))
         check("слои построены", pg.evaluate("document.querySelectorAll('.fe-layer').length > 3"))
+        wait_ir_ready('.fe-canvas [data-ir-path="children.0"]')
 
         # выделение карточки на канвасе
-        card = pg.query_selector('.fe-canvas [data-ir-path="children.0"]')
-        cb = card.bounding_box()
+        card_selector = '.fe-canvas [data-ir-path="children.0"]'
+        cb = pg.evaluate("""(selector) => {
+            const box = document.querySelector(selector)?.getBoundingClientRect();
+            return box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null;
+        }""", card_selector)
         pg.mouse.click(cb["x"] + 8, cb["y"] + 8)
         pg.wait_for_timeout(400)
         check("выделение в редакторе", pg.evaluate("document.querySelectorAll('.fe-canvas .geo-box.selected').length === 1"))
@@ -99,7 +103,10 @@ def main():
 
         # рамка совпадает с элементом
         box = pg.query_selector('.fe-canvas .geo-box.selected').bounding_box()
-        cb2 = card.bounding_box()
+        cb2 = pg.evaluate("""(selector) => {
+            const box = document.querySelector(selector)?.getBoundingClientRect();
+            return box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null;
+        }""", card_selector)
         d = max(abs(box["x"] - cb2["x"]), abs(box["y"] - cb2["y"]))
         check("рамка выделения совпадает", d < 4, f"d={d:.1f}")
 
@@ -108,14 +115,14 @@ def main():
         gin.fill("24")
         pg.evaluate("document.querySelector('.fe-inspector .fe-shared-insp input[data-pi=\"gap\"]').dispatchEvent(new Event('change'))")
         pg.wait_for_timeout(400)
-        gp = pg.evaluate("window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir.tree[0].children[0].frame.gap")
+        gp = pg.evaluate("(() => { const d = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data; return (d._editorDraft?.ir || d.ir).tree[0].children[0].frame.gap; })()")
         check("инспектор редактора: gap=24", gp == 24, str(gp))
 
         # undo после мутации (снимаем фокус с input, чтобы дошёл хоткей)
         pg.evaluate("document.activeElement && document.activeElement.blur()")
         pg.keyboard.press("Control+z")
         pg.wait_for_timeout(300)
-        gp2 = pg.evaluate("window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir.tree[0].children[0].frame.gap")
+        gp2 = pg.evaluate("(() => { const d = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data; return (d._editorDraft?.ir || d.ir).tree[0].children[0].frame.gap; })()")
         check("undo откатывает gap", gp2 != 24, str(gp2))
 
         # левая панель инструментов как в pen.dev
@@ -132,7 +139,7 @@ def main():
         pg.mouse.move(sb["x"] + sb["width"] - 50, sb["y"] + 110, steps=5)
         pg.mouse.up()
         pg.wait_for_timeout(400)
-        rects = pg.evaluate("(() => { const out = []; const walk = (n) => (n.children || []).forEach(c => { out.push(c); walk(c); }); (window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir.tree || []).forEach(s => walk(s)); return out.filter(c => c.type === 'rect').length; })()")
+        rects = pg.evaluate("(() => { const out = []; const walk = (n) => (n.children || []).forEach(c => { out.push(c); walk(c); }); const d = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data; ((d._editorDraft?.ir || d.ir).tree || []).forEach(s => walk(s)); return out.filter(c => c.type === 'rect').length; })()")
         check("rail: rect создан на канвасе", rects == 1, str(rects))
 
         # hand панорамирует канвас

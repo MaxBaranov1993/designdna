@@ -30,7 +30,7 @@ def check(name, cond, extra=""):
 
 
 def node_expr(path):
-    return f"window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir{path}"
+    return f"(() => {{ const d = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data; return (d._editorDraft?.ir || d.ir){path}; }})()"
 
 
 def wait_ir_ready(pg, sel, interval=100, max_polls=80):
@@ -68,12 +68,12 @@ def main():
             sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
-        node_sel = f'.react-flow__node[data-id="{nid}"]'
+        node_sel = f'.svelte-flow__node[data-id="{nid}"]'
         pg.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, ir)
         wait_ir_ready(pg, f"{node_sel} .edit-inner [class^='ir-']")
 

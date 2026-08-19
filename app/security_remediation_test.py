@@ -366,19 +366,23 @@ def test_desktop_asgi_bridge_does_not_override_an_explicit_untrusted_host():
     assert response["status"] == 400
 
 
-def test_desktop_worker_configures_openrouter_without_echoing_the_secret(monkeypatch):
+def test_desktop_worker_configures_provider_keys_without_echoing_secrets(monkeypatch):
     import desktop_worker
 
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
     configured = asyncio.run(desktop_worker.dispatch(
-        "runtime.configure", {"openrouterApiKey": "test-openrouter-secret"},
+        "runtime.configure", {"openaiApiKey": "test-openai-secret", "kimiApiKey": "test-kimi-secret"},
     ))
-    assert configured == {"ok": True, "openrouterConfigured": True}
-    assert "test-openrouter-secret" not in str(configured)
-    assert os.environ["OPENROUTER_API_KEY"] == "test-openrouter-secret"
+    assert configured == {"ok": True, "openaiConfigured": True, "kimiConfigured": True}
+    assert "test-openai-secret" not in str(configured)
+    assert "test-kimi-secret" not in str(configured)
+    assert os.environ["OPENAI_API_KEY"] == "test-openai-secret"
+    assert os.environ["KIMI_API_KEY"] == "test-kimi-secret"
 
     cleared = asyncio.run(desktop_worker.dispatch(
-        "runtime.configure", {"openrouterApiKey": ""},
+        "runtime.configure", {"openaiApiKey": "", "kimiApiKey": ""},
     ))
-    assert cleared == {"ok": True, "openrouterConfigured": False}
-    assert "OPENROUTER_API_KEY" not in os.environ
+    assert cleared == {"ok": True, "openaiConfigured": False, "kimiConfigured": False}
+    assert "OPENAI_API_KEY" not in os.environ
+    assert "KIMI_API_KEY" not in os.environ

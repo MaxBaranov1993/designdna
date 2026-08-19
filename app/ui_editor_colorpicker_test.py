@@ -48,7 +48,7 @@ def main():
             sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
@@ -83,7 +83,7 @@ def main():
         pg.wait_for_selector('.dna-editor[style*="flex"]')
         pg.wait_for_timeout(600)
 
-        STYLE_BG = ("(() => { const n = window.GraphDev.node(%d).data.ir.tree[0].children[0];"
+        STYLE_BG = ("(() => { const d = window.GraphDev.node(%d).data; const n = (d._editorDraft?.ir || d.ir).tree[0].children[0];"
                     " return (n.style && n.style.background) || null; })()" % nid)
 
         def click_card():
@@ -91,6 +91,9 @@ def main():
             cb = card.bounding_box()
             pg.mouse.click(cb["x"] + 12, cb["y"] + 12)
             pg.wait_for_timeout(300)
+            manual = pg.query_selector(".manual-controls")
+            if manual is not None and manual.get_attribute("open") is None:
+                pg.click(".manual-controls summary")
 
         def open_picker():
             sw = pg.query_selector('.fe-inspector .pi-cp-swatch')

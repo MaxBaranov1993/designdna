@@ -87,6 +87,11 @@ export type QualityPassResp = {
   initial_scorecard?: { score?: number };
   deterministic?: { before?: unknown[]; after?: unknown[] };
   repair?: { attempted?: boolean; applied?: boolean; error?: string | null };
+  pending?: {
+    stage: "judge" | "repair" | "rejudge";
+    profile: "quality_judge" | "quality_repair";
+    messages: Array<{ role: string; content: string }>;
+  };
 };
 export type ProjectLoadResp = { project?: unknown | null; updated_at?: string | null };
 export type ProjectSaveResp = { ok?: boolean; bytes?: number; updated_at?: string; taste?: Record<string, unknown> };
@@ -96,7 +101,6 @@ export type ConfigResp = {
   models?: {
     generator?: string;
     motionDirector?: string;
-    video?: Record<string, string>;
   };
 };
 export type StyleDnaExtractResp = { tokens?: IRObject };

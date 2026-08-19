@@ -1,10 +1,11 @@
 /* UI-состояние React DNA-редактора: открытие/закрытие, активный инструмент.
  * Тяжёлая сессия (IR, geo-хендл, история, pan/zoom) живёт в controller.ts —
  * здесь только то, что рендерит React. */
-import { create } from "zustand";
+import { createStore } from "zustand/vanilla";
 import { useFlowStore } from "../flow/store";
 import { toast } from "../flow/toast";
 import type { IRObject } from "../flow/types";
+import type { AssistPreview } from "./aiTypes";
 import * as ctl from "./controller";
 
 interface EditorUIState {
@@ -21,11 +22,14 @@ interface EditorUIState {
   responsiveProposal: ctl.ResponsiveAutopilotProposal | null;
   intentLocksOpen: boolean;
   semanticSelectOpen: boolean;
+  aiBusy: boolean;
+  aiError: string;
+  aiPreview: AssistPreview | null;
   /** Открыть React-редактор для ноды. false — движки недоступны, зовите legacy fallback. */
   openEditor: (nodeId: number) => boolean;
 }
 
-export const useEditorStore = create<EditorUIState>()((set) => ({
+export const useEditorStore = createStore<EditorUIState>()((set) => ({
   isOpen: false,
   nodeId: null,
   tool: "select",
@@ -37,6 +41,9 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
   responsiveProposal: null,
   intentLocksOpen: false,
   semanticSelectOpen: false,
+  aiBusy: false,
+  aiError: "",
+  aiPreview: null,
 
   openEditor: (nodeId) => {
     const st = useFlowStore.getState();
@@ -95,7 +102,11 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
       { registry: sourceRegistry, nodeSources, layoutEvidence },
     );
     if (!ok) return false;
-    set({ isOpen: true, nodeId, tool: "select", smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false });
+    set({ isOpen: true, nodeId, tool: "select", smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null });
+    if (ctl.dom.overlay) ctl.dom.overlay.style.display = "flex";
+    requestAnimationFrame(() => {
+      if (ctl.dom.overlay && useEditorStore.getState().isOpen && ctl.isActive()) ctl.finishOpen();
+    });
     return true;
   },
 }));
@@ -103,7 +114,10 @@ export const useEditorStore = create<EditorUIState>()((set) => ({
 /* Связываем контроллер со стором (без циклического импорта controller → store) */
 ctl.bindUi({
   setTool: (t) => useEditorStore.setState({ tool: t }),
-  setOpen: (v) => useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false }) }),
+  setOpen: (v) => {
+    if (ctl.dom.overlay) ctl.dom.overlay.style.display = v ? "flex" : "none";
+    useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null }) });
+  },
   bumpInspector: () => useEditorStore.setState((s) => ({ inspectorTick: s.inspectorTick + 1 })),
   bumpSources: () => useEditorStore.setState((s) => ({ sourceTick: s.sourceTick + 1 })),
   setSmartAxisProposal: (smartAxisProposal) => useEditorStore.setState({ smartAxisProposal }),
@@ -112,4 +126,7 @@ ctl.bindUi({
   setResponsiveProposal: (responsiveProposal) => useEditorStore.setState({ responsiveProposal }),
   setIntentLocksOpen: (intentLocksOpen) => useEditorStore.setState({ intentLocksOpen }),
   setSemanticSelectOpen: (semanticSelectOpen) => useEditorStore.setState({ semanticSelectOpen }),
+  setAiBusy: (aiBusy) => useEditorStore.setState({ aiBusy }),
+  setAiError: (aiError) => useEditorStore.setState({ aiError }),
+  setAiPreview: (aiPreview) => useEditorStore.setState({ aiPreview }),
 });

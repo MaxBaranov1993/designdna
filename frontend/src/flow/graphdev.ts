@@ -1,4 +1,3 @@
-import type { ReactFlowInstance } from "@xyflow/react";
 import { deepClone } from "./dataflow";
 import { NODE_DEFS } from "./ports";
 import { useFlowStore } from "./store";
@@ -40,9 +39,14 @@ declare global {
   }
 }
 
-let rfInstance: ReactFlowInstance | null = null;
+/* Минимальный интерфейс инстанса канваса, нужный GraphDev.fit (Svelte Flow) */
+export interface FlowInstanceLike {
+  fitView: () => unknown;
+}
 
-export function setReactFlowInstance(instance: ReactFlowInstance | null) {
+let rfInstance: FlowInstanceLike | null = null;
+
+export function setReactFlowInstance(instance: FlowInstanceLike | null) {
   rfInstance = instance;
 }
 

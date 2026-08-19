@@ -1,6 +1,9 @@
 """Продакшен LLM-клиент DesignAI Web (ранее жил в spike/run_test.py).
 
-Только stdlib. Все текстовые и vision-вызовы проходят через OpenRouter.
+Только stdlib. Текстовые и vision-вызовы идут напрямую в OpenAI API и Kimi API
+(OpenAI-совместимый формат), без OpenRouter. Модель задаётся композитным
+slug'ом «provider/model»; записи цепочки без ключа в env пропускаются —
+работает тот аккаунт, который подключён.
 Таймауты: LLM_TIMEOUT_S (по умолчанию 120с), раньше было 600с.
 """
 import json
@@ -39,60 +42,65 @@ def load_dotenv(path: Path | None = None) -> int:
 load_dotenv()
 
 PROVIDERS = {
-    # Единственный транспорт продукта. Модель выбирается из ROUTING по роли.
-    "openrouter": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "env": "OPENROUTER_API_KEY",
-        "model": None,
+    # Прямые транспорты продукта. Модель выбирается из ROUTING по роли.
+    "openai": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "env": "OPENAI_API_KEY",
+    },
+    "kimi": {
+        "url": "https://api.kimi.com/coding/v1/chat/completions",
+        "env": "KIMI_API_KEY",
+        "base_env": "KIMI_BASE_URL",  # опциональный оверрайд базового URL
     },
 }
 
-# Роутинг моделей через OpenRouter (роль ноды → [основная, fallback]).
-# Любую роль можно переопределить env: OPENROUTER_MODELS_<ROLE> (через запятую).
-# Current quality-first routing:
-# - Claude owns taste, composition, design generation, reskin and judging.
-# - Gemini is a multimodal fallback for visual import/reproduction.
-# - Qwen is reserved for mechanical IR/JSON/schema repair.
-# - Kimi is intentionally not a default route; test it only via env overrides.
+# Роутинг моделей по ролям (роль ноды → [основная, fallback]).
+# Каждая запись — композитный slug «provider/model» (разбор по первому '/').
+# Если у записи нет ключа провайдера в env — она пропускается: так цепочка
+# сама выбирает подключённый аккаунт (только Kimi → Kimi, только OpenAI → OpenAI).
+# Любую роль можно переопределить env: LLM_MODELS_<ROLE> (через запятую).
+# Текущий роутинг: все роли — openai/gpt-5.6-sol с запасным kimi/k3
+# (обе модели vision-capable).
+STRONG = CHEAP = VISION = ["openai/gpt-5.6-sol", "kimi/k3"]
 ROUTING = {
-    # канонические роли владельца (конфиг от 2026-08-05)
-    "prompt_enhancer": ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
-    "planner":    ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "motion_director": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "generator":  ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol"],
-    "reskin":     ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol"],
-    "repair":     ["qwen/qwen3-coder-plus", "anthropic/claude-sonnet-5"],
-    "style_analysis": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "vision":     ["anthropic/claude-opus-5", "google/gemini-3.6-flash", "openai/gpt-5.6-sol", "qwen/qwen3.8-max"],
-    "vision_fast": ["google/gemini-3.6-flash", "qwen/qwen3.8-max", "anthropic/claude-sonnet-5"],
-    "vision_pixel_qa": ["anthropic/claude-opus-5", "openai/gpt-5.6-sol", "google/gemini-3.6-flash"],
-    "judge":      ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+    # канонические роли владельца
+    "prompt_enhancer": STRONG,
+    "planner":    STRONG,
+    "motion_director": STRONG,
+    "generator":  STRONG,
+    "reskin":     STRONG,
+    "repair":     CHEAP,
+    "style_analysis": STRONG,
+    "vision":     VISION,
+    "vision_fast": VISION,
+    "vision_pixel_qa": VISION,
+    "judge":      STRONG,
     # Премиальный Quality Pass: независимая оценка и адресная починка.
-    "quality_judge": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol-pro"],
-    "quality_repair": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "qwen/qwen3-coder-plus"],
-    # дополнительные роли из таблицы 2026-08-04
-    "edit":       ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "derive":     ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "optimizer":  ["qwen/qwen3-coder-plus", "anthropic/claude-sonnet-5"],
-    "tokens":     ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "components": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "google/gemini-3.6-flash"],
-    "clone":      ["anthropic/claude-sonnet-5", "qwen/qwen3-coder-plus"],
-    "blockparse": ["anthropic/claude-sonnet-5", "qwen/qwen3-coder-plus"],
-    # Source Import geometry stays deterministic; Sonnet labels only ambiguous
-    # rendered containers. Opus is an escalation, not the pixel/layout engine.
-    "source_semantics": ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
-    "source_vision_audit": ["anthropic/claude-opus-5", "openai/gpt-5.6-sol", "google/gemini-3.6-flash"],
-    "reproduce":  ["anthropic/claude-opus-5", "google/gemini-3.6-flash", "qwen/qwen3.8-max"],
-    "a11y":       ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
-    "docs":       ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
+    "quality_judge": STRONG,
+    "quality_repair": STRONG,
+    # дополнительные роли
+    "edit":       STRONG,
+    "derive":     STRONG,
+    "optimizer":  CHEAP,
+    "tokens":     STRONG,
+    "components": STRONG,
+    "clone":      CHEAP,
+    "blockparse": CHEAP,
+    # Source Import geometry stays deterministic; the model labels only
+    # ambiguous rendered containers — it is not the pixel/layout engine.
+    "source_semantics": CHEAP,
+    "source_vision_audit": VISION,
+    "reproduce":  VISION,
+    "a11y":       STRONG,
+    "docs":       CHEAP,
     # legacy-роли (старые вызовы и env-оверрайды)
-    "mechanics":  ["qwen/qwen3-coder-plus", "anthropic/claude-sonnet-5"],
-    "taste":      ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+    "mechanics":  CHEAP,
+    "taste":      STRONG,
 }
 
 
 def routing_models(role: str) -> list:
-    env_key = "OPENROUTER_MODELS_" + role.upper()
+    env_key = "LLM_MODELS_" + role.upper()
     if os.environ.get(env_key):
         return [m.strip() for m in os.environ[env_key].split(",") if m.strip()]
     return list(ROUTING.get(role, ROUTING["mechanics"]))
@@ -115,11 +123,31 @@ def _check_model_slug(slug) -> None:
         raise ValueError(f"недопустимый model slug: {slug!r}")
 
 
-def get_key(cfg: dict) -> str:
-    key = os.environ.get(cfg.get("env", ""))
-    if not key:
-        raise RuntimeError(f"Нет ключа: set {cfg.get('env', '?')}=...")
-    return key
+def _provider_url(cfg: dict) -> str:
+    """URL chat/completions провайдера; Kimi допускает оверрайд базы через env."""
+    base = os.environ.get(cfg.get("base_env", ""), "")
+    if base:
+        return base.rstrip("/") + "/chat/completions"
+    return cfg["url"]
+
+
+def _resolve_chain(role: str, model: str | None, provider: str | None) -> list:
+    """Цепочка (provider_name, model_id, cfg) из явного model или ROUTING/env.
+    provider — необязательный фильтр предпочтительного провайдера
+    (None/"auto" = вся цепочка)."""
+    chain = []
+    for slug in ([model] if model else routing_models(role)):
+        _check_model_slug(slug)
+        name, _, model_id = slug.partition("/")
+        if not model_id:
+            raise ValueError(f"model slug без провайдера (нужен 'provider/model'): {slug!r}")
+        cfg = PROVIDERS.get(name)
+        if cfg is None:
+            raise ValueError(f"неизвестный провайдер в model slug: {slug!r}")
+        if provider and provider != "auto" and name != provider:
+            continue
+        chain.append((name, model_id, cfg))
+    return chain
 
 
 def load(name: str) -> str:
@@ -132,6 +160,8 @@ def build_system_prompt(mode: str = "generate") -> str:
     return (
         template.replace("{{SCHEMA}}", load("schema/design-ir.schema.json"))
         .replace("{{BLOCKS}}", load("app/prompts/BLOCKS.md"))
+        # craft-правила нужны только свободной генерации; в edit они шум
+        .replace("{{DESIGN}}", load("app/prompts/DESIGN.md") if mode == "generate" else "")
         .replace("{{BRIEF}}", "")
         .replace("{{STYLE_HINT}}", "")
         .replace("{{MODE}}", mode)
@@ -157,13 +187,17 @@ def _chat_openai_once(cfg, key, model, messages, temp, t) -> str:
         "response_format": {"type": "json_object"},
     }
     data = None
-    for attempt in (True, False):  # если response_format не поддержан — повтор без него
+    for _ in range(3):  # HTTP 400 → выбрасываем неподдержанный параметр и повторяем
         try:
-            data = _post_json(cfg["url"], payload, key, t)
+            data = _post_json(_provider_url(cfg), payload, key, t)
             break
         except urllib.error.HTTPError as e:
-            if attempt and e.code == 400:
-                payload.pop("response_format", None)
+            if e.code == 400 and "response_format" in payload:
+                payload.pop("response_format")
+                continue
+            if e.code == 400 and "temperature" in payload:
+                # kimi/k3 принимает только temperature=1 — полагаемся на дефолт сервера
+                payload.pop("temperature")
                 continue
             raise
     msg = data["choices"][0]["message"]
@@ -173,76 +207,76 @@ def _chat_openai_once(cfg, key, model, messages, temp, t) -> str:
     return content
 
 
-def chat(provider: str, messages: list, temperature: float, timeout: int | None = None,
+def chat(provider: str | None, messages: list, temperature: float, timeout: int | None = None,
          role: str = "mechanics", model: str | None = None) -> str:
-    """Вызов OpenRouter. role выбирает цепочку ROUTING, model — явный override."""
+    """Прямой вызов OpenAI/Kimi. role выбирает цепочку ROUTING, model — явный
+    override, provider — необязательный фильтр (None/"auto" = вся цепочка).
+    Записи цепочки без ключа провайдера в env пропускаются."""
     if model is not None:
         _check_model_slug(model)
-    if provider != "openrouter":
-        raise ValueError("Поддерживается только provider=openrouter")
-    cfg = PROVIDERS["openrouter"]
-    key = get_key(cfg)
     t = timeout or TIMEOUT
     temp = temperature
 
-    # явный model > цепочка ROUTING
-    if model:
-        models = [model]
-    else:
-        models = routing_models(role) if cfg["model"] is None else [cfg["model"]]
-    for m in models:  # валидны все пути разрешения: явный, cfg, ROUTING/env
-        _check_model_slug(m)
+    chain = _resolve_chain(role, model, provider)
+    skipped = []
     last_error = None
-    for model in models:
+    for name, model_id, cfg in chain:
+        key = os.environ.get(cfg["env"], "")
+        if not key:
+            skipped.append(f"{name}/{model_id}: нет {cfg['env']}")
+            continue  # аккаунт провайдера не подключён — следующая запись
         try:
-            return _chat_openai_once(cfg, key, model, messages, temp, t)
+            return _chat_openai_once(cfg, key, model_id, messages, temp, t)
         except urllib.error.HTTPError as e:
-            last_error = f"{model} HTTP {e.code}: {e.read()[:300]!r}"
-            if e.code in (404, 429, 500, 502, 503) and model != models[-1]:
+            last_error = f"{name}/{model_id} HTTP {e.code}: {e.read()[:300]!r}"
+            if e.code in (404, 429, 500, 502, 503) and (name, model_id, cfg) != chain[-1]:
                 continue  # fallback на следующую модель цепочки
-            raise RuntimeError(f"{provider} {last_error}")
-    raise RuntimeError(f"{provider}: все модели цепочки недоступны. Последняя ошибка: {last_error}")
+            raise RuntimeError(last_error)
+    detail = f" Последняя ошибка: {last_error}." if last_error else ""
+    if skipped:
+        detail += " Пропущено без ключа: " + "; ".join(skipped)
+    raise RuntimeError(f"все модели цепочки недоступны.{detail}")
 
 
-def chat_vision(provider: str, image_data_url: str, text_prompt: str,
+def chat_vision(provider: str | None, image_data_url: str, text_prompt: str,
                 system_prompt: str = "", temperature: float = 0.2,
                 timeout: int | None = None, role: str = "vision") -> str:
-    """Vision-вызов через OpenRouter с fallback-моделями роли."""
-    if provider != "openrouter":
-        raise ValueError("Поддерживается только provider=openrouter")
-    cfg = PROVIDERS["openrouter"]
-    key = get_key(cfg)
+    """Vision-вызов напрямую (OpenAI/Kimi) с fallback-моделями роли.
+    provider — необязательный фильтр (None/"auto" = вся цепочка)."""
     t = timeout or TIMEOUT
 
-    vision_models = routing_models(role)
-    if isinstance(vision_models, str):
-        vision_models = [vision_models]
-    for m in vision_models:
-        _check_model_slug(m)
-
+    chain = _resolve_chain(role, None, provider)
+    skipped = []
     last_error = None
-    for model in vision_models:
+    for name, model_id, cfg in chain:
+        key = os.environ.get(cfg["env"], "")
+        if not key:
+            skipped.append(f"{name}/{model_id}: нет {cfg['env']}")
+            continue
         try:
-            content = _call_openai_vision(cfg, key, model, image_data_url,
+            content = _call_openai_vision(cfg, key, model_id, image_data_url,
                                           text_prompt, system_prompt, temperature, t)
             if content and content.strip():
                 return content
         except urllib.error.HTTPError as e:
             err_body = e.read()[:300]
-            last_error = f"{model} HTTP {e.code}: {err_body!r}"
+            last_error = f"{name}/{model_id} HTTP {e.code}: {err_body!r}"
             if e.code in (404, 400, 429, 403):
                 continue
-            raise RuntimeError(f"{provider} vision {last_error}")
+            raise RuntimeError(f"vision {last_error}")
         except Exception as e:
             last_error = str(e)
             continue
 
-    raise RuntimeError(f"{provider} vision: все модели недоступны. Последняя ошибка: {last_error}")
+    detail = f" Последняя ошибка: {last_error}." if last_error else ""
+    if skipped:
+        detail += " Пропущено без ключа: " + "; ".join(skipped)
+    raise RuntimeError(f"vision: все модели недоступны.{detail}")
 
 
 def _call_openai_vision(cfg, key, model, image_data_url, text_prompt, system_prompt,
                         temperature, timeout):
-    """OpenRouter vision-вызов в OpenAI-совместимом формате."""
+    """Vision-вызов в OpenAI-совместимом формате (OpenAI и Kimi API)."""
     user_content = [
         {"type": "text", "text": text_prompt},
         {"type": "image_url", "image_url": {"url": image_data_url}},
@@ -257,7 +291,16 @@ def _call_openai_vision(cfg, key, model, image_data_url, text_prompt, system_pro
         "messages": messages,
         "temperature": cfg.get("fixed_temperature", temperature),
     }
-    data = _post_json(cfg["url"], payload, key, timeout)
+    data = None
+    for _ in range(2):  # HTTP 400 → kimi/k3 не принимает temperature ≠ 1 — повтор без него
+        try:
+            data = _post_json(_provider_url(cfg), payload, key, timeout)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code == 400 and "temperature" in payload:
+                payload.pop("temperature")
+                continue
+            raise
     return data["choices"][0]["message"].get("content") or ""
 
 
@@ -289,7 +332,8 @@ def extract_json(text: str) -> str:
 def main() -> int:
     import argparse
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--provider", choices=PROVIDERS, required=True)
+    p.add_argument("--provider", choices=[*PROVIDERS, "auto"], default="auto",
+                   help="Фильтр провайдера; auto (по умолчанию) — вся цепочка ROUTING")
     p.add_argument("--brief", help="Текст брифа")
     p.add_argument("--brief-file", help="Файл с брифом")
     p.add_argument("--repair", metavar="JSON_FILE", help="Режим repair: починить невалидный IR")

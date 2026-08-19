@@ -119,12 +119,17 @@ async def dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
     if method == "health":
         return {"ok": True, "transport": "stdio", "backend": "asgi"}
     if method == "runtime.configure":
-        key = str(params.get("openrouterApiKey") or "").strip()
-        if key:
-            os.environ["OPENROUTER_API_KEY"] = key
+        openai_key = str(params.get("openaiApiKey") or "").strip()
+        kimi_key = str(params.get("kimiApiKey") or "").strip()
+        if openai_key:
+            os.environ["OPENAI_API_KEY"] = openai_key
         else:
-            os.environ.pop("OPENROUTER_API_KEY", None)
-        return {"ok": True, "openrouterConfigured": bool(key)}
+            os.environ.pop("OPENAI_API_KEY", None)
+        if kimi_key:
+            os.environ["KIMI_API_KEY"] = kimi_key
+        else:
+            os.environ.pop("KIMI_API_KEY", None)
+        return {"ok": True, "openaiConfigured": bool(openai_key), "kimiConfigured": bool(kimi_key)}
     if method == "http.request":
         return await asgi_request(params)
     if method == "shutdown":

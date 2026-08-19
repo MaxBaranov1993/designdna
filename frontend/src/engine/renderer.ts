@@ -326,7 +326,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
       case "heading": {
         const lvl = Math.min(4, Math.max(1, el.level || 2));
         const a = safeAlign(el.align);
-        const textCss = visualTextCss(el.style);
+        const textCss = visualCss(el.style);
         const alignCss = a ? `text-align:${a}` : "";
         const css = [textCss, alignCss].filter(Boolean).join(";");
         const sa = css ? ` style="${css}"` : "";
@@ -337,7 +337,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
       }
       case "text": {
         const a = safeAlign(el.align);
-        const textCss = visualTextCss(el.style);
+        const textCss = visualCss(el.style);
         const alignCss = a ? `text-align:${a}` : "";
         const css = [textCss, alignCss].filter(Boolean).join(";");
         const sa = css ? ` style="${css}"` : "";
@@ -646,13 +646,34 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     }
 
     if (t === "contact-form") {
+      const submit = p.submit || {};
+      const submitFrame = sec._frames && sec._frames["props.submit"] || {};
+      const submitCss = ["justify-content:center", frameCss(submitFrame, false, false), visualCss(submit.style)].filter(Boolean).join(";");
+      const submitText = submit.text ?? p.submitText ?? "Отправить";
       const form = `<div class="card" style="display:flex;flex-direction:column;gap:14px">
-        ${(p.fields || []).map((f, i) => `<label style="display:flex;flex-direction:column;gap:6px;font-size:calc(13px*var(--fs));font-weight:600">
-          <span data-ir-path="props.fields.${i}.label">${esc(f.label)}${f.required ? " *" : ""}</span>
-          ${f.inputType === "textarea" ? `<textarea class="input" rows="3" placeholder="${esc(f.placeholder || "")}"></textarea>`
-            : f.inputType === "checkbox" ? `<span style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox"> <span data-ir-path="props.fields.${i}.placeholder">${esc(f.placeholder || "")}</span></span>`
-            : `<input class="input" placeholder="${esc(f.placeholder || "")}">`}</label>`).join("")}
-        <a class="btn btn-primary" style="justify-content:center"><span data-ir-path="props.submitText">${esc(p.submitText || "Отправить")}</span></a></div>`;
+        ${(p.fields || []).map((f, i) => {
+          const path = `props.fields.${i}`;
+          const frame = sec._frames && sec._frames[path] || {};
+          const labelPart = f.parts && f.parts.label || {};
+          const controlPart = f.parts && f.parts.control || {};
+          const labelPath = `${path}.parts.label`;
+          const controlPath = `${path}.parts.control`;
+          const labelFrame = sec._frames && sec._frames[labelPath] || {};
+          const controlFrame = sec._frames && sec._frames[controlPath] || {};
+          const groupCss = ["display:flex", "flex-direction:column", "gap:6px", frameCss(frame, false, false), visualCss(f.style)].filter(Boolean).join(";");
+          const labelCss = ["font-size:calc(13px*var(--fs))", "font-weight:600", frameCss(labelFrame, false, false), visualTextCss(labelPart.style)].filter(Boolean).join(";");
+          const controlCss = [frameCss(controlFrame, false, false), visualCss(controlPart.style)].filter(Boolean).join(";");
+          const controlStyle = controlCss ? ` style="${controlCss}"` : "";
+          const labelText = labelPart.text ?? f.label ?? "";
+          const placeholder = controlPart.placeholder ?? f.placeholder ?? "";
+          const inputType = controlPart.inputType ?? f.inputType;
+          return `<div data-ir-path="${path}" data-form-field="${i}" style="${groupCss}">
+            <span data-ir-path="${labelPath}" data-form-part="label" style="${labelCss}">${esc(labelText)}${f.required ? " *" : ""}</span>
+            ${inputType === "textarea" ? `<textarea data-ir-path="${controlPath}" data-form-part="control" class="input" rows="3" placeholder="${esc(placeholder)}"${controlStyle}></textarea>`
+              : inputType === "checkbox" ? `<span data-ir-path="${controlPath}" data-form-part="control" style="display:flex;gap:8px;align-items:center;font-weight:400;${controlCss}"><input type="checkbox"> <span>${esc(placeholder)}</span></span>`
+              : `<input data-ir-path="${controlPath}" data-form-part="control" class="input" placeholder="${esc(placeholder)}"${controlStyle}>`}</div>`;
+        }).join("")}
+        <a class="btn btn-primary" data-ir-path="props.submit" data-form-submit style="${submitCss}">${esc(submitText)}</a></div>`;
       const info = `<div style="display:flex;flex-direction:column;justify-content:center;gap:12px">
         <h2 data-ir-path="props.heading">${esc(p.heading || "")}</h2>
         ${p.subheading ? `<p class="muted" data-ir-path="props.subheading">${esc(p.subheading)}</p>` : ""}</div>`;

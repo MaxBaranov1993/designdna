@@ -64,7 +64,7 @@ def main():
 
         page.evaluate("localStorage.clear()")
         page.reload()
-        page.wait_for_selector(".react-flow__pane")
+        page.wait_for_selector(".svelte-flow__pane")
         page.wait_for_function("window.GraphDev && window.DNAEditor")
         page.evaluate("window.GraphDev.add('edit', 60, 40)")
         node_id = int(page.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))

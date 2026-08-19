@@ -137,11 +137,11 @@ def main():
 
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
         # ---------- создание нод из контекстного меню (14 типов, с Recorder, Motion и Page Bridge) ----------
-        pg.click(".react-flow__pane", button="right", position={"x": 300, "y": 120})
+        pg.click(".svelte-flow__pane", button="right", position={"x": 300, "y": 120})
         pg.wait_for_selector("#ctx-menu")
         check(
             "контекстное меню: 14 типов нод",
@@ -152,7 +152,7 @@ def main():
         check("BlockParse создан из меню",
               pg.evaluate("window.GraphDev.state().nodes.some(n => n.type === 'sourceimport')"))
 
-        pg.click(".react-flow__pane", button="right", position={"x": 900, "y": 120})
+        pg.click(".svelte-flow__pane", button="right", position={"x": 900, "y": 120})
         pg.click("#ctx-menu .ctx-item[data-type='reskin']")
         pg.wait_for_selector(".n-reskin")
         check("Reskin создан из меню",
@@ -241,7 +241,7 @@ def main():
         check("протянуты 2 провода", pg.evaluate("window.GraphDev.state().edges.length === 2"))
         check("провод tokens — янтарный (новый kind)",
               pg.evaluate(
-                  "Array.from(document.querySelectorAll('.react-flow__edge-path'))"
+                  "Array.from(document.querySelectorAll('.svelte-flow__edge-path'))"
                   ".some(p => p.style.stroke === '#d6a13b' || p.style.stroke === 'rgb(214, 161, 59)')"
               ))
 
@@ -305,7 +305,7 @@ def main():
         # ---------- автосейв (debounce 300 мс) и перезагрузка ----------
         pg.wait_for_timeout(700)
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.wait_for_selector(".n-sourceimport")
         pg.wait_for_selector(".n-reskin")

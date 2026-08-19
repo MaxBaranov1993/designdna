@@ -1,7 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 // Дизайн-язык shadcn/ui: цвета через CSS-переменные (hsl), палитра zinc, тёмная тема
 export default {
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  content: ["./src/**/*.{html,ts,svelte}"],
   theme: {
     extend: {
       colors: {

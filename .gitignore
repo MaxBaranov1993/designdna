@@ -11,6 +11,7 @@ start.bat
 .worker-brief-*.txt
 app/static/flow/
 frontend/node_modules/
+frontend/.svelte-kit/
 node_modules/
 tools/repo-canvas/node_modules/
 .repo-canvas/

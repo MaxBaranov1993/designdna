@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import server
@@ -7,18 +8,18 @@ import server
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_generate_can_prepare_prompts_without_openrouter() -> None:
+def test_generate_can_prepare_prompts_without_server_llm() -> None:
     response = server.generate(server.GenerateReq(brief="hero for a marketplace", count=2, prepareOnly=True))
     assert len(response["prompts"]) == 2
     assert response["prompts"][0]["messages"][0]["role"] == "system"
     assert "hero for a marketplace" in response["prompts"][0]["messages"][1]["content"]
 
 
-def test_generate_finalizes_external_provider_outputs_without_openrouter(monkeypatch) -> None:
+def test_generate_finalizes_external_provider_outputs_without_server_llm(monkeypatch) -> None:
     fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
 
     def fail_chat(*_args, **_kwargs):
-        raise AssertionError("OpenRouter must not be called for external provider outputs")
+        raise AssertionError("server-side LLM must not be called for external provider outputs")
 
     monkeypatch.setattr(server.llm, "chat", fail_chat)
     response = server.generate(server.GenerateReq(
@@ -30,6 +31,27 @@ def test_generate_finalizes_external_provider_outputs_without_openrouter(monkeyp
     assert len(response["variants"]) == 1
     assert response["variants"][0]["version"] == "1.1"
     assert server.validate_ir(response["variants"][0]) == []
+
+
+def test_browser_generate_honors_direct_api_provider_and_maps_codex_to_auto(monkeypatch) -> None:
+    fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
+    seen: list[str] = []
+
+    def fake_call(provider, *_args, **_kwargs):
+        seen.append(provider)
+        return deepcopy(fixture), None
+
+    monkeypatch.setattr(server, "call_llm_ir", fake_call)
+    for requested, expected in (
+        ("kimi", "kimi"),
+        ("openai", "openai"),
+        ("codex", "auto"),
+        ("openrouter", "auto"),
+        ("auto", "auto"),
+    ):
+        response = server.generate(server.GenerateReq(brief="marketplace hero", count=1, provider=requested))
+        assert len(response["variants"]) == 1
+        assert seen.pop() == expected
 
 
 def test_generate_applies_locked_dna_to_model_inline_styles(monkeypatch) -> None:
@@ -57,7 +79,7 @@ def test_generate_applies_locked_dna_to_model_inline_styles(monkeypatch) -> None
     tokens["semantic"]["buttonRadius"] = 9999  # DOM-capture pill sentinel
 
     monkeypatch.setattr(server.llm, "chat", lambda *_args, **_kwargs: (_ for _ in ()).throw(
-        AssertionError("OpenRouter must not be called for external provider outputs")
+        AssertionError("server-side LLM must not be called for external provider outputs")
     ))
     response = server.generate(server.GenerateReq(
         brief="marketplace card", count=1, provider="codex",

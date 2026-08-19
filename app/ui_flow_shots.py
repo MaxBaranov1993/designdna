@@ -35,7 +35,7 @@ def main():
             sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
         gid = int(pg.evaluate("window.GraphDev.add('generator', 80, 60).id"))

@@ -43,10 +43,10 @@
 }
 
 /* React Flow: attribution не должен спорить с тёмной темой */
-.react-flow__attribution {
+.svelte-flow__attribution {
   background: transparent;
 }
-.react-flow__attribution a {
+.svelte-flow__attribution a {
   color: hsl(var(--muted-foreground));
 }
 
@@ -169,7 +169,7 @@
   justify-content: flex-end;
   text-align: right;
 }
-.port-dot.react-flow__handle {
+.port-dot.svelte-flow__handle {
   position: relative;
   top: auto;
   left: auto;
@@ -185,26 +185,26 @@
   cursor: crosshair;
   transition: 0.12s;
 }
-.port-dot.react-flow__handle:hover {
+.port-dot.svelte-flow__handle:hover {
   background: var(--flow-accent);
   border-color: var(--flow-accent);
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.16);
 }
-.fnode.snap-target .port-dot.react-flow__handle {
+.fnode.snap-target .port-dot.svelte-flow__handle {
   background: var(--flow-accent);
   border-color: #ffffff;
   box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.2);
 }
-.port-dot.port-ir.react-flow__handle {
+.port-dot.port-ir.svelte-flow__handle {
   border-color: var(--flow-accent);
 }
-.port-dot.port-tokens.react-flow__handle {
+.port-dot.port-tokens.svelte-flow__handle {
   border-color: var(--flow-wire-tokens);
 }
-.port-dot.port-interaction.react-flow__handle {
+.port-dot.port-interaction.svelte-flow__handle {
   border-color: #2fbf9f;
 }
-.port-dot.port-motion.react-flow__handle {
+.port-dot.port-motion.svelte-flow__handle {
   border-color: #e05fb0;
 }
 

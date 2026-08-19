@@ -13,7 +13,9 @@ contextBridge.exposeInMainWorld("designDNA", Object.freeze({
     credentials: () => ipcRenderer.invoke("providers:credentials"),
     setCredential: (provider, value) => ipcRenderer.invoke("providers:set-credential", { provider, value }),
     deleteCredential: (provider) => ipcRenderer.invoke("providers:delete-credential", { provider }),
-    chat: (provider, messages, temperature = 0.8) => ipcRenderer.invoke("providers:chat", { provider, messages, temperature }),
+    importKimiCli: () => ipcRenderer.invoke("providers:import-kimi-cli"),
+    chat: (provider, messages, temperature = 0.8, profile = "generator") =>
+      ipcRenderer.invoke("providers:chat", { provider, messages, temperature, profile }),
   }),
   codex: Object.freeze({
     account: () => ipcRenderer.invoke("codex:account"),

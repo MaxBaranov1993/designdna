@@ -26,7 +26,7 @@ mimetypes.add_type("font/woff", ".woff")
 
 from fastapi import FastAPI
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from interaction_capture import capture_live_flow
@@ -49,7 +49,7 @@ import qualitygate
 import project_store
 import typography
 import designkb
-import video_client
+from editor_assist import router as editor_assist_router
 
 import ir
 from ir import apply_tokens as apply_ir_tokens
@@ -76,9 +76,9 @@ app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["127.0.0.1", "localhost", "testserver", "[::1]"],
 )
+app.include_router(editor_assist_router)
 
 COLOR_TOKEN_KEYS = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"]
-PRODUCT_PROVIDER = "openrouter"
 MAX_CLONE_HTML_BYTES = 2_000_000
 
 
@@ -127,7 +127,7 @@ def _locked_generation_dna(tokens: dict | None) -> tuple[dict | None, dict | Non
                 complete["semantic"][key] = min(1000, max(0, value))
     return public, complete
 
-# роли вызовов для роутинга OpenRouter — см. таблицу llm_client.ROUTING
+# роли вызовов для роутинга LLM — см. таблицу llm_client.ROUTING
 # (generate/edit/repair/clone/reference/...)
 
 
@@ -136,6 +136,20 @@ def _locked_generation_dna(tokens: dict | None) -> tuple[dict | None, dict | Non
 def validate_ir(doc: dict) -> list[str]:
     """Список ошибок валидации IR по схеме (пустой = ок)."""
     return ir.format_errors(ir.validate_ir(doc))
+
+
+def sanitize_font_face_weights(doc: dict) -> dict:
+    """Variable-шрифты отдают диапазон весов («400 800»), а схема принимает один
+    вес. IR, захваченные до нормализации на захвате (scraper._resolve_font_faces),
+    чиним на входе: диапазон → базовый вес. Мутирует и возвращает документ."""
+    meta = doc.get("meta") if isinstance(doc, dict) else None
+    faces = meta.get("fontFaces") if isinstance(meta, dict) else None
+    if isinstance(faces, list):
+        for face in faces:
+            weight = face.get("weight") if isinstance(face, dict) else None
+            if isinstance(weight, str) and len(weight.split()) > 1:
+                face["weight"] = weight.split()[0]
+    return doc
 
 
 def parse_ir_response(raw: str):
@@ -162,10 +176,9 @@ def err(status: int, message: str) -> JSONResponse:
     return JSONResponse({"detail": message}, status_code=status)
 
 
-def normalize_provider(provider: str | None) -> str:
-    # Старые сейвы могли передавать имя прямого провайдера. Продукт всегда
-    # маршрутизирует вызов через OpenRouter, поэтому вход намеренно игнорируется.
-    return PRODUCT_PROVIDER
+# Поле provider в запросах сохранено для совместимости со старыми сейвами;
+# продукт маршрутизирует вызовы по цепочке ROUTING подключённых аккаунтов,
+# поэтому вход намеренно игнорируется (всегда "auto").
 
 
 # ---------- models ----------
@@ -173,7 +186,7 @@ def normalize_provider(provider: str | None) -> str:
 class GenerateReq(BaseModel):
     brief: str = ""
     count: int = 3
-    provider: str = "openrouter"
+    provider: str = "auto"
     styleHint: str | None = None
     seedTag: str | None = None
     tokens: dict | None = None  # Style DNA: залоченные design-токены
@@ -190,7 +203,7 @@ class MixReq(BaseModel):
 class CloneReq(BaseModel):
     url: str = ""
     component: str = ""
-    provider: str = "openrouter"
+    provider: str = "auto"
 
 
 class BlockParseReq(BaseModel):
@@ -204,6 +217,7 @@ class ReskinReq(BaseModel):
     prompt: str = ""
     tokens: dict | None = None  # источник нового стиля (design-токены)
     mask: dict = {}             # чекбоксы: colors/fonts/radii/shadows/texts/images
+    provider: str = "auto"      # фильтр цепочки ROUTING: auto | openai | kimi
 
 
 class QualityGateReq(BaseModel):
@@ -217,6 +231,16 @@ class QualityPassReq(BaseModel):
     min_score: int = 85
     repair: bool = True
     rejudge: bool = True
+
+
+class QualityPassCodexOutputs(BaseModel):
+    judge: str | None = None
+    repair: str | None = None
+    rejudge: str | None = None
+
+
+class QualityPassCodexReq(QualityPassReq):
+    outputs: QualityPassCodexOutputs = QualityPassCodexOutputs()
 
 
 class ConstraintsCheckReq(BaseModel):
@@ -288,18 +312,6 @@ class MotionRenderReq(BaseModel):
     motion: dict
 
 
-class AiVideoGenerateReq(BaseModel):
-    prompt: str
-    tier: str = "studio"
-    duration: int = 5
-    aspect_ratio: str = "16:9"
-    resolution: str = "720p"
-    generate_audio: bool = False
-    references: list[str] = Field(default_factory=list)
-    seed: int | None = None
-    confirmed: bool = False
-
-
 class ScrapeReq(BaseModel):
     url: str = ""
     use_playwright: bool = True
@@ -308,7 +320,7 @@ class ScrapeReq(BaseModel):
 class ReproduceReq(BaseModel):
     image: str = ""  # base64 data URL
     url: str = ""  # или URL сайта: скриншот снимем сами, результат кэшируется
-    provider: str = "openrouter"  # роль vision выбирает модель из ROUTING
+    provider: str = "auto"  # роль vision выбирает модель из ROUTING
     regions: list | None = None  # опциональные регионы для diff: [["name", x1, y1, x2, y2], ...]
 
 
@@ -327,7 +339,9 @@ class ProjectLoadReq(BaseModel):
 
 @app.post("/api/generate")
 def generate(req: GenerateReq):
-    provider = normalize_provider(req.provider)
+    # Browser mode may explicitly select a direct API account. Codex is a
+    # desktop-only transport, so unknown/desktop values fall back to ROUTING.
+    provider = req.provider if req.provider in ("openai", "kimi") else "auto"
     brief = req.brief.strip()
     if not brief:
         return err(422, "Пустой бриф: опишите, что нужно сгенерировать.")
@@ -379,7 +393,13 @@ def generate(req: GenerateReq):
                      + json.dumps(dna, ensure_ascii=False)
                      + "\nГотовый IR обязан использовать эти tokens в точности "
                        "(mode/color/font/radius/spacing/shadow): вариативность — "
-                       "в композиции и контенте, не в токенах.")
+                       "в композиции и контенте, не в токенах.\n"
+                       "Токены — это голос бренда, а не декорация: CTA и ключевые "
+                       "акценты — tokens.color.primary, фон секций чередуй "
+                       "background/surface, текст — text/textMuted. Страница, где "
+                       "всё бело-серое и primary нигде не виден, — провал (wireframe, "
+                       "а не дизайн). Изображения — только с imagePrompt и конкретным "
+                       "арт-дирекшном (объект, свет, палитра).")
             if preset:
                 user += (f"\n\nСтилевое направление «{preset['label']}»: "
                          + preset["prompt"])
@@ -391,7 +411,11 @@ def generate(req: GenerateReq):
                 direction, palette = designkb.design_direction(ptype, pinfo, n)
                 user += "\n\n" + direction
             else:
-                user += ("\n\nАнти-паттерны — НИКОГДА так не делай:\n"
+                # С залоченной DNA палитра не нужна, но UX-правила типа продукта
+                # и анти-клише остаются — иначе выходит безликий каркас.
+                user += (f"\n\n## UX-правила для типа «{pinfo['label']}»:\n"
+                         + "\n".join("- " + r for r in pinfo["rules"])
+                         + "\n\nАнти-паттерны — НИКОГДА так не делай:\n"
                          + "\n".join("- " + a for a in designkb.ANTI_AI))
         if req.prepareOnly:
             return user, None, None
@@ -497,7 +521,7 @@ def clone(req: CloneReq):
         return err(422, "Укажите URL сайта.")
     if not component:
         return err(422, "Опишите, какой компонент клонировать.")
-    provider = normalize_provider(req.provider)
+    provider = "auto"  # вся цепочка ROUTING подключённых аккаунтов
 
     # SSRF-гард: только публичные http/https URL
     try:
@@ -611,11 +635,11 @@ def block_parse(req: BlockParseReq):
 def reskin(req: ReskinReq):
     """Reskin: AI-рестайл блока с локом структуры.
 
-    LLM через OpenRouter → детерминированный merge-back
+    LLM (прямой вызов OpenAI/Kimi) → детерминированный merge-back
     (залоченные поля принудительно из входного IR) → валидация по схеме →
     один repair-вызов по существующему паттерну. Дрейф структуры невозможен.
     """
-    errors = validate_ir(req.ir)
+    errors = validate_ir(sanitize_font_face_weights(req.ir))
     if errors:
         return err(422, "Входной IR невалиден: " + "; ".join(errors[:5]))
 
@@ -640,7 +664,8 @@ def reskin(req: ReskinReq):
     if req.prompt.strip():
         user += f"\n\n## Пожелания по новому стилю\n{req.prompt.strip()}"
 
-    provider = "openrouter"  # роль reskin: закреплённая модель и fallback из ROUTING
+    # выбор пользователя в ноде (openai/kimi) — фильтр цепочки ROUTING, auto = вся цепочка
+    provider = req.provider if req.provider in ("openai", "kimi") else "auto"
     try:
         raw = llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt("edit")},
@@ -712,13 +737,16 @@ QUALITY_JUDGE_SYSTEM = """Ты — строгий арт-директор и QA-
 score — целое 0..100. Учитывай только наблюдаемые данные в IR и брифе."""
 
 
-def _quality_scorecard(ir: dict, brief: str) -> dict:
-    """Независимая LLM-оценка. Нормализует недоверенный JSON до публичного контракта."""
-    raw = llm.chat(PRODUCT_PROVIDER, [
+def _quality_judge_messages(ir: dict, brief: str) -> list[dict]:
+    return [
         {"role": "system", "content": QUALITY_JUDGE_SYSTEM},
         {"role": "user", "content": "## Бриф\n" + (brief.strip() or "(не указан)")
          + "\n\n## Design IR\n" + json.dumps(ir, ensure_ascii=False)},
-    ], 0.2, role="quality_judge")
+    ]
+
+
+def _parse_quality_scorecard(raw: str, model_route: str) -> dict:
+    """Нормализует недоверенный JSON judge до публичного контракта."""
     try:
         parsed = json.loads(llm.extract_json(raw))
     except (json.JSONDecodeError, ValueError) as e:
@@ -750,12 +778,12 @@ def _quality_scorecard(ir: dict, brief: str) -> dict:
         "summary": str(parsed.get("summary", "")),
         "issues": issues[:12],
         "repair_instruction": str(parsed.get("repair_instruction", "")),
-        "model_route": "OpenRouter / quality_judge",
+        "model_route": model_route,
     }
 
 
-def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None, str | None]:
-    """Адресная починка только по замечаниям независимого судьи."""
+def _quality_repair_messages(ir: dict, scorecard: dict, brief: str) -> tuple[list[dict] | None, str | None]:
+    """Готовит адресную починку только по замечаниям judge."""
     instructions = scorecard.get("repair_instruction", "").strip()
     if not instructions:
         instructions = "\n".join(
@@ -771,11 +799,14 @@ def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None,
         f"## Инструкции\n{instructions}\n\n"
         f"## Входной Design IR\n{json.dumps(ir, ensure_ascii=False)}"
     )
-    try:
-        raw = llm.chat(PRODUCT_PROVIDER, [
+    return [
             {"role": "system", "content": llm.build_system_prompt("edit")},
             {"role": "user", "content": user},
-        ], 0.25, role="quality_repair")
+        ], None
+
+
+def _parse_quality_repair(raw: str) -> tuple[dict | None, str | None]:
+    try:
         repaired, parse_error = parse_ir_response(raw)
         if repaired is None:
             return None, parse_error
@@ -787,6 +818,24 @@ def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None,
         return None, str(e)
 
 
+def _quality_scorecard(ir: dict, brief: str) -> dict:
+    """Серверный LLM-путь standalone веб-сервера (прямой вызов OpenAI/Kimi)."""
+    raw = llm.chat("auto", _quality_judge_messages(ir, brief), 0.2, role="quality_judge")
+    return _parse_quality_scorecard(raw, "LLM / quality_judge")
+
+
+def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None, str | None]:
+    """Серверный LLM-путь standalone веб-сервера (прямой вызов OpenAI/Kimi)."""
+    messages, error = _quality_repair_messages(ir, scorecard, brief)
+    if messages is None:
+        return None, error
+    try:
+        raw = llm.chat("auto", messages, 0.25, role="quality_repair")
+    except Exception as e:
+        return None, str(e)
+    return _parse_quality_repair(raw)
+
+
 @app.post("/api/quality-pass")
 def quality_pass(req: QualityPassReq):
     """Премиальный контур: детерминированные правила → независимый judge → repair → rejudge.
@@ -794,7 +843,7 @@ def quality_pass(req: QualityPassReq):
     API всегда возвращает исходный валидный IR, если repair не удался: результат
     контролируем и не подменяем граф битым ответом модели.
     """
-    schema_errors = validate_ir(req.ir)
+    schema_errors = validate_ir(sanitize_font_face_weights(req.ir))
     if schema_errors:
         return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
     deterministic_before = qualitygate.check(req.ir)
@@ -821,6 +870,96 @@ def quality_pass(req: QualityPassReq):
                     final = _quality_scorecard(output_ir, req.brief)
                 except Exception as e:
                     repair["error"] = f"rejudge недоступен: {e}"
+    deterministic_after = qualitygate.check(output_ir)
+    passed = (final["score"] >= min_score and final["verdict"] == "pass"
+              and not deterministic_after)
+    return {
+        "ir": output_ir,
+        "passed": passed,
+        "min_score": min_score,
+        "scorecard": final,
+        "initial_scorecard": initial,
+        "deterministic": {"before": deterministic_before, "after": deterministic_after},
+        "repair": repair,
+    }
+
+
+@app.post("/api/quality-pass/codex-step")
+def quality_pass_codex_step(req: QualityPassCodexReq):
+    """Pure Quality Pass state machine for the desktop Codex transport.
+
+    This endpoint prepares prompts and validates model outputs, but never calls
+    an LLM itself. Every request is reconstructed from the source IR plus the
+    three bounded raw outputs, so the renderer cannot smuggle trusted state.
+    """
+    schema_errors = validate_ir(sanitize_font_face_weights(req.ir))
+    if schema_errors:
+        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
+    outputs = req.outputs
+    for stage in ("judge", "repair", "rejudge"):
+        raw = getattr(outputs, stage)
+        if raw is not None and len(raw.encode("utf-8")) > 2 * 1024 * 1024:
+            return err(413, f"Quality Pass {stage}: ответ Codex слишком большой")
+    if outputs.judge is None and (outputs.repair is not None or outputs.rejudge is not None):
+        return err(422, "Quality Pass: repair/rejudge без judge — неконсистентное состояние Codex")
+    if outputs.rejudge is not None and outputs.repair is None:
+        return err(422, "Quality Pass: rejudge без repair — неконсистентное состояние Codex")
+
+    deterministic_before = qualitygate.check(req.ir)
+    if outputs.judge is None:
+        return {"pending": {
+            "stage": "judge",
+            "profile": "quality_judge",
+            "messages": _quality_judge_messages(req.ir, req.brief),
+        }}
+    try:
+        initial = _parse_quality_scorecard(outputs.judge, "Codex app-server / quality_judge")
+    except Exception as e:
+        return err(502, f"Quality Pass judge вернул неверный ответ: {e}")
+
+    min_score = max(0, min(int(req.min_score), 100))
+    important = any(i["severity"] in {"critical", "major"} for i in initial["issues"])
+    needs_repair = bool(deterministic_before) or important or initial["score"] < min_score
+    if outputs.repair is not None and (not req.repair or not needs_repair):
+        return err(422, "Quality Pass: repair не запрашивался — неконсистентное состояние Codex")
+    output_ir = copy.deepcopy(req.ir)
+    repair = {"attempted": False, "applied": False, "error": None}
+    final = initial
+
+    if req.repair and needs_repair:
+        repair["attempted"] = True
+        messages, message_error = _quality_repair_messages(req.ir, initial, req.brief)
+        if messages is None:
+            repair["error"] = message_error
+        elif outputs.repair is None:
+            return {"pending": {
+                "stage": "repair",
+                "profile": "quality_repair",
+                "messages": messages,
+            }}
+        else:
+            repaired, repair_error = _parse_quality_repair(outputs.repair)
+            if repaired is None:
+                repair["error"] = repair_error
+            else:
+                output_ir = repaired
+                repair["applied"] = True
+                if req.rejudge:
+                    if outputs.rejudge is None:
+                        return {"pending": {
+                            "stage": "rejudge",
+                            "profile": "quality_judge",
+                            "messages": _quality_judge_messages(output_ir, req.brief),
+                        }}
+                    try:
+                        final = _parse_quality_scorecard(
+                            outputs.rejudge, "Codex app-server / quality_judge"
+                        )
+                    except Exception as e:
+                        return err(502, f"Quality Pass rejudge вернул неверный ответ: {e}")
+
+    if outputs.rejudge is not None and not repair["applied"]:
+        return err(422, "Quality Pass: rejudge без применённого repair — неконсистентное состояние Codex")
     deterministic_after = qualitygate.check(output_ir)
     passed = (final["score"] >= min_score and final["verdict"] == "pass"
               and not deterministic_after)
@@ -937,7 +1076,7 @@ def reproduce(req: ReproduceReq):
         source_kind = "url" if url else "image"
         return {**_with_reproduce_parser_contract(hit, source_ref, source_kind), "cached": True}
 
-    provider = normalize_provider(req.provider)
+    provider = "auto"  # вся цепочка ROUTING подключённых аккаунтов
 
     regions = None
     if req.regions:
@@ -1008,7 +1147,6 @@ def app_config():
         "models": {
             "generator": llm.routing_models("generator")[0],
             "motionDirector": llm.routing_models("motion_director")[0],
-            "video": video_client.public_models(),
         },
     }
 
@@ -1262,51 +1400,6 @@ def motion_render_download(render_id: str):
     return FileResponse(output, media_type=media_type, filename=filename)
 
 
-@app.post("/api/ai-video/generate")
-def ai_video_generate(req: AiVideoGenerateReq):
-    """Submit an explicitly confirmed generative B-roll job to OpenRouter."""
-    if not FEATURE_FLAGS.is_enabled("generativeVideo"):
-        return err(404, "Generative video is disabled by feature flag.")
-    if not req.confirmed:
-        return err(409, "Confirm the paid OpenRouter video generation before submitting.")
-    if len(req.references) > 4:
-        return err(422, "At most four video reference images are allowed.")
-    safe_references = []
-    try:
-        for reference in req.references:
-            safe = validate_public_url(reference)
-            if not safe.startswith("https://"):
-                raise ValueError("Video reference images must use HTTPS.")
-            safe_references.append(safe)
-        return video_client.submit(
-            req.prompt,
-            tier=req.tier,
-            duration=req.duration,
-            aspect_ratio=req.aspect_ratio,
-            resolution=req.resolution,
-            generate_audio=req.generate_audio,
-            references=safe_references,
-            seed=req.seed,
-        )
-    except ValueError as exc:
-        return err(422, str(exc))
-    except RuntimeError as exc:
-        return err(502, str(exc))
-
-
-@app.get("/api/ai-video/{job_id}")
-def ai_video_status(job_id: str):
-    """Poll one OpenRouter video job without accepting arbitrary polling URLs."""
-    if not FEATURE_FLAGS.is_enabled("generativeVideo"):
-        return err(404, "Generative video is disabled by feature flag.")
-    try:
-        return video_client.status(job_id)
-    except ValueError as exc:
-        return err(422, str(exc))
-    except RuntimeError as exc:
-        return err(502, str(exc))
-
-
 @app.get("/nodes")
 def nodes_page():
     # Legacy-граф снят: старый адрес ведёт в единственную актуальную SPA.
@@ -1325,7 +1418,13 @@ def flow_page():
     # Единственная актуальная SPA: новый нодовый редактор (React Flow, сборка из
     # frontend/). Любой подпуть /flow отдаёт index.html, ассеты приходят через
     # /static/flow/.
-    return FileResponse(APP_ROOT / "static" / "flow" / "index.html")
+    index_path = APP_ROOT / "static" / "flow" / "index.html"
+    html = index_path.read_text(encoding="utf-8")
+    # The static build must stay relative for Electron file://. For the HTTP
+    # surface, inject a literal base before SvelteKit's preload links so the
+    # browser preload scanner resolves them through the existing /static mount.
+    html = html.replace("<head>", '<head><base href="/static/flow/">', 1)
+    return HTMLResponse(html)
 
 
 app.mount("/static", StaticFiles(directory=APP_ROOT / "static"), name="static")

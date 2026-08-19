@@ -1,7 +1,7 @@
-"""Пайплайн независимого ревью: diff спринта → два OpenRouter-ревьювера
+"""Пайплайн независимого ревью: diff спринта → два LLM-ревьювера
 → консолидированный JSON-отчёт.
 
-Все LLM-вызовы проходят через OpenRouter.
+LLM-вызовы идут напрямую в OpenAI/Kimi (композитные slug'и «provider/model»).
 Оркестрация — на мне (lead): модели дают независимые мнения, триаж и фиксы — человек/lead.
 Использование:
     .venv/Scripts/python app/review_pipeline.py [git-range]   (по умолчанию 737478f..HEAD)
@@ -18,10 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import llm_client
 
-# (имя, provider, model, fallback) — все модели вызываются через OpenRouter.
+# (имя, provider, model, fallback) — модели задаются композитными slug'ами
+# «provider/model»; "auto" = без фильтра предпочтительного провайдера.
 REVIEWERS = [
-    ("architecture", "openrouter", "anthropic/claude-opus-5", ("openrouter", "anthropic/claude-sonnet-5")),
-    ("implementation", "openrouter", "qwen/qwen3-coder-plus", ("openrouter", "anthropic/claude-sonnet-5")),
+    ("architecture", "auto", "openai/gpt-5.6-sol", ("auto", "kimi/k3")),
+    ("implementation", "auto", "openai/gpt-5.6-sol", ("auto", "kimi/k3")),
 ]
 
 PROMPT = (

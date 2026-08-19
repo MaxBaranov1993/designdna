@@ -46,7 +46,7 @@ def main():
             sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
@@ -81,9 +81,9 @@ def main():
         pg.wait_for_selector('.dna-editor[style*="flex"]')
         pg.wait_for_timeout(600)
 
-        CARD_X = ("(() => { const f = window.GraphDev.node(%d).data.ir.tree[0].children[0].frame;"
+        CARD_X = ("(() => { const d = window.GraphDev.node(%d).data; const f = (d._editorDraft?.ir || d.ir).tree[0].children[0].frame;"
                   " return typeof f.x === 'number' ? f.x : null; })()" % nid)
-        CARD_COUNT = "window.GraphDev.node(%d).data.ir.tree[0].children.length" % nid
+        CARD_COUNT = "(() => { const d = window.GraphDev.node(%d).data; return (d._editorDraft?.ir || d.ir).tree[0].children.length; })()" % nid
 
         def select_card():
             card = pg.query_selector('.fe-canvas [data-ir-path="children.0"]')
@@ -128,12 +128,12 @@ def main():
         check("Ctrl+D: children +1", after == before + 1, f"{before} -> {after}")
 
         dup_x = pg.evaluate(
-            "(() => { const f = window.GraphDev.node(%d).data.ir.tree[0].children[1].frame;"
+            "(() => { const d = window.GraphDev.node(%d).data; const f = (d._editorDraft?.ir || d.ir).tree[0].children[1].frame;"
             " return typeof f.x === 'number' ? f.x : null; })()" % nid)
         check("дубликат со сдвигом +16", dup_x == xa + 4 + 16,
               f"x={dup_x!r}, ждём {xa + 4 + 16}")
 
-        dup_key = pg.evaluate("window.GraphDev.node(%d).data.ir.tree[0].children[1].sourceKey" % nid)
+        dup_key = pg.evaluate("(() => { const d = window.GraphDev.node(%d).data; return (d._editorDraft?.ir || d.ir).tree[0].children[1].sourceKey; })()" % nid)
         check("дубликат получил sourceKey", bool(dup_key), f"sourceKey={dup_key!r}")
 
         # выделен именно дубликат: Delete убирает копию, оригинал остаётся

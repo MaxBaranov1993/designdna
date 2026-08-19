@@ -134,8 +134,8 @@ export function portsOfNode(n: {
   return PORTS[n.type];
 }
 
-/* Каждая AI-нода идёт через OpenRouter в закреплённую роль ROUTING.
- * Прямой выбор провайдера в UI убран: он создавал расхождение с модельной картой. */
+/* AI-ноды сохраняют переносимый маршрут. Browser отправляет auto/kimi/openai
+ * серверу, desktop дополнительно поддерживает явный codex через подключённый ChatGPT. */
 export function defaultData(type: NodeType): AnyNodeData {
   switch (type) {
     case "prompt":
@@ -143,7 +143,7 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "reference":
       return { brief: "", image: null, fileName: "", decomposed: false };
     case "generator":
-      return { provider: "codex", count: 2, ownPrompt: "", preset: "", variants: [], active: 0 };
+      return { provider: "auto", count: 2, ownPrompt: "", preset: "", variants: [], active: 0 };
     case "edit":
       return { inputs: ["a", "b"], ir: null, sourceRegistry: {}, nodeSources: {} };
     case "mix":
@@ -159,6 +159,7 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "reskin":
       return {
         prompt: "",
+        provider: "auto",
         mask: { colors: true, fonts: true, radii: true, shadows: true, texts: false, images: false },
         ir: null,
         log: [],

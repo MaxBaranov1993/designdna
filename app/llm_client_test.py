@@ -1,4 +1,4 @@
-"""LLM-клиент OpenRouter: chat()/chat_vision() на локальном mock-сервере.
+"""LLM-клиент (прямые вызовы OpenAI/Kimi): chat()/chat_vision() на локальном mock-сервере.
 Запуск: .venv/Scripts/python app/llm_client_test.py (сервер не нужен)
 """
 import json
@@ -34,7 +34,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         RECORDED.append((self.path, body))
-        if body.get("model") == "mock/first":  # первая модель цепочки недоступна
+        if body.get("model") == "first":  # первая модель цепочки недоступна
             self.send_response(404)
             self.send_header("Content-Length", "2")
             self.end_headers()
@@ -54,10 +54,15 @@ def main():
     port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
-    os.environ["MOCK_KEY"] = "test-key"
-    llm_client.PROVIDERS["openrouter"] = {
-        "url": f"http://127.0.0.1:{port}/openrouter/chat/completions",
-        "env": "MOCK_KEY", "model": None,
+    os.environ["MOCK_OPENAI_KEY"] = "test-openai-key"
+    os.environ["MOCK_KIMI_KEY"] = "test-kimi-key"
+    llm_client.PROVIDERS["openai"] = {
+        "url": f"http://127.0.0.1:{port}/openai/chat/completions",
+        "env": "MOCK_OPENAI_KEY",
+    }
+    llm_client.PROVIDERS["kimi"] = {
+        "url": f"http://127.0.0.1:{port}/kimi/chat/completions",
+        "env": "MOCK_KIMI_KEY",
     }
 
     msgs = [
@@ -67,51 +72,91 @@ def main():
         {"role": "user", "content": "next"},
     ]
 
-    # ---------- chat: OpenRouter-совместимый формат ----------
-    os.environ["OPENROUTER_MODELS_MECHANICS"] = "mock/text"
-    r = llm_client.chat("openrouter", msgs[:2], 0.2)
-    check("chat openai: контент", r == '{"ok": "mock/text"}', r)
+    # ---------- chat: OpenAI-совместимый формат, композитный slug ----------
+    os.environ["LLM_MODELS_MECHANICS"] = "openai/mock-text"
+    r = llm_client.chat("auto", msgs[:2], 0.2)
+    check("chat openai: контент", r == '{"ok": "mock-text"}', r)
     path, body = RECORDED[-1]
+    check("chat openai: provider/model разобран по первому '/'",
+          path.startswith("/openai/") and body.get("model") == "mock-text", str(body)[:200])
     check("chat openai: response_format json_object",
           body.get("response_format") == {"type": "json_object"}, str(body)[:200])
 
-    # ---------- chat_vision: OpenRouter-совместимый формат ----------
+    # ---------- chat_vision: OpenAI-совместимый формат ----------
     img = "data:image/png;base64," + "A" * 64
-    os.environ["OPENROUTER_MODELS_VISION"] = "mock/vision"
-    r = llm_client.chat_vision("openrouter", img, "опиши", "", 0.1)
-    check("vision openrouter: контент", r == '{"ok": "mock/vision"}', r)
+    os.environ["LLM_MODELS_VISION"] = "openai/mock-vision"
+    r = llm_client.chat_vision("auto", img, "опиши", "", 0.1)
+    check("vision: контент", r == '{"ok": "mock-vision"}', r)
     path, body = RECORDED[-1]
     uc = body["messages"][-1]["content"]
-    check("vision openrouter: text + image_url",
+    check("vision: text + image_url",
           uc[0]["type"] == "text" and uc[1]["type"] == "image_url", str(uc)[:200])
 
-    # ---------- openrouter: роутинг и fallback-цепочка ----------
-    os.environ["OPENROUTER_MODELS_MECHANICS"] = "mock/first,mock/second"
-    check("routing_models: env-оверрайд",
-          llm_client.routing_models("mechanics") == ["mock/first", "mock/second"])
+    # ---------- роутинг и fallback-цепочка ----------
+    os.environ["LLM_MODELS_MECHANICS"] = "openai/first,kimi/second"
+    check("routing_models: env-оверрайд LLM_MODELS_<ROLE>",
+          llm_client.routing_models("mechanics") == ["openai/first", "kimi/second"])
     for role in ("generator", "clone", "blockparse", "source_semantics", "reskin", "reproduce", "edit", "vision", "taste"):
-        os.environ.pop("OPENROUTER_MODELS_" + role.upper(), None)
-    check("routing_models: дефолт taste из таблицы",
-          llm_client.routing_models("taste")[0] == "anthropic/claude-opus-5")
+        os.environ.pop("LLM_MODELS_" + role.upper(), None)
+    check("routing_models: дефолт taste",
+          llm_client.routing_models("taste")[0] == "openai/gpt-5.6-sol")
     check(
-        "routing_models: роли нод закреплены за OpenRouter-моделями",
-        llm_client.routing_models("generator")[0] == "anthropic/claude-opus-5"
-        and llm_client.routing_models("motion_director")[0] == "anthropic/claude-opus-5"
-        and llm_client.routing_models("clone")[0] == "anthropic/claude-sonnet-5"
-        and llm_client.routing_models("blockparse")[0] == "anthropic/claude-sonnet-5"
-        and llm_client.routing_models("source_semantics")[0] == "anthropic/claude-sonnet-5"
-        and llm_client.routing_models("reskin")[0] == "anthropic/claude-opus-5"
-        and llm_client.routing_models("reproduce")[0] == "anthropic/claude-opus-5",
+        "routing_models: дефолтные роли на прямых провайдерах",
+        llm_client.routing_models("generator")[0] == "openai/gpt-5.6-sol"
+        and llm_client.routing_models("motion_director")[0] == "openai/gpt-5.6-sol"
+        and llm_client.routing_models("clone")[0] == "openai/gpt-5.6-sol"
+        and llm_client.routing_models("blockparse")[0] == "openai/gpt-5.6-sol"
+        and llm_client.routing_models("source_semantics")[0] == "openai/gpt-5.6-sol"
+        and llm_client.routing_models("reskin")[0] == "openai/gpt-5.6-sol"
+        and llm_client.routing_models("reproduce")[0] == "openai/gpt-5.6-sol"
+        and llm_client.routing_models("vision") == ["openai/gpt-5.6-sol", "kimi/k3"],
     )
+    check("routing_models: все роли — композитные slug'и известных провайдеров",
+          all(slug.partition("/")[0] in llm_client.PROVIDERS and slug.partition("/")[2]
+              for slugs in llm_client.ROUTING.values() for slug in slugs))
     n_before = len(RECORDED)
-    r = llm_client.chat("openrouter", msgs[:2], 0.2, role="mechanics")
-    check("openrouter: fallback на вторую модель", json.loads(r) == {"ok": "mock/second"}, r)
+    r = llm_client.chat("auto", msgs[:2], 0.2, role="mechanics")
+    check("fallback на вторую модель цепочки", json.loads(r) == {"ok": "second"}, r)
     calls = RECORDED[n_before:]
-    check("openrouter: две попытки (404 -> 200)", len(calls) == 2
-          and calls[0][1]["model"] == "mock/first" and calls[1][1]["model"] == "mock/second",
-          str([c[1].get("model") for c in calls]))
-    os.environ.pop("OPENROUTER_MODELS_MECHANICS", None)
-    os.environ.pop("OPENROUTER_MODELS_VISION", None)
+    check("две попытки (404 -> 200), разные провайдеры", len(calls) == 2
+          and calls[0][0].startswith("/openai/") and calls[0][1]["model"] == "first"
+          and calls[1][0].startswith("/kimi/") and calls[1][1]["model"] == "second",
+          str([(c[0], c[1].get("model")) for c in calls]))
+
+    # ---------- skip записи без ключа провайдера ----------
+    llm_client.PROVIDERS["openai"]["env"] = "MOCK_MISSING_KEY"
+    os.environ.pop("MOCK_MISSING_KEY", None)
+    os.environ["LLM_MODELS_MECHANICS"] = "openai/mock-text,kimi/mock-kimi"
+    n_before = len(RECORDED)
+    r = llm_client.chat("auto", msgs[:2], 0.2, role="mechanics")
+    check("skip без ключа: дошли до kimi", json.loads(r) == {"ok": "mock-kimi"}, r)
+    calls = RECORDED[n_before:]
+    check("skip без ключа: openai даже не вызывался", len(calls) == 1
+          and calls[0][0].startswith("/kimi/"), str([(c[0], c[1].get("model")) for c in calls]))
+    try:
+        llm_client.chat("openai", msgs[:2], 0.2, role="mechanics")
+        check("все записи без ключа → понятная ошибка", False)
+    except RuntimeError as e:
+        check("все записи без ключа → понятная ошибка", "MOCK_MISSING_KEY" in str(e), str(e)[:200])
+    llm_client.PROVIDERS["openai"]["env"] = "MOCK_OPENAI_KEY"
+
+    # ---------- фильтр предпочтительного провайдера ----------
+    n_before = len(RECORDED)
+    r = llm_client.chat("kimi", msgs[:2], 0.2, role="mechanics")
+    check("фильтр provider=kimi: сразу kimi", json.loads(r) == {"ok": "mock-kimi"}, r)
+    calls = RECORDED[n_before:]
+    check("фильтр provider=kimi: openai не вызывался", len(calls) == 1
+          and calls[0][0].startswith("/kimi/"), str([(c[0], c[1].get("model")) for c in calls]))
+
+    # ---------- slug без известного провайдера отклоняется ----------
+    os.environ["LLM_MODELS_MECHANICS"] = "unknown/mock"
+    try:
+        llm_client.chat("auto", msgs[:2], 0.2, role="mechanics")
+        check("неизвестный провайдер в slug → ValueError", False)
+    except ValueError as e:
+        check("неизвестный провайдер в slug → ValueError", "unknown/mock" in str(e), str(e)[:200])
+    os.environ.pop("LLM_MODELS_MECHANICS", None)
+    os.environ.pop("LLM_MODELS_VISION", None)
 
     # ---------- load_dotenv ----------
     import tempfile

@@ -411,7 +411,7 @@ def parse_design_tokens(css_text: str) -> dict:
 
 # ---------- image prep (Pillow) ----------
 
-MAX_VISION_DIM = 1568  # безопасный предел для vision-маршрута OpenRouter
+MAX_VISION_DIM = 1568  # безопасный предел для vision-API (OpenAI/Kimi)
 
 
 def prepare_image_b64(data_url: str) -> str:
@@ -857,7 +857,10 @@ def _resolve_font_faces(raw_faces: list, used: set) -> list:
         fam = str(face.get("family") or "").strip()
         if not fam or fam.lower() not in used:
             continue
-        key = (fam.lower(), str(face.get("weight")), str(face.get("style")))
+        # Variable fonts declare a range ("400 800"); the IR schema takes a
+        # single weight — keep the range's base value.
+        weight = str(face.get("weight") or "400").split()[0]
+        key = (fam.lower(), weight, str(face.get("style")))
         if key in seen:
             continue
         for url in face.get("urls") or []:
@@ -865,7 +868,7 @@ def _resolve_font_faces(raw_faces: list, used: set) -> list:
             if not data:
                 continue
             seen.add(key)
-            out.append({"family": fam, "weight": str(face.get("weight") or "400"),
+            out.append({"family": fam, "weight": weight,
                         "style": str(face.get("style") or "normal"),
                         "url": "/fonts/" + _store_font(data)})
             break

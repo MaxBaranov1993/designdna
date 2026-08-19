@@ -76,10 +76,16 @@ export class CodexAppServer extends EventEmitter {
   async startTurn(params) { await this.start(); return this.request("turn/start", params); }
   async steerTurn(params) { await this.start(); return this.request("turn/steer", params); }
   async interruptTurn(threadId, turnId) { await this.start(); return this.request("turn/interrupt", { threadId, turnId }); }
-  async chat(messages, { timeoutMs = 180_000 } = {}) {
+  async chat(messages, { timeoutMs = 180_000, profile = "generator" } = {}) {
     await this.start();
+    const profileInstructions = {
+      generator: "Generate the requested Design IR. The SYSTEM section below is the complete, authoritative design specification — follow it exactly, including the design craft rules and any locked Style DNA tokens: token colors (primary for CTAs and key accents, alternating background/surface sections) are mandatory, a plain white-and-grey wireframe is a failure.",
+      quality_judge: "Evaluate the supplied Design IR exactly as requested.",
+      quality_repair: "Repair the supplied Design IR exactly as requested.",
+    };
+    if (!Object.hasOwn(profileInstructions, profile)) throw new Error(`Unsupported Codex chat profile: ${profile}`);
     const prompt = [
-      "Generate the requested Design IR. Do not inspect files, run commands, or call tools. Return only the JSON object.",
+      `${profileInstructions[profile]} Do not inspect files, run commands, or call tools. Return only the JSON object.`,
       ...messages.map((message) => `${String(message.role || "user").toUpperCase()}:\n${String(message.content || "")}`),
     ].join("\n\n");
     const started = await this.startThread({

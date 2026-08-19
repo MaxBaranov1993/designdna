@@ -66,7 +66,7 @@ def main() -> None:
         page.wait_for_function("window.GraphDev")
         edit_id = page.evaluate("window.GraphDev.add('edit', 200, 120).id")
         page.evaluate("(v) => window.GraphDev.patchData(v.id, {ir:v.ir})", {"id": edit_id, "ir": document()})
-        page.click(f'.react-flow__node[data-id="{edit_id}"] .f-open-editor')
+        page.click(f'.svelte-flow__node[data-id="{edit_id}"] .f-open-editor')
         page.click('[data-act="responsive-autopilot"]')
         page.wait_for_selector('[data-act="apply-responsive-autopilot"]')
         panel = page.locator(".fe-responsive-card").inner_text()

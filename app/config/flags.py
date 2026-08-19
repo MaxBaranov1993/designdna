@@ -22,8 +22,6 @@ DEFAULT_FLAGS = {
     "videoRender": True,
     # Stage 7: AI director for motion.
     "aiDirector": False,
-    # Optional generative B-roll/asset jobs through OpenRouter Videos.
-    "generativeVideo": True,
 }
 
 

@@ -44,7 +44,7 @@ def main():
             sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
@@ -79,7 +79,7 @@ def main():
         pg.wait_for_selector('.dna-editor[style*="flex"]')
         pg.wait_for_timeout(600)
 
-        CARD_COUNT = "window.GraphDev.node(%d).data.ir.tree[0].children.length" % nid
+        CARD_COUNT = "(() => { const d = window.GraphDev.node(%d).data; return (d._editorDraft?.ir || d.ir).tree[0].children.length; })()" % nid
 
         def click_card():
             card = pg.query_selector('.fe-canvas [data-ir-path="children.0"]')

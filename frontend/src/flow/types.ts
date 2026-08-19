@@ -1,4 +1,4 @@
-import type { Edge, Node } from "@xyflow/react";
+import type { Edge, Node } from "@xyflow/svelte";
 
 /* Типы данных актуальных нод графа (см. docs/NODES.md).
  * Runtime-поля legacy (el/geo/history) в React Flow state не переносятся. */
@@ -166,6 +166,7 @@ export type ReskinMask = {
 };
 export type ReskinNodeData = {
   prompt: string;
+  provider: string;
   mask: ReskinMask;
   ir: IRObject | null;
   log: string[];

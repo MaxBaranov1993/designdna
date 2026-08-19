@@ -1,0 +1,25 @@
+export type AssistAction = "adapt" | "overflow" | "content-fit" | "align" | "style" | "custom";
+export type AssistScopeMode = "single" | "selection";
+
+export interface AssistOp {
+  op: "add" | "remove" | "replace";
+  path: string;
+  before?: unknown;
+  after?: unknown;
+  reason?: string;
+}
+
+export interface AssistPreview {
+  summary: string;
+  ops: AssistOp[];
+  previewIr: any;
+  changedViewports: string[];
+  warnings: { code?: string; message: string; path?: string }[];
+  validation: { schema: boolean; overflow: unknown[]; constraints: unknown[] };
+}
+
+export interface AssistRequest {
+  prompt: string;
+  action: AssistAction;
+  scopeMode: AssistScopeMode;
+}

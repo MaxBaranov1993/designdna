@@ -52,7 +52,7 @@ def main():
             sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
@@ -119,8 +119,9 @@ def main():
         # ---------- 3. вьюпорты ----------
         check("вьюпорт-бар виден (responsive IR)",
               pg.evaluate("document.querySelector('.dna-editor .fe-viewports').hidden === false"))
-        WIDTH = ("window.GraphDev.node(%d).data.ir.meta &&"
-                 " window.GraphDev.node(%d).data.ir.meta.activeViewport" % (nid, nid))
+        WIDTH = ("(() => { const d = window.GraphDev.node(%d).data;"
+                 " const ir = d._editorDraft?.ir || d.ir;"
+                 " return ir.meta && ir.meta.activeViewport; })()" % nid)
         WIDTH_INPUT = "document.querySelector('.dna-editor .fe-viewport-width').value"
 
         pg.click('.dna-editor .fe-viewports [data-viewport="tablet"]')

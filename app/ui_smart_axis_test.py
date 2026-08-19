@@ -86,7 +86,7 @@ def main() -> None:
             "headerContract": contract("source-header", "Imported header", "header-root", 960),
             "heroContract": contract("source-hero", "Custom hero", "hero-root"),
         })
-        page.click(f'.react-flow__node[data-id="{ids["edit"]}"] .f-open-editor')
+        page.click(f'.svelte-flow__node[data-id="{ids["edit"]}"] .f-open-editor')
         page.click('[data-act="smart-axis"]')
         dialog = page.locator(".fe-smart-axis-card")
         check("AI proposes a preview before mutation", dialog.count() == 1)

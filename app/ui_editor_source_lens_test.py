@@ -99,7 +99,7 @@ def main() -> None:
         check("Edit composes inputs in port order", composed["sections"] == ["header", "hero"], json.dumps(composed))
         check("source registry survives composition", len(composed["sources"]) == 2, json.dumps(composed))
 
-        page.click(f'.react-flow__node[data-id="{ids["edit"]}"] .f-open-editor')
+        page.click(f'.svelte-flow__node[data-id="{ids["edit"]}"] .f-open-editor')
         page.wait_for_selector(".fe-source-lens")
         check("Source Lens exposes two clear source chips", page.locator(".fe-source-filter").count() == 2)
         marks = page.evaluate("""() => Array.from(document.querySelectorAll('.dna-editor [data-ir-sec]')).map(el => ({
@@ -107,7 +107,8 @@ def main() -> None:
         }))""")
         check("sections receive different source colors", len(marks) == 2 and marks[0]["color"] != marks[1]["color"], json.dumps(marks))
 
-        page.click('.dna-editor [data-ir-sec="1"]')
+        section = page.locator('.dna-editor [data-ir-sec="1"]').bounding_box()
+        page.mouse.click(section["x"] + 8, section["y"] + 8)
         page.wait_for_timeout(80)
         origin = page.locator(".fe-source-origin")
         check("selection reveals its source in Inspector", origin.count() == 1 and "Custom hero" in origin.inner_text())

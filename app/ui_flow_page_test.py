@@ -87,11 +87,11 @@ def main():
             sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
         # ---------- ctx-Р СР ВµР Р…РЎР‹: 14 РЎвЂљР С‘Р С—Р С•Р Р†, Р ВµРЎРѓРЎвЂљРЎРЉ Page ----------
-        pg.click(".react-flow__pane", button="right")
+        pg.click(".svelte-flow__pane", button="right")
         check("Р Р† Р СР ВµР Р…РЎР‹ 14 РЎвЂљР С‘Р С—Р С•Р Р† Р Р…Р С•Р Т‘",
               pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
         check("Р Р† Р СР ВµР Р…РЎР‹ Р ВµРЎРѓРЎвЂљРЎРЉ Р РЋРЎвЂљРЎР‚Р В°Р Р…Р С‘РЎвЂ Р В°",
@@ -272,7 +272,7 @@ def main():
 
         # 3) РЎР‚Р ВµР Т‘Р В°Р С”РЎвЂљР С•РЎР‚ Р С•РЎвЂљР С”РЎР‚РЎвЂ№Р Р†Р В°Р ВµРЎвЂљРЎРѓРЎРЏ Р Р…Р В° Р Р†РЎРЉРЎР‹Р С—Р С•РЎР‚РЎвЂљР Вµ Р С‘Р В· Р С–РЎР‚Р В°РЎвЂћР В° (Page РЎРѓР ВµР в„–РЎвЂЎР В°РЎРѓ Р Р…Р В° mobile);
         #    Р В°РЎР‚РЎвЂљР В±Р С•РЎР‚Р Т‘ Р СР В°РЎвЂљР ВµРЎР‚Р С‘Р В°Р В»Р С‘Р В·Р С•Р Р†Р В°Р Р…Р Р…Р С•Р С–Р С• Р Р†Р В°РЎР‚Р С‘Р В°Р Р…РЎвЂљР В° Р Р…Р Вµ РЎРѓР В¶Р В°РЎвЂљ fitPreview (zoom РІР‚вЂќ Р Т‘Р ВµР В»Р С• РЎР‚Р ВµР Т‘Р В°Р С”РЎвЂљР С•РЎР‚Р В°)
-        pg.click(f'.react-flow__node[data-id="{edit3}"] .f-open-editor')
+        pg.click(f'.svelte-flow__node[data-id="{edit3}"] .f-open-editor')
         pg.wait_for_selector('.dna-editor .fe-canvas-inner [class^="ir-"]')
         pg.wait_for_timeout(500)
         open_st = pg.evaluate("""(() => {
@@ -339,7 +339,7 @@ def main():
         # 5) Р С—РЎР‚Р ВµР Р†РЎРЉРЎР‹ Page Р Р…Р В° mobile: Р СР В°РЎвЂљР ВµРЎР‚Р С‘Р В°Р В»Р С‘Р В·Р С•Р Р†Р В°Р Р…Р Р…РЎвЂ№Р в„– Р В°РЎР‚РЎвЂљР В±Р С•РЎР‚Р Т‘ 390 РЎР‚Р В°РЎРѓРЎвЂљРЎРЏР Р…РЎС“РЎвЂљ fitPreview
         #    Р Р…Р В° Р Р†РЎРѓРЎР‹ РЎв‚¬Р С‘РЎР‚Р С‘Р Р…РЎС“ Р С—РЎР‚Р ВµР Р†РЎРЉРЎР‹ (РЎР‚Р ВµР С–РЎР‚Р ВµРЎРѓРЎРѓР С‘РЎРЏ Р’В«РЎС“Р В·Р С”Р В°РЎРЏ Р С”Р С•Р В»Р С•Р Р…Р С”Р В° Р Р†Р СР ВµРЎРѓРЎвЂљР С• Р СР С•Р В±Р С‘Р В»РЎРЉР Р…Р С•Р в„– РЎРѓРЎвЂљРЎР‚Р В°Р Р…Р С‘РЎвЂ РЎвЂ№Р’В»)
         pv = pg.evaluate(f"""(() => {{
-            const inner = document.querySelector('.react-flow__node[data-id="{page_id}"] .ir-preview-inner');
+            const inner = document.querySelector('.svelte-flow__node[data-id="{page_id}"] .ir-preview-inner');
             const art = inner.querySelector('div[class^="ir-"]');
             const r = art.getBoundingClientRect();
             return {{ innerW: inner.clientWidth, designW: Number(art.dataset.designWidth),
@@ -349,7 +349,7 @@ def main():
               pv["designW"] == 390 and abs(pv["rectW"] - pv["innerW"]) <= 2, str(pv))
 
         # 6) РЎР‚Р ВµР Т‘Р В°Р С”РЎвЂљР С•РЎР‚: Р С”Р Р…Р С•Р С—Р С”Р С‘ D/T/M РЎР‚Р ВµР В°Р В»РЎРЉР Р…Р С• Р СР ВµР Р…РЎРЏРЎР‹РЎвЂљ Р СР В°РЎвЂљР ВµРЎР‚Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎР‹ (1440/768/390)
-        pg.click(f'.react-flow__node[data-id="{edit3}"] .f-open-editor')
+        pg.click(f'.svelte-flow__node[data-id="{edit3}"] .f-open-editor')
         pg.wait_for_selector('.dna-editor .fe-canvas-inner [class^="ir-"]')
         pg.wait_for_timeout(500)
         open_vp = pg.evaluate("""(() => {

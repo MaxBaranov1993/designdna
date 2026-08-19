@@ -156,7 +156,7 @@ export function makeRfEdge(
     target: String(to.node),
     targetHandle: to.port,
   };
-  return { ...base, style: { stroke: WIRE_COLORS[edgeKindOf(nodes, base)], strokeWidth: 2 } };
+  return { ...base, style: `stroke: ${WIRE_COLORS[edgeKindOf(nodes, base)]}; stroke-width: 2;` };
 }
 
 function dataForStorage(type: NodeType, data: AnyNodeData): AnyNodeData {
@@ -308,6 +308,10 @@ export function payloadToRf(payload: LegacyGraphPayload): {
         id: String(raw.id),
         type: raw.type,
         position: { x: raw.x, y: raw.y },
+        // Bootstrap custom-node measurement after hydration; actual dimensions
+        // are updated by Svelte Flow's ResizeObserver.
+        initialWidth: 260,
+        initialHeight: 120,
         data: dataForRuntime(raw.type, raw.data),
       }) as FlowNode,
   );
@@ -345,10 +349,12 @@ export function parseLegacyPayload(input: unknown): LegacyGraphPayload {
     autoId = Math.max(autoId, id) + 1;
     let data =
       r.data && typeof r.data === "object" ? (r.data as AnyNodeData) : defaultData(r.type as NodeType);
-    // РЎРѕС…СЂР°РЅС‘РЅРЅС‹Рµ РґРѕ Р·Р°РєСЂРµРїР»РµРЅРёСЏ РјР°СЂС€СЂСѓС‚РёР·Р°С†РёРё РіСЂР°С„С‹ РјРѕРіР»Рё С…СЂР°РЅРёС‚СЊ qwen/kimi/etc.
-    // РќРѕРІР°СЏ СЃС…РµРјР° РІСЃРµРіРґР° РІРµРґС‘С‚ AI-РЅРѕРґС‹ С‡РµСЂРµР· OpenRouter Рё РµРіРѕ ROUTING РїРѕ СЂРѕР»Рё.
+    // Сохраняем поддерживаемый выбор аккаунта. Неизвестные значения из старых
+    // графов возвращаем к переносимому auto-маршруту.
     if (r.type === "generator") {
-      data = { ...data, provider: "openrouter" } as AnyNodeData;
+      const saved = String((data as { provider?: unknown }).provider || "");
+      const provider = new Set(["auto", "codex", "kimi", "openai"]).has(saved) ? saved : "auto";
+      data = { ...data, provider } as AnyNodeData;
     }
     data = dataForRuntime(r.type as NodeType, data);
     nodes.push({ id, type: r.type as NodeType, x: Number(r.x) || 0, y: Number(r.y) || 0, data });

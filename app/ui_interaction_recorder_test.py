@@ -47,7 +47,7 @@ def main():
 
         page.evaluate("localStorage.clear()")
         page.reload()
-        page.wait_for_selector(".react-flow__pane")
+        page.wait_for_selector(".svelte-flow__pane")
         page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         edit_id = int(page.evaluate("window.GraphDev.add('edit', 40, 40).id"))
         recorder_id = int(page.evaluate("window.GraphDev.add('recorder', 560, 40).id"))

@@ -91,11 +91,11 @@ def main() -> None:
         node_id = page.evaluate("window.GraphDev.add('edit', 80, 60).id")
         page.evaluate("(v) => window.GraphDev.setIR(v.id, v.ir)", {"id": node_id, "ir": SOURCE_IR})
         page.wait_for_function(
-            "(id) => document.querySelector(`.react-flow__node[data-id=\"${id}\"] .edit-preview-card .ir-preview`)?.offsetHeight < 100",
+            "(id) => document.querySelector(`.svelte-flow__node[data-id=\"${id}\"] .edit-preview-card .ir-preview`)?.offsetHeight < 100",
             arg=node_id,
         )
         compact_preview = page.evaluate("""(id) => {
-          const preview=document.querySelector(`.react-flow__node[data-id="${id}"] .edit-preview-card .ir-preview`);
+          const preview=document.querySelector(`.svelte-flow__node[data-id="${id}"] .edit-preview-card .ir-preview`);
           const art=preview.querySelector('[data-design-width]');
           return {previewHeight:preview.offsetHeight, renderedHeight:art.getBoundingClientRect().height};
         }""", node_id)
@@ -103,7 +103,7 @@ def main() -> None:
               compact_preview["previewHeight"] < 100 and
               abs(compact_preview["previewHeight"] - compact_preview["renderedHeight"]) <= 2,
               json.dumps(compact_preview))
-        page.click(f'.react-flow__node[data-id="{node_id}"] .f-open-editor')
+        page.click(f'.svelte-flow__node[data-id="{node_id}"] .f-open-editor')
         page.wait_for_selector('.dna-editor [data-ir-path="children.2.children.0"]')
 
         desktop = page.evaluate("""() => ({

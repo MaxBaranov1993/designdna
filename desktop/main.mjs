@@ -7,7 +7,8 @@ import { pythonWorkerEnvironment, pythonWorkerSpec } from "./lib/runtime-paths.m
 import { CredentialStore } from "./services/credential-store.mjs";
 import { SettingsStore } from "./services/settings-store.mjs";
 import { getProviderStatus } from "./services/provider-status.mjs";
-import { chatWithKimi } from "./services/provider-chat.mjs";
+import { chatWithProvider } from "./services/provider-router.mjs";
+import { getValidToken, importFromCli, kimiAccountStatus } from "./services/kimi-account.mjs";
 import { CodexAppServer } from "./services/codex-app-server.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
 import { canonicalMcpSpec, createMcpActivationApprover } from "./services/mcp-activation-approval.mjs";
@@ -131,13 +132,27 @@ function registerIpc() {
     productionTransport: "ipc+stdio",
   }));
   handleTrusted("api:request", async (_event, request) => {
-    // Keep the OpenRouter credential inside the trusted main/sidecar boundary.
+    // Keep provider credentials inside the trusted main/sidecar boundary.
     // Reconfigure before every API call so credential rotation and worker
-    // restarts take effect without exposing the secret to the renderer.
+    // restarts take effect without exposing the secrets to the renderer.
+    let kimiApiKey = "";
+    if (credentials.has("kimi")) {
+      // Best-effort: a token refresh failure must not break the API request;
+      // the worker just runs without a Kimi key until re-import/re-login.
+      try {
+        kimiApiKey = await getValidToken(credentials);
+      } catch (error) {
+        console.warn(`Kimi token unavailable for api:request: ${error.message}`);
+      }
+    }
     await pythonWorker.request("runtime.configure", {
-      openrouterApiKey: credentials.get("openrouter") || "",
+      openaiApiKey: credentials.get("openai") || "",
+      kimiApiKey,
     });
-    return pythonWorker.request("http.request", validateApiRequest(request));
+    // Source Import / generation pipelines legitimately take minutes
+    // (Playwright captures × viewports, font downloads, LLM steps) — give the
+    // HTTP call a wider budget than the default 120s worker timeout.
+    return pythonWorker.request("http.request", validateApiRequest(request), 600_000);
   });
   handleTrusted("repo-canvas:snapshot", () => repoCanvasWorker.request("snapshot"));
   handleTrusted("repo-canvas:check", () => repoCanvasWorker.request("check"));
@@ -145,17 +160,16 @@ function registerIpc() {
   handleTrusted("providers:status", async () => ({
     runtimes: await getProviderStatus(),
     credentials: credentials.status(),
+    kimiAccount: kimiAccountStatus(credentials),
     encryptedStorage: credentials.available(),
   }));
   handleTrusted("providers:credentials", () => ({ configured: credentials.status(), encryptedStorage: credentials.available() }));
   handleTrusted("providers:set-credential", (_event, { provider, value }) => credentials.set(provider, value));
   handleTrusted("providers:delete-credential", (_event, { provider }) => credentials.delete(provider));
-  handleTrusted("providers:chat", async (_event, { provider, messages, temperature }) => {
-    if (provider === "codex") return { content: await codex.chat(messages, { timeoutMs: 180_000 }) };
-    if (provider === "kimi") {
-      return { content: await chatWithKimi({ apiKey: credentials.get("kimi"), messages, temperature }) };
-    }
-    throw new Error(`Unsupported generator provider: ${provider}`);
+  // Import OAuth tokens from the Kimi CLI; returns account status only, never the tokens.
+  handleTrusted("providers:import-kimi-cli", (_event) => importFromCli(credentials));
+  handleTrusted("providers:chat", async (_event, { provider, messages, temperature, profile }) => {
+    return chatWithProvider({ provider, messages, temperature, profile, codex, credentials });
   });
   handleTrusted("codex:account", () => codex.account());
   handleTrusted("codex:login", async (_event, { type }) => {

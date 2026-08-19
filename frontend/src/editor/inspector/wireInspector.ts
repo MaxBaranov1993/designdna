@@ -28,7 +28,7 @@ function wireActs(root: HTMLElement) {
         "align-left": "alignLeft", "align-center-h": "alignCenterH", "align-right": "alignRight",
         "align-top": "alignTop", "align-center-v": "alignCenterV", "align-bottom": "alignBottom",
         "distribute-h": "distributeH", "distribute-v": "distributeV", "reset-frame": "resetFrame",
-        "stretch-width": "stretchWidth",
+        "stretch-width": "stretchWidth", "group": "groupSelection", "ungroup": "ungroupSelection",
       };
       const fn = map[(btn as HTMLElement).dataset.act!];
       if (fn && typeof g[fn] === "function") (g[fn] as () => void)();
@@ -46,6 +46,7 @@ function wireSingle(root: HTMLElement) {
   const f = () => (geo() ? geo()!.frameOf(ref) : {}) || {};
 
   root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-pi]").forEach((inp) => {
+    if (inp.hasAttribute("data-direct-change")) return;
     inp.addEventListener("change", () => {
       const g2 = geo();
       if (!g2) return;
@@ -103,7 +104,17 @@ function wireSingle(root: HTMLElement) {
       if (!g2) return;
       const key = inp.dataset.styleText!;
       const value = String(inp.value || "").trim();
-      g2.setNodeStyle({ [key]: !value || value.toLowerCase() === "transparent" ? null : value });
+      if (!value || value.toLowerCase() === "transparent") {
+        g2.setNodeStyle({ [key]: null });
+        return;
+      }
+      const short = value.match(/^#([0-9a-f]{3})$/i);
+      const normalized = short
+        ? "#" + short[1].split("").map((char) => char + char).join("").toLowerCase()
+        : /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null;
+      if (!normalized) return;
+      inp.value = normalized;
+      g2.setNodeStyle({ [key]: normalized });
     });
   });
   root.querySelectorAll<HTMLElement>("[data-clear-style]").forEach((btn) => {

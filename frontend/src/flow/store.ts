@@ -1,6 +1,4 @@
-import { create } from "zustand";
-import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
-import type { EdgeChange, NodeChange } from "@xyflow/react";
+import { createStore } from "zustand/vanilla";
 
 import { api, extractStyleDna as extractStyleDnaApi } from "./api";
 import type {
@@ -114,8 +112,7 @@ export interface FlowStoreState {
   addPageInput: (id: number) => void;
   removePageInput: (id: number, name: string) => void;
   reorderPageInputs: (id: number, from: number, to: number) => void;
-  onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
-  onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
+  syncFromCanvas: (nodes: FlowNode[], edges: FlowEdge[]) => void;
   loadGraph: (payload: LegacyGraphPayload) => void;
   clearGraph: () => void;
   setView: (v: LegacyView) => void;
@@ -242,7 +239,7 @@ function summarizeStyleDna(tokens: Record<string, unknown>): string {
 
 let localDirtySinceInit = false;
 
-export const useFlowStore = create<FlowStoreState>()((set, get) => ({
+export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   nodes: hydratePageBridgeNodes(initialActiveGraph.nodes, initialChannels),
   edges: initialActiveGraph.edges,
   view: initialActiveGraph.view,
@@ -258,11 +255,19 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     const id = get().nextId;
     const rx = Math.round(x);
     const ry = Math.round(y);
+    const data = defaultData(type);
+    if (type === "generator" && typeof window !== "undefined" && window.designDNA) {
+      (data as { provider: string }).provider = "codex";
+    }
     const node = {
       id: String(id),
       type,
       position: { x: rx, y: ry },
-      data: defaultData(type),
+      // Svelte Flow keeps a custom node hidden until it has initial dimensions.
+      // ResizeObserver replaces these bootstrap values with the real rendered size.
+      initialWidth: 260,
+      initialHeight: 120,
+      data,
     } as FlowNode;
     set({ nodes: [...get().nodes, node], nextId: id + 1 });
     return { id, type, x: rx, y: ry, data: node.data };
@@ -518,13 +523,20 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     const styleHint = styleRaw ? String(styleRaw) : undefined;
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
     const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as Record<string, unknown>) : undefined;
-    const provider = data.provider === "kimi" ? "kimi" : "codex";
+    const selectedProvider = data.provider === "kimi" || data.provider === "openai"
+      ? data.provider
+      : data.provider === "auto" ? "auto" : "codex";
+    const desktop = window.designDNA;
+    const provider = desktop
+      ? selectedProvider
+      : selectedProvider === "codex" ? "auto" : selectedProvider;
     const count = Math.max(1, Math.min(2, Number(data.count) || 1));
-    const providerLabel = provider === "kimi" ? "Kimi K2.5" : "GPT Codex";
+    const providerLabel = provider === "kimi"
+      ? "Kimi K3"
+      : provider === "openai" ? "GPT-5.6-sol" : provider === "auto" ? "Auto route" : "GPT Codex";
     get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
     get().setBusy(id, true);
     try {
-      const desktop = window.designDNA;
       const request = {
         brief,
         count,
@@ -535,13 +547,14 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       };
       let res: GenerateResp;
       if (!desktop) {
-        res = await api<GenerateResp>("/api/generate", { ...request, provider: "openrouter" });
+        res = await api<GenerateResp>("/api/generate", request);
       } else {
+        const desktopProvider: "auto" | "codex" | "kimi" | "openai" = provider;
         const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true });
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы генератора");
         const rawOutputs: string[] = [];
         for (const prompt of prepared.prompts) {
-          const answer = await desktop.providers.chat(provider, prompt.messages, styleHint ? 0.3 : 0.8);
+          const answer = await desktop.providers.chat(desktopProvider, prompt.messages, styleHint ? 0.3 : 0.8);
           rawOutputs.push(answer.content);
         }
         res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs });
@@ -654,11 +667,11 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
           get().setStatus(id, "Загрузите скриншот элемента", "err");
           return;
         }
-        get().setStatus(id, "Скриншот → pixel capture через OpenRouter…");
+        get().setStatus(id, "Скриншот → pixel capture через подключённый аккаунт…");
         const res = await api<ReproduceResp>("/api/reproduce", {
           image: data.image,
           url: "",
-          provider: "openrouter",
+          provider: "auto",
         });
         const ir = res.ir || null;
         const dna = extractStyleDna(ir, null);
@@ -769,13 +782,13 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       tokens ? "Style DNA:\n" + JSON.stringify(tokens) : "",
       reference ? "Reference IR:\n" + JSON.stringify(reference).slice(0, 9000) : "",
     ].filter(Boolean).join("\n\n");
-    get().setStatus(id, `Derive: ${data.count} вариант(а) через OpenRouter…`);
+    get().setStatus(id, `Derive: ${data.count} вариант(а) через подключённый аккаунт…`);
     get().setBusy(id, true);
     try {
       const res = await api<GenerateResp>("/api/generate", {
         brief: prompt,
         count: data.count,
-        provider: "openrouter",
+        provider: "auto",
         styleHint: styleHint || undefined,
         tokens: tokens && typeof tokens === "object" ? tokens : undefined,
       });
@@ -817,6 +830,7 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       const payload: Record<string, unknown> = {
         ir,
         prompt: data.prompt || "",
+        provider: data.provider || "auto",
         mask: data.mask,
       };
       if (tokensRaw && typeof tokensRaw === "object") payload.tokens = tokensRaw;
@@ -834,9 +848,9 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     }
   },
 
-  /* Quality Pass: независимый judge оценивает IR, затем при необходимости
-   * запускает адресный repair и повторную оценку. Все LLM-вызовы внутри
-   * endpoint идут только через OpenRouter; UI получает объяснимый scorecard. */
+  /* Quality Pass: FastAPI prepares and validates every step. In desktop mode
+   * judge/repair/rejudge run through whichever account is explicitly connected;
+   * standalone web keeps the server-side provider compatibility path. */
   runQualityPass: async (id) => {
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
@@ -850,13 +864,35 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
     get().setStatus(id, "Quality Pass: judge + проверка правил… 30–120 сек");
     get().setBusy(id, true);
     try {
-      const res = await api<QualityPassResp>("/api/quality-pass", {
+      const request = {
         ir,
         brief: data.brief,
         min_score: data.minScore,
         repair: data.repair,
         rejudge: data.repair,
-      });
+      };
+      const desktop = window.designDNA;
+      let res: QualityPassResp;
+      if (!desktop) {
+        res = await api<QualityPassResp>("/api/quality-pass", request);
+      } else {
+        const outputs: Partial<Record<"judge" | "repair" | "rejudge", string>> = {};
+        const seen = new Set<string>();
+        for (;;) {
+          res = await api<QualityPassResp>("/api/quality-pass/codex-step", { ...request, outputs });
+          const pending = res.pending;
+          if (!pending) break;
+          if (seen.has(pending.stage) || seen.size >= 3) {
+            throw new Error("Quality Pass: некорректная последовательность этапов Codex");
+          }
+          seen.add(pending.stage);
+          get().setStatus(id, `Quality Pass: ${pending.stage} через подключённый аккаунт…`);
+          const answer = await desktop.providers.chat(
+            "auto", pending.messages, pending.stage === "repair" ? 0.25 : 0.2, pending.profile,
+          );
+          outputs[pending.stage] = answer.content;
+        }
+      }
       const score = Number(res.scorecard?.score ?? 0);
       const passed = Boolean(res.passed);
       const repairNote = res.repair?.applied ? " · repair применён" : "";
@@ -1184,28 +1220,17 @@ export const useFlowStore = create<FlowStoreState>()((set, get) => ({
       }),
     }));
   },
-  onNodesChange: (changes) => {
-    // удаление ноды ведём сами, чтобы гарантированно снять рёбра (аналог removeNode)
-    for (const ch of changes) {
-      if (ch.type === "remove") get().deleteNode(Number(ch.id));
-    }
-    const rest = changes.filter((ch) => ch.type !== "remove");
-    if (!rest.length) return;
-    set({ nodes: applyNodeChanges(rest, get().nodes) });
-    // конец drag: округляем позицию (legacy Math.round, nodes.js:336-337)
-    for (const ch of rest) {
-      if (ch.type === "position" && ch.dragging === false && ch.position) {
-        get().moveNode(Number(ch.id), ch.position.x, ch.position.y);
-      }
-    }
-  },
-
-  onEdgesChange: (changes) => {
-    for (const ch of changes) {
-      if (ch.type === "remove") get().deleteEdge(ch.id);
-    }
-    const rest = changes.filter((ch) => ch.type !== "remove");
-    if (rest.length) set({ edges: applyEdgeChanges(rest, get().edges) });
+  /* Синхронизация из канваса Svelte Flow (bind:nodes/bind:edges — библиотека
+   * сама применяет drag/select/remove к массивам). Удаления ведём через
+   * deleteNode/deleteEdge — та же зачистка рёбер/статусов, что в legacy
+   * onNodesChange; округление позиции на dragend — в moveNode из onnodedragstop. */
+  syncFromCanvas: (nextNodes, nextEdges) => {
+    const removedNodes = get().nodes.filter((n) => !nextNodes.some((x) => x.id === n.id));
+    const removedEdges = get().edges.filter((e) => !nextEdges.some((x) => x.id === e.id));
+    for (const n of removedNodes) get().deleteNode(Number(n.id));
+    for (const e of removedEdges) get().deleteEdge(e.id);
+    const alive = new Set(get().edges.map((e) => e.id));
+    set({ nodes: nextNodes, edges: nextEdges.filter((e) => alive.has(e.id)) });
   },
 
   /* Зеркало load() (nodes.js:1202-1219): полная замена графа из payload */

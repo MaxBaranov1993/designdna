@@ -48,7 +48,7 @@ def main() -> None:
           sourceRegistry:{a:{id:'a',kind:'url',label:'Imported header',symbol:'A'},b:{id:'b',kind:'manual',label:'Custom hero',symbol:'B'}},
           nodeSources:{'source-a::header':'a','source-b::hero':'b'}
         })""", {"id": edit_id, "ir": document()})
-        page.click(f'.react-flow__node[data-id="{edit_id}"] .f-open-editor')
+        page.click(f'.svelte-flow__node[data-id="{edit_id}"] .f-open-editor')
         page.click('[data-act="semantic-select"]')
         page.locator(".fe-semantic-input input").fill("кнопки из Custom hero")
         page.click('[data-act="run-semantic-select"]')

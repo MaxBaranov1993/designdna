@@ -6,6 +6,7 @@ import { IRRenderer } from "../engine/renderer";
 import { GeoEdit } from "../engine/geoedit";
 import { IRHistory } from "../engine/irhistory";
 import { DesignAIFontCatalog } from "../engine/fontCatalog";
+import type { AssistPreview, AssistRequest } from "./aiTypes";
 
 /* ---------- DOM-refs: регистрируются React-компонентами ---------- */
 
@@ -126,9 +127,10 @@ let dnaPanelState: {
   normalization?: any;
   tailwindText?: string;
 } | null = null;
+let aiAssistState: AssistPreview | null = null;
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void } = {
+let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void; setAiBusy: (busy: boolean) => void; setAiError: (error: string) => void; setAiPreview: (preview: AssistPreview | null) => void } = {
   setTool: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
@@ -139,6 +141,9 @@ let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspe
   setResponsiveProposal: () => {},
   setIntentLocksOpen: () => {},
   setSemanticSelectOpen: () => {},
+  setAiBusy: () => {},
+  setAiError: () => {},
+  setAiPreview: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -423,6 +428,14 @@ export function setTool(tool: string) {
   if (!state) return;
   state.tool = tool;
   ui.setTool(tool);
+  const shapeTools = ["rect", "ellipse", "line", "image"];
+  dom.overlay?.querySelectorAll<HTMLElement>(".fe-rail [data-tool]").forEach((button) => {
+    const buttonTool = button.dataset.tool;
+    button.classList.toggle(
+      "active",
+      buttonTool === tool || (buttonTool === "rect" && shapeTools.includes(tool)),
+    );
+  });
   if (dom.canvas) dom.canvas.style.cursor = tool === "hand" ? "grab" : "default";
   // синхронизируем geoedit: создание rect/text/frame и hand-панорама
   if (state.geo && state.geo.getTool() !== tool) {
@@ -469,6 +482,7 @@ function activateViewport(viewport: string, width: number) {
   if (state.ir && state.ir.responsive) {
     state.ir.meta = state.ir.meta || {};
     state.ir.meta.activeViewport = viewport;
+    persistDraft();
   }
   dom.viewports?.querySelectorAll("[data-viewport]").forEach((b) => {
     b.classList.toggle("active", (b as HTMLElement).dataset.viewport === viewport);
@@ -872,6 +886,18 @@ export function applyResponsiveProposal(proposal: ResponsiveAutopilotProposal) {
 /* ---------- открытие / закрытие ---------- */
 
 /** Фаза 1 открытия: состояние + не-layout части (вызывается из store.openEditor). */
+/** Re-apply toolbar state when a lazily mounted Svelte toolbar registers its DOM refs. */
+export function syncToolbarState() {
+  if (!state) return;
+  const responsive = !!(state.ir && state.ir.responsive && state.ir.responsive.viewports);
+  if (dom.viewports) dom.viewports.hidden = !responsive;
+  if (dom.responsiveSep) dom.responsiveSep.hidden = !responsive;
+  dom.viewports?.querySelectorAll("[data-viewport]").forEach((button) => {
+    button.classList.toggle("active", (button as HTMLElement).dataset.viewport === state?.viewport);
+  });
+  if (dom.viewportWidth) dom.viewportWidth.value = String(state.previewWidth);
+}
+
 export function open(
   node: NodeShim,
   onSave: (ir: any, expectedRevision: number) => boolean,
@@ -922,12 +948,7 @@ export function open(
   const viewportMeta = responsive ? st.ir.responsive.viewports[st.viewport] : null;
   st.previewWidth =
     (viewportMeta && viewportMeta.width ? viewportMeta.width : st.ir.frame && st.ir.frame.width) || 1440;
-  if (dom.viewports) dom.viewports.hidden = !responsive;
-  if (dom.responsiveSep) dom.responsiveSep.hidden = !responsive;
-  dom.viewports?.querySelectorAll("[data-viewport]").forEach((b) => {
-    b.classList.toggle("active", (b as HTMLElement).dataset.viewport === st.viewport);
-  });
-  if (dom.viewportWidth) dom.viewportWidth.value = String(st.previewWidth);
+  syncToolbarState();
   if (dom.search) dom.search.value = "";
   return true;
 }
@@ -948,6 +969,28 @@ function upgradeSourceNesting(ir: any) {
   if (!ir || !Array.isArray(ir.tree)) return false;
   let changed = false;
   ir.tree.forEach((sec: any) => {
+    if (sec?.type === "contact-form") {
+      sec.props = sec.props || {};
+      if (!sec.props.submit || typeof sec.props.submit !== "object") {
+        sec.props.submit = { type: "button", role: "form-submit" };
+        changed = true;
+      }
+      (Array.isArray(sec.props.fields) ? sec.props.fields : []).forEach((field: any) => {
+        if (!field || typeof field !== "object") return;
+        if (!field.parts || typeof field.parts !== "object") {
+          field.parts = {};
+          changed = true;
+        }
+        if (!field.parts.label || typeof field.parts.label !== "object") {
+          field.parts.label = { type: "text", role: "form-label" };
+          changed = true;
+        }
+        if (!field.parts.control || typeof field.parts.control !== "object") {
+          field.parts.control = { type: "input", role: "form-control" };
+          changed = true;
+        }
+      });
+    }
     if (!sec || !(sec.type === "source-block" || sec.variant === "dom-capture") || !Array.isArray(sec.children)) return;
     if (sec.children.some((ch: any) => ch && Array.isArray(ch.children) && ch.children.length)) return;
     const sf = sec.frame || ir.frame || {};
@@ -1499,6 +1542,95 @@ function sanitizeIrForPost(ir: any) {
   return clone;
 }
 
+function selectedSourceKeys(mode: "single" | "selection") {
+  if (!state) return [];
+  const selected = mode === "single" ? state.sel.slice(0, 1) : state.sel;
+  return selected.map((sel) => {
+    const active = activeSelectionNode(sel);
+    const canonical = canonicalNode(sel.ref);
+    const sourceKey = active?.sourceKey || canonical?.sourceKey;
+    if (sourceKey) return sourceKey;
+    if (sel.ref.secIdx == null) return "";
+    const suffix = sel.ref.path ? "/" + sel.ref.path.replace(/\./g, "/") : "";
+    return `editor:/tree/${sel.ref.secIdx}${suffix}`;
+  }).filter(Boolean);
+}
+
+function friendlyAiError(detail: string) {
+  console.warn("AI assist rejected:", detail);
+  if (/outside|вне текущего выделения|не найден элемент/i.test(detail)) return "Выделение изменилось. Выберите объект ещё раз.";
+  if (/schema|невалидн|структурн|children|sourceKey|patch|команд/i.test(detail)) return "AI предложил небезопасную правку. Уточните запрос.";
+  if (/429|лимит|очередь/i.test(detail)) return "AI занят. Повторите через минуту.";
+  return "Не удалось подготовить результат. Попробуйте уточнить запрос.";
+}
+
+async function postAiAssist(payload: Record<string, unknown>) {
+  const response = await fetch("/api/editor/assist", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+  return data;
+}
+
+export async function requestAiAssist(request: AssistRequest) {
+  if (!state || !state.sel.length) return;
+  const prompt = request.prompt.trim();
+  if (!prompt) { ui.setAiError("Опишите, что нужно изменить"); return; }
+  ui.setAiBusy(true);
+  ui.setAiError("");
+  aiAssistState = null;
+  ui.setAiPreview(null);
+  const payload: Record<string, unknown> = {
+    ir: sanitizeIrForPost(state.ir), prompt, action: request.action,
+    scope: { sourceKeys: selectedSourceKeys(request.scopeMode), viewport: state.viewport },
+    constraints: { allowStructure: false, allowContent: true, allowStyle: true, allowFrame: true },
+  };
+  try {
+    let data: any;
+    if (window.designDNA?.providers && request.action !== "adapt") {
+      const prepared = await postAiAssist({ ...payload, prepareOnly: true });
+      if (Array.isArray(prepared.messages)) {
+        const answer = await window.designDNA.providers.chat("auto", prepared.messages, 0.2);
+        data = await postAiAssist({ ...payload, rawOutput: answer.content });
+      } else data = prepared;
+    } else data = await postAiAssist(payload);
+    if (!data?.previewIr || !Array.isArray(data.ops)) throw new Error("AI вернул неполный preview");
+    aiAssistState = data as AssistPreview;
+    ui.setAiPreview(aiAssistState);
+    dom.overlay?.classList.add("ai-previewing");
+    rerenderEditorCanvas();
+  } catch (error) {
+    ui.setAiError(friendlyAiError(error instanceof Error ? error.message : String(error)));
+  } finally {
+    ui.setAiBusy(false);
+  }
+}
+
+export function cancelAiAssist() {
+  const hadPreview = !!aiAssistState;
+  aiAssistState = null;
+  dom.overlay?.classList.remove("ai-previewing");
+  ui.setAiPreview(null);
+  ui.setAiError("");
+  if (hadPreview) rerenderEditorCanvas();
+}
+
+export function applyAiAssist() {
+  if (!state || !aiAssistState?.previewIr || aiAssistState.validation?.schema === false) return false;
+  pushHistory();
+  state.ir = deepClone(aiAssistState.previewIr);
+  state.activeIR = null;
+  aiAssistState = null;
+  dom.overlay?.classList.remove("ai-previewing");
+  ui.setAiPreview(null);
+  persistDraft();
+  rerenderEditorCanvas();
+  return true;
+}
+
 /* ---------- сохранение / история ---------- */
 
 function save() {
@@ -1513,7 +1645,10 @@ export function close(saved?: boolean) {
   if (state && state.geo) { state.geo.destroy(); state.geo = null; }
   state = null;
   dnaPanelState = null;
+  aiAssistState = null;
+  dom.overlay?.classList.remove("ai-previewing");
   dom.dnaPanel?.classList.remove("open");
+  if (dom.overlay) dom.overlay.style.display = "none";
   ui.setOpen(false);
 }
 
@@ -1993,7 +2128,7 @@ function attachGeoEdit() {
 
 function propsElements(sec: any) {
   const p = sec.props || {};
-  const items: { path: string; label: string; icon: string }[] = [];
+  const items: { path: string; label: string; icon: string; depth?: number }[] = [];
   if (p.logoText) items.push({ path: "props.logoText", label: "logo: " + p.logoText, icon: "◆" });
   if (p.links) p.links.forEach((l: any, i: number) => items.push({ path: `props.links.${i}`, label: "link: " + (l.label || ""), icon: "→" }));
   if (p.cta && p.cta.text) items.push({ path: "props.cta", label: "cta: " + p.cta.text, icon: "⬛" });
@@ -2007,6 +2142,21 @@ function propsElements(sec: any) {
   if (p.tiers) p.tiers.forEach((tier: any, i: number) => items.push({ path: `props.tiers.${i}`, label: "tier: " + tier.name, icon: "$" }));
   if (p.items && sec.type === "faq") p.items.forEach((item: any, i: number) => items.push({ path: `props.items.${i}`, label: "faq: " + String(item.question).slice(0, 20), icon: "?" }));
   if (p.items && sec.type === "stats") p.items.forEach((item: any, i: number) => items.push({ path: `props.items.${i}`, label: "stat: " + item.value, icon: "#" }));
+  if (p.fields) p.fields.forEach((field: any, i: number) => {
+    const base = `props.fields.${i}`;
+    items.push({
+      path: base,
+      label: "поле: " + String(field.label || field.placeholder || `№ ${i + 1}`).slice(0, 24),
+      icon: "◇",
+    });
+    items.push({ path: `${base}.parts.label`, label: "подпись", icon: "T", depth: 3 });
+    items.push({ path: `${base}.parts.control`, label: "поле ввода", icon: "▭", depth: 3 });
+  });
+  if (sec.type === "contact-form" && (p.submit || p.submitText)) items.push({
+    path: "props.submit",
+    label: "кнопка: " + String(p.submit?.text ?? p.submitText ?? "Отправить").slice(0, 24),
+    icon: "▰",
+  });
   return items;
 }
 
@@ -2022,7 +2172,7 @@ export function renderLayers() {
     addLayerItem(tree, sec, { secIdx: si, path: null }, 1, secLabel);
     // props-элементы
     propsElements(sec).forEach((pe) => {
-      addLayerItem(tree, getByPath(sec, pe.path) || {}, { secIdx: si, path: pe.path }, 2, pe.label, pe.icon);
+      addLayerItem(tree, getByPath(sec, pe.path) || {}, { secIdx: si, path: pe.path }, pe.depth || 2, pe.label, pe.icon);
     });
     renderChildLayers(tree, sec.children || [], si, "children", 2);
   });
@@ -2222,7 +2372,13 @@ export function rerenderEditorCanvas() {
   // Fingerprint-gated persistence converts that into a new Zustand identity.
   persistDraft();
   const inner = dom.canvasInner;
-  IRRenderer.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
+  let canvasIr = buildActiveIR();
+  if (aiAssistState?.previewIr) {
+    canvasIr = aiAssistState.previewIr?.responsive?.viewports
+      ? IRRenderer.materializeResponsiveIR(aiAssistState.previewIr, state.viewport)
+      : aiAssistState.previewIr;
+  }
+  IRRenderer.renderIR(inner, canvasIr, { fit: false });
   applyLayerFlags();
   applyTransform();
   attachGeoEdit();

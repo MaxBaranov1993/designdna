@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const PROVIDERS = new Set(["openai", "kimi", "openrouter"]);
+const PROVIDERS = new Set(["openai", "kimi"]);
 
 export class CredentialStore {
   constructor({ userDataPath, safeStorage }) {
@@ -54,7 +54,13 @@ export class CredentialStore {
     if (!fs.existsSync(this.file)) return {};
     if (!this.available()) throw new Error("OS credential encryption is unavailable");
     const encrypted = fs.readFileSync(this.file);
-    return JSON.parse(this.safeStorage.decryptString(encrypted));
+    const data = JSON.parse(this.safeStorage.decryptString(encrypted));
+    // Migration: the openrouter provider was removed; silently drop any stored key.
+    if ("openrouter" in data) {
+      delete data.openrouter;
+      this.#write(data);
+    }
+    return data;
   }
 
   #write(value) {

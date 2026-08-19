@@ -170,10 +170,10 @@ def main():
 
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
-        pg.click(".react-flow__pane", button="right", position={"x": 520, "y": 100})
+        pg.click(".svelte-flow__pane", button="right", position={"x": 520, "y": 100})
         pg.wait_for_selector("#ctx-menu")
         check("menu has 14 current node types", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
         check("old nodes are removed from menu", pg.locator("#ctx-menu .ctx-item[data-type='clone']").count() == 0
@@ -194,7 +194,23 @@ def main():
         for sel in (".n-prompt", ".n-sourceimport", ".n-styledna", ".n-derive", ".n-edit", ".n-mix", ".n-qualitypass"):
             pg.wait_for_selector(sel)
         check("created 8 nodes", pg.evaluate("window.GraphDev.state().nodes.length === 8"))
-        check("Generator shows Opus 5 OpenRouter route", pg.locator(".n-generator .generator-model-row").inner_text().strip() == "Opus 5 · OpenRouter")
+        check("Browser Generator shows automatic server route",
+              pg.locator(".n-generator .f-provider-select option:checked").inner_text().strip() == "Auto · server routing")
+        check("Browser Generator offers only portable routes",
+              pg.locator(".n-generator .f-provider-select option").evaluate_all(
+                  "els => els.map(e => e.value)") == ["auto", "kimi", "openai"])
+        check("New browser Generator stores auto",
+              pg.evaluate("""(() => {
+                  const n = window.GraphDev.state().nodes.find(x => x.type === 'generator');
+                  return window.GraphDev.node(n.id).data.provider;
+              })()""") == "auto")
+        pg.select_option(".n-generator .f-provider-select", "kimi")
+        pg.wait_for_timeout(500)
+        pg.reload()
+        pg.wait_for_selector(".n-generator .f-provider-select")
+        check("Generator provider survives reload",
+              pg.locator(".n-generator .f-provider-select").input_value() == "kimi")
+        pg.select_option(".n-generator .f-provider-select", "auto")
 
         old_add_rejected = pg.evaluate("""(() => {
             const before = window.GraphDev.state().nodes.length;
@@ -217,7 +233,7 @@ def main():
         check("Source Import exposes block + DNA ports", pg.locator(".n-sourceimport .port-row.out").count() == 2)
 
         check("connect prompt → generator", connect_types(pg, "prompt", "out", "generator", "prompt"))
-        check("connect generator → edit", connect_types(pg, "generator", "ir", "edit", "ir"))
+        check("connect generator → edit", connect_types(pg, "generator", "ir", "edit", "a"))
         check("connect Source Import tokens → Style DNA", connect_types(pg, "sourceimport", "tokens", "styledna", "tokens"))
         check("connect Style DNA → Derive", connect_types(pg, "styledna", "tokens", "derive", "tokens"))
         check("connect prompt → Derive", connect_types(pg, "prompt", "out", "derive", "prompt"))
@@ -232,7 +248,7 @@ def main():
 
         run_node_type(pg, "generator")
         pg.wait_for_selector('.n-generator .f-preview .ir-preview-inner div[class^="ir-"]', timeout=8000)
-        check("Generator uses OpenRouter role", CAPTURED.get("generate", [{}])[0].get("provider") == "openrouter")
+        check("Generator uses auto provider", CAPTURED.get("generate", [{}])[0].get("provider") == "auto")
         pg.wait_for_selector('.n-edit .f-preview .ir-preview-inner div[class^="ir-"]', timeout=5000)
 
         run_node_type(pg, "styledna")
@@ -262,7 +278,7 @@ def main():
 
         pg.wait_for_timeout(700)
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         check("after reload: current graph persists", pg.evaluate("window.GraphDev.state().nodes.length === 8"))
         check("after reload: old node types absent", pg.evaluate("""(() => {

@@ -6,14 +6,14 @@ DesignDNA is one product and one desktop runtime. Repo Canvas is a feature surfa
 
 ```mermaid
 flowchart TD
-  R["React renderer"] -->|"typed preload API"| E["Electron main"]
+  R["SvelteKit renderer"] -->|"typed preload API"| E["Electron main"]
   E -->|"JSONL over stdio"| P["Python ASGI runtime"]
   E -->|"JSONL over stdio"| C["Repo Canvas worker"]
   E -->|"JSON-RPC over stdio"| O["Codex app-server"]
   E --> M["MCP and provider adapters"]
 ```
 
-The production application opens no local HTTP port. Electron loads the compiled React bundle from disk. Existing FastAPI routes run in-process through the ASGI protocol in `app/desktop_worker.py`, so the editor keeps its current contracts without Uvicorn or `localhost`. The browser/FastAPI launch remains a development and compatibility mode.
+The production application opens no local HTTP port. Electron loads the compiled SvelteKit bundle from disk. Existing FastAPI routes run in-process through the ASGI protocol in `app/desktop_worker.py`, so the editor keeps its current contracts without Uvicorn or `localhost`. The browser/FastAPI launch remains a development and compatibility mode.
 
 ## Trust boundaries
 

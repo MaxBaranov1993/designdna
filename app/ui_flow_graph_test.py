@@ -82,11 +82,11 @@ def main():
 
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
 
         # правый клик по канвасу — контекстное меню создания ноды
-        pg.click(".react-flow__pane", button="right", position={"x": 320, "y": 300})
+        pg.click(".svelte-flow__pane", button="right", position={"x": 320, "y": 300})
         check("контекстное меню открыто", pg.is_visible("#ctx-menu"))
         # 14 типов: AI-ноды + Interaction Recorder + Motion Editor + Page Bridge.
         check("в меню 14 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
@@ -98,10 +98,10 @@ def main():
         check("меню закрылось после выбора", not pg.is_visible("#ctx-menu"))
 
         # Референс и Генератор — правее (с запасом: нода Референса ~300px высотой)
-        pg.click(".react-flow__pane", button="right", position={"x": 700, "y": 180})
+        pg.click(".svelte-flow__pane", button="right", position={"x": 700, "y": 180})
         pg.click("#ctx-menu .ctx-item[data-type='reference']")
         pg.wait_for_selector(".n-reference")
-        pg.click(".react-flow__pane", button="right", position={"x": 760, "y": 620})
+        pg.click(".svelte-flow__pane", button="right", position={"x": 760, "y": 620})
         pg.click("#ctx-menu .ctx-item[data-type='generator']")
         pg.wait_for_selector(".n-generator")
         check("созданы 3 ноды", pg.evaluate("window.GraphDev.state().nodes.length === 3"))
@@ -120,7 +120,7 @@ def main():
         drag_wire(pg, ".n-prompt .pp-out-out", ".n-generator .pp-in-prompt")
         drag_wire(pg, ".n-reference .pp-out-out", ".n-generator .pp-in-style")
         check("протянуты 2 провода", pg.evaluate("window.GraphDev.state().edges.length === 2"))
-        check("провода видны на канвасе", pg.evaluate("document.querySelectorAll('.react-flow__edge').length === 2"))
+        check("провода видны на канвасе", pg.evaluate("document.querySelectorAll('.svelte-flow__edge').length === 2"))
         edges_ok = pg.evaluate("""(() => {
             const st = window.GraphDev.state();
             const byType = (t) => st.nodes.find(n => n.type === t);
@@ -144,7 +144,7 @@ def main():
         # автосейв (debounce 300 мс) и перезагрузка — граф должен сохраниться
         pg.wait_for_timeout(600)
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.wait_for_selector(".n-prompt")
         pg.wait_for_selector(".n-generator")

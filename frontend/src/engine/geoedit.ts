@@ -331,6 +331,10 @@
       const node = irNodeAt(ref);
       if (ref.secIdx == null) return "артборд";
       if (ref.path == null) return "section · " + (node ? node.type : "?");
+      if (/^props\.fields\.\d+$/.test(ref.path)) return "поле формы · " + String(node && (node.label || node.placeholder) || "без названия");
+      if (/^props\.fields\.\d+\.parts\.label$/.test(ref.path)) return "подпись поля";
+      if (/^props\.fields\.\d+\.parts\.control$/.test(ref.path)) return "поле ввода";
+      if (ref.path === "props.submit") return "кнопка формы · " + String(node && node.text || "Отправить");
       if (ref.path && ref.path.startsWith("props.")) return ref.path.replace("props.", "");
       return node && node.type ? node.type : "узел";
     }
@@ -1798,7 +1802,13 @@
     function onDragUp(e) {
       overlay().removeEventListener("pointermove", onDragMove);
       try { overlay().releasePointerCapture(e.pointerId); } catch (_) {}
+      // pointermove is throttled through requestAnimationFrame. A fast release can
+      // happen before that frame runs; cancelling it used to drop the last delta,
+      // leaving `moved=false` and turning a real Shift/Alt drag into a plain click.
+      // Apply the pointer-up position synchronously before finalizing the gesture.
       if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      pendingPointer = e;
+      applyDragFrame();
       const d = drag;
       drag = null;
       pendingPointer = null;
@@ -2277,9 +2287,11 @@
           if (v === null || v === "") delete style[k];
           else style[k] = v;
         }
-        // text-узлы не должны нести фон/рамку/тень — это всегда родительский контейнер
+        // Фон текстового слоя — самостоятельное редактируемое свойство: пользователь
+        // ожидает, что «Заливка» работает и у heading/text. Рамка и тень по-прежнему
+        // остаются свойствами контейнера, чтобы не ломать модель вложенности.
         if (node.type === "text" || node.type === "heading") {
-          for (const k of ["background", "borderColor", "borderWidth", "borderRadius", "boxShadow"]) delete style[k];
+          for (const k of ["borderColor", "borderWidth", "borderRadius", "boxShadow"]) delete style[k];
           delete node.fill;
         }
         if (node.type === "rect") {

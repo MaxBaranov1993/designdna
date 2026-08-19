@@ -53,7 +53,8 @@ IR = {
     ],
 }
 
-NODE_IR = ("window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir")
+NODE_IR = ("(() => { const d = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data;"
+           " return d._editorDraft?.ir || d.ir; })()")
 
 
 def check(name, cond, extra=""):
@@ -78,7 +79,7 @@ def main():
             sys.exit(2)
         pg.evaluate("localStorage.clear()")
         pg.reload()
-        pg.wait_for_selector(".react-flow__pane")
+        pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
