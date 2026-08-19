@@ -101,16 +101,8 @@ def main():
         def click_path(path):
             target = page.locator(f'.fe-layer[data-key="0:{path}"]')
             assert target.count() == 1, f"missing layer {path}"
-            for _ in range(30):
-                target.click()
-                page.wait_for_timeout(150)
-                if page.locator("[data-ai-inspector]").count(): break
-                # Layer rows are draggable; headless Chromium can swallow the
-                # pointer click as the beginning of a drag gesture.
-                target.dispatch_event("click")
-                page.wait_for_timeout(150)
-                if page.locator("[data-ai-inspector]").count(): break
-            assert page.locator("[data-ai-inspector]").count() == 1, path
+            target.click()
+            page.wait_for_selector("[data-ai-inspector]")
 
         # Every concrete element kind exposes the same clear AI entry point.
         for path in ["children.0", "children.0.children.0", "children.0.children.1", "children.0.children.2", "children.0.children.3", "children.0.children.4.children.1"]:

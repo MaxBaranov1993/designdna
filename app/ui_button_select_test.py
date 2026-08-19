@@ -55,7 +55,8 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        pg = browser.new_page(viewport={"width": 1700, "height": 800})
+        context = browser.new_context(viewport={"width": 1700, "height": 800})
+        pg = context.new_page()
         for _ in range(30):
             try:
                 pg.goto(BASE + "/flow", timeout=2000)
@@ -130,7 +131,14 @@ def main():
             )
             check("find button selected", bool(selected) and "button" in (selected or "").lower(), str(selected))
 
+        pg.locator('.dna-editor [data-act="close"]').click()
+        pg.close(run_before_unload=False)
+        context.close()
         browser.close()
+
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
 
     if FAILS:
         print("FAILS:", FAILS)

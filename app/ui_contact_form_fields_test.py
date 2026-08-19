@@ -45,7 +45,8 @@ IR = {
 def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1700, "height": 1000})
+        context = browser.new_context(viewport={"width": 1700, "height": 1000})
+        page = context.new_page()
         page.on("pageerror", lambda error: print("PAGE ERROR:", error))
         page.set_default_timeout(6000)
         for _ in range(30):
@@ -56,7 +57,7 @@ def main():
                 time.sleep(1)
         page.evaluate("localStorage.clear()")
         page.reload()
-        page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'", timeout=15000)
         edit_id = page.evaluate("window.GraphDev.add('edit', 60, 40).id")
         page.evaluate("(v) => window.GraphDev.setIR(v.id, v.ir)", {"id": edit_id, "ir": IR})
         page.click(f'.svelte-flow__node[data-id="{edit_id}"] .f-open-editor')
@@ -151,6 +152,9 @@ def main():
             page.locator(".manual-controls summary").click()
         SCREENSHOT.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(SCREENSHOT), full_page=True, timeout=20000)
+        page.locator('.dna-editor [data-act="close"]').click()
+        page.close(run_before_unload=False)
+        context.close()
         browser.close()
     print("ALL CONTACT FORM FIELD CHECKS PASSED")
 

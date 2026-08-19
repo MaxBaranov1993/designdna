@@ -12,12 +12,17 @@
 
   const tick = $derived($editorUi.inspectorTick);
 
-  const sess = $derived.by(() => {
+  // The controller mutates selection inside the long-lived session object.
+  // Depend on the explicit revision instead of the session reference, whose
+  // identity does not change and can otherwise leave the empty state mounted.
+  const selCount = $derived.by(() => {
     void $editorUi.inspectorTick;
-    return ctl.getSession();
+    return ctl.getSession()?.sel.length ?? 0;
   });
-  const selCount = $derived(sess ? sess.sel.length : 0);
-  const source = $derived(selCount ? ctl.sourceForSelection() : null);
+  const source = $derived.by(() => {
+    void $editorUi.inspectorTick;
+    return selCount ? ctl.sourceForSelection() : null;
+  });
   let contentRoot = $state<HTMLDivElement | null>(null);
   const wiredRoots = new WeakSet<HTMLDivElement>();
 
