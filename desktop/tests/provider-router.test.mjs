@@ -3,7 +3,10 @@ import test from "node:test";
 import { chatWithProvider } from "../services/provider-router.mjs";
 
 const messages = [{ role: "user", content: "Judge this IR" }];
-const credentials = (configured = []) => ({ has: (provider) => configured.includes(provider) });
+const credentials = (configured = []) => ({
+  has: (provider) => configured.includes(provider),
+  get: (provider) => configured.includes(provider) ? `test-${provider}-credential` : null,
+});
 
 test("auto provider prefers an authenticated Codex account and keeps its profile", async () => {
   let options;
@@ -56,6 +59,32 @@ test("auto provider fails clearly when no account is connected", async () => {
     }),
     /Нет подключённого AI-аккаунта/,
   );
+});
+
+test("an unavailable saved OpenAI route falls back to the connected Codex account", async () => {
+  const result = await chatWithProvider({
+    provider: "openai",
+    messages,
+    credentials: credentials(),
+    codex: {
+      account: async () => ({ account: { email: "user@example.com" } }),
+      chat: async () => '{"score":91}',
+    },
+  });
+  assert.equal(result.provider, "codex");
+  assert.equal(result.content, '{"score":91}');
+});
+
+test("an unavailable saved Kimi route falls back to a configured OpenAI account", async () => {
+  const result = await chatWithProvider({
+    provider: "kimi",
+    messages,
+    credentials: credentials(["openai"]),
+    codex: { account: async () => ({ account: null }) },
+    openaiChat: async () => '{"score":89}',
+  });
+  assert.equal(result.provider, "openai");
+  assert.equal(result.content, '{"score":89}');
 });
 
 test("explicit Codex route does not fall back after a chat error", async () => {

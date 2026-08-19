@@ -98,6 +98,10 @@
   // this pass replaces those values with their real, content-driven size and
   // initializes handle bounds for connections.
   $effect(() => {
+    // Do not rescan the whole controlled array at pointer frequency. Node ids
+    // cannot change during a drag; the final dragstop commit re-enables this
+    // effect and performs any pending measurement once.
+    if (nodeDragActive) return;
     const ids = nodes.map((node) => node.id);
     const signature = ids.join("|");
     if (signature === measuredNodeIds) return;
@@ -215,6 +219,7 @@
 
 <div
   class="h-full w-full"
+  class:flow-drag-active={nodeDragActive}
   role="presentation"
   onmousemove={(e) => updateSnapTarget(e.clientX, e.clientY)}
   onmouseleave={clearSnapTarget}
@@ -223,6 +228,7 @@
     bind:nodes
     bind:edges
     {nodeTypes}
+    onlyRenderVisibleElements={true}
     onconnect={onConnect}
     {isValidConnection}
     minZoom={0.1}
@@ -267,7 +273,9 @@
     }}
     onnodedragstop={({ nodes: dragged }) => {
       // конец drag: округляем позицию (legacy Math.round, nodes.js:336-337)
-      for (const n of dragged) useFlowStore.getState().moveNode(Number(n.id), n.position.x, n.position.y);
+      useFlowStore.getState().moveNodes(
+        dragged.map((node) => ({ id: Number(node.id), x: node.position.x, y: node.position.y })),
+      );
       nodeDragActive = false;
     }}
     {initialViewport}

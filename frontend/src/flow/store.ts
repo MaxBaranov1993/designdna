@@ -50,6 +50,15 @@ import type {
   MotionNodeData,
 } from "./types";
 
+function friendlyProviderError(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error);
+  const detail = raw.replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, "").trim();
+  if (/OpenAI API key|Kimi не подключён|нет подключённого AI-аккаунта|Agents\s*→\s*Connections/i.test(detail)) {
+    return "AI-аккаунт не подключён. Откройте Agents → Connections.";
+  }
+  return detail || "AI не ответил. Повторите запуск.";
+}
+
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
 export type NodeStatus = { text: string; kind?: "ok" | "err" };
 
@@ -78,6 +87,7 @@ export interface FlowStoreState {
     y: number,
   ) => { id: number; type: NodeType; x: number; y: number; data: AnyNodeData };
   moveNode: (id: number, x: number, y: number) => void;
+  moveNodes: (updates: Array<{ id: number; x: number; y: number }>) => void;
   connect: (from: LegacyEdgeEndpoint, to: LegacyEdgeEndpoint) => boolean;
   deleteNode: (id: number) => void;
   deleteEdge: (edgeId: string) => void;
@@ -275,11 +285,19 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   /* Позиция ноды в мировых px (legacy Math.round на dragend, nodes.js:336-337) */
   moveNode: (id, x, y) => {
-    const sid = String(id);
+    get().moveNodes([{ id, x, y }]);
+  },
+
+  /* Multi-select drag is one user action: publish one array and wake autosave once. */
+  moveNodes: (updates) => {
+    const positions = new Map(
+      updates.map(({ id, x, y }) => [String(id), { x: Math.round(x), y: Math.round(y) }]),
+    );
     set({
-      nodes: get().nodes.map((n) =>
-        n.id === sid ? { ...n, position: { x: Math.round(x), y: Math.round(y) } } : n,
-      ),
+      nodes: get().nodes.map((node) => {
+        const position = positions.get(node.id);
+        return position ? { ...node, position } : node;
+      }),
     });
   },
 
@@ -568,7 +586,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote}`, "ok");
       get().propagate(id);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = friendlyProviderError(e);
       get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Генератор: " + msg, "error");
     } finally {
