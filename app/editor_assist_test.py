@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from editor_assist import AssistRequest, editor_assist
+from ui_contact_form_fields_test import IR as CONTACT_FORM_IR
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "frame-example.json"
@@ -33,12 +34,13 @@ def _contains(node, source_key):
     return any(item["sourceKey"] == source_key for item in _nodes({"tree": [node]}))
 
 
-def _request(document, scope, commands):
+def _request(document, scope, commands, constraints=None):
     return editor_assist(AssistRequest(
         ir=document,
         prompt="Измени только выделение",
         action="custom",
         scope={"sourceKeys": scope, "viewport": "desktop"},
+        constraints=constraints or {},
         rawOutput=json.dumps({"summary": "Готово", "commands": commands}),
     ))
 
@@ -87,3 +89,217 @@ def test_ai_cannot_escape_single_selection():
     }])
     assert getattr(result, "status_code", None) == 422
     assert "вне текущего выделения" in result.body.decode("utf-8")
+
+
+def test_empty_scope_is_rejected_instead_of_allowing_the_whole_document():
+    base = _base()
+    target = _nodes(base)[2]
+    result = _request(base, [], [{
+        "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
+        "changes": {"style": {"opacity": 0.5}}, "reason": "must reject",
+    }])
+    assert getattr(result, "status_code", None) == 422
+    assert "выберите хотя бы один элемент" in result.body.decode("utf-8")
+
+
+def test_nested_group_scope_keeps_specific_child_and_excludes_parent():
+    base = _base()
+    parent = next(node for node in _nodes(base) if node.get("children"))
+    child = parent["children"][0]
+    result = _request(base, [parent["sourceKey"], child["sourceKey"]], [{
+        "command": "update", "targetSourceKey": child["sourceKey"], "viewport": "shared",
+        "changes": {"style": {"opacity": 0.75}}, "reason": "specific child",
+    }])
+    assert isinstance(result, dict), getattr(result, "body", result)
+    assert any(warning["code"] == "nested_scope_normalized" for warning in result["warnings"])
+    changed = next(node for node in _nodes(result["previewIr"]) if node["sourceKey"] == child["sourceKey"])
+    assert changed["style"]["opacity"] == 0.75
+
+    rejected = _request(base, [parent["sourceKey"], child["sourceKey"]], [{
+        "command": "update", "targetSourceKey": parent["sourceKey"], "viewport": "shared",
+        "changes": {"style": {"opacity": 0.5}}, "reason": "too broad",
+    }])
+    assert getattr(rejected, "status_code", None) == 422
+
+
+def test_content_and_color_constraints_are_enforced_server_side():
+    base = _base()
+    target = _nodes(base)[2]
+    no_color = _request(base, [target["sourceKey"]], [{
+        "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
+        "changes": {"style": {"color": "#123456"}}, "reason": "color",
+    }], {"allowColor": False})
+    assert getattr(no_color, "status_code", None) == 422
+    assert "цвета" in no_color.body.decode("utf-8")
+
+    no_content = _request(base, [target["sourceKey"]], [{
+        "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
+        "changes": {"text": "Новый текст"}, "reason": "content",
+    }], {"allowContent": False})
+    assert getattr(no_content, "status_code", None) == 422
+    assert "текста" in no_content.body.decode("utf-8")
+
+    no_props = _request(base, [target["sourceKey"]], [{
+        "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
+        "changes": {"props": {"submitText": "Новая кнопка"}}, "reason": "content in props",
+    }], {"allowContent": False})
+    assert getattr(no_props, "status_code", None) == 422
+
+
+def test_scalar_prop_selection_is_ai_editable_and_stays_scoped():
+    base = _base()
+    key = "editor:/tree/0/props/heading"
+    before_subheading = base["tree"][0]["props"]["subheading"]
+    result = _request(base, [key], [{
+        "command": "update", "targetSourceKey": key, "viewport": "shared",
+        "changes": {"text": "Новый заголовок"}, "reason": "edit selected prop",
+    }])
+    assert isinstance(result, dict), getattr(result, "body", result)
+    assert result["previewIr"]["tree"][0]["props"]["heading"] == "Новый заголовок"
+    assert result["previewIr"]["tree"][0]["props"]["subheading"] == before_subheading
+
+    blocked = _request(base, [key], [{
+        "command": "update", "targetSourceKey": key, "viewport": "shared",
+        "changes": {"text": "Нельзя"}, "reason": "content disabled",
+    }], {"allowContent": False})
+    assert getattr(blocked, "status_code", None) == 422
+
+    viewport_only = _request(base, [key], [{
+        "command": "update", "targetSourceKey": key, "viewport": "mobile",
+        "changes": {"text": "Только mobile"}, "reason": "must reject",
+    }])
+    assert getattr(viewport_only, "status_code", None) == 422
+
+    structured_value = _request(base, [key], [{
+        "command": "update", "targetSourceKey": key, "viewport": "shared",
+        "changes": {"text": {"unsafe": True}}, "reason": "must reject",
+    }])
+    assert getattr(structured_value, "status_code", None) == 422
+
+    adapt = editor_assist(AssistRequest(
+        ir=base, prompt="Адаптируй", action="adapt",
+        scope={"sourceKeys": [key], "viewport": "desktop"}, constraints={},
+    ))
+    assert getattr(adapt, "status_code", None) == 422
+
+
+def test_partial_or_ambiguous_scope_is_rejected():
+    base = _base()
+    target = _nodes(base)[2]
+    command = [{
+        "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
+        "changes": {"style": {"opacity": 0.8}}, "reason": "exact scope",
+    }]
+    partial = _request(base, [target["sourceKey"], "missing:key"], command)
+    assert getattr(partial, "status_code", None) == 422
+
+    duplicate = _base()
+    nodes = _nodes(duplicate)
+    nodes[3]["sourceKey"] = nodes[2]["sourceKey"]
+    ambiguous = _request(duplicate, [nodes[2]["sourceKey"]], command)
+    assert getattr(ambiguous, "status_code", None) == 422
+
+
+def test_structured_props_cannot_bypass_structure_lock():
+    base = _base()
+    target = _nodes(base)[0]
+    result = _request(base, [target["sourceKey"]], [{
+        "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
+        "changes": {"props": {"ctaPrimary": {"label": "Заменить"}}}, "reason": "must reject",
+    }])
+    assert getattr(result, "status_code", None) == 422
+    assert "структурные props" in result.body.decode("utf-8")
+
+
+def test_intent_locks_and_embedded_constraints_are_enforced():
+    base = _base()
+    base["version"] = "1.1"
+    for index, section in enumerate(base["tree"]):
+        section["id"] = f"section-{index}"
+    target = _nodes(base)[0]
+    base["constraints"] = {
+        "intentLocks": ["appearance", "content", "geometry"],
+        "allowedColors": ["#ffffff"], "maxTextLength": 3,
+        "minWidth": 100, "maxWidth": 200,
+    }
+    key = target["sourceKey"]
+    cases = [
+        ({"style": {"color": "#123456"}}, "Intent Lock"),
+        ({"props": {"heading": "длинный текст"}}, "Intent Lock"),
+        ({"frame": {"width": 300}}, "Intent Lock"),
+    ]
+    for changes, expected in cases:
+        result = _request(base, [key], [{
+            "command": "update", "targetSourceKey": key, "viewport": "shared",
+            "changes": changes, "reason": "locked",
+        }])
+        assert getattr(result, "status_code", None) == 422
+        assert expected in result.body.decode("utf-8")
+
+
+def test_color_constraint_covers_shadows_but_color_is_independent_from_style():
+    base = _base()
+    target = _nodes(base)[2]
+    key = target["sourceKey"]
+    shadow = _request(base, [key], [{
+        "command": "update", "targetSourceKey": key, "viewport": "shared",
+        "changes": {"style": {"boxShadow": "0 0 0 10px #ff0000"}}, "reason": "color",
+    }], {"allowColor": False})
+    assert getattr(shadow, "status_code", None) == 422
+
+    color_only = _request(base, [key], [{
+        "command": "update", "targetSourceKey": key, "viewport": "shared",
+        "changes": {"style": {"color": "#123456"}}, "reason": "color only",
+    }], {"allowStyle": False, "allowColor": True})
+    assert isinstance(color_only, dict), getattr(color_only, "body", color_only)
+
+
+def test_contact_form_nested_parts_validate_and_are_independently_ai_editable():
+    base = copy.deepcopy(CONTACT_FORM_IR)
+    form = base["tree"][0]
+    form["id"] = "contact-form"
+    form["variant"] = "stacked"
+    form["props"]["submit"] = {"type": "button", "role": "form-submit"}
+    for field in form["props"]["fields"]:
+        field["parts"] = {
+            "label": {"type": "text", "role": "form-label"},
+            "control": {"type": "input", "role": "form-control"},
+        }
+    label_key = "editor:/tree/0/props/fields/0/parts/label"
+    result = _request(base, [label_key], [{
+        "command": "update", "targetSourceKey": label_key, "viewport": "shared",
+        "changes": {"text": "Товар"}, "reason": "selected label",
+    }])
+    assert isinstance(result, dict), getattr(result, "body", result)
+    field = result["previewIr"]["tree"][0]["props"]["fields"][0]
+    assert field["parts"]["label"]["text"] == "Товар"
+    assert field["label"] == "Название товара"
+
+    submit_key = "editor:/tree/0/props/submit"
+    submit = _request(base, [submit_key], [{
+        "command": "update", "targetSourceKey": submit_key, "viewport": "shared",
+        "changes": {"style": {"background": "#112233"}}, "reason": "selected submit",
+    }])
+    assert isinstance(submit, dict), getattr(submit, "body", submit)
+    assert submit["previewIr"]["tree"][0]["props"]["submit"]["style"]["background"] == "#112233"
+
+    control_key = "editor:/tree/0/props/fields/0/parts/control"
+    control = _request(base, [control_key], [{
+        "command": "update", "targetSourceKey": control_key, "viewport": "shared",
+        "changes": {"value": "Новая подсказка"}, "reason": "visible control text",
+    }])
+    assert isinstance(control, dict), getattr(control, "body", control)
+    assert control["previewIr"]["tree"][0]["props"]["fields"][0]["parts"]["control"]["placeholder"] == "Новая подсказка"
+
+
+def test_scaffold_ops_are_not_shown_or_counted_as_high_impact():
+    base = _base()
+    target = _nodes(base)[2]
+    target.pop("style", None)
+    result = _request(base, [target["sourceKey"]], [{
+        "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
+        "changes": {"style": {"opacity": 0.8}}, "reason": "single visible change",
+    }])
+    assert isinstance(result, dict), getattr(result, "body", result)
+    assert len(result["ops"]) == 1 and result["ops"][0]["path"].endswith("/opacity")
+    assert not any(warning["code"] == "high_impact" for warning in result["warnings"])

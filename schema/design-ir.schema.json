@@ -564,7 +564,8 @@
           "maxItems": 8,
           "items": { "$ref": "#/$defs/inputElement" }
         },
-        "submitText": { "type": "string" }
+        "submitText": { "type": "string" },
+        "submit": { "$ref": "#/$defs/editorPart" }
       }
     },
     "newsletterProps": {
@@ -699,7 +700,30 @@
         "label": { "type": "string" },
         "placeholder": { "type": "string" },
         "inputType": { "enum": ["text", "email", "tel", "textarea", "select", "checkbox"] },
-        "required": { "type": "boolean" }
+        "required": { "type": "boolean" },
+        "parts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "label": { "$ref": "#/$defs/editorPart" },
+            "control": { "$ref": "#/$defs/editorPart" }
+          }
+        }
+      }
+    },
+    "editorPart": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "role": { "type": "string" },
+        "text": { "type": "string" },
+        "placeholder": { "type": "string" },
+        "sourceKey": { "type": "string", "maxLength": 500 },
+        "frame": { "$ref": "#/$defs/frame" },
+        "style": { "$ref": "#/$defs/elementStyle" },
+        "responsive": { "$ref": "#/$defs/responsiveOverrides" },
+        "styleBindings": { "$ref": "#/$defs/styleBindings" }
       }
     }
   }

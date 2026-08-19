@@ -35,13 +35,38 @@
     const next = [...padding]; next[index] = value;
     geo?.setFrameProps({ padding: next });
   }
-  function run(action: AssistAction, text: string) { void ctl.requestAiAssist({ action, prompt: text, scopeMode }); }
+  function valueLabel(value: unknown) {
+    if (value === undefined) return "—";
+    if (value === null) return "пусто";
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    return text.length > 48 ? text.slice(0, 45) + "…" : text;
+  }
+  function propertyLabel(path: string) {
+    const key = path.split("/").filter(Boolean).at(-1) || path;
+    const names: Record<string, string> = {
+      background: "Заливка", color: "Цвет текста", fontSize: "Размер шрифта", fontWeight: "Вес шрифта",
+      fontFamily: "Шрифт", padding: "Внутренние отступы", gap: "Расстояние", width: "Ширина", height: "Высота",
+      x: "Позиция X", y: "Позиция Y", align: "Выравнивание", justify: "Распределение", direction: "Направление",
+      text: "Текст", title: "Заголовок", placeholder: "Подсказка", opacity: "Прозрачность", radius: "Скругление",
+    };
+    return names[key] || key;
+  }
+  function run(action: AssistAction, text: string) {
+    confirmed = false;
+    ctl.setAiAssistFormState({ prompt: text, action, scopeMode, constraints: { allowContent, allowStyle, allowFrame, allowColor } });
+    void ctl.requestAiAssist({
+      action, prompt: text, scopeMode,
+      constraints: { allowContent, allowStyle, allowFrame, allowColor },
+    });
+  }
 
   const sess = ctl.getSession();
   const sels: GeoSel[] = sess?.sel || [];
   const geo = sess?.geo || null;
   const first = sels[0];
-  const node = first ? nodeOf(sess?.ir, first.ref) || {} : {};
+  const selectedValue = first ? nodeOf(sess?.ir, first.ref) : undefined;
+  const node = selectedValue ?? {};
+  const isScalarProp = first?.ref.path?.startsWith("props.") && (selectedValue == null || typeof selectedValue !== "object");
   const isFormField = !!first?.ref.path && /^props\.fields\.\d+$/.test(first.ref.path);
   const isFormLabel = !!first?.ref.path && /^props\.fields\.\d+\.parts\.label$/.test(first.ref.path);
   const isFormControl = !!first?.ref.path && /^props\.fields\.\d+\.parts\.control$/.test(first.ref.path);
@@ -54,32 +79,65 @@
   const padding = paddingOf(frame.padding);
   const fill = hex(style.background || node.fill, "#ffffff");
   const textColor = hex(style.color, "#111111");
-  let scopeMode = $state<AssistScopeMode>(sels.length > 1 ? "selection" : "single");
-  let prompt = $state("");
+  const savedAiForm = ctl.getAiAssistFormState();
+  let scopeMode = $state<AssistScopeMode>(sels.length > 1 ? (ctl.hasExplicitAiAssistScopeMode() ? savedAiForm.scopeMode : "selection") : "single");
+  let prompt = $state(savedAiForm.prompt);
+  let allowContent = $state(savedAiForm.constraints.allowContent);
+  let allowStyle = $state(isScalarProp ? false : savedAiForm.constraints.allowStyle);
+  let allowFrame = $state(isScalarProp ? false : savedAiForm.constraints.allowFrame);
+  let allowColor = $state(isScalarProp ? false : savedAiForm.constraints.allowColor);
+  let confirmed = $state(false);
   const busy = $derived($editorUi.aiBusy);
   const error = $derived($editorUi.aiError);
   const preview = $derived($editorUi.aiPreview);
+  const scope = $derived(ctl.getAiScopeView(scopeMode));
+  const highImpact = $derived(!!preview && (preview.ops.length > 8 || preview.warnings.some((warning) => warning.code === "high_impact")));
 </script>
 
 <div class="ai-inspector" data-ai-inspector>
   <section class="ai-scope" aria-label="Область изменения">
-    <div class="ai-scope-copy"><span class="ai-scope-kicker">AI изменит</span><strong>{scopeMode === "selection" ? `группу · ${sels.length}` : first?.label}</strong></div>
+    <div class="ai-scope-copy"><span class="ai-scope-kicker">AI изменит</span><strong>{scopeMode === "selection" ? `выбранные объекты · ${scope.items.length}` : scope.items[0]?.label}</strong></div>
     {#if sels.length > 1}
-      <div class="ai-scope-switch"><button class:active={scopeMode === "single"} onclick={() => scopeMode = "single"}>Один</button><button class:active={scopeMode === "selection"} onclick={() => scopeMode = "selection"}>Группа</button></div>
+      <div class="ai-scope-switch"><button aria-pressed={scopeMode === "single"} class:active={scopeMode === "single"} onclick={() => { scopeMode = "single"; ctl.setAiAssistScopeMode(scopeMode); }}>Один</button><button aria-pressed={scopeMode === "selection"} class:active={scopeMode === "selection"} onclick={() => { scopeMode = "selection"; ctl.setAiAssistScopeMode(scopeMode); }}>Группа</button></div>
     {:else}<span class="ai-scope-lock">1 объект</span>{/if}
   </section>
+  <div class="ai-scope-list" aria-label="Элементы для AI">
+    {#each scope.items as item (item.sourceKey)}
+      <span class="ai-scope-chip">{item.label}{#if scopeMode === "selection" && scope.items.length > 1}<button title="Убрать из группы" aria-label={`Убрать ${item.label} из группы`} onclick={() => ctl.removeFromAiSelection(item.ref)}>×</button>{/if}</span>
+    {/each}
+  </div>
+  {#if scope.excluded.length}
+    <div class="ai-scope-warning">Контейнер «{scope.excluded.map((item) => item.label).join(", ")}» исключён: выбрана вложенная часть.</div>
+  {/if}
 
   <section class="ai-command-card">
     <div class="ai-command-title"><span class="ai-spark">✦</span><div><strong>Что изменить?</strong><small>Сначала покажу результат. Вы решаете, применять ли его.</small></div></div>
-    <textarea bind:value={prompt} disabled={busy || !!preview} placeholder="Например: сделай карточку компактнее и легче" aria-label="Задача для AI"></textarea>
-    <div class="ai-quick-row">{#each QUICK as item (item.action)}<button disabled={busy || !!preview} onclick={() => run(item.action, item.prompt)}>{item.label}</button>{/each}</div>
-    <button class="ai-run" disabled={busy || !!preview || !prompt.trim()} onclick={() => run("custom", prompt)}>{busy ? "Готовлю результат…" : "Показать результат"}</button>
+    <textarea bind:value={prompt} oninput={() => ctl.setAiAssistFormState({ prompt })} disabled={busy || !!preview} placeholder="Например: сделай карточку компактнее и легче" aria-label="Задача для AI"></textarea>
+    <fieldset class="ai-constraints" disabled={busy || !!preview}>
+      <legend>Можно менять</legend>
+      <label><input type="checkbox" bind:checked={allowContent} onchange={() => ctl.setAiAssistFormState({ constraints: { allowContent } as any })} /> Текст</label>
+      <label><input type="checkbox" bind:checked={allowStyle} disabled={isScalarProp} onchange={() => ctl.setAiAssistFormState({ constraints: { allowStyle } as any })} /> Стиль</label>
+      <label><input type="checkbox" bind:checked={allowFrame} disabled={isScalarProp} onchange={() => ctl.setAiAssistFormState({ constraints: { allowFrame } as any })} /> Размеры</label>
+      <label><input type="checkbox" bind:checked={allowColor} disabled={isScalarProp} onchange={() => ctl.setAiAssistFormState({ constraints: { allowColor } as any })} /> Цвета</label>
+    </fieldset>
+    {#if isScalarProp}<small>Для этого текстового свойства AI меняет только текст.</small>{:else}<div class="ai-quick-row">{#each QUICK as item (item.action)}<button disabled={busy || !!preview || !scope.items.length} onclick={() => run(item.action, item.prompt)}>{item.label}</button>{/each}</div>{/if}
+    <button class="ai-run" disabled={busy || !!preview || !prompt.trim() || !scope.items.length} onclick={() => run("custom", prompt)}>{busy ? "Готовлю результат…" : "Показать результат"}</button>
     {#if error}<div class="ai-error" role="alert">{error}</div>{/if}
     {#if preview}
-      <div class="ai-preview" data-ai-preview="ready">
+      <div class="ai-preview" data-ai-preview="ready" aria-live="polite">
         <div class="ai-preview-head"><span>Предпросмотр</span><b>{preview.ops.length} изм.</b></div><p>{preview.summary}</p>
         <small>{preview.ops.length ? "Изменения видны на холсте, исходник ещё не изменён." : "Макет уже соответствует запросу."}</small>
-        <div class="ai-preview-actions"><button data-ai-cancel onclick={ctl.cancelAiAssist}>Отменить</button><button class="primary" data-ai-apply disabled={!preview.ops.length} onclick={ctl.applyAiAssist}>Применить</button></div>
+        {#if preview.ops.length}
+          <details class="ai-diff" open>
+            <summary>Что изменится</summary>
+            <ol>{#each preview.ops.slice(0, 8) as op}<li><strong>{propertyLabel(op.path)}</strong><span>{valueLabel(op.before)} → {valueLabel(op.after)}</span>{#if op.reason}<small>{op.reason}</small>{/if}</li>{/each}</ol>
+            {#if preview.ops.length > 8}<div class="ai-diff-more">Ещё {preview.ops.length - 8} изменений</div>{/if}
+          </details>
+        {/if}
+        {#if highImpact}
+          <div class="ai-impact" role="alert"><strong>Много изменений</strong><span>Проверьте подсвеченные объекты и список перед применением.</span><label><input type="checkbox" bind:checked={confirmed} /> Я проверил изменения</label></div>
+        {/if}
+        <div class="ai-preview-actions"><button data-ai-cancel onclick={ctl.cancelAiAssist}>Отменить</button><button class="primary" data-ai-apply disabled={!preview.ops.length || (highImpact && !confirmed)} onclick={ctl.applyAiAssist}>Применить</button></div>
       </div>
     {/if}
   </section>

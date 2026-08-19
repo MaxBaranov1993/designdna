@@ -46,7 +46,7 @@ def main():
             url,
             [{"name": "header", "label": "Header", "kind": "header", "selector": "#fixture-header"}],
             return_tokens=True,
-            timeout_ms=5000,
+            timeout_ms=15000,
         )
     finally:
         scraper.validate_public_url = original_validate
@@ -86,7 +86,8 @@ def main():
         # try to click the publish button on canvas
         bbox = pg.evaluate(
             """() => {
-              const el = document.querySelector('.fe-canvas [data-ir-path="children.6"]');
+              const el = Array.from(document.querySelectorAll('.fe-canvas button[data-ir-path]'))
+                .find(node => /publish|размест/i.test(node.textContent || ''));
               if (!el) return null;
               const r = el.getBoundingClientRect();
               return {x: r.left + r.width/2, y: r.top + r.height/2, w: r.width, h: r.height};

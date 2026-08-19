@@ -1,6 +1,13 @@
 export type AssistAction = "adapt" | "overflow" | "content-fit" | "align" | "style" | "custom";
 export type AssistScopeMode = "single" | "selection";
 
+export interface AssistConstraints {
+  allowContent: boolean;
+  allowStyle: boolean;
+  allowFrame: boolean;
+  allowColor: boolean;
+}
+
 export interface AssistOp {
   op: "add" | "remove" | "replace";
   path: string;
@@ -22,4 +29,5 @@ export interface AssistRequest {
   prompt: string;
   action: AssistAction;
   scopeMode: AssistScopeMode;
+  constraints: AssistConstraints;
 }

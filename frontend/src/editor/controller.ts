@@ -128,6 +128,14 @@ let dnaPanelState: {
   tailwindText?: string;
 } | null = null;
 let aiAssistState: AssistPreview | null = null;
+let aiAssistBaseFingerprint: string | null = null;
+let aiAssistScopeModeTouched = false;
+let aiAssistFormState: AssistRequest = {
+  prompt: "",
+  action: "custom",
+  scopeMode: "single",
+  constraints: { allowContent: true, allowStyle: true, allowFrame: true, allowColor: true },
+};
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
 let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void; setAiBusy: (busy: boolean) => void; setAiError: (error: string) => void; setAiPreview: (preview: AssistPreview | null) => void } = {
@@ -151,6 +159,27 @@ export function bindUi(hooks: typeof ui) {
 
 export function isActive() {
   return !!state;
+}
+
+export function getAiAssistFormState(): AssistRequest {
+  return deepClone(aiAssistFormState);
+}
+
+export function setAiAssistFormState(next: Partial<AssistRequest>) {
+  aiAssistFormState = {
+    ...aiAssistFormState,
+    ...next,
+    constraints: { ...aiAssistFormState.constraints, ...(next.constraints || {}) },
+  };
+}
+
+export function setAiAssistScopeMode(scopeMode: AssistRequest["scopeMode"]) {
+  aiAssistScopeModeTouched = true;
+  setAiAssistFormState({ scopeMode });
+}
+
+export function hasExplicitAiAssistScopeMode() {
+  return aiAssistScopeModeTouched;
 }
 
 const SOURCE_COLORS = ["#4F7CFF", "#F97316", "#10B981", "#A855F7", "#EC4899", "#06B6D4", "#EAB308", "#EF4444"];
@@ -904,6 +933,13 @@ export function open(
   onClose: (saved: boolean) => void,
   sourceContext?: { registry?: Record<string, any>; nodeSources?: Record<string, string>; layoutEvidence?: any[] },
 ) {
+  aiAssistState = null;
+  aiAssistBaseFingerprint = null;
+  aiAssistScopeModeTouched = false;
+  aiAssistFormState = {
+    prompt: "", action: "custom", scopeMode: "single",
+    constraints: { allowContent: true, allowStyle: true, allowFrame: true, allowColor: true },
+  };
   const restoredDraft = node.draft && node.draft.ir ? node.draft : null;
   const upstreamRevision = node.currentRevision ? node.currentRevision() : 0;
   const startingIr = deepClone(restoredDraft ? restoredDraft.ir : node.data.ir);
@@ -1542,10 +1578,8 @@ function sanitizeIrForPost(ir: any) {
   return clone;
 }
 
-function selectedSourceKeys(mode: "single" | "selection") {
-  if (!state) return [];
-  const selected = mode === "single" ? state.sel.slice(0, 1) : state.sel;
-  return selected.map((sel) => {
+function sourceKeyForSelection(sel: GeoSel) {
+  if (!state) return "";
     const active = activeSelectionNode(sel);
     const canonical = canonicalNode(sel.ref);
     const sourceKey = active?.sourceKey || canonical?.sourceKey;
@@ -1553,11 +1587,42 @@ function selectedSourceKeys(mode: "single" | "selection") {
     if (sel.ref.secIdx == null) return "";
     const suffix = sel.ref.path ? "/" + sel.ref.path.replace(/\./g, "/") : "";
     return `editor:/tree/${sel.ref.secIdx}${suffix}`;
-  }).filter(Boolean);
+}
+
+function isAncestorRef(parent: GeoRef, child: GeoRef) {
+  if (parent.secIdx == null) return child.secIdx != null;
+  if (parent.secIdx !== child.secIdx) return false;
+  if (parent.path == null) return child.path != null;
+  return !!child.path && child.path.startsWith(parent.path + ".");
+}
+
+export function getAiScopeView(mode: "single" | "selection") {
+  if (!state) return { items: [], excluded: [] };
+  const selected = mode === "single" ? state.sel.slice(0, 1) : state.sel;
+  const excluded = mode === "selection"
+    ? selected.filter((candidate) => selected.some((other) => candidate !== other && isAncestorRef(candidate.ref, other.ref)))
+    : [];
+  const items = selected.filter((candidate) => !excluded.includes(candidate));
+  const map = (sel: GeoSel) => ({ label: sel.label || "Объект", ref: sel.ref, sourceKey: sourceKeyForSelection(sel) });
+  return { items: items.map(map).filter((item) => item.sourceKey), excluded: excluded.map(map) };
+}
+
+function selectedSourceKeys(mode: "single" | "selection") {
+  return getAiScopeView(mode).items.map((item) => item.sourceKey);
+}
+
+export function removeFromAiSelection(ref: GeoRef) {
+  if (!state?.geo) return;
+  const key = refKeyOf(ref);
+  const refs = state.sel.filter((sel) => refKeyOf(sel.ref) !== key).map((sel) => sel.ref);
+  if (refs.length) state.geo.selectMulti(refs);
 }
 
 function friendlyAiError(detail: string) {
   console.warn("AI assist rejected:", detail);
+  if (/AI_STALE|изменился во время AI/i.test(detail)) return "Макет или выделение изменились во время работы AI. Запустите запрос ещё раз — ручные правки сохранены.";
+  if (/Intent Lock|allowedColors|maxTextLength|защищ[её]н|ограничен/i.test(detail)) return "Эта часть объекта защищена ограничениями. Измените разрешения или выберите другой элемент.";
+  if (/OpenAI API key|Kimi не подключён|нет подключённого AI-аккаунта|Agents\s*→\s*Connections/i.test(detail)) return "AI-аккаунт не подключён. Откройте Agents → Connections.";
   if (/outside|вне текущего выделения|не найден элемент/i.test(detail)) return "Выделение изменилось. Выберите объект ещё раз.";
   if (/schema|невалидн|структурн|children|sourceKey|patch|команд/i.test(detail)) return "AI предложил небезопасную правку. Уточните запрос.";
   if (/429|лимит|очередь/i.test(detail)) return "AI занят. Повторите через минуту.";
@@ -1582,11 +1647,16 @@ export async function requestAiAssist(request: AssistRequest) {
   ui.setAiBusy(true);
   ui.setAiError("");
   aiAssistState = null;
+  aiAssistBaseFingerprint = null;
   ui.setAiPreview(null);
+  setAiAssistFormState(request);
+  const baseSessionId = state.sessionId;
+  const baseFingerprint = JSON.stringify(sanitizeIrForPost(state.ir));
+  const requestScopeKeys = selectedSourceKeys(request.scopeMode);
   const payload: Record<string, unknown> = {
     ir: sanitizeIrForPost(state.ir), prompt, action: request.action,
-    scope: { sourceKeys: selectedSourceKeys(request.scopeMode), viewport: state.viewport },
-    constraints: { allowStructure: false, allowContent: true, allowStyle: true, allowFrame: true },
+    scope: { sourceKeys: requestScopeKeys, viewport: state.viewport },
+    constraints: { allowStructure: false, ...request.constraints },
   };
   try {
     let data: any;
@@ -1598,7 +1668,14 @@ export async function requestAiAssist(request: AssistRequest) {
       } else data = prepared;
     } else data = await postAiAssist(payload);
     if (!data?.previewIr || !Array.isArray(data.ops)) throw new Error("AI вернул неполный preview");
+    const currentScopeKeys = state ? selectedSourceKeys(request.scopeMode) : [];
+    if (!state || state.sessionId !== baseSessionId
+      || JSON.stringify(sanitizeIrForPost(state.ir)) !== baseFingerprint
+      || JSON.stringify(currentScopeKeys) !== JSON.stringify(requestScopeKeys)) {
+      throw new Error("AI_STALE: макет или выделение изменился во время AI");
+    }
     aiAssistState = data as AssistPreview;
+    aiAssistBaseFingerprint = baseFingerprint;
     ui.setAiPreview(aiAssistState);
     dom.overlay?.classList.add("ai-previewing");
     rerenderEditorCanvas();
@@ -1612,6 +1689,7 @@ export async function requestAiAssist(request: AssistRequest) {
 export function cancelAiAssist() {
   const hadPreview = !!aiAssistState;
   aiAssistState = null;
+  aiAssistBaseFingerprint = null;
   dom.overlay?.classList.remove("ai-previewing");
   ui.setAiPreview(null);
   ui.setAiError("");
@@ -1620,10 +1698,20 @@ export function cancelAiAssist() {
 
 export function applyAiAssist() {
   if (!state || !aiAssistState?.previewIr || aiAssistState.validation?.schema === false) return false;
+  if (!aiAssistBaseFingerprint || JSON.stringify(sanitizeIrForPost(state.ir)) !== aiAssistBaseFingerprint) {
+    aiAssistState = null;
+    aiAssistBaseFingerprint = null;
+    dom.overlay?.classList.remove("ai-previewing");
+    ui.setAiPreview(null);
+    ui.setAiError("Макет изменился после предпросмотра. AI-правка отменена, ручные изменения сохранены.");
+    rerenderEditorCanvas();
+    return false;
+  }
   pushHistory();
   state.ir = deepClone(aiAssistState.previewIr);
   state.activeIR = null;
   aiAssistState = null;
+  aiAssistBaseFingerprint = null;
   dom.overlay?.classList.remove("ai-previewing");
   ui.setAiPreview(null);
   persistDraft();
@@ -1646,6 +1734,7 @@ export function close(saved?: boolean) {
   state = null;
   dnaPanelState = null;
   aiAssistState = null;
+  aiAssistBaseFingerprint = null;
   dom.overlay?.classList.remove("ai-previewing");
   dom.dnaPanel?.classList.remove("open");
   if (dom.overlay) dom.overlay.style.display = "none";
@@ -2206,6 +2295,8 @@ function addLayerItem(
   const fl = state.layerFlags[key] || {};
   const div = document.createElement("div");
   div.className = "fe-layer depth-" + Math.min(depth, 3);
+  div.tabIndex = 0;
+  div.setAttribute("role", "button");
   if (depth > 3) div.style.paddingLeft = 48 + (depth - 3) * 12 + "px";
   div.dataset.key = key;
   // reorder drag&drop — только не-артборд
@@ -2243,7 +2334,9 @@ function addLayerItem(
   }
   if (fl.hidden) div.classList.add("flag-hidden");
   if (fl.locked) div.classList.add("flag-locked");
-  if (state.sel.some((s) => s.ref.secIdx === ref.secIdx && s.ref.path === ref.path)) div.classList.add("selected");
+  const isSelected = state.sel.some((s) => s.ref.secIdx === ref.secIdx && s.ref.path === ref.path);
+  if (isSelected) div.classList.add("selected");
+  div.setAttribute("aria-pressed", String(isSelected));
   const icons: Record<string, string> = {
     navbar: "☰", hero: "◈", card: "▢", heading: "H", text: "T", button: "⬛", image: "▣",
     badge: "•", pricing: "$", faq: "?", footer: "⊥",
@@ -2259,12 +2352,26 @@ function addLayerItem(
     `<span class="fe-li">${icon}</span><span class="fe-ln">${esc(label)}</span>` +
     `<button class="fe-lbtn" data-flag="hidden" title="Скрыть/показать слой">${fl.hidden ? "🚫" : "👁"}</button>` +
     `<button class="fe-lbtn" data-flag="locked" title="Залочить/разлочить">${fl.locked ? "🔒" : "🔓"}</button>`;
-  div.addEventListener("click", (e) => {
+  const selectLayer = (e: Pick<MouseEvent | KeyboardEvent, "target" | "shiftKey" | "ctrlKey" | "metaKey">) => {
     if (!state) return;
     const btn = (e.target as HTMLElement).closest("[data-flag]") as HTMLElement | null;
     if (btn) { toggleLayerFlag(ref, btn.dataset.flag as "hidden" | "locked"); return; }
     if (refFlag(ref, "locked")) return; // залочен — не выделяется
-    if (state.geo) state.geo.select(ref);
+    if (state.geo) {
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        const selected = state.sel.some((sel) => refKeyOf(sel.ref) === key);
+        const refs = selected
+          ? state.sel.filter((sel) => refKeyOf(sel.ref) !== key).map((sel) => sel.ref)
+          : [...state.sel.map((sel) => sel.ref), ref];
+        if (refs.length) state.geo.selectMulti(refs); else state.geo.clear();
+      } else state.geo.select(ref);
+    }
+  };
+  div.addEventListener("click", selectLayer);
+  div.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    selectLayer(e);
   });
   container.appendChild(div);
 }
@@ -2379,6 +2486,25 @@ export function rerenderEditorCanvas() {
       : aiAssistState.previewIr;
   }
   IRRenderer.renderIR(inner, canvasIr, { fit: false });
+  if (aiAssistState?.ops?.length) {
+    const marked = new Set<string>();
+    aiAssistState.ops.forEach((op) => {
+      const parts = op.path.split("/").filter(Boolean);
+      if (parts[0] !== "tree" || !/^\d+$/.test(parts[1] || "")) return;
+      const sectionIndex = Number(parts[1]);
+      const nodeParts = parts.slice(2);
+      const marker = `${sectionIndex}:${nodeParts.join(".")}`;
+      if (marked.has(marker)) return;
+      marked.add(marker);
+      let target: HTMLElement | null = null;
+      while (nodeParts.length && !target) {
+        target = domAtCanvas({ secIdx: sectionIndex, path: nodeParts.join(".") });
+        if (!target) nodeParts.pop();
+      }
+      if (!target) target = domAtCanvas({ secIdx: sectionIndex, path: null });
+      target?.classList.add("ai-changed-node");
+    });
+  }
   applyLayerFlags();
   applyTransform();
   attachGeoEdit();

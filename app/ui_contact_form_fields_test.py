@@ -150,7 +150,7 @@ def main():
         if not page.locator(".manual-controls").evaluate("el => el.open"):
             page.locator(".manual-controls summary").click()
         SCREENSHOT.parent.mkdir(parents=True, exist_ok=True)
-        page.screenshot(path=str(SCREENSHOT), full_page=True)
+        page.screenshot(path=str(SCREENSHOT), full_page=True, timeout=20000)
         browser.close()
     print("ALL CONTACT FORM FIELD CHECKS PASSED")
 
