@@ -51,6 +51,9 @@ GATE_THRESHOLDS = {
     "max_origin_error_px": 2.0,
     "min_paint_coverage": 95.0,
     "min_pixel_similarity": 85.0,
+    # bbox p95: structural drift leaf→render; фантомные leafBox у implicit-текстов
+    # убраны в компиляторе, так что это честный порог (текст-heavy шапки ~3-4px)
+    "max_bbox_p95_px": 12.0,
 }
 REQUIRED_METRICS = (
     "pixel_similarity", "bbox_mean", "bbox_p95", "bbox_max",
@@ -169,6 +172,9 @@ def viewport_gate(metrics: dict | None) -> dict:
     if float(metrics["pixel_similarity"]) < GATE_THRESHOLDS["min_pixel_similarity"]:
         reasons.append(f"pixel similarity {metrics['pixel_similarity']} < "
                        f"{GATE_THRESHOLDS['min_pixel_similarity']}")
+    if float(metrics["bbox_p95"]) > GATE_THRESHOLDS["max_bbox_p95_px"]:
+        reasons.append(f"bbox p95 {metrics['bbox_p95']}px > "
+                       f"{GATE_THRESHOLDS['max_bbox_p95_px']}px")
     if int(metrics["unexplained_losses"]) > 0:
         reasons.append(f"{metrics['unexplained_losses']} unexplained lost visuals")
     return {"passed": not reasons, "reasons": reasons}
@@ -495,6 +501,16 @@ def run(url: str, blocks: list[dict] | None = None, viewports: list[dict] | None
                    and not blockparse._is_hidden_block_error(item.get("error"))},
     }
     report["gate"] = evaluate_gate({"blocks": report["blocks"]})
+    if report["errors"]:
+        # блок с ошибкой захвата не должен проходить гейт молча — раньше
+        # ошибки печатались, но не влияли на verdict
+        report["gate"] = {
+            "passed": False,
+            "reasons": report["gate"]["reasons"] + [
+                f"[{selector}] capture error: {str(err)[:140]}"
+                for selector, err in report["errors"].items()
+            ],
+        }
     if artifacts_dir is not None:
         artifacts_dir.mkdir(parents=True, exist_ok=True)
         (artifacts_dir / "fidelity-report.json").write_text(

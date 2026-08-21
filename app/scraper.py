@@ -1632,8 +1632,8 @@ _APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve()
 _RENDERER_JS = _APP_ROOT / "static" / "flow" / "engine.js"
 
 
-def _render_ir_jpeg(page, ir: dict, width: int, height: int) -> bytes:
-    """Отрисовать IR движком из React-сборки (app/static/flow/engine.js) и вернуть JPEG."""
+def _render_ir_png(page, ir: dict, width: int, height: int) -> bytes:
+    """Отрисовать IR движком редактора (app/static/flow/engine.js) и вернуть PNG."""
     page.set_viewport_size({"width": max(320, int(width)), "height": max(320, int(height) + 40)})
     page.set_content(f'<div id="preview" style="width:{int(width)}px"></div>')
     page.add_script_tag(path=str(_RENDERER_JS))
@@ -1641,18 +1641,22 @@ def _render_ir_jpeg(page, ir: dict, width: int, height: int) -> bytes:
     page.wait_for_selector('[data-ir-sec="0"]', timeout=5000)
     # fitPreview выставляет высоту контейнера в requestAnimationFrame
     page.wait_for_function("() => document.querySelector('#preview').style.height !== ''", timeout=5000)
-    return page.locator("#preview").screenshot(type="jpeg", quality=90)
+    return page.locator("#preview").screenshot(type="png")
 
 
-def _pixel_similarity(render_jpeg: bytes, reference_data_url: str) -> float | None:
-    """Доля пикселей с per-channel |diff| < 24 (после resize к одному размеру), 0-100."""
+def _pixel_similarity(render_png: bytes, reference_data_url: str) -> float | None:
+    """Доля пикселей с per-channel |diff| < 24 в ТОЧНОМ размере, 0-100.
+
+    Ресайз LANCZOS к размеру референса запрещён: он прятал layout-дрейф
+    (сдвинутая сетка того же палитры давала высокий скор). Расхождение
+    размеров — честный ноль, как в fidelity harness."""
     try:
         import numpy as np
         _, b64 = reference_data_url.split(",", 1)
         ref = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
-        got = Image.open(io.BytesIO(render_jpeg)).convert("RGB")
+        got = Image.open(io.BytesIO(render_png)).convert("RGB")
         if got.size != ref.size:
-            got = got.resize(ref.size, Image.LANCZOS)
+            return 0.0
         diff = np.abs(np.asarray(got, dtype=np.int16) - np.asarray(ref, dtype=np.int16))
         return round(float((diff < 24).all(axis=2).mean()) * 100)
     except Exception:
@@ -1673,13 +1677,13 @@ def ir_fidelity(ir: dict, reference_jpeg_data_url: str, width: int, height: int,
         if not str(reference_jpeg_data_url or "").startswith("data:image"):
             return None
         if page is not None:
-            shot = _render_ir_jpeg(page, ir, width, height)
+            shot = _render_ir_png(page, ir, width, height)
         else:
             from playwright.sync_api import sync_playwright
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
                 try:
-                    shot = _render_ir_jpeg(browser.new_page(), ir, width, height)
+                    shot = _render_ir_png(browser.new_page(), ir, width, height)
                 finally:
                     browser.close()
         return _pixel_similarity(shot, reference_jpeg_data_url)
@@ -1752,7 +1756,7 @@ def _attach_block_fidelity(result: dict) -> None:
             page = browser.new_page(viewport={"width": 1440, "height": 900})
             for selector, item, preview, width, height in jobs:
                 try:
-                    shot = _render_ir_jpeg(page, item["ir"], width, height)
+                    shot = _render_ir_png(page, item["ir"], width, height)
                     score = _pixel_similarity(shot, preview)
                 except Exception:
                     score = None
@@ -1772,9 +1776,11 @@ def _attach_block_fidelity(result: dict) -> None:
                 if p95 is not None:
                     item["p95_layout_error"][base_name] = round(p95, 2)
                 # Mirror into the IR responsive payload for the editor/schema.
+                # None не пишем: схема требует number, недоступная метрика
+                # просто отсутствует.
                 ir_viewports = item["ir"].get("responsive", {}).get("viewports") or {}
-                if base_name and isinstance(ir_viewports.get(base_name), dict):
-                    ir_viewports[base_name]["fidelity"] = item["fidelity"][base_name]
+                if score is not None and base_name and isinstance(ir_viewports.get(base_name), dict):
+                    ir_viewports[base_name]["fidelity"] = score
         finally:
             browser.close()
 

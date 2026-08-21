@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stage 2 colors: modern color functions, per-side borders, text metrics</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Space Grotesk", "Segoe UI", sans-serif; background: #ffffff; }
+  #wrap { width: 900px; }
+  .hero {
+    background: oklch(96.8% 0.007 247.9);
+    border-bottom: 3px solid oklch(54.6% 0.245 262.9);
+    padding: 18px 24px;
+  }
+  .hero h1 { font-size: 28px; color: lab(29% 40 59); }
+  .hero p {
+    font-size: 14px; color: color-mix(in srgb, #3355aa 70%, #dd4433 30%);
+    text-align: center; margin-top: 8px;
+  }
+  .fine { font-style: italic; font-size: 13px; color: #666666; margin-top: 6px; }
+  .timer { font-variant-numeric: tabular-nums; font-size: 18px; color: lch(56% 84 41); margin-top: 6px; }
+  .p3 { color: color(display-p3 0.8 0.2 0.2); font-size: 13px; margin-top: 6px; }
+  .sides {
+    margin-top: 12px; padding: 10px;
+    border-top: 1px solid #111111; border-bottom: 4px solid #111111;
+    border-left: 2px solid #444444; border-right: 2px solid #444444;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <section class="hero" id="hero">
+    <h1>Modern colors</h1>
+    <p>centered subtitle over oklch background</p>
+    <div class="fine">fine print in italic</div>
+    <div class="timer">04:37</div>
+    <div class="p3">display-p3 red</div>
+  </section>
+  <section class="sides" id="sides">
+    four different borders
+  </section>
+</div>
+</body>
+</html>

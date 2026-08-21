@@ -1,43 +1,166 @@
 (blocks) => {
                   const num = (v) => Number.parseFloat(v) || 0;
                   const round2 = (v) => Math.round(Number(v || 0) * 100) / 100;
-                  const hex = (v) => {
-                    const value=String(v||'');
-                    const rgb=value.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/);
-                    if(rgb){
-                      const alpha=rgb[4]===undefined ? 1 : Math.max(0,Math.min(1,Number(rgb[4])));
-                      if(alpha<=.05) return null;
-                      const color='#'+rgb.slice(1,4).map(x=>(+x).toString(16).padStart(2,'0')).join('');
-                      return alpha<1 ? color+Math.round(alpha*255).toString(16).padStart(2,'0') : color;
-                    }
-                    const srgb=value.match(/color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\)/);
-                    if(!srgb) return null;
-                    const alpha=srgb[4]===undefined ? 1 : Math.max(0,Math.min(1,Number(srgb[4])));
-                    if(alpha<=.05) return null;
-                    const color='#'+srgb.slice(1,4).map(x=>Math.round(Math.max(0,Math.min(1,Number(x)))*255).toString(16).padStart(2,'0')).join('');
-                    return alpha<1 ? color+Math.round(alpha*255).toString(16).padStart(2,'0') : color;
+                  // ---- цвет: rgb/rgba, color(srgb|display-p3), oklch, oklab, lab, lch, color-mix ----
+                  const clamp01=(v)=>Math.max(0,Math.min(1,v));
+                  const gamma=(v)=>v<=0.0031308?12.92*v:1.055*Math.pow(v,1/2.4)-0.055;
+                  const linToHex=(r,g,b)=>{
+                    const R=Math.round(clamp01(gamma(r))*255),G=Math.round(clamp01(gamma(g))*255),B=Math.round(clamp01(gamma(b))*255);
+                    return '#'+[R,G,B].map(x=>x.toString(16).padStart(2,'0')).join('');
                   };
+                  // Björn Ottosson: OKLab → linear sRGB
+                  const oklabToLinSrgb=(L,a,b)=>{
+                    const l_=L+0.3963377774*a+0.2158037573*b;
+                    const m_=L-0.1055613458*a-0.0638541728*b;
+                    const s_=L-0.0894841775*a-1.2914855480*b;
+                    const l=l_*l_*l_,m=m_*m_*m_,s=s_*s_*s_;
+                    return [
+                      4.0767416621*l-3.3077115913*m+0.2309699292*s,
+                      -1.2684380046*l+2.6097574011*m-0.3413193965*s,
+                      -0.0041960863*l-0.7034186147*m+1.7076147010*s];
+                  };
+                  // CIE Lab (D50) → linear sRGB (Bradford D50→D65)
+                  const labToLinSrgb=(L,a,b)=>{
+                    const d=6/29, fy=(L+16)/116, fx=fy+a/500, fz=fy-b/200;
+                    const finv=(t)=>t>d?t*t*t:3*d*d*(t-4/29);
+                    const xr=finv(fx)*0.95047, yr=finv(fy)*1.0, zr=finv(fz)*1.08883;
+                    const X= 1.0479298208405488*xr + 0.022946793341019088*yr - 0.05019222954356957*zr;
+                    const Y= 0.029627815688159344*xr + 0.990434484573249*yr - 0.01707382502938514*zr;
+                    const Z=-0.009243058152591178*xr + 0.015055144896577895*yr + 0.7518742899580008*zr;
+                    return [
+                      3.1338561*X-1.6168667*Y-0.4906146*Z,
+                      -0.9787684*X+1.9161415*Y+0.0334540*Z,
+                      0.0719453*X-0.2289914*Y+1.4052427*Z];
+                  };
+                  // display-p3 (linear) → linear sRGB
+                  const p3ToLinSrgb=(r,g,b)=>{
+                    const X=0.4865709486*r+0.2656676932*g+0.1982172852*b;
+                    const Y=0.2289745641*r+0.6917385218*g+0.0792869141*b;
+                    const Z=0.0451133819*g+1.0439443689*b;
+                    return [
+                      3.2406*X-1.5372*Y-0.4986*Z,
+                      -0.9689*X+1.8758*Y+0.0415*Z,
+                      0.0557*X-0.2040*Y+1.0570*Z];
+                  };
+                  const pct=(tok,max)=>tok.endsWith('%')?(Number.parseFloat(tok)/100)*(max||1):Number.parseFloat(tok);
+                  const hex = (v) => {
+                    const value=String(v||'').trim();
+                    let out=null, alpha=1;
+                    const rgb=value.match(/^rgba?\(\s*([\d.]+)(?:%)?\s*,\s*([\d.]+)(?:%)?\s*,\s*([\d.]+)(?:%)?\s*(?:,\s*([\d.]+)%?\s*)?\)$/);
+                    const rgbSlash=value.match(/^rgba?\(\s*([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+%?)(?:\s*\/\s*([\d.]+%?)\s*)?\)$/);
+                    const m=rgb||rgbSlash;
+                    if(m){
+                      const scale=m[1].endsWith('%')?2.55:1;
+                      out='#'+[1,2,3].map(i=>Math.round(Math.max(0,Math.min(255,Number.parseFloat(m[i])*scale))).toString(16).padStart(2,'0')).join('');
+                      if(m[4]===undefined) alpha=1;
+                      else if(m[4].endsWith('%')) alpha=clamp01(Number.parseFloat(m[4])/100);
+                      else alpha=clamp01(Number.parseFloat(m[4]));
+                    } else if(/^color\(srgb/i.test(value)){
+                      const t=value.match(/color\(srgb\s+([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+%?)(?:\s*\/\s*([\d.]+%?))?\)/i);
+                      if(!t) return null;
+                      out='#'+[1,2,3].map(i=>Math.round(clamp01(pct(t[i],1))*255).toString(16).padStart(2,'0')).join('');
+                      alpha=t[4]===undefined?1:clamp01(pct(t[4],1));
+                    } else if(/^color\(display-p3/i.test(value)){
+                      const t=value.match(/color\(display-p3\s+([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+%?)(?:\s*\/\s*([\d.]+%?))?\)/i);
+                      if(!t) return null;
+                      const lin=p3ToLinSrgb(pct(t[1],1),pct(t[2],1),pct(t[3],1));
+                      out=linToHex(lin[0],lin[1],lin[2]);
+                      alpha=t[4]===undefined?1:clamp01(pct(t[4],1));
+                    } else if(/^oklch\(/i.test(value)){
+                      const t=value.match(/oklch\(\s*([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+)(?:deg|grad|rad|turn)?\s*(?:\/\s*([\d.]+%?))?\)/i);
+                      if(!t) return null;
+                      const L=pct(t[1],1), C=Number.parseFloat(t[2]), H=Number.parseFloat(t[3])*Math.PI/180;
+                      const lin=oklabToLinSrgb(L,C*Math.cos(H),C*Math.sin(H));
+                      out=linToHex(lin[0],lin[1],lin[2]);
+                      alpha=t[4]===undefined?1:clamp01(pct(t[4],1));
+                    } else if(/^oklab\(/i.test(value)){
+                      const t=value.match(/oklab\(\s*([\d.]+%?)\s+(-?[\d.]+%?)\s+(-?[\d.]+%?)(?:\s*\/\s*([\d.]+%?))?\)/i);
+                      if(!t) return null;
+                      const lin=oklabToLinSrgb(pct(t[1],1),pct(t[2],0.4),pct(t[3],0.4));
+                      out=linToHex(lin[0],lin[1],lin[2]);
+                      alpha=t[4]===undefined?1:clamp01(pct(t[4],1));
+                    } else if(/^lch\(/i.test(value)){
+                      const t=value.match(/lch\(\s*([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+)(?:deg|grad|rad|turn)?\s*(?:\/\s*([\d.]+%?))?\)/i);
+                      if(!t) return null;
+                      const L=pct(t[1],100), C=Number.parseFloat(t[2]), H=Number.parseFloat(t[3])*Math.PI/180;
+                      const lin=labToLinSrgb(L,C*Math.cos(H),C*Math.sin(H));
+                      out=linToHex(lin[0],lin[1],lin[2]);
+                      alpha=t[4]===undefined?1:clamp01(pct(t[4],1));
+                    } else if(/^lab\(/i.test(value)){
+                      const t=value.match(/lab\(\s*([\d.]+%?)\s+(-?[\d.]+%?)\s+(-?[\d.]+%?)(?:\s*\/\s*([\d.]+%?))?\)/i);
+                      if(!t) return null;
+                      const lin=labToLinSrgb(pct(t[1],100),pct(t[2],125),pct(t[3],125));
+                      out=linToHex(lin[0],lin[1],lin[2]);
+                      alpha=t[4]===undefined?1:clamp01(pct(t[4],1));
+                    } else if(/^color-mix\(/i.test(value)){
+                      // color-mix(in srgb|oklch..., A p%, B q%) — смешиваем уже
+                      // разобранные цвета; oklch-интерполяция аппроксимируется srgb
+                      const inner=value.slice(value.indexOf('(')+1,value.lastIndexOf(')'));
+                      const segs=inner.split(',').map(s=>s.trim()).filter(Boolean);
+                      if(segs.length<3) return null;
+                      const a=hexColorMixPart(segs[1]), b=hexColorMixPart(segs[2]);
+                      if(!a||!b) return null;
+                      const pa=mixPercentOf(segs[1],50), pb=mixPercentOf(segs[2],100-pa);
+                      const tot=pa+pb||1;
+                      const mix=(i)=>Math.round((a.r*pa/tot+b.r*pb/tot));
+                      out='#'+[mix(),mix(),mix()].map(x=>Math.max(0,Math.min(255,x)).toString(16).padStart(2,'0')).join('');
+                      const alA=a.alpha??1, alB=b.alpha??1;
+                      alpha=(alA*pa+alB*pb)/tot;
+                    }
+                    else return null;
+                    if(alpha<=.05) return null;
+                    return alpha<1 ? out+Math.round(alpha*255).toString(16).padStart(2,'0') : out;
+                  };
+                  // helpers для color-mix (после hex — рекурсивный разбор частей)
+                  function hexColorMixPart(part){
+                    const m=part.match(/^(.*?)(?:\s+([\d.]+)%?)?$/);
+                    const color=hex(m[1].trim());
+                    if(!color) return null;
+                    const h=color.length===9?color.slice(1,7):color.slice(1);
+                    return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16),
+                      alpha:color.length===9?parseInt(h.slice(6,8),16)/255:1};
+                  }
+                  function mixPercentOf(part,fallback){
+                    const m=part.match(/([\d.]+)%?\s*$/);
+                    return m?Number.parseFloat(m[1]):fallback;
+                  }
                   const visible = (el,r,cs) => r.width>=1 && r.height>=1 && cs.display!=='none' &&
                     cs.visibility!=='hidden' && Number(cs.opacity)!==0;
                   const safeEnum = (v, allowed, fallback) => allowed.includes(v) ? v : fallback;
+                  const SAFE_ALIGNS=['left','center','right','justify','start','end'];
                   const styleOf = (cs, warnings) => {
                     if (cs.backgroundImage && cs.backgroundImage !== 'none') warnings.add('complex background');
                     const deco=(cs.textDecorationLine||'none').split(' ')[0];
+                    // per-side borders: uniform -> старые单一 поля; иначе borderSides [T,R,B,L]
+                    const bw=[num(cs.borderTopWidth),num(cs.borderRightWidth),num(cs.borderBottomWidth),num(cs.borderLeftWidth)]
+                      .map(v=>Math.min(64,Math.max(0,v)));
+                    const bc=[hex(cs.borderTopColor),hex(cs.borderRightColor),hex(cs.borderBottomColor),hex(cs.borderLeftColor)];
+                    const hasBorder=bw.some(v=>v>0);
+                    const uniformW=bw.every(v=>v===bw[0]);
+                    const uniformC=bc.every(v=>(v||null)===(bc[0]||null));
+                    const lhPx=num(cs.lineHeight);
                     const style={
                       color:hex(cs.color), background:hex(cs.backgroundColor),
                       fontFamily:String(cs.fontFamily||'').replace(/["']/g,'').slice(0,160),
                       fontSize:Math.min(512,Math.max(1,num(cs.fontSize))),
                       fontWeight:Math.min(900,Math.max(100,Number.parseInt(cs.fontWeight,10)||400)),
-                      lineHeight:(()=>{const lh=num(cs.lineHeight);return lh>0?Math.min(10,Math.max(.5,lh/Math.max(1,num(cs.fontSize)))):1.2})(),
+                      // line-height:unknown (normal) НЕ подставляем 1.2 — рендер
+                      // оставляет CSS normal и браузер берёт метрики шрифта
+                      lineHeight:lhPx>0?Math.min(10,Math.max(.5,lhPx/Math.max(1,num(cs.fontSize)))):null,
                       letterSpacing:Math.max(-20,Math.min(100,num(cs.letterSpacing))),
-                      borderColor:hex(cs.borderTopColor) || (num(cs.borderTopWidth)>0 ? '#e0e0e0' : null),
-                      borderWidth:Math.min(64,Math.max(0,num(cs.borderTopWidth))),
+                      borderColor:hasBorder?(uniformC?(bc[0]||'#e0e0e0'):null):null,
+                      borderWidth:uniformW?bw[0]:null,
+                      borderSides:hasBorder&&!uniformW
+                        ?bw.map((w,i)=>({width:w,color:bc[i]||'#e0e0e0'})):null,
                       borderRadius:Math.min(1000,Math.max(0,num(cs.borderTopLeftRadius))),
                       boxShadow:cs.boxShadow && cs.boxShadow!=='none' ? cs.boxShadow.slice(0,300) : null,
                       textDecoration:safeEnum(deco,['none','underline','line-through','overline'],'none'),
                       whiteSpace:safeEnum(cs.whiteSpace,['normal','nowrap','pre','pre-wrap','pre-line','break-spaces'],'normal'),
                       overflow:safeEnum(cs.overflow,['visible','hidden','clip','scroll','auto'],'visible'),
                       textTransform:safeEnum(cs.textTransform,['none','uppercase','lowercase','capitalize'],'none'),
+                      fontStyle:cs.fontStyle==='italic'||cs.fontStyle==='oblique'?cs.fontStyle:null,
+                      fontVariantNumeric:String(cs.fontVariantNumeric||'').includes('tabular-nums')?'tabular-nums':null,
+                      textAlign:SAFE_ALIGNS.includes(cs.textAlign)?cs.textAlign:null,
                       opacity:Math.min(1,Math.max(0,num(cs.opacity))),
                       objectFit:safeEnum(cs.objectFit,['contain','cover','fill','none','scale-down'],'fill')
                     };
@@ -526,11 +649,17 @@
                           if(!text || !isContainer) return;
                           const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect();
                           if(tr.width<1||tr.height<1) return;
-                          const textFrame={width:Math.ceil(tr.width)+2,height:Math.round(tr.height),
-                            x:Math.round(tr.left-r.left),y:Math.round(tr.top-r.top)};
+                          // субпиксельная точность: округление в целый px и надбавка
+                          // +2px сдвигали глифы на доли px и портили сходство
+                          const textFrame={width:round2(tr.width),height:round2(tr.height),
+                            x:round2(tr.left-r.left),y:round2(tr.top-r.top)};
                           if(!childParentAuto){ textFrame.absolute=true; }
+                          const tstyle=cleanTextStyle(styleOf(cs,warnings));
+                          // IR-enum align уже́е CSS: start/end сводим к физическим сторонам (LTR)
+                          const talign={start:'left',end:'right',left:'left',center:'center',right:'right',justify:'justify'}[tstyle.textAlign]||null;
+                          delete tstyle.textAlign;
                           const tnode={type:'text',text:text.slice(0,1000),sourceKey:key+'::text'+idx,
-                            style:cleanTextStyle(styleOf(cs,warnings)),frame:textFrame};
+                            align:talign,style:tstyle,frame:textFrame};
                           rawChildren.push(tnode);
                           emitted++; pushRootRect({left:r.left+textFrame.x,top:r.top+textFrame.y,width:textFrame.width,height:textFrame.height},tnode.sourceKey);
                         } else if(child.nodeType===Node.ELEMENT_NODE){
@@ -564,10 +693,20 @@
                           const implicit={type:'text',text:missing.slice(0,120),sourceKey:key+(atStart?'::implicit-prefix':'::implicit-suffix'),
                             style:cleanTextStyle(styleOf(cs,warnings)),frame:{width:Math.max(1,Math.ceil(ctx ? ctx.measureText(missing).width : num(cs.fontSize))),height:linePx}};
                           if(atStart) rawChildren.unshift(implicit); else rawChildren.push(implicit);
-                          emitted++; pushRootRect({left:r.left+(implicit.frame.x||0),top:r.top+(implicit.frame.y||0),width:implicit.frame.width,height:implicit.frame.height},implicit.sourceKey);
+                          emitted++;
+                          // leafBox не записываем: узел потоковый (x/y нет), позиция
+                          // известна только после layout — захваченный (0,0) давал
+                          // фантомную ошибку bbox ~11px в fidelity-метриках
                         }
                       }
                       const node={type,sourceKey:key,style,frame:frameFor(r,parentRect,cs,parentAuto,isContainer,layout)};
+                      // text-align элемента-текста (<p>, <h1>) — в IR-поле align
+                      // (enum уже́е CSS: start/end сводим к физическим сторонам)
+                      if(type==='text'||type==='heading'){
+                        const a={start:'left',end:'right',left:'left',center:'center',right:'right',justify:'justify'}[style.textAlign]||null;
+                        if(a) node.align=a;
+                        delete style.textAlign;
+                      }
                       const componentMeta=componentMetaOf(el);
                       if(componentMeta) node.sourceMeta=componentMeta;
                       if(type==='heading'){ node.level=Number(tag.slice(1)); node.text=directText.slice(0,1000); }
@@ -705,10 +844,14 @@
                         const text=(child.textContent||'').replace(/\s+/g,' ').trim();
                         if(text){
                           const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect();
-                          const textFrame={width:Math.ceil(tr.width)+2,height:Math.round(tr.height),
-                            x:Math.round(tr.left-rr.left),y:Math.round(tr.top-rr.top)};
+                          // субпиксельная точность — как у текстов внутри блоков
+                          const textFrame={width:round2(tr.width),height:round2(tr.height),
+                            x:round2(tr.left-rr.left),y:round2(tr.top-rr.top)};
                           if(!rootAuto){ textFrame.absolute=true; }
-                          const tnode={type:'text',text:text.slice(0,1000),sourceKey:'root::text'+idx,style:cleanTextStyle(styleOf(rcs,warnings)),frame:textFrame};
+                          const tstyle=cleanTextStyle(styleOf(rcs,warnings));
+                          const talign={start:'left',end:'right',left:'left',center:'center',right:'right',justify:'justify'}[tstyle.textAlign]||null;
+                          delete tstyle.textAlign;
+                          const tnode={type:'text',text:text.slice(0,1000),sourceKey:'root::text'+idx,align:talign,style:tstyle,frame:textFrame};
                           rootChildren.push(tnode);
                           emitted++; pushRootRect(tr,tnode.sourceKey);
                         }

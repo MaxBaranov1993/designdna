@@ -19,7 +19,7 @@
     border-bottom: 1px solid #3a3833;
   }
   .brand { font-size: 20px; font-weight: 700; color: #f0ede4; }
-  .brand span { color: #81b64c; }
+  .brand span { color: oklch(72.8% 0.17 128.4); }
   .nav { display: flex; gap: 18px; flex: 1; }
   .nav a { color: #b8b4a8; text-decoration: none; font-size: 14px; }
   .btn {
@@ -63,7 +63,7 @@
   .player.white .avatar { background: #b8874b; }
   .pinfo { flex: 1; }
   .pname { font-size: 15px; font-weight: 600; }
-  .prating { font-size: 12px; color: #b8b4a8; }
+  .prating { font-size: 12px; color: #b8b4a8; font-style: italic; }
   .clock {
     font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums;
     background: #161512; border-radius: 6px; padding: 6px 10px;
@@ -79,6 +79,7 @@
   .moves .mv { background: #2c2a26; border-radius: 4px; padding: 2px 8px; min-width: 56px; }
   .actions { display: flex; gap: 10px; }
   .actions .btn { flex: 1; text-align: center; }
+  .center-note { text-align: center; font-size: 12px; color: #b8b4a8; padding-top: 2px; }
   @media (max-width: 1023px) {
     .board { grid-template-columns: repeat(8, 52px); grid-template-rows: repeat(8, 52px); }
     .sq { font-size: 34px; }
@@ -152,6 +153,7 @@
         <button class="btn ghost">Resign</button>
         <button class="btn">Offer Draw</button>
       </div>
+      <div class="center-note">rapid · 10 min · rated</div>
     </aside>
   </main>
 </div>

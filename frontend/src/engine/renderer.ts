@@ -57,10 +57,28 @@ import { isLockedNode } from "./locked";
     return null;
   }
 
-  /** Имя шрифта — буквы/цифры/пробелы/дефис; всё остальное вырезается
-   *  (и для <style>, и для URL Google Fonts). */
+  /** Полный font-stack из недоверенной строки: имена в кавычках, generic —
+   *  без. Запятые и fallback сохраняются: раньше всё вне букв/цифр/дефисов
+   *  вырезалось, и стек "Space Grotesk", sans-serif превращался в
+   *  несуществующее семейство 'Space Grotesk sans-serif' — текст рендерился
+   *  неправильным шрифтом на любом реальном сайте. */
+  function safeFontStack(v) {
+    const GENERIC = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui",
+      "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded", "math", "emoji", "fangsong"]);
+    const parts = String(v == null ? "" : v).split(",")
+      .map((p) => p.replace(/["']/g, "").trim())
+      .filter(Boolean);
+    const out = [];
+    for (const p of parts.slice(0, 8)) {
+      if (!p || p.length > 60 || !/^[\p{L}\p{N}\s._-]+$/u.test(p)) continue;
+      out.push(GENERIC.has(p) ? p : `'${p}'`);
+    }
+    return out.join(",");
+  }
+
+  /** Первый family стека — для каталога шрифтов и URL Google Fonts. */
   function safeFontFamily(v) {
-    return String(v == null ? "" : v).replace(/[^\p{L}\p{N}\s-]/gu, "").trim().slice(0, 60) || "Inter";
+    return safeFontStack(v).split(",")[0].replace(/'/g, "") || "Inter";
   }
 
   /** text-align — whitelist, иначе null (инъекции в style-атрибут через el.align). */
@@ -78,11 +96,24 @@ import { isLockedNode } from "./locked";
     const bg = safeColor(style.background); if (bg) s.push(`background:${bg}`);
     const border = safeColor(style.borderColor); if (border) s.push(`border-color:${border}`);
     const bw = Number(style.borderWidth); if (Number.isFinite(bw) && bw >= 0 && bw <= 64) s.push(`border-style:solid`, `border-width:${bw}px`);
-    const family = style.fontFamily ? safeFontFamily(style.fontFamily) : ""; if (family) s.push(`font-family:'${family}',sans-serif`);
+    const family = style.fontFamily ? safeFontStack(style.fontFamily) : ""; if (family) s.push(`font-family:${family}`);
     const fs = Number(style.fontSize); if (Number.isFinite(fs) && fs >= 1 && fs <= 512) s.push(`font-size:${fs}px`);
-    const fw = Number(style.fontWeight); if (Number.isFinite(fw) && fw >= 100 && fw <= 900) s.push(`font-weight:${Math.round(fw)}`);
+    const fw = Number(style.fontWeight); if (Number.isFinite(fw) && fw >= 100 && fw <= 900) s.push(`font-weight:${fw}`);
     const lh = Number(style.lineHeight); if (Number.isFinite(lh) && lh >= .5 && lh <= 10) s.push(`line-height:${lh}`);
     const ls = Number(style.letterSpacing); if (Number.isFinite(ls) && ls >= -20 && ls <= 100) s.push(`letter-spacing:${ls}px`);
+    // per-side borders (когда стороны различаются — напр. border-bottom у шапки)
+    if (Array.isArray(style.borderSides) && style.borderSides.length === 4) {
+      const sides = ["top", "right", "bottom", "left"];
+      style.borderSides.forEach((side, i) => {
+        const w = Number(side && side.width);
+        if (!Number.isFinite(w) || w <= 0) return;
+        const c = safeColor(side && side.color) || "#e0e0e0";
+        s.push(`border-${sides[i]}:${Math.min(64, w)}px solid ${c}`);
+      });
+    }
+    if (style.fontStyle === "italic" || style.fontStyle === "oblique") s.push(`font-style:${style.fontStyle}`);
+    if (style.fontVariantNumeric === "tabular-nums") s.push(`font-variant-numeric:tabular-nums`);
+    if (["left", "center", "right", "justify", "start", "end"].includes(style.textAlign)) s.push(`text-align:${style.textAlign}`);
     const radius = Number(style.borderRadius); if (Number.isFinite(radius) && radius >= 0 && radius <= 1000) s.push(`border-radius:${radius}px`);
     if (typeof style.boxShadow === "string" && style.boxShadow.length <= 300 && !/[;{}<>"'\\\r\n]/.test(style.boxShadow)) s.push(`box-shadow:${style.boxShadow}`);
     if (["none", "underline", "line-through", "overline"].includes(style.textDecoration)) s.push(`text-decoration:${style.textDecoration}`);
@@ -106,11 +137,13 @@ import { isLockedNode } from "./locked";
     if (!style || typeof style !== "object") return "";
     const s = [];
     const color = safeColor(style.color); if (color) s.push(`color:${color}`);
-    const family = style.fontFamily ? safeFontFamily(style.fontFamily) : ""; if (family) s.push(`font-family:'${family}',sans-serif`);
+    const family = style.fontFamily ? safeFontStack(style.fontFamily) : ""; if (family) s.push(`font-family:${family}`);
     const fs = Number(style.fontSize); if (Number.isFinite(fs) && fs >= 1 && fs <= 512) s.push(`font-size:${fs}px`);
-    const fw = Number(style.fontWeight); if (Number.isFinite(fw) && fw >= 100 && fw <= 900) s.push(`font-weight:${Math.round(fw)}`);
+    const fw = Number(style.fontWeight); if (Number.isFinite(fw) && fw >= 100 && fw <= 900) s.push(`font-weight:${fw}`);
     const lh = Number(style.lineHeight); if (Number.isFinite(lh) && lh >= .5 && lh <= 10) s.push(`line-height:${lh}`);
     const ls = Number(style.letterSpacing); if (Number.isFinite(ls) && ls >= -20 && ls <= 100) s.push(`letter-spacing:${ls}px`);
+    if (style.fontStyle === "italic" || style.fontStyle === "oblique") s.push(`font-style:${style.fontStyle}`);
+    if (style.fontVariantNumeric === "tabular-nums") s.push(`font-variant-numeric:tabular-nums`);
     if (["none", "underline", "line-through", "overline"].includes(style.textDecoration)) s.push(`text-decoration:${style.textDecoration}`);
     if (["none", "uppercase", "lowercase", "capitalize"].includes(style.textTransform)) s.push(`text-transform:${style.textTransform}`);
     return s.join(";");
@@ -165,7 +198,7 @@ import { isLockedNode } from "./locked";
     return `
       --c-primary:${primary};--c-secondary:${col("secondary", primary)};--c-accent:${col("accent", primary)};
       --c-bg:${col("background", d.background)};--c-surface:${col("surface", d.surface)};--c-text:${col("text", d.text)};--c-muted:${col("textMuted", d.textMuted)};--c-border:${col("border", d.border)};
-      --font-display:'${safeFontFamily(tokens.font.display.family)}',sans-serif;--font-body:'${safeFontFamily(tokens.font.body.family)}',sans-serif;
+      --font-display:${safeFontStack(tokens.font.display.family) || "'Inter'"},sans-serif;--font-body:${safeFontStack(tokens.font.body.family) || "'Inter'"},sans-serif;
       --fw-display:${fw(tokens.font.display, 700)};--fw-body:${fw(tokens.font.body, 400)};
       --fs:${scale};
       --r-card:${RADIUS_PX[tokens.radius.card]};--r-btn:${RADIUS_PX[tokens.radius.button]};--r-input:${RADIUS_PX[tokens.radius.input]};

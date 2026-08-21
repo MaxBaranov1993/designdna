@@ -41,7 +41,7 @@ _SEMANTIC_ROLES = {
     "gallery", "navigation", "status", "toolbar", "profile", "panel", "section",
 }
 
-SOURCE_COMPILER_VERSION = "dom-v27"
+SOURCE_COMPILER_VERSION = "dom-v28"
 
 # Hidden blocks (display:none / zero box / no visual content) are not import
 # errors; they are omitted from Source Import outputs. Both English compiler

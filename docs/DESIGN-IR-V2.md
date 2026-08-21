@@ -122,7 +122,7 @@ are not rescaled; the alignment is applied to editable generic section wraps.
 
 ## Capture contract additions (IR 1.1)
 
-The Source Import rework (compiler `dom-v27`) extended the 1.1 schema instead
+The Source Import rework (compiler `dom-v28`) extended the 1.1 schema instead
 of bumping the version:
 
 - `frame.transform` (full CSS transform string, takes priority over rotation)
@@ -135,7 +135,14 @@ of bumping the version:
   boundary/role, repeat group, background layer index);
 - `responsiveOverrides.src` per viewport for images; `elementStyle`
   `backgroundImage`/`maskImage`/`clipPath`;
-- variable-font weight ranges and `unicodeRange` subsets in `@font-face`.
+- variable-font weight ranges and `unicodeRange` subsets in `@font-face`;
+- text fidelity (dom-v28): the full font stack survives sanitization
+  (quoted names + generics), text frames keep subpixel coordinates,
+  `line-height: normal` is left to browser font metrics instead of a 1.2
+  fallback, and the capture covers `text-align` (element `align`), italic,
+  `tabular-nums`, per-side borders (`style.borderSides`) and modern color
+  functions (`oklch`/`oklab`/`lab`/`lch`/`color(display-p3)`/`color-mix()`
+  converted to sRGB hex).
 
 Capture honesty is enforced out-of-band by the fidelity harness
 (`app/fidelity_harness.py`): the IR is re-rendered by the editor engine and

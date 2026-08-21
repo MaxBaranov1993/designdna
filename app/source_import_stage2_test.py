@@ -442,6 +442,93 @@ def main() -> None:
           set(multi["#fixture-grid"].get("layers_by_viewport") or {}) == {"desktop", "tablet", "mobile"},
           str(multi["#fixture-grid"].get("layers_by_viewport")))
 
+    # ---------- colors fixture: modern color functions, per-side borders, text metrics ----------
+    colors_server = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(FIXTURES)))
+    threading.Thread(target=colors_server.serve_forever, daemon=True).start()
+    colors_url = f"http://127.0.0.1:{colors_server.server_port}/source_import_stage2_colors.html"
+    original_validate2 = scraper.validate_public_url
+    scraper.validate_public_url = lambda _url: None
+    try:
+        colors_cap = capture_block_irs(
+            colors_url,
+            [
+                {"name": "hero", "label": "Hero", "kind": "section", "selector": "#hero"},
+                {"name": "sides", "label": "Sides", "kind": "section", "selector": "#sides"},
+            ],
+            viewports=[{"name": "desktop", "width": 1440, "height": 900}],
+            timeout_ms=5000,
+        )
+    finally:
+        scraper.validate_public_url = original_validate2
+        colors_server.shutdown()
+        colors_server.server_close()
+
+    hero_cap = colors_cap["#hero"]
+    hero_ir = hero_cap["ir"]
+    jsonschema.Draft7Validator(SCHEMA).validate(hero_ir)
+    hero_section = hero_ir["tree"][0]
+    # #hero сам становится source-block секцией: фон/бордеры лежат на ней
+    hstyle = hero_section.get("style") or {}
+
+    def walk_all(node):
+        yield node
+        for child in node.get("children") or []:
+            yield from walk_all(child)
+
+    flat = [n for n in walk_all(hero_section) if isinstance(n, dict)]
+    by_text = {str(n.get("text") or ""): n for n in flat if n.get("text")}
+
+    check("oklch background parses to hex", isinstance(hstyle.get("background"), str)
+          and hstyle["background"].startswith("#"), str(hstyle.get("background")))
+    border_sides = hstyle.get("borderSides")
+    check("border-bottom-only serializes per-side (borderSides [0,0,3,0])",
+          isinstance(border_sides, list) and len(border_sides) == 4
+          and abs(float(border_sides[2].get("width", 0)) - 3) <= 0.6
+          and all(float(s.get("width", 99)) <= 0.6 for i, s in enumerate(border_sides) if i != 2),
+          str(border_sides))
+    lab_heading = by_text.get("Modern colors")
+    check("lab() heading color parses to hex",
+          bool(lab_heading and (lab_heading.get("style") or {}).get("color", "").startswith("#")),
+          str((lab_heading or {}).get("style")))
+    mix_p = by_text.get("centered subtitle over oklch background")
+    check("color-mix() text color parses to hex",
+          bool(mix_p and (mix_p.get("style") or {}).get("color", "").startswith("#")),
+          str((mix_p or {}).get("style")))
+    check("centered subtitle carries align:center", bool(mix_p and mix_p.get("align") == "center"),
+          str((mix_p or {}).get("align")))
+    fine = by_text.get("fine print in italic")
+    check("italic captured as fontStyle", bool(fine and (fine.get("style") or {}).get("fontStyle") == "italic"),
+          str((fine or {}).get("style")))
+    timer = by_text.get("04:37")
+    check("tabular-nums captured", bool(timer and (timer.get("style") or {}).get("fontVariantNumeric") == "tabular-nums"),
+          str((timer or {}).get("style")))
+    check("lch() timer color parses to hex",
+          bool(timer and (timer.get("style") or {}).get("color", "").startswith("#")),
+          str((timer or {}).get("style")))
+    p3 = by_text.get("display-p3 red")
+    check("color(display-p3) parses to hex",
+          bool(p3 and (p3.get("style") or {}).get("color", "").startswith("#")),
+          str((p3 or {}).get("style")))
+    check("font stack keeps fallbacks (comma preserved)",
+          "," in str((timer or {}).get("style", {}).get("fontFamily", "")),
+          str((timer or {}).get("style", {}).get("fontFamily")))
+    check("text frames keep subpixel precision (floats allowed)",
+          all(isinstance((n.get("frame") or {}).get("width"), (int, float)) for n in flat if n.get("frame")),
+          "frame widths are numeric")
+
+    sides_cap = colors_cap["#sides"]
+    sides_ir = sides_cap["ir"]
+    jsonschema.Draft7Validator(SCHEMA).validate(sides_ir)
+    sides_style = sides_ir["tree"][0].get("style") or {}
+    four = sides_style.get("borderSides")
+    check("four differing borders serialize per-side with widths [1,2,4,2]",
+          isinstance(four, list) and len(four) == 4
+          and abs(float(four[0].get("width", 0)) - 1) <= 0.6
+          and abs(float(four[1].get("width", 0)) - 2) <= 0.6
+          and abs(float(four[2].get("width", 0)) - 4) <= 0.6
+          and abs(float(four[3].get("width", 0)) - 2) <= 0.6,
+          str(four))
+
     print("ALL STAGE 2 CHECKS PASSED")
 
 
