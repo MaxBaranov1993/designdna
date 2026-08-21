@@ -141,8 +141,8 @@ def main():
         check("правило kind: провод prompt.out->reference.ir отклонён", bool(rejected))
         check("лишний провод не создан", pg.evaluate("window.GraphDev.state().edges.length === 2"))
 
-        # автосейв (debounce 300 мс) и перезагрузка — граф должен сохраниться
-        pg.wait_for_timeout(600)
+        # автосейв (debounce 300 мс + idle-слот до ~1.2 с) и перезагрузка — граф должен сохраниться
+        pg.wait_for_timeout(2000)
         pg.reload()
         pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
@@ -155,9 +155,10 @@ def main():
             pg.evaluate("document.querySelector('.n-prompt .f-text').value") == PROMPT_TEXT,
         )
         check(
-            "сейв в отдельном ключе, legacy-граф не затронут",
+            "сейв в pages-ключе, legacy-ключи не пишутся",
             pg.evaluate(
-                "localStorage.getItem('designai-flow-v1') !== null && "
+                "localStorage.getItem('designai-flow-pages-v1') !== null && "
+                "localStorage.getItem('designai-flow-v1') === null && "
                 "localStorage.getItem('designai-graph-v1') === null"
             ),
         )

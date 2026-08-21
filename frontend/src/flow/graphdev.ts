@@ -18,6 +18,7 @@ export interface GraphDevApi {
   setText: (nodeId: number, text: string) => boolean;
   patchData: (nodeId: number, patch: Record<string, unknown>) => boolean;
   run: (nodeId: number) => void;
+  clear: () => void;
   createPage: (name?: string) => void;
   switchPage: (id: string) => void;
   pages: () => { id: string; name: string; active: boolean; nodes: number }[];
@@ -96,6 +97,9 @@ export function installGraphDev() {
     },
     run: (nodeId) => {
       useFlowStore.getState().runNode(Number(nodeId));
+    },
+    clear: () => {
+      useFlowStore.getState().clearGraph();
     },
     createPage: (name) => {
       useFlowStore.getState().createPage(name);

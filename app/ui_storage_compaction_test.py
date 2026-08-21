@@ -1,4 +1,4 @@
-"""Project persistence must omit Source screenshots before localStorage quota errors."""
+"""Project persistence must omit Source screenshots from every store (localStorage and SQLite)."""
 from __future__ import annotations
 
 import json
@@ -30,6 +30,8 @@ def main() -> None:
         page.evaluate("localStorage.clear()")
         page.reload()
         page.wait_for_function("window.GraphDev")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        page.evaluate("window.GraphDev.clear()")
 
         result = page.evaluate("""() => {
           const heavy = 'data:image/jpeg;base64,' + 'A'.repeat(1800000);
@@ -52,7 +54,7 @@ def main() -> None:
           window.GraphDev.setIR(edit.id,ir);
           return {source:source.id,edit:edit.id,editableSrc};
         }""")
-        page.wait_for_timeout(1200)
+        page.wait_for_timeout(2200)
 
         stored = page.evaluate("""() => {
           const raw=localStorage.getItem('designai-flow-pages-v1')||'';
@@ -69,9 +71,7 @@ def main() -> None:
         check("project save stays compact", stored["bytes"] < 100_000, json.dumps(stored))
         check("source screenshot references are not persisted", not stored["hasDataScreenshot"], json.dumps(stored))
         check("editable image src is preserved", stored["hasEditableSrc"], json.dumps(stored))
-        check("legacy compatibility save is compact",
-              len(stored["legacy"]) < 100_000 and "data:image/jpeg;base64," not in stored["legacy"],
-              json.dumps(stored))
+        check("legacy graph key is no longer written", len(stored["legacy"]) == 0, json.dumps(stored))
         check("quota warning is not shown", not stored["quotaToast"], json.dumps(stored))
 
         db_saved = page.evaluate("""async () => {
@@ -87,7 +87,8 @@ def main() -> None:
             hasEditableSrc:text.includes('data:image/svg+xml;base64,PHN2Zy8+'),
           };
         }""")
-        check("sqlite project keeps source screenshots", db_saved["hasDataScreenshot"], json.dumps(db_saved))
+        check("sqlite project is compact too (screenshots are evidence, not state)",
+              not db_saved["hasDataScreenshot"], json.dumps(db_saved))
         check("sqlite project keeps editable IR", db_saved["hasEditableSrc"], json.dumps(db_saved))
 
         page.reload()

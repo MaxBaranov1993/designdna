@@ -77,69 +77,129 @@ export function compactForStorage(v: unknown): unknown {
   return v;
 }
 
-/* ---------- Р°РІС‚РѕСЃРµР№РІ (Р·РµСЂРєР°Р»Рѕ save(), nodes.js:1174-1196) ---------- */
+/* ---------- автосейв: один compact + один stringify, запись в idle-слоте ----------
+ *
+ * Раньше каждое изменение графа сериализовалось 3-4 раза (две записи в
+ * localStorage + POST в SQLite получали несжатый payload с base64-скриншотами)
+ * и писало localStorage синхронно в кадре взаимодействия. Теперь:
+ *  - compact и stringify выполняются ровно один раз, одну и ту же строку едят
+ *    localStorage и POST /api/project/save (скриншоты — evidence, не состояние);
+ *  - сама работа уезжает в requestIdleCallback с timeout-капом, чтобы
+ *    dragstop/набор текста не платили за сериализацию мегабайтного проекта;
+ *  - legacy-ключ designai-flow-v1 больше не пишется (читается только при
+ *    миграции старых проектов), pages-ключ содержит всё. */
 
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-let lastProvider: (() => LegacyGraphPayload) | null = null;
-let lastSaveOk = true;
-let lsGraphDisabled = false;
+let projectSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let lastProjectProvider: (() => PagesProjectPayload) | null = null;
+let idleWriteHandle: number | null = null;
+let dbSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let lastDbProjectText: string | null = null;
+let lsPagesDisabled = false;
 
-function writeGraph(payload: LegacyGraphPayload) {
-  if (lsGraphDisabled) return;
+function scheduleIdleWrite(): void {
+  if (idleWriteHandle != null) return; // отложенный write возьмёт свежий provider при исполнении
+  if (typeof requestIdleCallback === "function") {
+    idleWriteHandle = requestIdleCallback(
+      () => {
+        idleWriteHandle = null;
+        if (lastProjectProvider) writeProjectNow(lastProjectProvider);
+      },
+      { timeout: 1200 },
+    );
+  } else {
+    idleWriteHandle = setTimeout(() => {
+      idleWriteHandle = null;
+      if (lastProjectProvider) writeProjectNow(lastProjectProvider);
+    }) as unknown as number;
+  }
+}
+
+function cancelIdleWrite(): void {
+  if (idleWriteHandle == null) return;
+  if (typeof cancelIdleCallback === "function") {
+    cancelIdleCallback(idleWriteHandle);
+  } else {
+    clearTimeout(idleWriteHandle as unknown as ReturnType<typeof setTimeout>);
+  }
+  idleWriteHandle = null;
+}
+
+function writeProjectNow(provider: () => PagesProjectPayload): void {
+  const payload = provider();
   const compact = compactForStorage(payload);
+  const text = JSON.stringify(compact);
+  lastDbProjectText = text;
+  scheduleDbProjectSave();
+  if (lsPagesDisabled) return;
   try {
-    localStorage.setItem(FLOW_LS_KEY, JSON.stringify(compact));
-    lastSaveOk = true;
+    localStorage.setItem(FLOW_PAGES_LS_KEY, text);
   } catch {
     try {
-      localStorage.setItem(FLOW_LS_KEY, JSON.stringify(stripHeavy(compact)));
-      lastSaveOk = true;
-      toast("localStorage РїРµСЂРµРїРѕР»РЅРµРЅ вЂ” СЃРѕС…СЂР°РЅРёР» Р±РµР· СЃРєСЂРёРЅС€РѕС‚РѕРІ", "error");
+      localStorage.setItem(FLOW_PAGES_LS_KEY, JSON.stringify(stripHeavy(compact)));
+      toast("localStorage переполнен — проект страниц сохранён без тяжёлых данных", "error");
     } catch {
-      lsGraphDisabled = true;
-      localStorage.removeItem(FLOW_LS_KEY);
-      lastSaveOk = true;
-      return;
+      lsPagesDisabled = true;
+      localStorage.removeItem(FLOW_PAGES_LS_KEY);
+      toast("localStorage переполнен - проект сохраняется в SQLite.", "error");
     }
   }
 }
 
-/* Р”РµР±Р°СѓРЅСЃ 300 РјСЃ вЂ” РєР°Рє nodes.js:1175-1176 */
-export function scheduleSave(provider: () => LegacyGraphPayload) {
-  lastProvider = provider;
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    if (lastProvider) writeGraph(lastProvider());
+function scheduleDbProjectSave(): void {
+  if (dbSaveTimer) clearTimeout(dbSaveTimer);
+  dbSaveTimer = setTimeout(() => {
+    dbSaveTimer = null;
+    void flushDbProject();
+  }, 250);
+}
+
+async function flushDbProject(): Promise<void> {
+  const text = lastDbProjectText;
+  if (!text) return;
+  lastDbProjectText = null;
+  try {
+    const resp = await fetch("/api/project/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // text — уже валидный JSON; склейка экономит повторный stringify мегабайтного payload
+      body: `{"project":${text}}`,
+    });
+    if (!resp.ok && lastDbProjectText === null) lastDbProjectText = text;
+  } catch {
+    // localStorage уже содержит актуальный compact; повторит следующий сейв или unload-beacon
+    if (lastDbProjectText === null) lastDbProjectText = text;
+  }
+}
+
+/* Дебаунс 300 мс, затем idle-слот */
+export function scheduleProjectSave(provider: () => PagesProjectPayload) {
+  lastProjectProvider = provider;
+  if (projectSaveTimer) clearTimeout(projectSaveTimer);
+  projectSaveTimer = setTimeout(() => {
+    projectSaveTimer = null;
+    if (lastProjectProvider) scheduleIdleWrite();
   }, 300);
 }
 
-/* РџСЂРё Р·Р°РєСЂС‹С‚РёРё РІРєР»Р°РґРєРё: РґРѕР¶Р°С‚СЊ РЅРµР·Р°РІРµСЂС€С‘РЅРЅС‹Р№ РґРµР±Р°СѓРЅСЃ; С„Р»Р°С€, РµСЃР»Рё Р·Р°РїРёСЃСЊ РЅРµ СѓРґР°Р»Р°СЃСЊ
- * (Р·РµСЂРєР°Р»Рѕ nodes.js:1198-1200) */
-window.addEventListener("beforeunload", (e) => {
-  if (saveTimer && lastProvider) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-    writeGraph(lastProvider());
-  }
-  if (projectSaveTimer && lastProjectProvider) {
+/* При закрытии вкладки: дожать незавершённый дебаунс/idle синхронно и
+ * отправить ожидающий SQLite-POST через sendBeacon */
+window.addEventListener("beforeunload", () => {
+  if (projectSaveTimer) {
     clearTimeout(projectSaveTimer);
     projectSaveTimer = null;
-    writeProject(lastProjectProvider());
   }
-  if (dbSaveTimer && lastDbProject) {
+  cancelIdleWrite();
+  if (lastProjectProvider) writeProjectNow(lastProjectProvider);
+  if (dbSaveTimer) {
     clearTimeout(dbSaveTimer);
     dbSaveTimer = null;
-    const body = JSON.stringify({ project: lastDbProject });
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon("/api/project/save", new Blob([body], { type: "application/json" }));
-    } else {
-      void saveProjectToDb(lastDbProject);
-    }
   }
-  if (!lastSaveOk) {
-    e.preventDefault();
-    e.returnValue = "";
+  if (lastDbProjectText && navigator.sendBeacon) {
+    navigator.sendBeacon(
+      "/api/project/save",
+      new Blob([`{"project":${lastDbProjectText}}`], { type: "application/json" }),
+    );
+    lastDbProjectText = null;
   }
 });
 
@@ -247,60 +307,6 @@ export function buildPagesProjectPayload(st: {
     }),
     channels: st.channels,
   };
-}
-
-let projectSaveTimer: ReturnType<typeof setTimeout> | null = null;
-let lastProjectProvider: (() => PagesProjectPayload) | null = null;
-let dbSaveTimer: ReturnType<typeof setTimeout> | null = null;
-let lastDbProject: PagesProjectPayload | null = null;
-let lsPagesDisabled = false;
-
-function writeProject(payload: PagesProjectPayload) {
-  lastDbProject = payload;
-  scheduleDbProjectSave(lastDbProject);
-  if (lsPagesDisabled) return;
-  const compact = compactForStorage(payload);
-  try {
-    localStorage.setItem(FLOW_PAGES_LS_KEY, JSON.stringify(compact));
-  } catch {
-    try {
-      localStorage.setItem(FLOW_PAGES_LS_KEY, JSON.stringify(stripHeavy(compact)));
-      toast("localStorage РїРµСЂРµРїРѕР»РЅРµРЅ вЂ” РїСЂРѕРµРєС‚ СЃС‚СЂР°РЅРёС† СЃРѕС…СЂР°РЅС‘РЅ Р±РµР· С‚СЏР¶С‘Р»С‹С… РґР°РЅРЅС‹С…", "error");
-    } catch {
-      lsPagesDisabled = true;
-      localStorage.removeItem(FLOW_PAGES_LS_KEY);
-      toast("localStorage переполнен - проект сохраняется в SQLite.", "error");
-    }
-  }
-}
-
-function scheduleDbProjectSave(payload: PagesProjectPayload) {
-  if (dbSaveTimer) clearTimeout(dbSaveTimer);
-  dbSaveTimer = setTimeout(() => {
-    dbSaveTimer = null;
-    void saveProjectToDb(payload);
-  }, 250);
-}
-
-async function saveProjectToDb(payload: PagesProjectPayload) {
-  try {
-    await fetch("/api/project/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project: payload }),
-    });
-  } catch {
-    // Local cache already contains the latest compact payload; the next edit will retry DB save.
-  }
-}
-
-export function scheduleProjectSave(provider: () => PagesProjectPayload) {
-  lastProjectProvider = provider;
-  if (projectSaveTimer) clearTimeout(projectSaveTimer);
-  projectSaveTimer = setTimeout(() => {
-    projectSaveTimer = null;
-    if (lastProjectProvider) writeProject(lastProjectProvider());
-  }, 300);
 }
 
 /* legacy-payload -> СЃРѕСЃС‚РѕСЏРЅРёРµ RF (СЃС‚СЂРѕРєРѕРІС‹Рµ id вЂ” С‚РѕР»СЊРєРѕ РІ СЂР°РЅС‚Р°Р№РјРµ) */

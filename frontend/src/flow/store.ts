@@ -15,15 +15,14 @@ import { composeSourceInputs, sourceInputForPort } from "./sourceComposition";
 import type { SourceInputBlock } from "./sourceComposition";
 import {
   DEFAULT_VIEW,
+  FLOW_LS_KEY,
   buildPagesProjectPayload,
-  buildSavePayload,
   loadPagesProjectFromDb,
   loadPagesProjectFromStorage,
   loadFromStorage,
   makeRfEdge,
   payloadToRf,
   scheduleProjectSave,
-  scheduleSave,
 } from "./serialize";
 import { toast } from "./toast";
 import type {
@@ -136,6 +135,15 @@ export interface FlowStoreState {
 /* Стартовое состояние — из сейва designai-flow-v1 (битый сейв → пустой граф) */
 const emptyGraph = { nodes: [] as FlowNode[], edges: [] as FlowEdge[], view: { ...DEFAULT_VIEW }, nextId: 1 };
 const projectSaved = loadPagesProjectFromStorage();
+if (projectSaved) {
+  /* pages-проект полностью заменяет legacy-ключ: убираем мёртвый блоб,
+   * который иначе занимает мегабайты квоты localStorage. */
+  try {
+    localStorage.removeItem(FLOW_LS_KEY);
+  } catch {
+    /* приватный режим и т.п. — не критично */
+  }
+}
 const saved = projectSaved ? null : loadFromStorage();
 const initialSingle = saved ? payloadToRf(saved) : emptyGraph;
 const initialPages: FlowPage[] = projectSaved?.pages || [
@@ -1406,14 +1414,15 @@ function samePersistedEdges(a: FlowEdge[], b: FlowEdge[]): boolean {
 }
 
 /* Автосейв: selection/measurement changes from Svelte Flow are runtime-only.
- * Serializing three Source Import payloads for every click can freeze the renderer. */
+ * Serializing three Source Import payloads for every click can freeze the renderer.
+ * view намеренно не будит автосейв: pan/zoom не сериализуют проект — вью
+ * уезжает в сейв при следующем реальном изменении либо во flush на unload. */
 useFlowStore.subscribe((state, prev) => {
   const nodesChanged = !samePersistedNodes(state.nodes, prev.nodes);
   const edgesChanged = !samePersistedEdges(state.edges, prev.edges);
   if (
     !nodesChanged &&
     !edgesChanged &&
-    state.view === prev.view &&
     state.nextId === prev.nextId &&
     state.pages === prev.pages &&
     state.activePageId === prev.activePageId &&
@@ -1421,6 +1430,5 @@ useFlowStore.subscribe((state, prev) => {
   )
     return;
   localDirtySinceInit = true;
-  scheduleSave(() => buildSavePayload(useFlowStore.getState()));
   scheduleProjectSave(() => buildPagesProjectPayload(useFlowStore.getState()));
 });
