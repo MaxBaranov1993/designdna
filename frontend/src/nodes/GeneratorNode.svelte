@@ -63,6 +63,7 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
       <option value="kimi">Kimi K3 · аккаунт</option>
       <option value="openai">GPT-5.6-sol · OpenAI API</option>
       <option value="glm">GLM-5.3 · Zhipu API</option>
+      <option value="zcode">GLM · ZCode (без ключа)</option>
     </select>
   </div>
   <div class="ctl-row">

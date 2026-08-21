@@ -29,7 +29,7 @@ declare global {
         setCredential(provider: "openai" | "kimi" | "glm", value: string): Promise<Record<string, unknown>>;
         deleteCredential(provider: "openai" | "kimi" | "glm"): Promise<Record<string, unknown>>;
         importKimiCli(): Promise<KimiAccountStatus>;
-        chat(provider: "auto" | "codex" | "kimi" | "openai" | "glm", messages: Array<{ role: string; content: string }>, temperature?: number,
+        chat(provider: "auto" | "codex" | "kimi" | "openai" | "glm" | "zcode", messages: Array<{ role: string; content: string }>, temperature?: number,
           profile?: "generator" | "quality_judge" | "quality_repair", tools?: Array<Record<string, unknown>> | null):
           Promise<{ content: string; toolCalls?: Array<{ id: string; name: string; arguments: string }> }>;
       };

@@ -53,12 +53,12 @@ def next_revision(document: dict, previous_revisions: list[str]) -> dict:
     """Новая published-ревизия: bump номера, пересчёт хеша; тот же contentHash
     среди существующих ревизий не создаёт новую (§31 — идемпотентность publish)."""
     digest = content_hash(document)
-    if digest in previous_revisions:
-        return copy.deepcopy(document)
     published = copy.deepcopy(document)
+    published["contentHash"] = digest
+    if digest in previous_revisions:
+        return published
     published["status"] = "published"
     published["revision"] = int(document.get("revision") or 0) + 1
-    published["contentHash"] = digest
     return published
 
 

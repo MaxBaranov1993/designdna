@@ -68,6 +68,7 @@
       <option value="kimi">Kimi K3</option>
       <option value="openai">GPT-5.6-sol</option>
       <option value="glm">GLM-5.3</option>
+      <option value="zcode">GLM · ZCode (без ключа)</option>
     </select>
     <button
       class="btn-node primary small f-run nodrag"

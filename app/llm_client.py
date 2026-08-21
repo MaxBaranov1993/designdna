@@ -4,12 +4,18 @@
 (OpenAI-совместимый формат), без OpenRouter. Модель задаётся композитным
 slug'ом «provider/model»; записи цепочки без ключа в env пропускаются —
 работает тот аккаунт, который подключён.
+Провайдер «zcode» ключа не требует вообще: он вызывает локальный
+авторизованный ZCode CLI (coding plan Z.AI) — приложение работает из коробки
+на аккаунте ZCode, без ключей open.bigmodel.cn.
 Таймауты: LLM_TIMEOUT_S (по умолчанию 120с), раньше было 600с.
 """
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -58,16 +64,27 @@ PROVIDERS = {
         "env": "GLM_API_KEY",
         "base_env": "GLM_BASE_URL",
     },
+    # Локальный ZCode CLI: без ключа, через авторизованный login Z.AI
+    # (coding plan). Не HTTP-транспорт — обрабатывается отдельно в chat().
+    "zcode": {
+        "url": "",
+        "env": "",  # ключ не нужен; доступность = наличие CLI и login
+    },
 }
 
 # Роутинг моделей по ролям (роль ноды → [основная, fallback]).
 # Каждая запись — композитный slug «provider/model» (разбор по первому '/').
 # Если у записи нет ключа провайдера в env — она пропускается: так цепочка
 # сама выбирает подключённый аккаунт (только Kimi → Kimi, только OpenAI → OpenAI).
+# zcode/GLM-5.2 стоит последним в текстовых цепочках: если ни один API-ключ
+# не настроен, генерация работает через локальный ZCode CLI (учётка ZCode).
+# Vision не включён: модели coding-плана (GLM-5.2/5.3) не принимают
+# inline-изображения на этом эндпоинте — vision остаётся на прямых API.
 # Любую роль можно переопределить env: LLM_MODELS_<ROLE> (через запятую).
 # Текущий роутинг: все роли — openai/gpt-5.6-sol с запасным kimi/k3
 # (обе модели vision-capable).
-STRONG = CHEAP = VISION = ["openai/gpt-5.6-sol", "kimi/k3", "glm/glm-5.3"]
+STRONG = CHEAP = ["openai/gpt-5.6-sol", "kimi/k3", "glm/glm-5.3", "zcode/GLM-5.2"]
+VISION = ["openai/gpt-5.6-sol", "kimi/k3", "glm/glm-5.3"]
 ROUTING = {
     # канонические роли владельца
     "prompt_enhancer": STRONG,
@@ -135,6 +152,156 @@ def _provider_url(cfg: dict) -> str:
     if base:
         return base.rstrip("/") + "/chat/completions"
     return cfg["url"]
+
+
+# --------------------------------------------------------------------------
+# Провайдер «zcode»: локальный ZCode CLI с общим login Z.AI (coding plan).
+# Ключей API не нужно — модель отвечает от имени учётки ZCode.
+# CLI требует ~/.zcode/cli/config.json с явным провайдером; конфиг
+# бутстрапится из ~/.zcode/v2/config.json (там лежит подключённый план).
+# --------------------------------------------------------------------------
+
+# Короткая инструкция headless-агенту: полный промпт лежит в TASK.md,
+# потому что командная строка Windows ограничена ~32К символов.
+ZCODE_TASK_PROMPT = (
+    "Read the file TASK.md in the current working directory and complete "
+    "the task it describes. Output only the final answer the task requires, "
+    "nothing else. Do not read, create or modify any other files."
+)
+
+# Агент не должен пользоваться инструментами (мы хотим чистую генерацию
+# текста); Read остаётся разрешённым, чтобы он прочёл TASK.md и вложения.
+ZCODE_DENY_TOOLS = (
+    "Bash Edit Write Glob Grep Agent Task WebFetch WebSearch TodoWrite Skill "
+    "SendMessage CronCreate CronDelete CronList CronUpdate TaskOutput TaskStop "
+    "EnterPlanMode ExitPlanMode AskUserQuestion"
+)
+
+ZCODE_MODEL_PREFERENCE = ["GLM-5.3", "GLM-5.2", "GLM-5-Turbo"]
+
+# Стартовый запас сверх LLM-таймаута: загрузка CLI + чтение TASK.md агентом.
+ZCODE_BOOT_GRACE_S = 45
+# Пол agent-цикл CLI (reasoning-модель + чтение TASK.md) медленнее прямого API
+# и высоковариативен (замерено 60–285с на полную генерацию IR): не даём коротким
+# таймаутам ролей убивать большие генерации.
+ZCODE_MIN_TIMEOUT_S = 420
+
+
+def _zcode_cli_path() -> str | None:
+    """Путь к zcode.cjs: env-оверрайд → установка ZCode → zcode в PATH."""
+    override = os.environ.get("ZCODE_CLI", "").strip()
+    if override and Path(override).exists():
+        return override
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    if localappdata:
+        cand = Path(localappdata) / "Programs" / "ZCode" / "resources" / "glm" / "zcode.cjs"
+        if cand.exists():
+            return str(cand)
+    return shutil.which("zcode")
+
+
+def _zcode_node_path() -> str | None:
+    return os.environ.get("ZCODE_NODE", "").strip() or shutil.which("node")
+
+
+def _zcode_pick_provider(v2cfg: dict) -> tuple[str, str] | None:
+    """Выбрать провайдера/модель из v2-конфига ZCode: активный coding plan."""
+    providers = v2cfg.get("provider") or {}
+    ordered = sorted(
+        providers.items(),
+        key=lambda kv: (0 if "coding-plan" in kv[0] and kv[1].get("enabled") else 1, kv[0]),
+    )
+    for pid, p in ordered:
+        models = list((p.get("models") or {}).keys())
+        if not models or not (p.get("options") or {}).get("baseURL"):
+            continue
+        for pref in ZCODE_MODEL_PREFERENCE:
+            if pref in models:
+                return pid, pref
+        return pid, models[0]
+    return None
+
+
+def zcode_available() -> bool:
+    """ZCode CLI установлен и авторизован (login Z.AI на месте).
+    Идемпотентно бутстрапит ~/.zcode/cli/config.json из v2-конфига."""
+    cli = _zcode_cli_path()
+    if not cli:
+        return False
+    home = Path.home()
+    if not (home / ".zcode" / "v2" / "credentials.json").exists():
+        return False  # не авторизован (zcode login не выполнялся)
+    cfg_path = home / ".zcode" / "cli" / "config.json"
+    if cfg_path.exists():
+        return True
+    v2_path = home / ".zcode" / "v2" / "config.json"
+    if not v2_path.exists():
+        return False
+    try:
+        v2cfg = json.loads(v2_path.read_text(encoding="utf-8"))
+        picked = _zcode_pick_provider(v2cfg)
+        if not picked:
+            return False
+        pid, model_id = picked
+        cfg = {
+            "provider": {pid: v2cfg["provider"][pid]},
+            "model": {"main": f"{pid}/{model_id}"},
+        }
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        return True
+    except (OSError, ValueError, KeyError):
+        return False
+
+
+def _zcode_render_task(messages: list) -> str:
+    """Собрать TASK.md из сообщений chat-completions формата."""
+    parts = []
+    for m in messages:
+        role = (m.get("role") or "user").upper()
+        content = m.get("content", "")
+        if isinstance(content, list):  # мультимодальные блоки — берём текст
+            content = "\n".join(
+                b.get("text", "") for b in content if isinstance(b, dict)
+            )
+        parts.append(f"### {role}\n{content}")
+    return "\n\n".join(parts)
+
+
+def _zcode_run(args: list, timeout: int, task_dir: str | None = None) -> str:
+    """Запустить zcode CLI, вернуть финальный текст ответа."""
+    node = _zcode_node_path()
+    cli = _zcode_cli_path()
+    if not node or not cli:
+        raise RuntimeError("zcode: node или zcode.cjs не найдены")
+    cmd = [node, cli, *args]
+    cap = max(timeout, ZCODE_MIN_TIMEOUT_S) + ZCODE_BOOT_GRACE_S
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, timeout=cap,
+            cwd=task_dir or tempfile.gettempdir(),
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"zcode: таймаут {cap}s")
+    out = (proc.stdout or b"").decode("utf-8", "replace").strip()
+    if proc.returncode != 0 or not out:
+        err = (proc.stderr or b"").decode("utf-8", "replace").strip()[-300:]
+        raise RuntimeError(f"zcode: exit {proc.returncode}: {err or 'пустой ответ'}")
+    return out
+
+
+def _chat_zcode_once(model_id: str, messages: list, timeout: int) -> str:
+    """Текстовая генерация через ZCode CLI: промпт в TASK.md, ответ — stdout."""
+    task_dir = tempfile.mkdtemp(prefix="zcode-task-")
+    try:
+        (Path(task_dir) / "TASK.md").write_text(
+            _zcode_render_task(messages), encoding="utf-8")
+        return _zcode_run(
+            ["--prompt", ZCODE_TASK_PROMPT, "--cwd", task_dir,
+             "--disallowed-tools", ZCODE_DENY_TOOLS],
+            timeout, task_dir)
+    finally:
+        shutil.rmtree(task_dir, ignore_errors=True)
 
 
 def _resolve_chain(role: str, model: str | None, provider: str | None) -> list:
@@ -227,6 +394,15 @@ def chat(provider: str | None, messages: list, temperature: float, timeout: int 
     skipped = []
     last_error = None
     for name, model_id, cfg in chain:
+        if name == "zcode":
+            if not zcode_available():
+                skipped.append("zcode: ZCode CLI не найден или нет login Z.AI")
+                continue
+            try:
+                return _chat_zcode_once(model_id, messages, t)
+            except Exception as e:
+                last_error = f"zcode/{model_id}: {e}"
+                continue
         key = os.environ.get(cfg["env"], "")
         if not key:
             skipped.append(f"{name}/{model_id}: нет {cfg['env']}")

@@ -89,7 +89,7 @@
   const textColor = hex(style.color, "#111111");
   const savedAiForm = ctl.getAiAssistFormState();
   let scopeMode = $state<AssistScopeMode>(sels.length > 1 ? (ctl.hasExplicitAiAssistScopeMode() ? savedAiForm.scopeMode : "selection") : "single");
-  let provider = $state<string>(["auto", "codex", "kimi", "openai", "glm"].includes(String(savedAiForm.provider)) ? String(savedAiForm.provider) : "auto");
+  let provider = $state<string>(["auto", "codex", "kimi", "openai", "glm", "zcode"].includes(String(savedAiForm.provider)) ? String(savedAiForm.provider) : "auto");
   const desktopAssist = typeof window !== "undefined" && !!window.designDNA?.providers;
   let prompt = $state(savedAiForm.prompt);
   let allowContent = $state(savedAiForm.constraints.allowContent);
@@ -138,6 +138,7 @@
       <option value="kimi">Kimi K3</option>
       <option value="openai">GPT-5.6-sol</option>
       <option value="glm">GLM-5.3</option>
+      <option value="zcode">GLM · ZCode (без ключа)</option>
     </select>
   </div>
   <div class="ai-scope-list" aria-label="Элементы для AI">

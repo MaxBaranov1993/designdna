@@ -56,8 +56,48 @@ test("auto provider fails clearly when no account is connected", async () => {
       messages,
       credentials: credentials(),
       codex: { account: async () => ({ account: null }) },
+      zcodeAvailable: () => null,
     }),
     /Нет подключённого AI-аккаунта/,
+  );
+});
+
+test("auto provider falls back to the local ZCode CLI when no account is connected", async () => {
+  let called = false;
+  const result = await chatWithProvider({
+    provider: "auto",
+    messages,
+    credentials: credentials(),
+    codex: { account: async () => ({ account: null }) },
+    zcodeAvailable: () => "C:/fake/zcode.cjs",
+    zcodeChat: async () => { called = true; return '{"score":85}'; },
+  });
+  assert.equal(result.provider, "zcode");
+  assert.equal(result.content, '{"score":85}');
+  assert.equal(called, true);
+});
+
+test("explicit zcode route works without credentials and fails clearly when unavailable", async () => {
+  const result = await chatWithProvider({
+    provider: "zcode",
+    messages,
+    credentials: credentials(),
+    codex: { account: async () => ({ account: null }) },
+    zcodeAvailable: () => "C:/fake/zcode.cjs",
+    zcodeChat: async () => "ok-zcode",
+  });
+  assert.equal(result.provider, "zcode");
+  assert.equal(result.content, "ok-zcode");
+
+  await assert.rejects(
+    chatWithProvider({
+      provider: "zcode",
+      messages,
+      credentials: credentials(),
+      codex: { account: async () => ({ account: null }) },
+      zcodeAvailable: () => null,
+    }),
+    /ZCode CLI не найден/,
   );
 });
 

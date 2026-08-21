@@ -389,7 +389,7 @@ export function parseLegacyPayload(input: unknown): LegacyGraphPayload {
     // графов возвращаем к переносимому auto-маршруту.
     if (r.type === "generator") {
       const saved = String((data as { provider?: unknown }).provider || "");
-      const provider = new Set(["auto", "codex", "kimi", "openai", "glm"]).has(saved) ? saved : "auto";
+      const provider = new Set(["auto", "codex", "kimi", "openai", "glm", "zcode"]).has(saved) ? saved : "auto";
       data = { ...data, provider } as AnyNodeData;
     }
     data = dataForRuntime(r.type as NodeType, data);

@@ -169,7 +169,7 @@ export function getAiAssistFormState(): AssistRequest {
 }
 
 export function setAiAssistFormState(next: Partial<AssistRequest>) {
-  if (next.provider !== undefined && !["auto", "codex", "kimi", "openai", "glm"].includes(String(next.provider))) next.provider = "auto";
+  if (next.provider !== undefined && !["auto", "codex", "kimi", "openai", "glm", "zcode"].includes(String(next.provider))) next.provider = "auto";
   aiAssistFormState = {
     ...aiAssistFormState,
     ...next,
@@ -1695,7 +1695,7 @@ export async function requestAiAssist(request: AssistRequest) {
       const prepared = await postAiAssist({ ...payload, prepareOnly: true });
       if (Array.isArray(prepared.messages)) {
         ui.setAiProgress({ stage: "provider", label: "AI анализирует объект и готовит правки", startedAt });
-        const assistProvider = ["auto", "codex", "kimi", "openai", "glm"].includes(String(request.provider)) ? request.provider as "auto" | "codex" | "kimi" | "openai" | "glm" : "auto";
+        const assistProvider = ["auto", "codex", "kimi", "openai", "glm", "zcode"].includes(String(request.provider)) ? request.provider as "auto" | "codex" | "kimi" | "openai" | "glm" | "zcode" : "auto";
         const answer = await window.designDNA.providers.chat(assistProvider, prepared.messages, 0.2);
         ui.setAiProgress({ stage: "validate", label: "Проверяю ответ и строю предпросмотр", startedAt });
         data = await postAiAssist({ ...payload, rawOutput: answer.content });

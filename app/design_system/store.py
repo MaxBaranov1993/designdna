@@ -8,7 +8,9 @@ from pathlib import Path
 
 from . import document as dsdoc
 
-_LOCK = threading.Lock()
+# RLock обязателен: list_systems держит лок и зовёт get_revision,
+# который берёт его повторно (обычный Lock здесь само-дедлочится)
+_LOCK = threading.RLock()
 
 
 def _db_path() -> Path:
