@@ -10,7 +10,8 @@
     "build:engine": "vite build --config vite.engine.config.ts",
     "preview": "vite preview",
     "build:desktop": "npm run build",
-    "check": "svelte-kit sync && svelte-check"
+    "check": "svelte-kit sync && svelte-check",
+    "test:engine": "node tests/engine.regression.test.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.1.0",

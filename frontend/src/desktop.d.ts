@@ -19,6 +19,7 @@ declare global {
     designDNA?: {
       app: { info(): Promise<Record<string, unknown>> };
       api: { request(request: Record<string, unknown>): Promise<Record<string, unknown>> };
+      sourceAuth: { open(url: string): Promise<{ opened: boolean }>; clear(): Promise<{ cleared: boolean }> };
       repoCanvas: { snapshot(): Promise<RepoCanvasSnapshot>; check(): Promise<Record<string, unknown>>; refresh(options?: Record<string, unknown>): Promise<Record<string, unknown>> };
       providers: {
         status(): Promise<{ runtimes: Array<Record<string, any>>; credentials: Record<DesktopProvider, boolean>; kimiAccount: KimiAccountStatus; encryptedStorage: boolean }>;

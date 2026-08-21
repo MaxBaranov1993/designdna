@@ -136,7 +136,9 @@ def _capture_confidence(capture: dict[str, Any]) -> float:
             samples.extend(score for item in value.values() if (score := _score(item)) is not None)
         elif (score := _score(value)) is not None:
             samples.append(score)
-    baseline = sum(samples) / len(samples) if samples else 0.92
+    # Missing coverage/fidelity is a warning, not a hidden OK. Defaulting to 0.92
+    # masked low-coverage captures and produced dishonest parser confidence.
+    baseline = sum(samples) / len(samples) if samples else 0.0
     warnings = capture.get("warnings") if isinstance(capture.get("warnings"), list) else []
     return round(max(0.0, min(1.0, baseline - min(len(warnings), 10) * 0.025)), 4)
 

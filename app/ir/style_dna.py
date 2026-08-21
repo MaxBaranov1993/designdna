@@ -452,9 +452,20 @@ def apply_tokens(ir: dict, tokens: dict) -> dict:
 
 
 def enrich_ir(ir: dict, source: str | None = None) -> dict:
-    """Attach full Style DNA primitives, semantic tokens and styleBindings to an IR document."""
+    """Attach full Style DNA primitives, semantic tokens and styleBindings to an IR document.
+
+    Display-токены (mode/color/font/radius/spacing/shadow), замеренные capture'ом
+    на живом DOM, точнее эвристик build_style_dna: renderer темит артборд по ним,
+    и их подмена ломает pixel parity со источником. Поэтому валидные захваченные
+    токены сохраняются; primitives/semantic/styleBindings добавляются всегда.
+    """
     ir = copy.deepcopy(ir)
+    existing = ir.get("tokens") if isinstance(ir.get("tokens"), dict) else None
     tokens = build_style_dna(ir, source=source)
+    if existing and {"mode", "color", "font", "radius", "spacing", "shadow"}.issubset(existing):
+        tokens = {**tokens, **{key: existing[key]
+                               for key in ("mode", "color", "font", "radius", "spacing", "shadow")
+                               if key in existing}}
     ir = bind_element_styles(ir, tokens)
     ir["tokens"] = tokens
     return ir

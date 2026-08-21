@@ -5,6 +5,7 @@
   import type { GeoRef, GeoSel } from "../globals";
   import ColorPicker from "./ColorPicker.svelte";
   import FontOptions from "./FontOptions.svelte";
+  import { findByKey, isSourceKeyPath } from "../../engine/sourcepath";
 
   const QUICK: { action: AssistAction; label: string; prompt: string }[] = [
     { action: "adapt", label: "Адаптив", prompt: "Сделай выделение адаптивным для tablet и mobile, сохрани дизайн и структуру." },
@@ -15,7 +16,8 @@
   function nodeOf(ir: any, ref: GeoRef) {
     if (ref.secIdx == null) return ir;
     if (ref.path == null) return ir.tree?.[ref.secIdx];
-    return getByPath(ir.tree?.[ref.secIdx], ref.path);
+    const section = ir.tree?.[ref.secIdx];
+    return isSourceKeyPath(ref.path) ? findByKey(section, ref.path) : getByPath(section, ref.path);
   }
   function hex(value: any, fallback: string) {
     const text = String(value || "").trim();
@@ -90,8 +92,23 @@
   const busy = $derived($editorUi.aiBusy);
   const error = $derived($editorUi.aiError);
   const preview = $derived($editorUi.aiPreview);
+  const progress = $derived($editorUi.aiProgress);
   const scope = $derived(ctl.getAiScopeView(scopeMode));
   const highImpact = $derived(!!preview && (preview.ops.length > 8 || preview.warnings.some((warning) => warning.code === "high_impact")));
+  let elapsedSeconds = $state(0);
+  $effect(() => {
+    const startedAt = progress?.startedAt;
+    if (!busy || !startedAt) { elapsedSeconds = 0; return; }
+    const update = () => { elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000)); };
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  });
+  function elapsedLabel(seconds: number) {
+    const minutes = Math.floor(seconds / 60);
+    const rest = String(seconds % 60).padStart(2, "0");
+    return minutes ? `${minutes}:${rest}` : `${seconds} сек`;
+  }
 </script>
 
 <div class="ai-inspector" data-ai-inspector>
@@ -121,7 +138,13 @@
       <label><input type="checkbox" bind:checked={allowColor} disabled={isScalarProp} onchange={() => ctl.setAiAssistFormState({ constraints: { allowColor } as any })} /> Цвета</label>
     </fieldset>
     {#if isScalarProp}<small>Для этого текстового свойства AI меняет только текст.</small>{:else}<div class="ai-quick-row">{#each QUICK as item (item.action)}<button disabled={busy || !!preview || !scope.items.length} onclick={() => run(item.action, item.prompt)}>{item.label}</button>{/each}</div>{/if}
-    <button class="ai-run" disabled={busy || !!preview || !prompt.trim() || !scope.items.length} onclick={() => run("custom", prompt)}>{busy ? "Готовлю результат…" : "Показать результат"}</button>
+    <button class="ai-run" disabled={busy || !!preview || !prompt.trim() || !scope.items.length} onclick={() => run("custom", prompt)}>{busy ? `AI работает · ${elapsedLabel(elapsedSeconds)}` : "Показать результат"}</button>
+    {#if busy && progress}
+      <div class="ai-progress" data-ai-progress={progress.stage} role="status" aria-live="polite">
+        <span class="ai-progress-spinner" aria-hidden="true"></span>
+        <div><strong>{progress.label}</strong><small>{elapsedSeconds >= 90 ? "Ответ занимает дольше обычного, но запрос ещё активен" : "Запрос активен · обычно 20–120 секунд"}</small></div>
+      </div>
+    {/if}
     {#if error}<div class="ai-error" role="alert">{error}</div>{/if}
     {#if preview}
       <div class="ai-preview" data-ai-preview="ready" aria-live="polite">

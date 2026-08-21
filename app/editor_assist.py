@@ -243,6 +243,27 @@ def _effective_node_constraints(doc: dict, path: str) -> dict:
     return result
 
 
+def _locked_node_reason(doc: dict, path: str) -> str | None:
+    """editable:false на целевом узле или его предке → AI-мутации запрещены.
+
+    Raster fallback Source Import (canvas/iframe/shadow/url-mask) остаётся
+    видимым и selectable, но content/geometry/style правки над ним не имеют
+    смысла: слой — плоское изображение источника. Возвращает lockedReason.
+    """
+    value = doc
+    chain = []
+    for part in _parts(path):
+        try:
+            value = value[int(part)] if isinstance(value, list) else value[part]
+        except (KeyError, IndexError, TypeError, ValueError):
+            break
+        chain.append(value)
+    for item in chain:
+        if isinstance(item, dict) and item.get("editable") is False:
+            return str(item.get("lockedReason") or "editable:false")
+    return None
+
+
 def _validate_apply(base: dict, ops: list[dict], req: AssistRequest) -> tuple[dict, list[dict]]:
     if len(ops) > 100: raise ValueError("слишком много изменений")
     allowed = _scope_paths(base, req.scope.sourceKeys)
@@ -255,6 +276,9 @@ def _validate_apply(base: dict, ops: list[dict], req: AssistRequest) -> tuple[di
         if not _inside(path, allowed): raise ValueError("AI попытался изменить элемент вне текущего выделения")
         if parts[-1] in FORBIDDEN_FIELDS or (len(parts) > 1 and parts[-2] in {"children", "tree"}):
             raise ValueError(f"структурное изменение запрещено: {path}")
+        locked_reason = _locked_node_reason(base, path)
+        if locked_reason:
+            raise ValueError(f"слой заблокирован (editable:false): {locked_reason}")
         is_frame = "frame" in parts
         is_style = any(part in {"style", "styleBindings"} for part in parts)
         is_color = _is_color_field(parts[-1])
@@ -377,7 +401,7 @@ def editor_assist(req: AssistRequest):
         else:
             messages = _messages(req.ir, req)
             if req.prepareOnly: return {"messages": messages}
-            raw = req.rawOutput if req.rawOutput is not None else llm.chat("auto", messages, 0.2, role="edit", priority="high")
+            raw = req.rawOutput if req.rawOutput is not None else llm.chat("auto", messages, 0.2, role="edit")
             candidate, ops, summary = _parse_result(raw, req.ir, req)
         ops = [op for op in ops if not (op.get("op") == "add" and op.get("after") == {})]
         warnings = []

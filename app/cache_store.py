@@ -77,6 +77,43 @@ def put(kind: str, key: str, payload: dict) -> None:
                  datetime.now(timezone.utc).isoformat()))
 
 
+def put_gated(kind: str, key: str, payload: dict, fidelity_report: dict | None = None) -> bool:
+    """Fail-closed запись результатов Source Import.
+
+    Кэш прогревается только когда fidelity report содержит все обязательные
+    метрики и проходит gate (origin <= 2px, paint >= 95, similarity >= 85, без
+    необъяснённых lost visuals). Флаг вызывающего кода (payload["rasterFallback"])
+    обхода не даёт: проверяется фактический IR payload — запись без метрик
+    разрешена только когда весь блок представлен исключительно явными locked
+    raster fallback слоями (editable:false, sourceMeta.reason == raster-fallback).
+    Флаг fidelity_report["raster_fallback"] обхода тоже не даёт: если отчёт
+    заявляет raster fallback, а фактический payload["ir"] строгой проверки
+    is_raster_fallback не проходит — запись отклоняется.
+    Отказ ничего не пишет и возвращает False — вызывающий код всё равно отдаёт
+    IR в ответе.
+    """
+    try:
+        from fidelity_harness import evaluate_gate, is_raster_fallback
+    except Exception as e:
+        _log(f"отказ записи ({kind}): fidelity harness недоступен: {e}")
+        return False
+    ir = payload.get("ir") if isinstance(payload, dict) else None
+    if is_raster_fallback(ir):
+        put(kind, key, payload)
+        return True
+    if isinstance(fidelity_report, dict) and fidelity_report.get("raster_fallback"):
+        _log(f"отказ записи ({kind}): report заявляет raster_fallback, "
+             "но фактический IR строгой проверки не проходит")
+        return False
+    gate = evaluate_gate(fidelity_report)
+    if not gate.get("passed"):
+        _log(f"отказ записи ({kind}): fidelity gate не пройден: "
+             + "; ".join(gate.get("reasons") or ["нет отчёта"]))
+        return False
+    put(kind, key, payload)
+    return True
+
+
 def stats() -> dict:
     """Сколько запросов отдано из кэша (≈ сэкономленные LLM-вызовы)."""
     with _lock:

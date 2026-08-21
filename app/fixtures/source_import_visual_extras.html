@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; }
+    /* visual extras: pseudo-канал на НЕконтейнерном элементе (heading не может
+       нести children) не представлен в IR → coverage не может быть 100 */
+    #fixture-extras { width: 600px; padding: 20px; background: #ffffff; }
+    #fixture-extras .pseudo { width: 220px; padding: 10px 14px; background: #f97316; color: #ffffff; margin: 0; font-size: 16px; }
+    #fixture-extras .pseudo::before { content: "• "; color: #7018e6; }
+    /* collapsed-neutral: пустые видимые div не дают IR-слоёв */
+    #fixture-collapse { width: 600px; }
+    #fixture-collapse .empty { width: 100px; height: 40px; }
+    /* flattened: нейтральная обёртка с единственным positioned ребёнком схлопывается */
+    #fixture-flatten { width: 600px; }
+    #fixture-flatten .wrap { position: relative; width: 300px; height: 60px; }
+    #fixture-flatten .leaf { position: absolute; left: 10px; top: 20px; }
+  </style>
+</head>
+<body>
+  <section id="fixture-extras"><h3 class="pseudo">Badge</h3></section>
+  <section id="fixture-collapse"><div class="empty"></div><div class="empty"></div></section>
+  <section id="fixture-flatten"><div class="wrap"><span class="leaf">Only child</span></div></section>
+</body>
+</html>

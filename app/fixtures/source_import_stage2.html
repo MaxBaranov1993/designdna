@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; }
+    /* Этап 2: CSS Grid НЕ превращается в wrapping flex — контейнер сериализуется
+       как free-layout, каждый ребёнок пиннится по измеренным x/y. */
+    #fixture-grid { width: 640px; padding: 16px; background: #ffffff; }
+    #fixture-grid .grid { display: grid; grid-template-columns: 200px 1fr; gap: 12px; }
+    #fixture-grid .cell { padding: 10px; background: #eef2ff; color: #111827; }
+    #fixture-grid .wide { grid-column: 1 / -1; background: #dbeafe; }
+    /* Этап 2: background-image — синтетический слой с source metadata. */
+    #fixture-bg { width: 640px; padding: 16px; background: #ffffff; }
+    #fixture-bg .hero {
+      width: 300px; height: 120px; padding: 12px; color: #ffffff;
+      background-color: #1e3a8a;
+      background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI4IiBoZWlnaHQ9IjgiIGZpbGw9IiNmOTczMTYiLz48L3N2Zz4=");
+      background-size: cover;
+    }
+    /* Этап 2: ::before/::after — синтетические слои с source metadata. */
+    #fixture-pseudo { width: 640px; padding: 16px; background: #ffffff; }
+    #fixture-pseudo .badge { position: relative; width: 220px; padding: 10px 14px; background: #f97316; color: #ffffff; }
+    #fixture-pseudo .badge::before { content: "\2022 "; color: #7018e6; }
+    #fixture-pseudo .badge::after {
+      content: ""; position: absolute; right: 8px; top: 8px;
+      width: 12px; height: 12px; background: #111827;
+    }
+  </style>
+</head>
+<body>
+  <section id="fixture-grid">
+    <div class="grid">
+      <div class="cell wide">Head</div>
+      <div class="cell">A</div>
+      <div class="cell">B</div>
+    </div>
+  </section>
+  <section id="fixture-bg"><div class="hero">Hero text</div></section>
+  <section id="fixture-pseudo"><div class="badge">Badge</div></section>
+</body>
+</html>

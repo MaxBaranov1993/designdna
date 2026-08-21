@@ -22,6 +22,9 @@
  * path — от корня секции: "children.0", "children.1.children.0", ...
  */
 
+import { isLockedNode, lockedReason } from "./locked";
+import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByKey, rekeyCloneKeys } from "./sourcepath";
+
   /* ---------- CSS (инжектится один раз) ---------- */
 
   const GEO_CSS = `
@@ -255,7 +258,32 @@
       const ir = getIR();
       if (ref.secIdx == null) return ir;
       if (ref.path == null) return ir.tree[ref.secIdx];
-      return getByPath(ir.tree[ref.secIdx], ref.path);
+      const sec = ir.tree[ref.secIdx];
+      if (!sec) return null;
+      const direct = getByPath(sec, ref.path);
+      if (direct || ref.path.startsWith("props.")) return direct;
+      // Source Import: data-ir-path — стабильный sourceKey ("block:root/div:1"),
+      // а не numeric path (annotatePaths: __path = sourceKey). Разрешаем обходом.
+      return findByKey(sec, ref.path);
+    }
+
+    /** Поиск узла по sourceKey/__path внутри секции — вынесен в sourcepath.ts
+     *  (чистые функции Source Import адресации, общие с regression-тестами). */
+
+    /** editable:false (raster fallback Source Import): слой selectable и
+     *  inspectable, но content/geometry/style мутации запрещены. */
+    function lockedNodeFor(ref) {
+      if (!ref || ref.secIdx == null || !ref.path || ref.path.startsWith("props.")) return null;
+      const node = irNodeAt(ref);
+      return isLockedNode(node) ? node : null;
+    }
+
+    /** Отказ мутации locked-слоя с подсказкой; true = вызывающий должен прерваться. */
+    function refuseLocked(ref) {
+      const node = lockedNodeFor(ref);
+      if (!node) return false;
+      hint("Слой заблокирован: " + lockedReason(node));
+      return true;
     }
 
     function getFrame(ref) {
@@ -270,6 +298,9 @@
     }
 
     function setFrameData(ref, frame) {
+      // editable:false (raster fallback): геометрия заблокирована контрактом.
+      // Общая точка записи frame — покрывает drag/resize/padding/nudge/inspector.
+      if (refuseLocked(ref)) return;
       if (ref.secIdx == null) { getIR().frame = frame; return; }
       if (ref.path == null) { getIR().tree[ref.secIdx].frame = frame; return; }
       if (ref.path.startsWith("props.")) {
@@ -396,11 +427,20 @@
     }
 
     function parentRef(ref) {
-      if (!ref || ref.secIdx == null || !ref.path || !ref.path.startsWith("children.")) return null;
-      const parts = ref.path.split(".");
-      if (parts.length <= 2) return { secIdx: ref.secIdx, path: null };
-      parts.pop(); parts.pop();
-      return { secIdx: ref.secIdx, path: parts.join(".") };
+      if (!ref || ref.secIdx == null || !ref.path) return null;
+      if (ref.path.startsWith("children.")) {
+        const parts = ref.path.split(".");
+        if (parts.length <= 2) return { secIdx: ref.secIdx, path: null };
+        parts.pop(); parts.pop();
+        return { secIdx: ref.secIdx, path: parts.join(".") };
+      }
+      // Source Import: фактический родитель через locateByKey (parentKeyByKey),
+      // НЕ строковый разбор ключа: после groupSelection дети лежат в группе
+      // "<prefix>/group~<uid>", а их sourceKey не меняется — sourceParentPath
+      // вернул бы старого родителя, и hoisting адресовал бы чужой контейнер.
+      const pk = parentKeyByKey(getIR().tree[ref.secIdx], ref.path);
+      if (pk === undefined) return null;
+      return { secIdx: ref.secIdx, path: pk };
     }
 
     function nearestSelectableContainer(ref, hitKeys) {
@@ -762,27 +802,55 @@
       const ir = getIR();
       if (ref.secIdx == null) return null;
       if (ref.path == null) {
-        return { node: ir, siblings: ir.tree, dom: artboardEl(), isRoot: true };
+        return { node: ir, siblings: ir.tree, dom: artboardEl(), isRoot: true, index: ref.secIdx };
+      }
+      const sec = ir.tree[ref.secIdx];
+      if (!sec) return null;
+      // Source Import: sourceKey-путь — СТРУКТУРНЫЙ lookup (locateByKey):
+      // фактический массив children родителя и точный индекс узла в нём.
+      // Строковый формат ключа не парсим: синтетические ключи (::text0/::bg0)
+      // валидны ровно тогда, когда реально представлены в дереве; иначе — null,
+      // и структурные мутации отказывают вместо угадывания.
+      if (isSourceKeyPath(ref.path)) {
+        const located = locateByKey(sec, ref.path);
+        if (!located || located.index < 0) return null;
+        const parentNode = located.parentNode;
+        const parentPath = parentNode === sec ? null
+          : String(parentNode.sourceKey || parentNode.__path || sourceParentPath(ref.path) || "");
+        return { node: parentNode, siblings: located.siblings,
+                 dom: domAt({ secIdx: ref.secIdx, path: parentPath }),
+                 parentPath, secIdx: ref.secIdx, index: located.index,
+                 sourceMode: true };
       }
       const keys = ref.path.split(".");
       keys.pop(); keys.pop();
       const parentPath = keys.join(".");
-      const sec = ir.tree[ref.secIdx];
       const parentNode = parentPath ? getByPath(sec, parentPath) : sec;
       const parentDom = domAt(parentPath ? { secIdx: ref.secIdx, path: parentPath }
                                          : { secIdx: ref.secIdx, path: null });
       return { node: parentNode, siblings: (parentNode && parentNode.children) || [],
-               dom: parentDom, parentPath, secIdx: ref.secIdx };
+               dom: parentDom, parentPath, secIdx: ref.secIdx,
+               index: parseInt(ref.path.split(".").pop(), 10) };
     }
 
     function siblingDom(parent, j) {
       if (parent.isRoot) return previewEl.querySelector(`[data-ir-sec="${j}"]`);
-      const prefix = parent.parentPath ? parent.parentPath + "." : "";
-      return domAt({ secIdx: parent.secIdx, path: prefix + "children." + j });
+      // sourceKey-родитель: сиблинг адресуется своим стабильным ключом
+      // (siblingPath), а не гибридом "b:root/div:1.children.0" — тот валиден
+      // только для безключевых детей (annotatePaths fallback).
+      return domAt({ secIdx: parent.secIdx, path: siblingPath(parent, j) });
     }
 
     function siblingPath(parent, j) {
       if (parent.isRoot) return null;
+      // sourceKey-родитель (включая верхний уровень source-секции, где
+      // parentPath === null): сиблинг адресуется своим стабильным ключом,
+      // а не гибридом "….children.0" — annotatePaths ставит data-ir-path =
+      // sourceKey, numeric path в DOM не существует.
+      if (parent.sourceMode || (parent.parentPath && !String(parent.parentPath).startsWith("children."))) {
+        const sib = parent.siblings[j];
+        if (sib && sib.sourceKey) return String(sib.sourceKey);
+      }
       return parent.parentPath ? parent.parentPath + ".children." + j : "children." + j;
     }
 
@@ -897,6 +965,11 @@
     function positionPaddingHandles(box, pads) {
       const [top, right, bottom, left] = pads;
       const values = { top, right, bottom, left };
+      // Keep padding controls just inside the frame. At zero padding they used
+      // to sit exactly on top of the N/E/S/W resize handles (higher z-index),
+      // making the selected artboard look resizable while every drag changed
+      // padding instead of width/height.
+      const handleInset = 10 / overlayScale();
       ["top", "right", "bottom", "left"].forEach(side => {
         const guide = box.querySelector(`.geo-pad-guide.pad-${side}`);
         const handle = box.querySelector(`.geo-pad.pad-${side}`);
@@ -905,16 +978,16 @@
         handle.dataset.value = `${Math.round(value)} px`;
         if (side === "top") {
           guide.style.cssText = `top:${value}px;left:${left}px;right:${right}px`;
-          handle.style.top = value + "px"; handle.style.left = "50%";
+          handle.style.top = (value + handleInset) + "px"; handle.style.left = "50%";
         } else if (side === "bottom") {
           guide.style.cssText = `bottom:${value}px;left:${left}px;right:${right}px`;
-          handle.style.bottom = value + "px"; handle.style.left = "50%";
+          handle.style.bottom = (value + handleInset) + "px"; handle.style.left = "50%";
         } else if (side === "left") {
           guide.style.cssText = `left:${value}px;top:${top}px;bottom:${bottom}px`;
-          handle.style.left = value + "px"; handle.style.top = "50%";
+          handle.style.left = (value + handleInset) + "px"; handle.style.top = "50%";
         } else {
           guide.style.cssText = `right:${value}px;top:${top}px;bottom:${bottom}px`;
-          handle.style.right = value + "px"; handle.style.top = "50%";
+          handle.style.right = (value + handleInset) + "px"; handle.style.top = "50%";
         }
       });
     }
@@ -1285,7 +1358,11 @@
       }
       contNode.children = contNode.children || [];
       contNode.children.push(child);
-      const newPath = (cont.ref.path ? cont.ref.path + "." : "") + "children." + (contNode.children.length - 1);
+      // sourceKey-контейнер (Source Import): новый ребёнок адресуется своим
+      // свежим sourceKey, а не гибридным "b:root/div:1.children.N" путём
+      const newPath = (!cont.ref.path || String(cont.ref.path).startsWith("children."))
+        ? (cont.ref.path ? cont.ref.path + "." : "") + "children." + (contNode.children.length - 1)
+        : String(child.sourceKey);
       selections = [];
       select({ secIdx: cont.ref.secIdx, path: newPath });
       onMutated();
@@ -1841,19 +1918,22 @@
       else { d.el.style.transform = ""; commitResize(d); }
     }
 
-    /** Копии выделенных children/секций вставляются рядом с оригиналами.
-     *  НЕ зовёт onCommit/onMutated — владелец решает сам. Возвращает ref'ы копий. */
+    /** Копии выделенных children/секций/sourceKey-слоёв вставляются рядом с
+     *  оригиналами. НЕ зовёт onCommit/onMutated — владелец решает сам.
+     *  Возвращает ref'ы копий. */
     function duplicateSelections() {
       const targets = [];
       selections.forEach(sel => {
         if (sel.ref.secIdx == null) return;
-        if (sel.ref.path != null && !sel.ref.path.startsWith("children.")) return;
+        // props.* не дублируем — children.*, секции (path === null) и sourceKey-слои
+        if (sel.ref.path != null && sel.ref.path.startsWith("props.")) return;
+        if (lockedNodeFor(sel.ref)) return; // editable:false: дублирование запрещено
         const parent = parentOf(sel.ref);
-        if (!parent) return;
-        const idx = sel.ref.path == null ? sel.ref.secIdx
-                                         : parseInt(sel.ref.path.split(".").pop());
+        if (!parent) return; // sourceKey вне дерева — структурный отказ
+        const idx = sel.ref.path == null ? sel.ref.secIdx : parent.index;
         if (!Number.isInteger(idx) || idx < 0 || idx >= parent.siblings.length) return;
-        targets.push({ ref: sel.ref, arr: parent.siblings, idx });
+        targets.push({ ref: sel.ref, arr: parent.siblings, idx,
+                       source: isSourceKeyPath(sel.ref.path) });
       });
       // в пределах одного массива идём от головы: каждая вставка сдвигает индексы
       targets.sort((a, b) => (a.arr === b.arr ? a.idx - b.idx : 0));
@@ -1863,10 +1943,23 @@
         const at = t.idx + (shifts.get(t.arr) || 0);
         const node = t.arr[at];
         if (!node) return;
-        t.arr.splice(at + 1, 0, JSON.parse(JSON.stringify(node)));
+        const clone = JSON.parse(JSON.stringify(node));
+        // Дубликат sourceKey-поддерева получает свежие иерархические ключи:
+        // клон не должен делить identity с захваченными ключами источника.
+        // В source-секции это правило действует и для numeric-адресованных
+        // селекций (selectAll): узел всё равно несёт захваченный sourceKey.
+        const sec = getIR().tree[t.ref.secIdx];
+        const keyed = clone.sourceKey != null &&
+          (t.source || (sec && (sec.type === "source-block" || sec.variant === "dom-capture")));
+        if (keyed) rekeyCloneKeys(clone, nextUid);
+        t.arr.splice(at + 1, 0, clone);
         shifts.set(t.arr, (shifts.get(t.arr) || 0) + 1);
         if (t.ref.path == null) newRefs.push({ secIdx: at + 1, path: null });
-        else {
+        else if (keyed) {
+          // валидный selectable ref дубликата — его свежий уникальный sourceKey
+          // (annotatePaths: __path = sourceKey в source-секциях)
+          newRefs.push({ secIdx: t.ref.secIdx, path: String(clone.sourceKey) });
+        } else {
           const segs = t.ref.path.split(".");
           segs[segs.length - 1] = String(at + 1);
           newRefs.push({ secIdx: t.ref.secIdx, path: segs.join(".") });
@@ -1880,19 +1973,24 @@
       if (selections.length !== 1) return;
       const ref = selections[0].ref;
       if (ref.secIdx == null) return;
+      if (refuseLocked(ref)) return; // editable:false: порядок слоя заблокирован
       const parent = parentOf(ref);
       if (!parent) return;
-      const idx = ref.path == null ? ref.secIdx : parseInt(ref.path.split(".").pop(), 10);
+      const idx = ref.path == null ? ref.secIdx : parent.index;
       const to = idx + dir;
       if (!Number.isInteger(idx) || to < 0 || to >= parent.siblings.length) return;
       onCommit();
       const [node] = parent.siblings.splice(idx, 1);
       parent.siblings.splice(to, 0, node);
+      // sourceKey стабилен при переупорядочении — ref не меняется;
+      // numeric path пересчитываем по новому индексу
       const newRef = ref.path == null
         ? { secIdx: to, path: null }
-        : Object.assign({}, ref, {
-            path: ref.path.split(".").slice(0, -1).concat(String(to)).join("."),
-          });
+        : isSourceKeyPath(ref.path)
+          ? ref
+          : Object.assign({}, ref, {
+              path: ref.path.split(".").slice(0, -1).concat(String(to)).join("."),
+            });
       select(newRef);
       onMutated();
     }
@@ -1903,11 +2001,15 @@
      *  Конвенция: перетаскиваемый занимает слот цели (цель сдвигается к источнику). */
     function moveSibling(ref, newIndex) {
       if (ref.secIdx == null) return;
+      if (refuseLocked(ref)) return; // editable:false: reorder заблокирован
       const parent = parentOf(ref);
       if (!parent) return;
-      // guard: корневые секции идут по secIdx, без обращения к path.split
-      const idx = ref.path == null ? ref.secIdx : parseInt(ref.path.split(".").pop(), 10);
-      if (!Number.isInteger(idx) || newIndex < 0 || newIndex >= parent.siblings.length
+      // guard: корневые секции идут по secIdx; sourceKey — по структурному
+      // индексу parentOf (ключ не парсим). newIndex обязан быть целым —
+      // layers-panel dnd по sourceKey-цели может прислать NaN: безопасный отказ.
+      const idx = ref.path == null ? ref.secIdx : parent.index;
+      if (!Number.isInteger(idx) || !Number.isInteger(newIndex)
+          || newIndex < 0 || newIndex >= parent.siblings.length
           || idx === newIndex) return;
       onCommit();
       const [node] = parent.siblings.splice(idx, 1);
@@ -1946,7 +2048,9 @@
     }
 
     /** Group: выделенные сиблинги одного родителя → card-контейнер (free) с их
-     *  относительными позициями. Ungroup — обратно, с офсетом контейнера. */
+     *  относительными позициями. Ungroup — обратно, с офсетом контейнера.
+     *  Работает и для sourceKey-слоёв Source Import: сиблингство проверяется
+     *  структурно (тот же массив children), индексы — через parentOf().index. */
     function groupSelection() {
       // секции верхнего уровня (path == null) не группируются: понятный отказ
       // вместо тихого пропуска (и без TypeError на r.path.split)
@@ -1954,20 +2058,24 @@
         hint("Группировка недоступна для секций верхнего уровня");
         return;
       }
+      // children.* и sourceKey-refs; props.* и editable:false исключаем
       const refs = selections.map(s => s.ref).filter(r => r.secIdx != null && r.path != null
-        && r.path.startsWith("children."));
+        && !r.path.startsWith("props.") && !lockedNodeFor(r));
       if (refs.length < 2) return;
-      const parentPathOf = r => r.path.split(".").slice(0, -2).join(".");
       const secIdx = refs[0].secIdx;
-      if (!refs.every(r => r.secIdx === secIdx && parentPathOf(r) === parentPathOf(refs[0]))) return;
-      const parent = parentOf(refs[0]);
-      if (!parent || !parent.dom) return;
+      const parents = refs.map(r => (r.secIdx === secIdx ? parentOf(r) : null));
+      const parent = parents[0];
+      // явный отказ вместо тихого пропуска: разные секции/родители, stale refs
+      if (!parent || !parent.dom || parents.some(p => !p || p.siblings !== parent.siblings)) {
+        hint("Группировка возможна только для сиблингов одного контейнера");
+        return;
+      }
       // локальные координаты от padding-box родителя — меряем из DOM, как makeParentFree
       const s = scale();
       const cs = getComputedStyle(parent.dom);
       const bl = parseFloat(cs.borderLeftWidth) || 0, bt = parseFloat(cs.borderTopWidth) || 0;
       const base = parent.dom.getBoundingClientRect();
-      const idxs = refs.map(r => parseInt(r.path.split(".").pop(), 10))
+      const idxs = refs.map((r, i) => parents[i].index)
         .filter(Number.isInteger).sort((a, b) => a - b);
       if (idxs.length !== refs.length) return;
       const meas = [];
@@ -1981,6 +2089,7 @@
       const gx = Math.min(...meas.map(m => m.x)), gy = Math.min(...meas.map(m => m.y));
       const gw = Math.max(...meas.map(m => m.x + m.w)) - gx;
       const gh = Math.max(...meas.map(m => m.y + m.h)) - gy;
+      const sourceMode = isSourceKeyPath(refs[0].path);
       onCommit();
       const taken = idxs.map(i => parent.siblings[i]);
       const group = {
@@ -1989,6 +2098,7 @@
                  width: Math.round(gw), height: Math.round(gh) },
         children: taken.map((n, k) => {
           const c = JSON.parse(JSON.stringify(n));
+          delete c.__path; // рантайм-аннотация рендерера — перевычислится
           c.frame = Object.assign({}, c.frame, {
             x: Math.round(meas[k].x - gx), y: Math.round(meas[k].y - gy),
           });
@@ -1998,11 +2108,20 @@
           return c;
         }),
       };
+      if (sourceMode) {
+        // ключ группы в пространстве sourceKey: иерархический префикс — для
+        // читаемости DOM/ключей; навигация (parentRef) идёт через locateByKey
+        // по фактическому parentNode, а не по строке. "~" не встречается в
+        // захваченных ключах компилятора — коллизий нет.
+        const pk = parent.parentPath ? String(parent.parentPath)
+          : (parent.node && parent.node.sourceKey ? String(parent.node.sourceKey) : "");
+        group.sourceKey = (pk ? pk + "/group~" : "group~") + nextUid();
+      }
       // вынимаем с хвоста, вставляем группу на место первого
       for (let k = idxs.length - 1; k >= 0; k--) parent.siblings.splice(idxs[k], 1);
       parent.siblings.splice(idxs[0], 0, group);
-      select({ secIdx, path: (parentPathOf(refs[0])
-        ? parentPathOf(refs[0]) + ".children." : "children.") + idxs[0] });
+      select({ secIdx, path: sourceMode ? group.sourceKey
+        : ((parent.parentPath ? parent.parentPath + ".children." : "children.") + idxs[0]) });
       onMutated();
     }
 
@@ -2012,12 +2131,13 @@
       if (ref.secIdx == null || ref.path == null) return;
       const node = irNodeAt(ref);
       // разгруппировываем только free-контейнеры (то, что groupSelection создаёт)
+      if (isLockedNode(node)) return; // editable:false: ungroup запрещён
       if (!node || !node.children || !node.children.length
           || !node.frame || node.frame.layout !== "free") return;
       const parent = parentOf(ref);
       if (!parent) return;
-      const idx = parseInt(ref.path.split(".").pop(), 10);
-      if (!Number.isInteger(idx)) return;
+      const idx = parent.index;
+      if (!Number.isInteger(idx) || idx < 0) return;
       onCommit();
       // координаты из внешнего IR бывают строками/NaN: в арифметике только конечные числа
       const gx = finiteNum(node.frame.x), gy = finiteNum(node.frame.y);
@@ -2040,11 +2160,11 @@
         return k;
       });
       parent.siblings.splice(idx, 1, ...kids);
-      // выделение переходит на раскрытых детей
-      const parentPath = ref.path.split(".").slice(0, -2).join(".");
+      // выделение переходит на раскрытых детей: siblingPath адресует sourceKey-
+      // сиблингов их стабильными ключами, numeric — индексными путями
       selectMulti(kids.map((_, k) => ({
         secIdx: ref.secIdx,
-        path: (parentPath ? parentPath + ".children." : "children.") + (idx + k),
+        path: siblingPath(parent, idx + k),
       })));
       onMutated();
     }
@@ -2279,6 +2399,7 @@
       if (now >= styleSessionUntil) onCommit();
       styleSessionUntil = now + 300;
       selections.forEach(sel => {
+        if (refuseLocked(sel.ref)) return; // editable:false: стиль заблокирован
         const node = irNodeAt(sel.ref);
         if (!node) return;
         const style = Object.assign({}, node.style || {});
@@ -2364,8 +2485,12 @@
       if (visible.length) selectMulti(visible);
     }
 
-    /** Ctrl+C: глубокие клоны выделенных узлов + ref исходного контейнера. */
+    /** Ctrl+C: глубокие клоны выделенных узлов + ref исходного контейнера.
+     *  editable:false: копия — отложенный дубликат (paste создаст клон locked-
+     *  поверхности), поэтому отказываем уже здесь, как duplicateSelection. */
     function copySelection() {
+      const lockedSel = selections.find(s => lockedNodeFor(s.ref));
+      if (lockedSel) { refuseLocked(lockedSel.ref); return 0; }
       const items = collectSelectionItems();
       if (items.length) geoClipboard = items;
       return items.length;
@@ -2376,7 +2501,8 @@
       const items = [];
       selections.forEach(sel => {
         if (sel.ref.secIdx == null) return;
-        if (sel.ref.path != null && !sel.ref.path.startsWith("children.")) return;
+        // props.* не копируем — children.*, секции (path === null) и sourceKey-слои
+        if (sel.ref.path != null && sel.ref.path.startsWith("props.")) return;
         const node = irNodeAt(sel.ref);
         if (!node) return;
         if (sel.ref.path == null) {
@@ -2392,21 +2518,22 @@
       return items;
     }
 
-    /** Удаление выделенных (Delete / Ctrl+X): общая механика сплайса с хвоста. */
+    /** Удаление выделенных (Delete / Ctrl+X): общая механика сплайса с хвоста.
+     *  children.*, секции и sourceKey-слои (структурный индекс через parentOf). */
     function deleteSelections() {
       if (!selections.length) return;
       onCommit();
       const targets = [];
       selections.forEach(sel => {
         if (sel.ref.secIdx == null) return;
-        // props.* не удаляем — только children и секции (path === null)
-        if (sel.ref.path != null && !sel.ref.path.startsWith("children.")) return;
+        // props.* не удаляем — только children, секции (path === null) и sourceKey-слои
+        if (sel.ref.path != null && sel.ref.path.startsWith("props.")) return;
+        if (lockedNodeFor(sel.ref)) return; // editable:false: удаление запрещено
         const parent = parentOf(sel.ref);
-        if (!parent) return;
-        // parentOf даёт сам массив сиблингов: для секции это ir.tree,
-        // для children.a.children.b — children узла по пути родителя
-        const idx = sel.ref.path == null ? sel.ref.secIdx
-                                         : parseInt(sel.ref.path.split(".").pop());
+        if (!parent) return; // sourceKey вне дерева — структурный отказ
+        // parentOf даёт сам массив сиблингов и точный индекс: для секции это
+        // ir.tree/secIdx, для children.a.children.b и sourceKey — children родителя
+        const idx = sel.ref.path == null ? sel.ref.secIdx : parent.index;
         if (!Number.isInteger(idx) || idx < 0 || idx >= parent.siblings.length) return;
         targets.push({ arr: parent.siblings, idx });
       });
@@ -2430,19 +2557,28 @@
     function insertItems(items) {
       const ir = getIR();
       if (!ir || !ir.tree || !ir.tree.length) return [];
+      // Свежие ключи: поддерево с sourceKey — иерархически через rekeyCloneKeys
+      // (строковая навигация/hoisting по ключу остаётся валидной, коллизий с
+      // захваченными ключами нет); безключевой узел получает плоский geo-ключ
+      // (схема IR: id разрешён только секциям — дочерним узлам даём sourceKey).
       const rekey = (n, isSection) => {
         if (!n || typeof n !== "object") return;
+        if (!isSection && n.sourceKey != null) { rekeyCloneKeys(n, nextUid); return; }
         if (isSection) {
           if ("id" in n) n.id = nextUid();
         } else {
           delete n.id;
           n.sourceKey = nextUid();
         }
+        delete n.__path; // рантайм-аннотация рендерера — перевычислится из sourceKey
         (n.children || []).forEach((c) => rekey(c, false));
       };
       const newRefs = [];
       items.forEach(item => {
         const node = JSON.parse(JSON.stringify(item.node));
+        // editable:false: locked-клон не создаётся ни на одном структурном пути
+        // (paste/cut+paste/duplicate), даже если буфер набит обходом copySelection.
+        if (isLockedNode(node)) return;
         rekey(node, !!item.intoTree);
         if (node.frame) {
           if (typeof node.frame.x === "number") node.frame.x += 16;
@@ -2464,10 +2600,21 @@
           contNode = ir.tree[0];
         }
         if (!contNode) return;
+        if (isLockedNode(contNode)) return; // editable:false: вставка внутрь запрещена
         contNode.children = contNode.children || [];
+        // В source-секции (source-block/dom-capture) annotatePaths адресует слои
+        // их sourceKey — ref вставленного узла обязан быть ключом, иначе
+        // numeric path не найдёт DOM-элемент после перерисовки.
+        const contSec = ir.tree[contRef.secIdx];
+        const sourceSec = !!(contSec && (contSec.type === "source-block" || contSec.variant === "dom-capture"));
+        const childPath = sourceSec
+          ? String(node.sourceKey || "")
+          : ((!contRef.path || String(contRef.path).startsWith("children."))
+              ? (contRef.path ? contRef.path + "." : "") + "children." + contNode.children.length
+              : String(node.sourceKey || ""));
+        if (!childPath) return; // безключевой узел в source-секции неадресуем
         contNode.children.push(node);
-        newRefs.push({ secIdx: contRef.secIdx,
-                       path: (contRef.path ? contRef.path + "." : "") + "children." + (contNode.children.length - 1) });
+        newRefs.push({ secIdx: contRef.secIdx, path: childPath });
       });
       return newRefs;
     }
@@ -2486,6 +2633,9 @@
     /** Ctrl+D: дубликат выделения in-place (Figma-стандарт): как paste, но из
      *  текущего выделения и не трогая буфер обмена. */
     function duplicateSelection() {
+      // editable:false (raster fallback): дублирование запрещено — явный отказ
+      const lockedSel = selections.find(s => lockedNodeFor(s.ref));
+      if (lockedSel) { refuseLocked(lockedSel.ref); return; }
       const items = collectSelectionItems();
       if (!items.length) return;
       const ir = getIR();
@@ -2561,7 +2711,7 @@
         && lastNode.children.length > 0 && lastNode.frame && lastNode.frame.layout === "free";
       const groupable = !selections.some(s => s.ref.secIdx != null && s.ref.path == null)
         && selections.filter(s => s.ref.secIdx != null && s.ref.path != null
-          && s.ref.path.startsWith("children.")).length >= 2;
+          && !s.ref.path.startsWith("props.") && !lockedNodeFor(s.ref)).length >= 2;
       const items = [
         { label: "Копировать", hint: "Ctrl+C", disabled: !hasSel, run: copySelection },
         { label: "Вырезать", hint: "Ctrl+X", disabled: !hasSel, run: cutSelection },
@@ -2744,6 +2894,10 @@
 
       const node = irNodeAt(ref);
 
+      // editable:false (raster fallback): выделение/инспекция есть, но вход
+      // в inline-редактирование текста/контейнера запрещён контрактом.
+      if (refuseLocked(ref)) return;
+
       // если попали в секцию (контейнер) — войти в неё
       if (ref.path === null && node && node.type) {
         containerCtx = ref;
@@ -2789,6 +2943,13 @@
           }
         } else if (path.startsWith("props.")) {
           setByPath(sec, editableTextPath(path), newText);
+        } else {
+          // Source Import: путь = sourceKey — узел разрешаем через irNodeAt
+          const n = irNodeAt({ secIdx, path });
+          if (n) {
+            if (n.text !== undefined) n.text = newText;
+            else if (n.title !== undefined) n.title = newText;
+          }
         }
         onMutated();
       };

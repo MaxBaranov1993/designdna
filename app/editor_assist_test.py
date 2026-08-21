@@ -303,3 +303,67 @@ def test_scaffold_ops_are_not_shown_or_counted_as_high_impact():
     assert isinstance(result, dict), getattr(result, "body", result)
     assert len(result["ops"]) == 1 and result["ops"][0]["path"].endswith("/opacity")
     assert not any(warning["code"] == "high_impact" for warning in result["warnings"])
+
+
+def test_browser_assist_calls_the_supported_llm_interface(monkeypatch):
+    base = _base()
+    target = _nodes(base)[2]
+    seen = {}
+
+    def fake_chat(provider, messages, temperature, role):
+        seen.update(provider=provider, messages=messages, temperature=temperature, role=role)
+        return json.dumps({
+            "summary": "Готово",
+            "commands": [{
+                "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
+                "changes": {"style": {"opacity": 0.85}}, "reason": "browser route",
+            }],
+        })
+
+    monkeypatch.setattr("editor_assist.llm.chat", fake_chat)
+    result = editor_assist(AssistRequest(
+        ir=base, prompt="Сделай немного прозрачнее", action="custom",
+        scope={"sourceKeys": [target["sourceKey"]], "viewport": "desktop"}, constraints={},
+    ))
+
+    assert isinstance(result, dict), getattr(result, "body", result)
+    assert seen["provider"] == "auto" and seen["role"] == "edit"
+    assert result["ops"][0]["after"] == 0.85
+
+
+def test_locked_raster_layers_refuse_ai_mutations_but_stay_inspectable():
+    """editable:false (raster fallback Source Import): AI отказывает content/
+    geometry/style правки над locked-слоем, соседние editable слои работают."""
+    base = _base()
+    nodes = _nodes(base)
+    locked = nodes[2]
+    locked["editable"] = False
+    locked["lockedReason"] = "canvas: raster surface"
+    editable = nodes[3]
+
+    for changes in ({"text": "Новый текст"}, {"frame": {"x": 12}}, {"style": {"opacity": 0.5}}):
+        rejected = _request(base, [locked["sourceKey"]], [{
+            "command": "update", "targetSourceKey": locked["sourceKey"], "viewport": "shared",
+            "changes": changes, "reason": "probe",
+        }])
+        assert getattr(rejected, "status_code", None) == 422, (changes, getattr(rejected, "body", rejected))
+        assert "editable:false" in rejected.body.decode("utf-8"), rejected.body
+
+    # locked-слой в scope предка тоже защищён (мутация через предка)
+    parent_key = next(
+        node["sourceKey"] for node in nodes
+        if any(child.get("sourceKey") == locked["sourceKey"] for child in node.get("children") or [])
+    )
+    rejected_child = _request(base, [parent_key], [{
+        "command": "update", "targetSourceKey": locked["sourceKey"], "viewport": "shared",
+        "changes": {"text": "Новый текст"}, "reason": "probe via parent scope",
+    }])
+    # вложенный target нормализует scope до родителя, но locked-узел отклоняется валидатором
+    assert getattr(rejected_child, "status_code", None) in (422,), getattr(rejected_child, "body", rejected_child)
+
+    # соседний editable слой по-прежнему принимает правки
+    accepted = _request(base, [editable["sourceKey"]], [{
+        "command": "update", "targetSourceKey": editable["sourceKey"], "viewport": "shared",
+        "changes": {"style": {"opacity": 0.9}}, "reason": "control",
+    }])
+    assert isinstance(accepted, dict), getattr(accepted, "body", accepted)

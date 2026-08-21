@@ -718,10 +718,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           get().setStatus(id, "Отметьте «это мой сайт/есть право»", "err");
           return;
         }
+        if (data.importedUrl === url && data.blocks.length > 0) {
+          get().setStatus(id, `Уже загружено локально · ${data.blocks.length} блоков`, "ok");
+          return;
+        }
         if (url !== data.url) get().setNodeData(id, { url });
         get().setStatus(id, `Импортирую ${url.slice(0, 30)}…`);
         const res = await api<BlockParseResp>("/api/block-parse", {
           url,
+          useAuthenticatedSession: !!data.authenticatedSession && !!window.designDNA?.sourceAuth,
           viewports: [
             { name: "desktop", width: 1440, height: 900 },
             { name: "tablet", width: 768, height: 1024 },
@@ -729,15 +734,21 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           ],
         });
         const litBefore = new Set(data.blocks.filter((b) => b.lit).map((b) => b.name));
-        const blocks = (res.blocks || []).map((b) => ({ ...b, lit: litBefore.has(b.name) }));
-        get().setNodeData(id, { blocks, tokens: res.tokens || null });
+        const blocks = (res.blocks || []).map((b) => ({
+          ...b,
+          cached: !!res.cached || !!b.cached,
+          lit: litBefore.has(b.name),
+        }));
+        get().setNodeData(id, { blocks, tokens: res.tokens || null, importedUrl: url });
         const sid = String(id);
         const alive = new Set<string>(["tokens", ...blocks.map((b) => b.name)]);
         set((state) => ({
           edges: state.edges.filter((e) => e.source !== sid || alive.has(e.sourceHandle ?? "")),
         }));
         const errCount = blocks.filter((b) => b.error).length;
-        get().setStatus(id, `${blocks.length} блоков (${errCount} ошибок) · Source Import`, errCount ? "err" : "ok");
+        const authNote = res.authWarning ? ` · ${res.authWarning}` : "";
+        const cacheNote = res.cached ? " · локальный кэш" : "";
+        get().setStatus(id, `${blocks.length} блоков (${errCount} ошибок) · Source Import${cacheNote}${authNote}`, errCount ? "err" : "ok");
       }
       get().propagate(id);
     } catch (e) {
@@ -1366,12 +1377,42 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 }));
 
-/* Автосейв: одна подписка на изменения nodes/edges/view/nextId с дебаунсом 300 мс
- * (зеркало save() nodes.js:1175-1176) */
+function samePersistedNodes(a: FlowNode[], b: FlowNode[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((node, index) => {
+    const other = b[index];
+    return !!other
+      && node.id === other.id
+      && node.type === other.type
+      && node.position.x === other.position.x
+      && node.position.y === other.position.y
+      && node.data === other.data;
+  });
+}
+
+function samePersistedEdges(a: FlowEdge[], b: FlowEdge[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((edge, index) => {
+    const other = b[index];
+    return !!other
+      && edge.id === other.id
+      && edge.source === other.source
+      && edge.sourceHandle === other.sourceHandle
+      && edge.target === other.target
+      && edge.targetHandle === other.targetHandle;
+  });
+}
+
+/* Автосейв: selection/measurement changes from Svelte Flow are runtime-only.
+ * Serializing three Source Import payloads for every click can freeze the renderer. */
 useFlowStore.subscribe((state, prev) => {
+  const nodesChanged = !samePersistedNodes(state.nodes, prev.nodes);
+  const edgesChanged = !samePersistedEdges(state.edges, prev.edges);
   if (
-    state.nodes === prev.nodes &&
-    state.edges === prev.edges &&
+    !nodesChanged &&
+    !edgesChanged &&
     state.view === prev.view &&
     state.nextId === prev.nextId &&
     state.pages === prev.pages &&

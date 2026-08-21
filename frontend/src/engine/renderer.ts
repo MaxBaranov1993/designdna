@@ -1,6 +1,7 @@
 // @ts-nocheck
 /* DesignAI Web — renderer: Design IR -> DOM. TS-модуль ядра (без window-глобалов). */
 import { DesignAIFontCatalog } from "./fontCatalog";
+import { isLockedNode } from "./locked";
 
   const DESIGN_WIDTH = 960;
 
@@ -90,6 +91,15 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     if (["none", "uppercase", "lowercase", "capitalize"].includes(style.textTransform)) s.push(`text-transform:${style.textTransform}`);
     const op = Number(style.opacity); if (Number.isFinite(op) && op >= 0 && op <= 1) s.push(`opacity:${op}`);
     if (["contain", "cover", "fill", "none", "scale-down"].includes(style.objectFit)) s.push(`object-fit:${style.objectFit}`);
+    // Source Import visual channels: gradient background/mask и clip-path.
+    // Только безопасный charset (как boxShadow), url() запрещён — внешние
+    // ресурсы переносятся через image-слои, а не через CSS.
+    const bgImg = style.backgroundImage;
+    if (typeof bgImg === "string" && bgImg.length <= 800 && !/[;{}<>"'\\\r\n]/.test(bgImg) && !/url\s*\(/i.test(bgImg)) s.push(`background-image:${bgImg}`);
+    const mask = style.maskImage;
+    if (typeof mask === "string" && mask.length <= 800 && !/[;{}<>"'\\\r\n]/.test(mask) && !/url\s*\(/i.test(mask)) s.push(`mask-image:${mask}`, `-webkit-mask-image:${mask}`);
+    const cp = style.clipPath;
+    if (typeof cp === "string" && cp.length <= 300 && /^[a-zA-Z0-9\s(),.%#-]+$/.test(cp)) s.push(`clip-path:${cp}`);
     return s.join(";");
   }
   function visualTextCss(style) {
@@ -210,19 +220,20 @@ import { DesignAIFontCatalog } from "./fontCatalog";
         display:inline-flex; align-items:center; justify-content:center; font-weight:700; flex:none; }
       .ir-${uid} .stars { color:var(--c-accent); letter-spacing:2px; }
       .ir-${uid} [data-ir-path].editing { outline:2px dashed var(--c-primary); outline-offset:2px; cursor:text; }
+      .ir-${uid} [data-ir-locked] { cursor:default; }
       .ir-${uid}.ir-mobile { font-size:calc(16px * var(--fs)); line-height:1.55; }
       .ir-${uid}.ir-mobile h1 { font-size:calc(34px * var(--fs)); line-height:1.08; letter-spacing:-.025em; }
       .ir-${uid}.ir-mobile h2 { font-size:calc(26px * var(--fs)); line-height:1.12; }
       .ir-${uid}.ir-mobile .sec:not(.sec-source), .ir-${uid}.ir-mobile .sec-free { padding-left:16px; padding-right:16px; }
       .ir-${uid}.ir-mobile .sec-free { display:flex !important; flex-direction:column; gap:20px; height:auto !important; }
-      .ir-${uid}.ir-mobile .sec-free > [data-ir-path] { position:relative !important; inset:auto !important; transform:none !important; }
+      .ir-${uid}.ir-mobile .sec-free > [data-ir-path]:not([data-ir-transform]) { position:relative !important; inset:auto !important; transform:none !important; }
       .ir-${uid}.ir-mobile .sec:not(.sec-source) .wrap { width:100%; }
       .ir-${uid}.ir-mobile .sec:not(.sec-source) [data-ir-path],
       .ir-${uid}.ir-mobile .sec-free [data-ir-path] { max-width:100%; overflow-wrap:anywhere; }
       .ir-${uid}.ir-mobile .btn { min-height:44px; padding:11px 18px; justify-content:center; }
       .ir-${uid}.ir-tablet .sec:not(.sec-source), .ir-${uid}.ir-tablet .sec-free { padding-left:24px; padding-right:24px; }
       .ir-${uid}.ir-tablet .sec-free { display:flex !important; flex-direction:column; gap:28px; height:auto !important; }
-      .ir-${uid}.ir-tablet .sec-free > [data-ir-path] { position:relative !important; inset:auto !important; transform:none !important; }
+      .ir-${uid}.ir-tablet .sec-free > [data-ir-path]:not([data-ir-transform]) { position:relative !important; inset:auto !important; transform:none !important; }
     `;
   }
 
@@ -264,7 +275,11 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     if (typeof f.minHeight === "number") s.push(`min-height:${f.minHeight}px`);
     if (typeof f.maxHeight === "number") s.push(`max-height:${f.maxHeight}px`);
     if (f.clip) s.push("overflow:hidden");
-    if (typeof f.rotation === "number" && f.rotation) s.push(`transform:rotate(${f.rotation}deg)`);
+    // Полный CSS transform источника имеет приоритет над простым rotation;
+    // charset-санитизация как у boxShadow (без инъекционных символов).
+    if (typeof f.transform === "string" && f.transform.length <= 300 && !/[;{}<>"'\\\r\n]/.test(f.transform)) s.push(`transform:${f.transform}`);
+    else if (typeof f.rotation === "number" && f.rotation) s.push(`transform:rotate(${f.rotation}deg)`);
+    const z = Number(f.z); if (Number.isInteger(z) && z >= -1000 && z <= 1000) s.push(`z-index:${z}`);
     // absolute — элемент выведен из раскладки родителя (аналог layoutPosition:absolute в pen.dev)
     const placed = (parentFree || f.absolute) && (typeof f.x === "number" || typeof f.y === "number");
     if (placed) {
@@ -291,13 +306,23 @@ import { DesignAIFontCatalog } from "./fontCatalog";
 
   /** Оборачивает html в div-бокс по frame (для секций и листовых элементов).
  *  data-ir-path переносится на обёртку чтобы GeoEdit работал с frame-контейнером.
- *  cls — опциональный класс обёртки (например sec-free для дефолтного padding). */
+ *  cls — опциональный класс обёртки (например sec-free для дефолтного padding).
+ *  data-ir-transform помечает захваченный CSS transform источника: responsive
+ *  reflow-правила (.ir-mobile/.ir-tablet .sec-free) не сбрасывают его — linked
+ *  viewports Source Import хранят измеренный transform каждого viewport. */
   function withFrame(html, frame, parentFree, container, irPath, cls, parentFrame, extraCss) {
     const css = [frameCss(frame, parentFree, container, parentFrame), extraCss || ""].filter(Boolean).join(";");
     if (!css && !cls) return html;
     const pathAttr = irPath ? ` data-ir-path="${esc(irPath)}"` : "";
+    const trAttr = frame && typeof frame.transform === "string" && frame.transform ? " data-ir-transform" : "";
     const clsAttr = cls ? ` class="${cls}"` : "";
-    return `<div data-ir-frame${pathAttr}${clsAttr} style="${css}">${html}</div>`;
+    return `<div data-ir-frame${pathAttr}${trAttr}${clsAttr} style="${css}">${html}</div>`;
+  }
+
+  /** data-ir-transform для корневых тегов контейнеров (card/button/input),
+   *  которые несут data-ir-path без withFrame-обёртки (см. withFrame). */
+  function transformAttr(frame) {
+    return frame && typeof frame.transform === "string" && frame.transform ? " data-ir-transform" : "";
   }
 
   /* ---------- элементы (children) ---------- */
@@ -306,17 +331,28 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     if (el && el.__responsiveHidden) return "";
     const irPath = el.__path || null;
     const html = renderElementInner(el, uid, parentFree, parentFrame);
-    if (el.type === "card" || ((el.type === "button" || el.type === "input") && el.children && el.children.length)) return html;
-    // текст с захваченной высотой: страховка от визуального наезда на соседей,
-    // если метрики шрифта всё же разойдутся (клип вместо overflow поверх)
-    const clipText = (el.type === "text" || el.type === "heading") &&
-      el.frame && typeof el.frame.height === "number" ? "overflow:hidden" : "";
-    const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, clipText);
-    // если frame пустой и withFrame не обернул — добавляем span-обёртку с path
-    if (wrapped === html && irPath) {
-      return `<span data-ir-path="${esc(irPath)}" style="display:inline-block">${html}</span>`;
+    let out;
+    if (el.type === "card" || ((el.type === "button" || el.type === "input") && el.children && el.children.length)) {
+      out = html;
+    } else {
+      // текст с захваченной высотой: страховка от визуального наезда на соседей,
+      // если метрики шрифта всё же разойдутся (клип вместо overflow поверх)
+      const clipText = (el.type === "text" || el.type === "heading") &&
+        el.frame && typeof el.frame.height === "number" ? "overflow:hidden" : "";
+      const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, clipText);
+      // если frame пустой и withFrame не обернул — добавляем span-обёртку с path
+      out = (wrapped === html && irPath)
+        ? `<span data-ir-path="${esc(irPath)}" style="display:inline-block">${html}</span>`
+        : wrapped;
     }
-    return wrapped;
+    // editable:false (raster fallback источника): слой остаётся selectable и
+    // inspectable (data-ir-path не трогаем), но помечается data-ir-locked —
+    // geoedit/inspector/AI mutation paths обязаны отказать в правках.
+    if (isLockedNode(el)) {
+      const lock = ` data-ir-locked="${esc(String(el.lockedReason || "locked"))}"`;
+      out = out.replace(/^<([a-zA-Z][a-zA-Z0-9]*)/, "<$1" + lock);
+    }
+    return out;
   }
 
   function renderElementInner(el, uid, parentFree, parentFrame) {
@@ -351,7 +387,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
           const fcss = frameCss(el.frame, parentFree, true, parentFrame);
           const css = [fcss, "padding:0", visualCss(el.style)].filter(Boolean).join(";");
           const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
-          return `<button type="button" class="source-control"${path}${css ? ` style="${css}"` : ""}>${kids}</button>`;
+          return `<button type="button" class="source-control"${path}${transformAttr(el.frame)}${css ? ` style="${css}"` : ""}>${kids}</button>`;
         }
         const textCss = visualTextCss(el.style);
         const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
@@ -393,7 +429,7 @@ import { DesignAIFontCatalog } from "./fontCatalog";
           const fcss = frameCss(el.frame, parentFree, true, parentFrame);
           const css = [fcss, "padding:0", visualCss(el.style)].filter(Boolean).join(";");
           const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
-          return `<div class="source-input"${path}${css ? ` style="${css}"` : ""}>${kids}</div>`;
+          return `<div class="source-input"${path}${transformAttr(el.frame)}${css ? ` style="${css}"` : ""}>${kids}</div>`;
         }
         return `<input class="input" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value || "")}">`;
       case "card": {
@@ -401,12 +437,13 @@ import { DesignAIFontCatalog } from "./fontCatalog";
         const inner = (el.children || []).map(c => renderElement(c, uid, free, el.frame)).join("");
         const fcss = frameCss(el.frame, parentFree, true, parentFrame);
         const cardPath = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
+        const cardTr = transformAttr(el.frame);
         if (el.role) {
           const sourceCss = [fcss, visualCss(el.style)].filter(Boolean).join(";");
-          return `<div${cardPath}${sourceCss ? ` style="${sourceCss}"` : ""}>${inner}</div>`;
+          return `<div${cardPath}${cardTr}${sourceCss ? ` style="${sourceCss}"` : ""}>${inner}</div>`;
         }
         const css = [fcss, visualCss(el.style)].filter(Boolean).join(";");
-        return `<div class="card"${cardPath}${css ? ` style="${css}"` : ""}>
+        return `<div class="card"${cardPath}${cardTr}${css ? ` style="${css}"` : ""}>
           ${el.icon ? `<span class="icon-dot" style="margin-bottom:12px">${esc(el.icon.slice(0, 2))}</span>` : ""}
           ${el.title ? `<h3 style="margin-bottom:8px">${esc(el.title)}</h3>` : ""}
           ${el.text ? `<p class="muted">${esc(el.text)}</p>` : ""}
@@ -730,13 +767,23 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     (source.tree || []).forEach(sec => annotatePaths(sec, "", false));
     const ir = JSON.parse(JSON.stringify(source));
     const meta = ir.responsive.viewports[viewport] || ir.responsive.viewports.desktop;
-    if (meta) ir.frame = Object.assign({}, ir.frame || {}, { width: meta.width, height: meta.height });
+    if (meta) {
+      // Page compositions use height:"hug" so the common artboard follows all
+      // rendered sections. Viewport metadata still carries a numeric export
+      // height, but must not turn the editable auto-height artboard back into a
+      // fixed 900/1024/844px crop.
+      const autoHeight = ir.frame && ir.frame.height === "hug";
+      const viewportFrame = { width: meta.width };
+      if (!autoHeight && Number.isFinite(meta.height)) viewportFrame.height = meta.height;
+      ir.frame = Object.assign({}, ir.frame || {}, viewportFrame);
+    }
     function resolveNode(node) {
       if (!node || typeof node !== "object") return node;
       const override = node.responsive && node.responsive[viewport];
       if (override && override.visible === false) node.__responsiveHidden = true;
       if (override && override.frame) node.frame = Object.assign({}, node.frame || {}, override.frame);
       if (override && override.style) node.style = Object.assign({}, node.style || {}, override.style);
+      if (override && typeof override.src === "string") node.src = override.src;
       if (Array.isArray(node.children)) node.children = node.children.map(resolveNode);
       return node;
     }
@@ -780,10 +827,12 @@ import { DesignAIFontCatalog } from "./fontCatalog";
       const weight = String(face.weight || "");
       const style = String(face.style || "");
       const url = String(face.url || "");
+      const unicodeRange = String(face.unicodeRange || "");
       return /^[A-Za-z0-9 ._-]{1,80}$/.test(family) &&
-        /^(?:[1-9]00|normal|bold)$/.test(weight) &&
+        /^(?:[1-9]00(?: [1-9]00)?|normal|bold)$/.test(weight) &&
         /^(?:normal|italic|oblique)$/.test(style) &&
-        /^\/fonts\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(url);
+        /^\/fonts\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(url) &&
+        (!unicodeRange || /^[Uu+0-9A-Fa-f? ,\-]{1,2048}$/.test(unicodeRange));
     });
     let ffEl = document.getElementById("ir-fontfaces");
     if (!ffEl) {
@@ -794,9 +843,10 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     ffEl.textContent = customFaces.map((f) => {
       const url = String(f.url);
       const format = /\.woff2$/i.test(url) ? "woff2" : /\.woff$/i.test(url) ? "woff" : "truetype";
+      const unicode = f.unicodeRange ? "unicode-range:" + String(f.unicodeRange) + ";" : "";
       return "@font-face{font-family:'" + String(f.family) + "';" +
         "font-style:" + String(f.style) + ";font-weight:" + String(f.weight) + ";" +
-        "src:url('" + url + "') format('" + format + "');font-display:swap;}";
+        unicode + "src:url('" + url + "') format('" + format + "');font-display:swap;}";
     }).join("\n");
     if (customFaces.length) {
       try {
@@ -873,19 +923,29 @@ import { DesignAIFontCatalog } from "./fontCatalog";
     container.style.height = (inner.offsetHeight * scale) + "px";
   }
 
-  /** Проставляет __path элементам children для редактирования. */
+  /** Проставляет __path элементам children для редактирования.
+   *  Source Import sections (source-block/dom-capture) carry stable sourceKeys,
+   *  so their layers use the sourceKey as the editable identity; generated/AI
+   *  sections fall back to the tree index path — even for nodes that gained a
+   *  sourceKey later (editor-created "geo-"/"manual:" keys), because the editor
+   *  structural machinery (numeric sibling addressing) is built on index paths. */
   function annotatePaths(sec, prefix, preserve) {
     prefix = prefix || "";
+    const sourceSec = !!sec && (sec.type === "source-block" || sec.variant === "dom-capture");
     (sec.children || []).forEach((el, i) => {
-      if (!preserve || !el.__path) el.__path = `${prefix}children.${i}`;
-      annotatePathsEl(el, el.__path, preserve);
+      if (!preserve || !el.__path) el.__path = (sourceSec && el.sourceKey) || `${prefix}children.${i}`;
+      annotatePathsEl(el, el.__path, preserve, sourceSec);
     });
   }
-  function annotatePathsEl(el, path, preserve) {
+  function annotatePathsEl(el, path, preserve, sourceSec) {
     (el.children || []).forEach((c, i) => {
-      if (!preserve || !c.__path) c.__path = `${path}.children.${i}`;
-      annotatePathsEl(c, c.__path, preserve);
+      if (!preserve || !c.__path) c.__path = (sourceSec && c.sourceKey) || `${path}.children.${i}`;
+      annotatePathsEl(c, c.__path, preserve, sourceSec);
     });
   }
 
 export const IRRenderer = { renderIR, materializeResponsiveIR, fitPreview, DESIGN_WIDTH };
+
+/** Чистые строковые инструменты рендерера для headless regression-тестов
+ *  (frontend/tests/engine.regression.test.mjs) — без DOM. */
+export const IRRendererTest = { baseCss, frameCss, withFrame, renderElement, visualCss };

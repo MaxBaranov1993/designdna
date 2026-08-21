@@ -15,6 +15,14 @@
 
   let busy = $derived(!!$flow.busy[Number(id)]);
   let previewMode = $derived(data.previewMode || "reference");
+  let desktopAuth = $derived(typeof window !== "undefined" ? window.designDNA?.sourceAuth : undefined);
+  let expandedBlock = $state<string | null>(null);
+
+  $effect(() => {
+    if (!selected || (expandedBlock && !data.blocks.some((block) => block.name === expandedBlock))) {
+      expandedBlock = null;
+    }
+  });
 
   const setViewport = (viewport: SourceViewport) => {
     $flow.setNodeData(Number(id), { activeViewport: viewport });
@@ -42,6 +50,18 @@
         .forEach((e) => $flow.deleteEdge(e.id));
       useFlowStore.getState().propagate(Number(id));
     }
+  };
+
+  const openAuthenticatedSession = async () => {
+    const rawUrl = (data.url || "").trim();
+    if (!rawUrl || !desktopAuth) return;
+    const url = /^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    await desktopAuth.open(url);
+  };
+
+  const refreshImport = () => {
+    $flow.setNodeData(Number(id), { importedUrl: null });
+    queueMicrotask(() => $flow.runNode(Number(id)));
   };
 </script>
 
@@ -77,6 +97,20 @@
       />
       это мой сайт / есть право
     </label>
+    {#if desktopAuth}
+      <label class="bp-mine nodrag" title="Cookies остаются в изолированной памяти desktop-приложения и не сохраняются в графе">
+        <input
+          type="checkbox"
+          class="f-auth-session"
+          checked={data.authenticatedSession}
+          onchange={(e) => $flow.setNodeData(Number(id), { authenticatedSession: e.currentTarget.checked })}
+        />
+        использовать авторизованную сессию
+      </label>
+      {#if data.authenticatedSession}
+        <button class="btn-node small f-auth-open nodrag" onclick={openAuthenticatedSession}>Открыть вход</button>
+      {/if}
+    {/if}
     <div class="source-viewports nodrag" aria-label="Source viewport">
       {#each VIEWPORTS as viewport (viewport)}
         <button
@@ -101,6 +135,11 @@
     <div class="bp-hint">Запуск доступен после отметки «это мой сайт / есть право»</div>
   {/if}
   <div class="ctl-row">
+    {#if data.mode === "url" && data.importedUrl && data.blocks.length}
+      <button class="btn-node small f-refresh nodrag" disabled={busy} onclick={refreshImport} title="Повторно загрузить страницу и обновить локальный результат">
+        Обновить
+      </button>
+    {/if}
     <button
       class="btn-node primary small f-run nodrag"
       style="margin-left: auto"
@@ -114,25 +153,38 @@
     <div class="bp-blocks">
       {#each data.blocks as b (b.name)}
         <div class="bp-block" data-block={b.name}>
-          <label class="bp-lit">
-            <input
-              type="checkbox"
-              class="f-lit nodrag"
-              disabled={!!b.error}
-              checked={b.lit}
-              onchange={(e) => toggleLit(b.name, e.currentTarget.checked)}
-            />
-            <span class="bp-name">{b.label || b.name}</span>
-            {#if b.kind}<span class="bp-kind">{b.kind}</span>{/if}
-            {#if b.cached}<span class="bp-cached">из кэша</span>{/if}
-            {#if b.source}<span class="bp-cached">{b.source}{b.layers ? ` · ${b.layers} layers` : ""}</span>{/if}
-            {#if b.repeat?.count && b.repeat.count > 1}
-              <span class="bp-repeat">{b.repeat.count}× {b.repeat.kind || "item"} → 1 block</span>
+          <div class="bp-block-head">
+            <label class="bp-lit">
+              <input
+                type="checkbox"
+                class="f-lit nodrag"
+                disabled={!!b.error}
+                checked={b.lit}
+                onchange={(e) => toggleLit(b.name, e.currentTarget.checked)}
+              />
+              <span class="bp-name">{b.label || b.name}</span>
+              {#if b.kind}<span class="bp-kind">{b.kind}</span>{/if}
+              {#if b.cached}<span class="bp-cached">из кэша</span>{/if}
+              {#if b.source}<span class="bp-cached">{b.source}{b.layers ? ` · ${b.layers} layers` : ""}</span>{/if}
+              {#if b.repeat?.count && b.repeat.count > 1}
+                <span class="bp-repeat">{b.repeat.count}× {b.repeat.kind || "item"} → 1 block</span>
+              {/if}
+            </label>
+            {#if !b.error}
+              <button
+                class="bp-expand nodrag"
+                class:active={expandedBlock === b.name}
+                aria-expanded={expandedBlock === b.name}
+                title={expandedBlock === b.name ? "Скрыть preview" : "Показать preview"}
+                onclick={() => expandedBlock = expandedBlock === b.name ? null : b.name}
+              >
+                {expandedBlock === b.name ? "Скрыть" : "Preview"}
+              </button>
             {/if}
-          </label>
+          </div>
           {#if b.error}
             <div class="bp-error">{b.error}</div>
-          {:else}
+          {:else if expandedBlock === b.name}
             <div class="source-preview-mode nodrag" aria-label="Source preview mode">
               {#each PREVIEW_MODES as mode (mode)}
                 <button class={previewMode === mode ? "active" : ""} onclick={() => $flow.setNodeData(Number(id), { previewMode: mode })}>
@@ -152,9 +204,20 @@
             {/if}
           {/if}
           {#if !b.error}
+            {@const active = data.activeViewport}
+            {@const editable = b.editableLayersByViewport?.[active] ?? b.layersByViewport?.[active] ?? b.layers ?? 0}
+            {@const components = b.componentBoundariesByViewport?.[active] ?? 0}
+            {@const paint = b.paintCoverage?.[active] ?? b.coverage?.[active] ?? 0}
+            {@const fidelity = b.fidelity?.[active]}
+            {@const p95 = b.p95LayoutError?.[active]}
+            {@const dropped = (b.droppedByViewport?.[active] ?? []).filter((d) => d.visual)}
             <div class="source-health">
-              <span>{b.layersByViewport?.[data.activeViewport] ?? b.layers ?? 0} layers</span>
-              <span>{Math.round(b.coverage?.[data.activeViewport] ?? b.fidelity?.[data.activeViewport] ?? 0)}% coverage</span>
+              <span>{editable} editable layers</span>
+              <span>{components} components</span>
+              <span>{Math.round(paint)}% paint coverage</span>
+              {#if fidelity != null}<span>{Math.round(fidelity)}% fidelity</span>{/if}
+              {#if p95 != null}<span>±{p95}px p95</span>{/if}
+              {#if dropped.length}<span class="source-warning" title={dropped.map((d) => `${d.sourceKey}: ${d.reason}`).join("\n")}>{dropped.length} visual drop</span>{/if}
               {#if b.warnings?.length}<span class="source-warning">{b.warnings.length} warning</span>{/if}
             </div>
           {/if}
@@ -171,7 +234,7 @@
     <div class="bp-preview source-reference-empty"></div>
   {:else}
     <div class="bp-preview source-reference-preview">
-      <img alt="Source reference" src={src} />
+      <img alt="Source reference" src={src} loading="lazy" decoding="async" />
     </div>
   {/if}
 {/snippet}

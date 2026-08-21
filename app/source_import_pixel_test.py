@@ -16,9 +16,33 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 
+import httpx  # noqa: E402
+
 import scraper  # noqa: E402
+from urlguard import PublicHttpResponse  # noqa: E402
 
 FAILS: list[str] = []
+
+
+def _local_fixture_fetcher(url: str, *, timeout: float, headers=None,
+                           max_bytes: int, max_redirects: int = 5) -> PublicHttpResponse:
+    """Test-only transport for the throwaway 127.0.0.1 fixture server.
+
+    Production always goes through urlguard.fetch_public_bytes (SSRF/DNS/size
+    guard); this monkeypatch exists so the localhost fixture does not weaken
+    the production URL guard.
+    """
+    with httpx.Client(timeout=timeout, headers=headers, trust_env=False) as client:
+        response = client.get(url, follow_redirects=False)
+        response.raise_for_status()
+        if len(response.content) > max_bytes:
+            raise ValueError(f"fixture response exceeds {max_bytes} bytes")
+        return PublicHttpResponse(
+            url=str(response.url),
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            content=response.content,
+        )
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -38,7 +62,9 @@ def main() -> None:
     thread.start()
     url = f"http://127.0.0.1:{server.server_port}/source_import_header.html"
     original_validate = scraper.validate_public_url
+    original_fetch = scraper.fetch_public_bytes
     scraper.validate_public_url = lambda _url: None
+    scraper.fetch_public_bytes = _local_fixture_fetcher
     try:
         captured, _tokens = scraper.capture_block_irs(
             url,
@@ -48,6 +74,7 @@ def main() -> None:
         )
     finally:
         scraper.validate_public_url = original_validate
+        scraper.fetch_public_bytes = original_fetch
 
     ir = captured["#fixture-header"]["ir"]
     try:
@@ -131,8 +158,8 @@ def main() -> None:
     qa = ir["meta"].get("qaWarnings") or []
     check("qa-пасс: предупреждения только в контрактном формате",
           all(isinstance(w, str) and w.startswith("qa: flow drift") for w in qa), str(qa))
-    check("qa-пасс: корень фикстуры не запиннен", section_frame.get("layout") == "free"
-          and (ir["meta"].get("qaWarnings") or []) == [])
+    check("qa-пасс: styled inline flow детерминированно запинен", section_frame.get("layout") == "free"
+          and any("root.3" in warning for warning in qa), str(qa))
 
     # контракт захвата: у каждого узла сняты x/y (нужны QA-пассу для пиннинга)
     def all_frames(nodes):
@@ -158,6 +185,26 @@ def main() -> None:
     check("шрифты: текст рендерится кастомной семьёй", bool(font_family_used))
 
     # ---------- inline-flow collapse и margin-aware layout ----------
+    original_download_font = scraper._download_font
+    original_store_font = scraper._store_font
+    scraper._download_font = lambda _url: b"wOF2" + b"x" * 128
+    scraper._store_font = lambda _data: "variable.woff2"
+    try:
+        variable_faces = scraper._resolve_font_faces([
+            {"family": "Variable Test", "weight": "400 800", "style": "normal",
+             "unicodeRange": "U+400-45F", "urls": ["https://fonts.example/cyr.woff2"]},
+            {"family": "Variable Test", "weight": "400 800", "style": "normal",
+             "unicodeRange": "U+0-FF", "urls": ["https://fonts.example/latin.woff2"]},
+        ], {"variable test"}, {"variable test": {400, 800}})
+    finally:
+        scraper._download_font = original_download_font
+        scraper._store_font = original_store_font
+    check("variable fonts preserve weight range and unicode subsets",
+          len(variable_faces) == 2
+          and all(face.get("weight") == "400 800" for face in variable_faces)
+          and {face.get("unicodeRange") for face in variable_faces} == {"U+400-45F", "U+0-FF"},
+          str(variable_faces))
+
     def find_node(nodes, pred):
         for n in nodes:
             if not isinstance(n, dict):
@@ -170,9 +217,12 @@ def main() -> None:
         return None
 
     kids = ir["tree"][0].get("children") or []
-    promo = find_node(kids, lambda n: n.get("type") == "text" and "sale" in (n.get("text") or ""))
-    check("inline-collapse: p+strong/em = один text-узел",
-          promo is not None and not promo.get("children"), str(promo)[:160])
+    promo_sale = find_node(kids, lambda n: n.get("type") == "text" and (n.get("text") or "") == "sale")
+    promo_live = find_node(kids, lambda n: n.get("type") == "text" and (n.get("text") or "") == "live")
+    check("styled inline descendants remain independent text layers",
+          promo_sale is not None and promo_live is not None
+          and promo_sale.get("sourceKey") != promo_live.get("sourceKey"),
+          str({"sale": promo_sale, "live": promo_live})[:240])
 
     def has_link_kids(n):
         cs = n.get("children") or []

@@ -3,6 +3,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("designDNA", Object.freeze({
   app: Object.freeze({ info: () => ipcRenderer.invoke("app:info") }),
   api: Object.freeze({ request: (request) => ipcRenderer.invoke("api:request", request) }),
+  sourceAuth: Object.freeze({
+    open: (url) => ipcRenderer.invoke("source-auth:open", { url }),
+    clear: () => ipcRenderer.invoke("source-auth:clear"),
+  }),
   repoCanvas: Object.freeze({
     snapshot: () => ipcRenderer.invoke("repo-canvas:snapshot"),
     check: () => ipcRenderer.invoke("repo-canvas:check"),

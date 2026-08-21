@@ -1,5 +1,12 @@
 export type AssistAction = "adapt" | "overflow" | "content-fit" | "align" | "style" | "custom";
 export type AssistScopeMode = "single" | "selection";
+export type AssistStage = "prepare" | "provider" | "validate";
+
+export interface AssistProgress {
+  stage: AssistStage;
+  label: string;
+  startedAt: number;
+}
 
 export interface AssistConstraints {
   allowContent: boolean;

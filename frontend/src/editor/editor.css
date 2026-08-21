@@ -313,6 +313,14 @@
 .ai-quick-row button { flex:1; padding:5px 3px; }
 .ai-run { width:100%; min-height:32px; border:0; border-radius:8px; background:var(--accent); color:hsl(var(--primary-foreground)); font-size:11px; font-weight:750; cursor:pointer; }
 .ai-run:disabled,.ai-quick-row button:disabled,.merge-row button:disabled { opacity:.42; cursor:not-allowed; }
+.ai-run:disabled:has(+ .ai-progress) { opacity:.82; }
+.ai-progress { display:flex; align-items:flex-start; gap:9px; margin-top:8px; padding:9px; border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border)); border-radius:8px; background:color-mix(in srgb,var(--accent) 6%,var(--fe-panel)); }
+.ai-progress-spinner { flex:0 0 auto; width:14px; height:14px; margin-top:1px; border:2px solid color-mix(in srgb,var(--accent) 25%,transparent); border-top-color:var(--accent); border-radius:50%; animation:ai-progress-spin .8s linear infinite; }
+.ai-progress > div { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.ai-progress strong { color:var(--text); font-size:10.5px; line-height:1.35; }
+.ai-progress small { color:var(--muted); font-size:9px; line-height:1.35; }
+@keyframes ai-progress-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ai-progress-spinner { animation-duration:1.8s; } }
 .ai-error { margin-top:8px; color:var(--fe-err); font-size:10px; line-height:1.4; }
 .ai-preview { margin-top:10px; padding:9px; border-radius:8px; border:1px solid color-mix(in srgb,var(--accent) 50%,var(--border)); background:color-mix(in srgb,var(--accent) 7%,var(--fe-panel)); }
 .ai-preview-head { display:flex; justify-content:space-between; font-size:10px; color:var(--muted); }

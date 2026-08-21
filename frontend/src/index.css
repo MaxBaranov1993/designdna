@@ -1148,6 +1148,32 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 54px;
+}
+.bp-block-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.bp-block-head .bp-lit {
+  min-width: 0;
+  flex: 1;
+}
+.bp-expand {
+  flex: 0 0 auto;
+  min-width: 48px;
+  height: 22px;
+  border: 1px solid var(--flow-border);
+  border-radius: 5px;
+  color: var(--flow-muted);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.bp-expand.active {
+  color: var(--flow-text);
+  background: var(--flow-panel-3);
 }
 .bp-lit {
   display: flex;

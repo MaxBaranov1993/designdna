@@ -151,7 +151,7 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "page":
       return { inputs: ["a", "b"], ir: null, activeViewport: "desktop" };
     case "sourceimport":
-      return { mode: "url", url: "", image: null, fileName: "", mine: false, activeViewport: "desktop", previewMode: "reference", blocks: [], tokens: null };
+      return { mode: "url", url: "", image: null, fileName: "", mine: false, authenticatedSession: false, activeViewport: "desktop", previewMode: "reference", importedUrl: null, blocks: [], tokens: null };
     case "styledna":
       return { tokens: null, summary: "" };
     case "derive":

@@ -210,6 +210,8 @@ class BlockParseReq(BaseModel):
     url: str = ""
     blocks: list | None = None  # опционально: [{name, selector}] — клонировать только их
     viewports: list[dict] | None = None
+    authCookies: list[dict] | None = None
+    authSessionFallback: bool = False
 
 
 class ReskinReq(BaseModel):
@@ -623,7 +625,15 @@ def block_parse(req: BlockParseReq):
     except ValueError as e:
         return err(422, str(e))
     try:
-        return blockparse.parse_blocks(url, blocks=req.blocks, viewports=req.viewports)
+        result = blockparse.parse_blocks(
+            url,
+            blocks=req.blocks,
+            viewports=req.viewports,
+            auth_cookies=req.authCookies,
+        )
+        if req.authSessionFallback:
+            result["authWarning"] = "В сессии нет cookie для этого URL — выполнен публичный импорт"
+        return result
     except ValueError as e:  # кривой список блоков
         return err(422, str(e))
     except Exception as e:

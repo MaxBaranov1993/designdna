@@ -8,6 +8,12 @@ export const PAGE_VIEWPORT_WIDTHS: Record<SourceViewport, number> = {
   mobile: 390,
 };
 
+const PAGE_VIEWPORT_FALLBACK_HEIGHTS: Record<SourceViewport, number> = {
+  desktop: 900,
+  tablet: 1024,
+  mobile: 844,
+};
+
 /* Сборка страницы из блоков (нода Page): детерминированно, без LLM.
  * Порядок blocks = порядок секций на странице. id секций и sourceKey
  * дедуплицируются между блоками (у Source Import все секции — "imported-block");
@@ -191,6 +197,76 @@ function prefixSourceKey(blockName: string, key: string): string {
   return `${name}/${key}`;
 }
 
+function verticalPadding(frame: IRNode): number {
+  if (typeof frame.padding === "number") return Math.max(0, frame.padding) * 2;
+  if (Array.isArray(frame.padding) && frame.padding.length === 4) {
+    const top = typeof frame.padding[0] === "number" ? frame.padding[0] : 0;
+    const bottom = typeof frame.padding[2] === "number" ? frame.padding[2] : 0;
+    return Math.max(0, top) + Math.max(0, bottom);
+  }
+  return 0;
+}
+
+function viewportNodeFrame(node: IRNode, viewport: SourceViewport): IRNode | null {
+  const responsive = isRecord(node.responsive) ? node.responsive : null;
+  const override = responsive && isRecord(responsive[viewport]) ? responsive[viewport] : null;
+  if (override && override.visible === false) return null;
+  return {
+    ...(isRecord(node.frame) ? node.frame : {}),
+    ...(override && isRecord(override.frame) ? override.frame : {}),
+  };
+}
+
+function fallbackSectionHeight(node: IRNode): number {
+  const type = String(node.type || "").toLowerCase();
+  if (type === "header" || type === "navbar" || type === "banner") return 96;
+  if (type === "footer") return 320;
+  if (type === "hero") return 640;
+  return 360;
+}
+
+function estimateNodeHeight(node: IRNode, viewport: SourceViewport, section = false): number {
+  const frame = viewportNodeFrame(node, viewport);
+  if (!frame) return 0;
+  if (typeof frame.height === "number" && Number.isFinite(frame.height) && frame.height >= 0) {
+    return frame.height;
+  }
+
+  const children = Array.isArray(node.children)
+    ? node.children.filter((child): child is IRNode => isRecord(child))
+    : [];
+  if (!children.length) return section ? fallbackSectionHeight(node) : 0;
+
+  const heights = children.map((child) => estimateNodeHeight(child, viewport));
+  const gap = typeof frame.gap === "number" ? Math.max(0, frame.gap) : 0;
+  const padding = verticalPadding(frame);
+  if (frame.layout === "free") {
+    let bottom = 0;
+    children.forEach((child, index) => {
+      const childFrame = viewportNodeFrame(child, viewport);
+      if (!childFrame) return;
+      const y = typeof childFrame.y === "number" ? childFrame.y : 0;
+      bottom = Math.max(bottom, y + heights[index]);
+    });
+    return Math.max(section ? fallbackSectionHeight(node) : 0, bottom + padding);
+  }
+  if (frame.direction === "row") {
+    return Math.max(section ? fallbackSectionHeight(node) : 0, ...heights) + padding;
+  }
+  const visibleHeights = heights.filter((height) => height > 0);
+  const content = visibleHeights.reduce((sum, height) => sum + height, 0) +
+    Math.max(0, visibleHeights.length - 1) * gap + padding;
+  return Math.max(section ? fallbackSectionHeight(node) : 0, content);
+}
+
+/** Best numeric document height for exports and viewport metadata. The actual
+ * page artboard remains height:"hug", so DOM content is still the authority
+ * when a generated section has intrinsic text/content height. */
+export function pageHeightForViewport(tree: IRNode[], viewport: SourceViewport): number {
+  const measured = tree.reduce((sum, section) => sum + estimateNodeHeight(section, viewport, true), 0);
+  return measured > 0 ? Math.ceil(measured) : PAGE_VIEWPORT_FALLBACK_HEIGHTS[viewport];
+}
+
 export function composePage(
   blocks: { name: string; ir: IRObject }[],
   tokensOverride: IRObject | null,
@@ -253,14 +329,18 @@ export function composePage(
     },
     // Канонический артборд всегда desktop: materializeResponsiveIR подставит
     // ширину активного вьюпорта при рендере, а редактор сохраняет canonical 1440.
-    frame: { width: PAGE_VIEWPORT_WIDTHS.desktop, layout: "auto", direction: "column" },
+    // Auto-height is intentional: the common page artboard follows every
+    // section, including generated sections whose intrinsic text height is not
+    // knowable until Chromium lays it out. A manual artboard resize replaces
+    // "hug" with a numeric height in the editor.
+    frame: { width: PAGE_VIEWPORT_WIDTHS.desktop, height: "hug", layout: "auto", direction: "column" },
     // responsive-мета документа: без неё renderer не материализует per-node
     // override'ы (visible/frame/style) и мобильные слои дублируются на десктопе
     responsive: {
       viewports: {
-        desktop: { width: PAGE_VIEWPORT_WIDTHS.desktop, height: 900 },
-        tablet: { width: PAGE_VIEWPORT_WIDTHS.tablet, height: 1024 },
-        mobile: { width: PAGE_VIEWPORT_WIDTHS.mobile, height: 844 },
+        desktop: { width: PAGE_VIEWPORT_WIDTHS.desktop, height: pageHeightForViewport(tree, "desktop") },
+        tablet: { width: PAGE_VIEWPORT_WIDTHS.tablet, height: pageHeightForViewport(tree, "tablet") },
+        mobile: { width: PAGE_VIEWPORT_WIDTHS.mobile, height: pageHeightForViewport(tree, "mobile") },
       },
     },
     tokens: deepClone(effectiveTokens || {}),

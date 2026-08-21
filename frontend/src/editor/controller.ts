@@ -6,6 +6,7 @@ import { IRRenderer } from "../engine/renderer";
 import { GeoEdit } from "../engine/geoedit";
 import { IRHistory } from "../engine/irhistory";
 import { DesignAIFontCatalog } from "../engine/fontCatalog";
+import { findByKey, isSourceKeyPath, locateByKey, parentKeyByKey } from "../engine/sourcepath";
 import type { AssistPreview, AssistRequest } from "./aiTypes";
 
 /* ---------- DOM-refs: регистрируются React-компонентами ---------- */
@@ -138,7 +139,7 @@ let aiAssistFormState: AssistRequest = {
 };
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void; setAiBusy: (busy: boolean) => void; setAiError: (error: string) => void; setAiPreview: (preview: AssistPreview | null) => void } = {
+let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void; setAiBusy: (busy: boolean) => void; setAiError: (error: string) => void; setAiPreview: (preview: AssistPreview | null) => void; setAiProgress: (progress: import("./aiTypes").AssistProgress | null) => void } = {
   setTool: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
@@ -152,6 +153,7 @@ let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspe
   setAiBusy: () => {},
   setAiError: () => {},
   setAiPreview: () => {},
+  setAiProgress: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -1626,6 +1628,7 @@ function friendlyAiError(detail: string) {
   if (/outside|вне текущего выделения|не найден элемент/i.test(detail)) return "Выделение изменилось. Выберите объект ещё раз.";
   if (/schema|невалидн|структурн|children|sourceKey|patch|команд/i.test(detail)) return "AI предложил небезопасную правку. Уточните запрос.";
   if (/429|лимит|очередь/i.test(detail)) return "AI занят. Повторите через минуту.";
+  if (/timed out|timeout|время ожидания/i.test(detail)) return "AI не ответил за 3 минуты. Запрос остановлен — попробуйте ещё раз или сократите задачу.";
   return "Не удалось подготовить результат. Попробуйте уточнить запрос.";
 }
 
@@ -1646,6 +1649,8 @@ export async function requestAiAssist(request: AssistRequest) {
   if (!prompt) { ui.setAiError("Опишите, что нужно изменить"); return; }
   ui.setAiBusy(true);
   ui.setAiError("");
+  const startedAt = Date.now();
+  ui.setAiProgress({ stage: "prepare", label: "Собираю контекст выделения", startedAt });
   aiAssistState = null;
   aiAssistBaseFingerprint = null;
   ui.setAiPreview(null);
@@ -1663,10 +1668,16 @@ export async function requestAiAssist(request: AssistRequest) {
     if (window.designDNA?.providers && request.action !== "adapt") {
       const prepared = await postAiAssist({ ...payload, prepareOnly: true });
       if (Array.isArray(prepared.messages)) {
+        ui.setAiProgress({ stage: "provider", label: "AI анализирует объект и готовит правки", startedAt });
         const answer = await window.designDNA.providers.chat("auto", prepared.messages, 0.2);
+        ui.setAiProgress({ stage: "validate", label: "Проверяю ответ и строю предпросмотр", startedAt });
         data = await postAiAssist({ ...payload, rawOutput: answer.content });
       } else data = prepared;
-    } else data = await postAiAssist(payload);
+    } else {
+      if (request.action !== "adapt") ui.setAiProgress({ stage: "provider", label: "AI анализирует объект и готовит правки", startedAt });
+      data = await postAiAssist(payload);
+      ui.setAiProgress({ stage: "validate", label: "Проверяю ответ и строю предпросмотр", startedAt });
+    }
     if (!data?.previewIr || !Array.isArray(data.ops)) throw new Error("AI вернул неполный preview");
     const currentScopeKeys = state ? selectedSourceKeys(request.scopeMode) : [];
     if (!state || state.sessionId !== baseSessionId
@@ -1683,6 +1694,7 @@ export async function requestAiAssist(request: AssistRequest) {
     ui.setAiError(friendlyAiError(error instanceof Error ? error.message : String(error)));
   } finally {
     ui.setAiBusy(false);
+    ui.setAiProgress(null);
   }
 }
 
@@ -1905,6 +1917,26 @@ function syncActiveIR() {
   });
 }
 
+function syncSelectedRootFrame(active: any, target: any) {
+  if (!state || !active?.frame || !target) return;
+  const next = deepClone(active.frame);
+  const viewport = state.viewport;
+  const current = target.frame || {};
+
+  // Width belongs to the viewport. All other artboard properties are shared;
+  // a numeric height means the user intentionally replaced auto-height with a
+  // manually editable size.
+  if (viewport === "desktop") target.frame = next;
+  else target.frame = { ...current, ...next, width: current.width };
+
+  const viewports = target.responsive && target.responsive.viewports;
+  const meta = viewports && viewports[viewport];
+  if (meta) {
+    if (typeof next.width === "number" && Number.isFinite(next.width)) meta.width = next.width;
+    if (typeof next.height === "number" && Number.isFinite(next.height)) meta.height = next.height;
+  }
+}
+
 /** Persist geometry/style for the exact refs being edited on the canvas.
  * Source-key reconciliation handles broad/structural changes, while this
  * direct path prevents viewport materialization from restoring an older
@@ -1917,7 +1949,7 @@ function syncSelectedActiveGeometry() {
     const section = ir && ir.tree && ir.tree[ref.secIdx];
     if (!section || ref.path == null) return section;
     if (ref.path.startsWith("props.")) return null;
-    return getByPath(section, ref.path);
+    return isSourceKeyPath(ref.path) ? findByKey(section, ref.path) : getByPath(section, ref.path);
   }
 
   state.sel.forEach((sel) => {
@@ -1925,7 +1957,7 @@ function syncSelectedActiveGeometry() {
     const target = at(state!.ir, sel.ref);
     if (!active || !target) return;
     if (sel.ref.secIdx == null) {
-      if (active.frame) target.frame = deepClone(active.frame);
+      syncSelectedRootFrame(active, target);
       return;
     }
     if (state!.viewport === "desktop") {
@@ -2263,11 +2295,18 @@ export function renderLayers() {
     propsElements(sec).forEach((pe) => {
       addLayerItem(tree, getByPath(sec, pe.path) || {}, { secIdx: si, path: pe.path }, pe.depth || 2, pe.label, pe.icon);
     });
-    renderChildLayers(tree, sec.children || [], si, "children", 2);
+    const sourceAddressed = sec.type === "source-block" || sec.variant === "dom-capture";
+    renderChildLayers(tree, sec.children || [], si, "children", 2, sourceAddressed);
   });
 }
 
 function layerLabel(el: any, maxText: number) {
+  const sourceMeta = el.sourceMeta || {};
+  if (sourceMeta.componentBoundary) {
+    const role = String(sourceMeta.componentRole || el.role || el.type || "component");
+    const name = String(sourceMeta.componentLabel || role);
+    return `компонент · ${name}`.slice(0, Math.max(18, maxText + 14));
+  }
   const base = el.type === "card" && el.role ? "div" : el.type;
   const suffix = el.text ? ` · ${String(el.text).slice(0, maxText)}`
     : el.title ? ` · ${String(el.title).slice(0, maxText)}`
@@ -2276,12 +2315,17 @@ function layerLabel(el: any, maxText: number) {
   return base + suffix;
 }
 
-function renderChildLayers(tree: HTMLElement, children: any[], secIdx: number, basePath: string, depth: number) {
+function renderChildLayers(
+  tree: HTMLElement, children: any[], secIdx: number, basePath: string, depth: number, sourceAddressed = false,
+) {
   children.forEach((el, i) => {
-    const path = `${basePath}.${i}`;
+    const numericPath = `${basePath}.${i}`;
+    const path = sourceAddressed && typeof el.sourceKey === "string" && el.sourceKey
+      ? el.sourceKey
+      : numericPath;
     addLayerItem(tree, el, { secIdx, path }, depth, layerLabel(el, depth > 2 ? 14 : 16));
     if (el.children && el.children.length) {
-      renderChildLayers(tree, el.children, secIdx, `${path}.children`, depth + 1);
+      renderChildLayers(tree, el.children, secIdx, `${numericPath}.children`, depth + 1, sourceAddressed);
     }
   });
 }
@@ -2326,9 +2370,17 @@ function addLayerItem(
       if (!fromKey || fromKey === key || !state.geo) return;
       const parse = (k: string) => { const i = k.indexOf(":"); return { si: k.slice(0, i), p: k.slice(i + 1) || null }; };
       const a = parse(fromKey), b = parse(key);
-      const parentOf = (x: { si: string; p: string | null }) => (x.p ? x.p.split(".").slice(0, -2).join(".") : null);
+      const parentOf = (x: { si: string; p: string | null }) => {
+        if (!x.p) return null;
+        return isSourceKeyPath(x.p)
+          ? parentKeyByKey(state!.ir.tree[Number(x.si)], x.p)
+          : x.p.split(".").slice(0, -2).join(".");
+      };
       if (a.si !== b.si || parentOf(a) !== parentOf(b)) return; // только внутри одного родителя
-      const to = parseInt((b.p || "0").split(".").pop()!);
+      const section = state.ir.tree[Number(b.si)];
+      const located: any = section && b.p && isSourceKeyPath(b.p) ? locateByKey(section, b.p) : null;
+      const to = located ? located.index : parseInt((b.p || "0").split(".").pop()!);
+      if (!Number.isInteger(to)) return;
       state.geo.moveSibling({ secIdx: a.si === "null" ? null : Number(a.si), path: a.p }, to);
     });
   }
@@ -2406,7 +2458,7 @@ export function renderInspector() {
 export function canonicalNode(ref: GeoRef): any {
   if (!state || !state.ir || ref.secIdx == null) return state && state.ir;
   let node = (state.ir.tree || [])[ref.secIdx];
-  if (node && ref.path) node = getByPath(node, ref.path);
+  if (node && ref.path) node = isSourceKeyPath(ref.path) ? findByKey(node, ref.path) : getByPath(node, ref.path);
   return node || null;
 }
 
@@ -2428,6 +2480,7 @@ export function resetResponsiveOverride(sel: GeoSel) {
   if (!state || state.viewport === "desktop") return;
   const target = canonicalNode(sel.ref);
   if (!target || !target.responsive || !target.responsive[state.viewport]) return;
+  if (target.editable === false) return; // editable:false (raster fallback): геометрия заблокирована
   pushHistory();
   delete target.responsive[state.viewport];
   if (!Object.keys(target.responsive).length) delete target.responsive;
@@ -2439,6 +2492,7 @@ export function applyResponsiveToAll(sel: GeoSel) {
   const source = activeSelectionNode(sel);
   const target = canonicalNode(sel.ref);
   if (!source || !target) return;
+  if (target.editable === false) return; // editable:false (raster fallback): геометрия заблокирована
   pushHistory();
   if (source.frame) target.frame = deepClone(source.frame);
   if (source.style) target.style = deepClone(source.style);
@@ -2457,6 +2511,7 @@ export function copyResponsiveTo(sel: GeoSel, viewport: string) {
   const source = activeSelectionNode(sel);
   const target = canonicalNode(sel.ref);
   if (!source || !target) return;
+  if (target.editable === false) return; // editable:false (raster fallback): геометрия заблокирована
   pushHistory();
   if (viewport === "desktop") {
     if (source.frame) target.frame = deepClone(source.frame);

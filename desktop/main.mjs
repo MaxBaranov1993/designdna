@@ -1,9 +1,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from "electron";
 import { JsonlProcess } from "./lib/jsonl-process.mjs";
 import { isAllowedRendererUrl } from "./lib/renderer-policy.mjs";
 import { pythonWorkerEnvironment, pythonWorkerSpec } from "./lib/runtime-paths.mjs";
+import { SerialRequestQueue } from "./lib/serial-request-queue.mjs";
 import { CredentialStore } from "./services/credential-store.mjs";
 import { SettingsStore } from "./services/settings-store.mjs";
 import { getProviderStatus } from "./services/provider-status.mjs";
@@ -12,6 +13,7 @@ import { getValidToken, importFromCli, kimiAccountStatus } from "./services/kimi
 import { CodexAppServer } from "./services/codex-app-server.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
 import { canonicalMcpSpec, createMcpActivationApprover } from "./services/mcp-activation-approval.mjs";
+import { attachSourceAuthCookies, sourceAuthIntent, validateSourceAuthUrl } from "./services/source-auth.mjs";
 
 const desktopDirectory = path.dirname(fileURLToPath(import.meta.url));
 const sourceRoot = path.resolve(desktopDirectory, "..");
@@ -24,6 +26,7 @@ const repoCanvasWorkerEntry = app.isPackaged
   : path.join(desktopDirectory, "workers", "repo-canvas-worker.mjs");
 
 let pythonWorker;
+let pythonInteractiveWorker;
 let repoCanvasWorker;
 let codex;
 let credentials;
@@ -33,6 +36,10 @@ let mcpActivation;
 let approvalSequence = 0;
 const mcpApprovals = new Map();
 const codexRequests = new Map();
+const pythonApiQueue = new SerialRequestQueue();
+const pythonInteractiveQueue = new SerialRequestQueue();
+const SOURCE_AUTH_PARTITION = "designdna-source-auth";
+let sourceAuthWindow = null;
 
 /* Точная политика доверенного renderer-URL: dev-сервер (когда задан
  * DESIGNDNA_RENDERER_URL) или ровно файл собранного renderer'а. Используется и
@@ -87,6 +94,17 @@ function createWorkers() {
     env: pythonWorkerEnvironment({ isPackaged: app.isPackaged, runtimeRoot, userDataPath: app.getPath("userData") }),
     timeoutMs: 120_000,
   });
+  // Editor Assist has a short prepare/finalize round-trip around the external
+  // provider call. Keep it independent from multi-minute Source Import jobs;
+  // the JSONL Python worker processes one request at a time.
+  pythonInteractiveWorker = new JsonlProcess({
+    name: "DesignDNA interactive Python runtime",
+    command: python.command,
+    args: python.args,
+    cwd: repositoryRoot,
+    env: pythonWorkerEnvironment({ isPackaged: app.isPackaged, runtimeRoot, userDataPath: app.getPath("userData") }),
+    timeoutMs: 120_000,
+  });
   repoCanvasWorker = new JsonlProcess({
     name: "Repo Canvas runtime",
     command: process.execPath,
@@ -123,6 +141,56 @@ function validateApiRequest(request) {
   return { ...request, method, path: rawPath };
 }
 
+function sourceAuthSession() {
+  return session.fromPartition(SOURCE_AUTH_PARTITION, { cache: false });
+}
+
+function openSourceAuthWindow(rawUrl) {
+  const url = validateSourceAuthUrl(rawUrl);
+  if (sourceAuthWindow && !sourceAuthWindow.isDestroyed()) {
+    sourceAuthWindow.show();
+    sourceAuthWindow.focus();
+    void sourceAuthWindow.loadURL(url);
+    return { opened: true };
+  }
+  sourceAuthWindow = new BrowserWindow({
+    width: 1120,
+    height: 820,
+    title: "Source Login — DesignDNA",
+    webPreferences: {
+      partition: SOURCE_AUTH_PARTITION,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+  const allowHttpNavigation = (event, nextUrl) => {
+    try { validateSourceAuthUrl(nextUrl); } catch { event.preventDefault(); }
+  };
+  sourceAuthWindow.webContents.on("will-navigate", allowHttpNavigation);
+  sourceAuthWindow.webContents.on("will-redirect", allowHttpNavigation);
+  sourceAuthWindow.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
+    try { validateSourceAuthUrl(popupUrl); } catch { return { action: "deny" }; }
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        parent: sourceAuthWindow,
+        webPreferences: {
+          partition: SOURCE_AUTH_PARTITION,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          webSecurity: true,
+        },
+      },
+    };
+  });
+  sourceAuthWindow.on("closed", () => { sourceAuthWindow = null; });
+  void sourceAuthWindow.loadURL(url);
+  return { opened: true };
+}
+
 function registerIpc() {
   let mcpSaveQueue = Promise.resolve();
   handleTrusted("app:info", () => ({
@@ -131,28 +199,45 @@ function registerIpc() {
     platform: process.platform,
     productionTransport: "ipc+stdio",
   }));
-  handleTrusted("api:request", async (_event, request) => {
-    // Keep provider credentials inside the trusted main/sidecar boundary.
-    // Reconfigure before every API call so credential rotation and worker
-    // restarts take effect without exposing the secrets to the renderer.
-    let kimiApiKey = "";
-    if (credentials.has("kimi")) {
-      // Best-effort: a token refresh failure must not break the API request;
-      // the worker just runs without a Kimi key until re-import/re-login.
-      try {
-        kimiApiKey = await getValidToken(credentials);
-      } catch (error) {
-        console.warn(`Kimi token unavailable for api:request: ${error.message}`);
+  handleTrusted("source-auth:open", (_event, { url }) => openSourceAuthWindow(url));
+  handleTrusted("source-auth:clear", async () => {
+    await sourceAuthSession().clearStorageData();
+    return { cleared: true };
+  });
+  handleTrusted("api:request", (_event, request) => {
+    const validatedRequest = validateApiRequest(request);
+    const interactive = validatedRequest.path.split("?", 1)[0] === "/api/editor/assist";
+    const queue = interactive ? pythonInteractiveQueue : pythonApiQueue;
+    const worker = interactive ? pythonInteractiveWorker : pythonWorker;
+    return queue.run(async () => {
+      let preparedRequest = validatedRequest;
+      const authIntent = sourceAuthIntent(validatedRequest);
+      if (authIntent) {
+        const cookies = await sourceAuthSession().cookies.get({ url: authIntent.url });
+        preparedRequest = attachSourceAuthCookies(validatedRequest, cookies, authIntent.url);
       }
-    }
-    await pythonWorker.request("runtime.configure", {
-      openaiApiKey: credentials.get("openai") || "",
-      kimiApiKey,
+      // Keep provider credentials inside the trusted main/sidecar boundary.
+      // Reconfigure before every API call so credential rotation and worker
+      // restarts take effect without exposing the secrets to the renderer.
+      let kimiApiKey = "";
+      if (credentials.has("kimi")) {
+        // Best-effort: a token refresh failure must not break the API request;
+        // the worker just runs without a Kimi key until re-import/re-login.
+        try {
+          kimiApiKey = await getValidToken(credentials);
+        } catch (error) {
+          console.warn(`Kimi token unavailable for api:request: ${error.message}`);
+        }
+      }
+      await worker.request("runtime.configure", {
+        openaiApiKey: credentials.get("openai") || "",
+        kimiApiKey,
+      });
+      // Source Import / generation pipelines legitimately take minutes
+      // (Playwright captures multiple viewports, font downloads, LLM steps),
+      // so the HTTP call gets a wider budget than the default worker timeout.
+      return worker.request("http.request", preparedRequest, interactive ? 120_000 : 600_000);
     });
-    // Source Import / generation pipelines legitimately take minutes
-    // (Playwright captures × viewports, font downloads, LLM steps) — give the
-    // HTTP call a wider budget than the default 120s worker timeout.
-    return pythonWorker.request("http.request", validateApiRequest(request), 600_000);
   });
   handleTrusted("repo-canvas:snapshot", () => repoCanvasWorker.request("snapshot"));
   handleTrusted("repo-canvas:check", () => repoCanvasWorker.request("check"));
@@ -283,6 +368,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   void pythonWorker?.stop();
+  void pythonInteractiveWorker?.stop();
   void repoCanvasWorker?.stop();
   codex?.stop();
   mcp?.stop();

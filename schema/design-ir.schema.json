@@ -37,9 +37,10 @@
             "additionalProperties": false,
             "properties": {
               "family": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[A-Za-z0-9 ._-]+$" },
-              "weight": { "enum": ["100", "200", "300", "400", "500", "600", "700", "800", "900", "normal", "bold"] },
+              "weight": { "type": "string", "pattern": "^(?:(?:[1-9]00)(?: (?:[1-9]00))?|normal|bold)$" },
               "style": { "enum": ["normal", "italic", "oblique"] },
-              "url": { "type": "string", "maxLength": 136, "pattern": "^/fonts/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
+              "url": { "type": "string", "maxLength": 136, "pattern": "^/fonts/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "unicodeRange": { "type": "string", "maxLength": 2048, "pattern": "^[Uu+0-9A-Fa-f? ,\\-]+$" }
             }
           },
           "description": "Locally captured font faces used by Source Import rendering."
@@ -287,6 +288,8 @@
         "align": { "enum": ["start", "center", "end", "stretch", "baseline"], "description": "Выравнивание по поперечной оси" },
         "wrap": { "type": "boolean", "description": "Перенос children на новую строку (direction:row)" },
         "rotation": { "type": "number", "description": "Угол поворота в градусах (аналог rotation в pen.dev)" },
+        "transform": { "type": "string", "maxLength": 300, "description": "Полный CSS transform источника (matrix/translate/rotate/scale) — Source Import; имеет приоритет над rotation" },
+        "z": { "type": "integer", "minimum": -1000, "maximum": 1000, "description": "Stacking order источника (z-index) — Source Import" },
         "absolute": { "type": "boolean", "description": "true — элемент выведен из раскладки родителя и позиционируется по x/y (аналог layoutPosition:absolute в pen.dev)" },
         "clip": { "type": "boolean", "description": "Обрезать содержимое за границами узла, overflow:hidden (clip в pen.dev)" }
       }
@@ -335,6 +338,7 @@
         "visible": { "type": "boolean" },
         "frame": { "$ref": "#/$defs/frame" },
         "style": { "$ref": "#/$defs/elementStyle" },
+        "src": { "type": "string" },
         "styleBindings": { "$ref": "#/$defs/styleBindings" }
       }
     },
@@ -434,7 +438,7 @@
       "additionalProperties": false,
       "properties": {
         "role": {
-          "enum": ["header", "footer", "carousel", "categories", "product-grid", "services-grid", "journal", "how-it-works", "faq", "cta", "trust", "pricing", "testimonials", "gallery", "section"]
+          "enum": ["header", "footer", "carousel", "categories", "product-grid", "services-grid", "journal", "how-it-works", "faq", "cta", "trust", "pricing", "testimonials", "gallery", "navigation", "status", "toolbar", "profile", "panel", "section"]
         },
         "label": { "type": "string" },
         "selector": { "type": "string" },
@@ -614,6 +618,9 @@
         },
         "frame": { "$ref": "#/$defs/frame" },
         "sourceKey": { "type": "string", "maxLength": 500 },
+        "sourceMeta": { "$ref": "#/$defs/sourceLayerMeta" },
+        "editable": { "type": "boolean", "description": "false — intrinsically non-editable surface (canvas/webgl/iframe/closed shadow): слой остаётся видимым и selectable, но AI/repair операции над ним заблокированы" },
+        "lockedReason": { "type": "string", "maxLength": 200, "description": "Причина editable:false (raster fallback)" },
         "responsive": { "$ref": "#/$defs/responsiveOverrides" },
         "styleBindings": { "$ref": "#/$defs/styleBindings" },
         "constraints": { "$ref": "#/$defs/constraints" },
@@ -667,7 +674,28 @@
         "overflow": { "enum": ["visible", "hidden", "clip", "scroll", "auto"] },
         "textTransform": { "enum": ["none", "uppercase", "lowercase", "capitalize"] },
         "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
-        "objectFit": { "enum": ["contain", "cover", "fill", "none", "scale-down"] }
+        "objectFit": { "enum": ["contain", "cover", "fill", "none", "scale-down"] },
+        "backgroundImage": { "type": "string", "maxLength": 800, "description": "url(...) или CSS gradient синтетического background layer (Source Import)" },
+        "maskImage": { "type": "string", "maxLength": 800, "description": "CSS gradient mask источника (Source Import); url()-mask уходит в locked raster fallback" },
+        "clipPath": { "type": "string", "maxLength": 300, "description": "CSS clip-path источника (inset/polygon/circle/ellipse) — Source Import" }
+      }
+    },
+    "sourceLayerMeta": {
+      "type": "object",
+      "description": "Provenance of a synthetic Source Import layer (background-image, pseudo-element, raster fallback).",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["dom", "background-image", "inherited-background", "pseudo-before", "pseudo-after", "canvas", "webgl", "iframe", "video", "shadow-dom", "url-mask", "complex-transform", "svg"] },
+        "url": { "type": "string", "maxLength": 1000 },
+        "reason": { "type": "string", "maxLength": 200 },
+        "selector": { "type": "string", "maxLength": 500 },
+        "componentBoundary": { "type": "boolean" },
+        "componentRole": { "type": "string", "maxLength": 100 },
+        "componentLabel": { "type": "string", "maxLength": 100 },
+        "repeatGroup": { "type": "string", "maxLength": 500 },
+        "repeatIndex": { "type": "integer", "minimum": 0 },
+        "layer": { "type": "integer", "minimum": 0, "description": "CSS-индекс слоя многослойного background (0 = верхний в CSS)" }
       }
     },
     "buttonElement": {

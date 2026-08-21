@@ -5,7 +5,7 @@ import { createStore } from "zustand/vanilla";
 import { useFlowStore } from "../flow/store";
 import { toast } from "../flow/toast";
 import type { IRObject } from "../flow/types";
-import type { AssistPreview } from "./aiTypes";
+import type { AssistPreview, AssistProgress } from "./aiTypes";
 import * as ctl from "./controller";
 
 interface EditorUIState {
@@ -25,6 +25,7 @@ interface EditorUIState {
   aiBusy: boolean;
   aiError: string;
   aiPreview: AssistPreview | null;
+  aiProgress: AssistProgress | null;
   /** Открыть React-редактор для ноды. false — движки недоступны, зовите legacy fallback. */
   openEditor: (nodeId: number) => boolean;
 }
@@ -44,6 +45,7 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
   aiBusy: false,
   aiError: "",
   aiPreview: null,
+  aiProgress: null,
 
   openEditor: (nodeId) => {
     const st = useFlowStore.getState();
@@ -102,7 +104,7 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
       { registry: sourceRegistry, nodeSources, layoutEvidence },
     );
     if (!ok) return false;
-    set({ isOpen: true, nodeId, tool: "select", smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null });
+    set({ isOpen: true, nodeId, tool: "select", smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null, aiProgress: null });
     if (ctl.dom.overlay) ctl.dom.overlay.style.display = "flex";
     requestAnimationFrame(() => {
       if (ctl.dom.overlay && useEditorStore.getState().isOpen && ctl.isActive()) ctl.finishOpen();
@@ -116,7 +118,7 @@ ctl.bindUi({
   setTool: (t) => useEditorStore.setState({ tool: t }),
   setOpen: (v) => {
     if (ctl.dom.overlay) ctl.dom.overlay.style.display = v ? "flex" : "none";
-    useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null }) });
+    useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null, aiProgress: null }) });
   },
   bumpInspector: () => useEditorStore.setState((s) => ({ inspectorTick: s.inspectorTick + 1 })),
   bumpSources: () => useEditorStore.setState((s) => ({ sourceTick: s.sourceTick + 1 })),
@@ -129,4 +131,5 @@ ctl.bindUi({
   setAiBusy: (aiBusy) => useEditorStore.setState({ aiBusy }),
   setAiError: (aiError) => useEditorStore.setState({ aiError }),
   setAiPreview: (aiPreview) => useEditorStore.setState({ aiPreview }),
+  setAiProgress: (aiProgress) => useEditorStore.setState({ aiProgress }),
 });

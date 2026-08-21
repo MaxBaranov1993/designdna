@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mount Kendall — Chess Arena (fixture)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: #161512;
+    color: #f0ede4;
+  }
+  #arena { width: 100%; }
+  .topbar {
+    display: flex; align-items: center; gap: 24px;
+    padding: 14px 28px;
+    background: #211f1c;
+    border-bottom: 1px solid #3a3833;
+  }
+  .brand { font-size: 20px; font-weight: 700; color: #f0ede4; }
+  .brand span { color: #81b64c; }
+  .nav { display: flex; gap: 18px; flex: 1; }
+  .nav a { color: #b8b4a8; text-decoration: none; font-size: 14px; }
+  .btn {
+    display: inline-block; border: none; border-radius: 8px;
+    background: #81b64c; color: #ffffff;
+    font-size: 14px; font-weight: 600;
+    padding: 10px 18px; cursor: pointer;
+  }
+  .btn.ghost { background: #3a3833; color: #f0ede4; }
+  .arena-main {
+    display: flex; gap: 24px; align-items: flex-start;
+    padding: 24px 28px;
+  }
+  .board-wrap {
+    background: #211f1c; border-radius: 12px; padding: 16px;
+  }
+  .board {
+    display: grid;
+    grid-template-columns: repeat(8, 70px);
+    grid-template-rows: repeat(8, 70px);
+    border: 4px solid #3a3833;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .sq { display: flex; align-items: center; justify-content: center; font-size: 44px; line-height: 1; }
+  .sq.l { background: #ebecd0; }
+  .sq.d { background: #739552; }
+  .bp { color: #23211d; }
+  .wp { color: #f9f9f9; }
+  .panel { width: 320px; display: flex; flex-direction: column; gap: 16px; }
+  .player {
+    display: flex; align-items: center; gap: 12px;
+    background: #211f1c; border-radius: 12px; padding: 12px 14px;
+  }
+  .avatar {
+    width: 44px; height: 44px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 16px; color: #ffffff;
+    background: #739552;
+  }
+  .player.white .avatar { background: #b8874b; }
+  .pinfo { flex: 1; }
+  .pname { font-size: 15px; font-weight: 600; }
+  .prating { font-size: 12px; color: #b8b4a8; }
+  .clock {
+    font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums;
+    background: #161512; border-radius: 6px; padding: 6px 10px;
+  }
+  .moves {
+    background: #211f1c; border-radius: 12px; padding: 14px;
+    flex: 1;
+  }
+  .moves h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #b8b4a8; margin-bottom: 10px; }
+  .moves ol { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .moves li { display: flex; gap: 10px; font-size: 14px; }
+  .moves .num { color: #b8b4a8; width: 26px; }
+  .moves .mv { background: #2c2a26; border-radius: 4px; padding: 2px 8px; min-width: 56px; }
+  .actions { display: flex; gap: 10px; }
+  .actions .btn { flex: 1; text-align: center; }
+  @media (max-width: 1023px) {
+    .board { grid-template-columns: repeat(8, 52px); grid-template-rows: repeat(8, 52px); }
+    .sq { font-size: 34px; }
+    .panel { width: 240px; }
+    .arena-main { padding: 18px; gap: 16px; }
+    .nav { gap: 12px; }
+  }
+  @media (max-width: 639px) {
+    .topbar { padding: 12px 16px; gap: 12px; }
+    .nav { display: none; }
+    .arena-main { flex-direction: column; padding: 12px; }
+    .board { grid-template-columns: repeat(8, 40px); grid-template-rows: repeat(8, 40px); }
+    .sq { font-size: 26px; }
+    .board-wrap { padding: 10px; }
+    .panel { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div id="arena">
+  <header class="topbar">
+    <div class="brand">Mount <span>Kendall</span></div>
+    <nav class="nav">
+      <a href="#play">Play</a>
+      <a href="#puzzles">Puzzles</a>
+      <a href="#learn">Learn</a>
+      <a href="#watch">Watch</a>
+    </nav>
+    <button class="btn">New Game</button>
+  </header>
+  <main class="arena-main">
+    <div class="board-wrap">
+      <div class="board">
+        <div class="sq l"><span class="bp">&#9820;</span></div><div class="sq d"><span class="bp">&#9822;</span></div><div class="sq l"><span class="bp">&#9821;</span></div><div class="sq d"><span class="bp">&#9819;</span></div><div class="sq l"><span class="bp">&#9818;</span></div><div class="sq d"><span class="bp">&#9821;</span></div><div class="sq l"><span class="bp">&#9822;</span></div><div class="sq d"><span class="bp">&#9820;</span></div>
+        <div class="sq d"><span class="bp">&#9823;</span></div><div class="sq l"><span class="bp">&#9823;</span></div><div class="sq d"><span class="bp">&#9823;</span></div><div class="sq l"><span class="bp">&#9823;</span></div><div class="sq d"><span class="bp">&#9823;</span></div><div class="sq l"><span class="bp">&#9823;</span></div><div class="sq d"><span class="bp">&#9823;</span></div><div class="sq l"><span class="bp">&#9823;</span></div>
+        <div class="sq l"></div><div class="sq d"></div><div class="sq l"></div><div class="sq d"></div><div class="sq l"></div><div class="sq d"></div><div class="sq l"></div><div class="sq d"></div>
+        <div class="sq d"></div><div class="sq l"></div><div class="sq d"></div><div class="sq l"></div><div class="sq d"></div><div class="sq l"></div><div class="sq d"></div><div class="sq l"></div>
+        <div class="sq l"></div><div class="sq d"></div><div class="sq l"></div><div class="sq d"></div><div class="sq l"></div><div class="sq d"></div><div class="sq l"></div><div class="sq d"></div>
+        <div class="sq d"></div><div class="sq l"></div><div class="sq d"></div><div class="sq l"></div><div class="sq d"></div><div class="sq l"></div><div class="sq d"></div><div class="sq l"></div>
+        <div class="sq l"><span class="wp">&#9817;</span></div><div class="sq d"><span class="wp">&#9817;</span></div><div class="sq l"><span class="wp">&#9817;</span></div><div class="sq d"><span class="wp">&#9817;</span></div><div class="sq l"><span class="wp">&#9817;</span></div><div class="sq d"><span class="wp">&#9817;</span></div><div class="sq l"><span class="wp">&#9817;</span></div><div class="sq d"><span class="wp">&#9817;</span></div>
+        <div class="sq d"><span class="wp">&#9814;</span></div><div class="sq l"><span class="wp">&#9816;</span></div><div class="sq d"><span class="wp">&#9815;</span></div><div class="sq l"><span class="wp">&#9813;</span></div><div class="sq d"><span class="wp">&#9812;</span></div><div class="sq l"><span class="wp">&#9815;</span></div><div class="sq d"><span class="wp">&#9816;</span></div><div class="sq l"><span class="wp">&#9814;</span></div>
+      </div>
+    </div>
+    <aside class="panel">
+      <div class="player black">
+        <div class="avatar">NK</div>
+        <div class="pinfo">
+          <div class="pname">Nadia Kremer</div>
+          <div class="prating">Blitz 1842</div>
+        </div>
+        <div class="clock">4:37</div>
+      </div>
+      <div class="moves">
+        <h2>Moves</h2>
+        <ol>
+          <li><span class="num">1.</span><span class="mv">e4</span><span class="mv">e5</span></li>
+          <li><span class="num">2.</span><span class="mv">Nf3</span><span class="mv">Nc6</span></li>
+          <li><span class="num">3.</span><span class="mv">Bb5</span><span class="mv">a6</span></li>
+          <li><span class="num">4.</span><span class="mv">Ba4</span><span class="mv">Nf6</span></li>
+        </ol>
+      </div>
+      <div class="player white">
+        <div class="avatar">TO</div>
+        <div class="pinfo">
+          <div class="pname">Tomas Odegaard</div>
+          <div class="prating">Blitz 1908</div>
+        </div>
+        <div class="clock">5:02</div>
+      </div>
+      <div class="actions">
+        <button class="btn ghost">Resign</button>
+        <button class="btn">Offer Draw</button>
+      </div>
+    </aside>
+  </main>
+</div>
+</body>
+</html>

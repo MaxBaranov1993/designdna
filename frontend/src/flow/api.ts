@@ -66,6 +66,10 @@ export type BlockParseBlockResp = {
   previews?: Partial<Record<SourceViewport, string>>;
   sizes?: Partial<Record<SourceViewport, { width?: number; height?: number }>>;
   layersByViewport?: Partial<Record<SourceViewport, number>>;
+  editableLayersByViewport?: Partial<Record<SourceViewport, number>>;
+  componentBoundariesByViewport?: Partial<Record<SourceViewport, number>>;
+  paintCoverage?: Partial<Record<SourceViewport, number>>;
+  p95LayoutError?: Partial<Record<SourceViewport, number | null>>;
   coverage?: Partial<Record<SourceViewport, number>>;
   fidelity?: Partial<Record<SourceViewport, number>>;
   warnings?: string[];
@@ -77,6 +81,8 @@ export type BlockParseResp = {
   blocks: BlockParseBlockResp[];
   tokens: Record<string, unknown> | null;
   cached?: boolean;
+  authenticated?: boolean;
+  authWarning?: string;
 };
 export type ReskinResp = { ir?: IRObject | null; log?: string[] };
 export type QualityPassResp = {

@@ -7,6 +7,7 @@
 import * as ctl from "../controller";
 import type { GeoHandle } from "../globals";
 import { applyNum, readNumInput } from "./evalMath";
+import { isLockedNode } from "../../engine/locked";
 
 function sess() {
   return ctl.getSession();
@@ -229,6 +230,7 @@ function wireTypeGroups(root: HTMLElement) {
       if (!s || !s.sel.length) return;
       const node = s.sel[0].node;
       if (!node) return;
+      if (isLockedNode(node)) return; // editable:false (raster fallback): правка запрещена
       ctl.pushHistory();
       const key = inp.dataset.elProp!;
       let val: any = inp.value;
@@ -243,6 +245,7 @@ function wireTypeGroups(root: HTMLElement) {
     ta.addEventListener("change", () => {
       const s = sess();
       if (!s || !s.sel.length) return;
+      if (isLockedNode(s.sel[0].node)) return; // editable:false (raster fallback): текст запрещён
       ctl.pushHistory();
       s.sel[0].node[ta.dataset.textprop!] = ta.value;
       ctl.commitActiveIrEdits();

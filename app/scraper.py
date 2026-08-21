@@ -15,8 +15,10 @@ import contextlib
 import copy
 import hashlib
 import io
+import math
 import os
 import re
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -91,6 +93,10 @@ _MAX_BLOCKS = 16
 _SAFE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 
 _SEMANTIC_PATTERNS = (
+    ("navigation", re.compile(r"(?:^|[-_ ])(?:rail|sidebar|side[-_ ]?nav|navigation|dock)(?:$|[-_ ])", re.I)),
+    ("status", re.compile(r"(?:^|[-_ ])(?:shell[-_ ]?act|action[-_ ]?bar|status[-_ ]?bar|bottom[-_ ]?bar)(?:$|[-_ ])", re.I)),
+    ("profile", re.compile(r"(?:^|[-_ ])(?:profile|account[-_ ]?summary|user[-_ ]?panel)(?:$|[-_ ])", re.I)),
+    ("panel", re.compile(r"(?:^|[-_ ])(?:panel|widget|module)(?:$|[-_ ])", re.I)),
     ("carousel", re.compile(r"carousel|slider|slideshow|swiper|\bhero\b|promo[-_ ]?slider", re.I)),
     ("categories", re.compile(r"categor|catalog|rubric|taxonomy|departments", re.I)),
     ("product-grid", re.compile(r"listing|product[-_ ]?grid|product[-_ ]?list|shelf|market[-_ ]?grid", re.I)),
@@ -129,7 +135,20 @@ _ROLE_LABELS = {
     "pricing": "Pricing",
     "testimonials": "Testimonials",
     "gallery": "Gallery",
+    "navigation": "Navigation",
+    "status": "Status / actions",
+    "toolbar": "Toolbar",
+    "profile": "Profile",
+    "panel": "Panel",
     "section": "Section",
+}
+
+_ARIA_ROLE_KINDS = {
+    "navigation": "navigation",
+    "status": "status",
+    "toolbar": "toolbar",
+    "complementary": "panel",
+    "region": "panel",
 }
 
 
@@ -175,6 +194,10 @@ def _identity_role(el: Tag) -> str:
     if el.name == "footer":
         return "footer"
 
+    aria_role = str(el.get("role") or "").strip().lower()
+    if aria_role in _ARIA_ROLE_KINDS:
+        return _ARIA_ROLE_KINDS[aria_role]
+
     identity = " ".join((
         str(el.get("id") or ""),
         " ".join(el.get("class") or []),
@@ -185,7 +208,7 @@ def _identity_role(el: Tag) -> str:
             return role
 
     if el.name == "nav":
-        return "categories"
+        return "navigation"
     return "section"
 
 
@@ -237,7 +260,12 @@ def detect_blocks(html: str) -> list:
     for el in body.find_all(_BLOCK_TAGS):
         add(el)
     for el in body.find_all("nav"):
-        if el.find_parent("main") is not None and el.find_parent("section") is None:
+        add(el)
+
+    # ARIA landmarks and stable shell panels are independent visible regions,
+    # even when a framework renders them as generic divs outside <main>.
+    for el in body.find_all(attrs={"role": True}):
+        if str(el.get("role") or "").strip().lower() in _ARIA_ROLE_KINDS:
             add(el)
 
     # Modern component frameworks often render page sections as divs. Promote only
@@ -455,6 +483,91 @@ def _guarded_browser_page(browser, viewport: dict):
     install_playwright_url_guard(context, validate_public_url)
     return context, context.new_page()
 
+
+def _normalize_source_cookies(cookies: list[dict] | None, target_url: str) -> list[dict]:
+    """Validate short-lived desktop cookies before handing them to Playwright."""
+    validate_public_url(target_url)
+    parsed = urlparse(target_url)
+    host = (parsed.hostname or "").lower()
+    scheme = parsed.scheme.lower()
+    normalized: list[dict] = []
+    for raw in (cookies or [])[:128]:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "")
+        value = str(raw.get("value") or "")
+        domain = str(raw.get("domain") or host).lstrip(".").lower()
+        path = str(raw.get("path") or "/")
+        if not name or len(name) > 256 or re.search(r"[\x00-\x20;=]", name):
+            continue
+        if len(value) > 4096 or re.search(r"[\x00-\x08\x0a-\x1f\x7f]", value):
+            continue
+        if domain != host and not host.endswith("." + domain):
+            continue
+        if not path.startswith("/") or len(path) > 1024:
+            path = "/"
+        if raw.get("secure") is True and scheme != "https":
+            continue
+        same_site = str(raw.get("sameSite") or "").capitalize()
+        item = {
+            "name": name,
+            "value": value,
+            "domain": str(raw.get("domain") or host),
+            "path": path,
+            "secure": raw.get("secure") is True,
+            "httpOnly": raw.get("httpOnly") is True,
+        }
+        if same_site in {"Strict", "Lax", "None"}:
+            item["sameSite"] = same_site
+        normalized.append(item)
+    return normalized
+
+
+def _wait_capture_settle(page, budget_ms: int = 5000) -> None:
+    """Deterministic pre-measure settle: fonts, images, then two rAF.
+
+    Один ритуал для всех viewport-проходов вместо фиксированного sleep:
+    document.fonts.ready + decode() всех <img> + два requestAnimationFrame,
+    с жёстким bail-таймером (оживлённые страницы не подвешивают capture).
+    """
+    try:
+        page.evaluate("""(budgetMs) => new Promise((resolve) => {
+          const finish = () => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+          const bail = setTimeout(finish, budgetMs);
+          const fonts = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+          const imgs = Promise.all(Array.from(document.images || []).slice(0, 200).map((img) => {
+            if (img.complete) return Promise.resolve();
+            return (img.decode ? img.decode() : Promise.resolve()).catch(() => {});
+          }));
+          Promise.all([fonts.catch(() => {}), imgs]).then(() => { clearTimeout(bail); finish(); });
+        })""", budget_ms)
+    except Exception:
+        page.wait_for_timeout(400)
+
+
+def _find_source_node(nodes, source_key):
+    for node, _parent in _walk_source_nodes(nodes):
+        if str(node.get("sourceKey") or "") == str(source_key or ""):
+            return node
+    return None
+
+
+def _namespace_block_keys(item: dict, namespace: str) -> None:
+    """Block-scoped sourceKeys: sibling-блоки одной страницы имеют одинаковые
+    root-relative DOM-пути ('root/div:1'); namespace делает ключи уникальными
+    между блоками (sibling isolation) и стабильными между viewport-ами."""
+    prefix = f"{namespace}:"
+    def nk(key):
+        key = str(key or "")
+        return key if not key or key.startswith(prefix) else prefix + key
+    for node, _parent in _walk_source_nodes(item.get("nodes")):
+        if node.get("sourceKey"):
+            node["sourceKey"] = nk(node["sourceKey"])
+    for coll in ("dropped", "extras", "leafBoxes"):
+        for rec in item.get(coll) or []:
+            if isinstance(rec, dict) and rec.get("sourceKey"):
+                rec["sourceKey"] = nk(rec["sourceKey"])
+
 def render_page_sync(url: str, viewport_w: int = 1440, viewport_h: int = 900,
                      screenshot: bool = True, timeout_ms: int = 15000) -> PageData:
     """Рендер страницы в headless Chromium: HTML после JS + скриншот + computed styles."""
@@ -519,7 +632,8 @@ def render_page_sync(url: str, viewport_w: int = 1440, viewport_h: int = 900,
     return result
 
 
-def rendered_html(url: str, timeout_ms: int = 20000) -> str:
+def rendered_html(url: str, timeout_ms: int = 20000,
+                  cookies: list[dict] | None = None) -> str:
     """HTML живого DOM после JS (один headless-проход Chromium).
 
     Детекция блоков по raw httpx HTML расходится с capture, который resolve'ит
@@ -536,6 +650,11 @@ def rendered_html(url: str, timeout_ms: int = 20000) -> str:
         try:
             browser = p.chromium.launch(headless=True)
             context, page = _guarded_browser_page(browser, {"width": 1440, "height": 900})
+            source_cookies = _normalize_source_cookies(cookies, url)
+            if cookies is not None and not source_cookies:
+                raise ValueError("Authenticated Source Import session has no valid cookies for this URL")
+            if source_cookies:
+                context.add_cookies(source_cookies)
             page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             validate_public_url(page.url)
             page.wait_for_timeout(900)
@@ -808,7 +927,13 @@ _FONT_MAGIC = ((b"wOF2", ".woff2"), (b"wOFF", ".woff"), (b"OTTO", ".otf"), (b"\x
 
 
 def _download_font(url: str, timeout: float = 15.0) -> Optional[bytes]:
-    """Скачивает файл шрифта с публичного URL (SSRF-гард + проверка magic bytes)."""
+    """Скачивает файл шрифта через общий SSRF/DNS/size guard.
+
+    Каждая сетевая загрузка идёт через fetch_public_bytes (per-hop валидация
+    URL, connect-time pinning публичного IP, жёсткий лимит байт) — same-origin
+    не является основанием для обхода guard-а. Тесты с локальными фикстурами
+    подменяют scraper.fetch_public_bytes monkeypatch-ем, production bypass-а нет.
+    """
     try:
         response = fetch_public_bytes(
             url, timeout=timeout, headers=_HEADERS, max_bytes=3_000_000,
@@ -848,7 +973,20 @@ def _collect_used_families(node, out: set) -> None:
         _collect_used_families(ch, out)
 
 
-def _resolve_font_faces(raw_faces: list, used: set) -> list:
+def _collect_used_font_weights(node, out: dict[str, set[int]]) -> None:
+    if not isinstance(node, dict):
+        return
+    st = node.get("style") or {}
+    if isinstance(st, dict) and st.get("fontFamily"):
+        family = _first_family(str(st["fontFamily"]))
+        if family:
+            out.setdefault(family, set()).add(_snap_weight(st.get("fontWeight", 400)))
+    for ch in node.get("children") or []:
+        _collect_used_font_weights(ch, out)
+
+
+def _resolve_font_faces(raw_faces: list, used: set,
+                        used_weights: dict[str, set[int]] | None = None) -> list:
     """Из всех @font-face страницы оставляет только семьи, реально использованные
     в IR блока, скачивает файлы и отдаёт ссылки на локальную базу /fonts."""
     out: list = []
@@ -857,20 +995,37 @@ def _resolve_font_faces(raw_faces: list, used: set) -> list:
         fam = str(face.get("family") or "").strip()
         if not fam or fam.lower() not in used:
             continue
-        # Variable fonts declare a range ("400 800"); the IR schema takes a
-        # single weight — keep the range's base value.
-        weight = str(face.get("weight") or "400").split()[0]
-        key = (fam.lower(), weight, str(face.get("style")))
-        if key in seen:
+        # Preserve a variable font range as one face; unicode-range keeps
+        # Google-font subsets (latin/cyrillic/etc.) independently selectable.
+        raw_weight = str(face.get("weight") or "400").strip()
+        parts = raw_weight.split()
+        if len(parts) == 2 and all(part.isdigit() for part in parts):
+            low, high = sorted((int(parts[0]), int(parts[1])))
+            low = max(100, min(900, int(round(low / 100.0) * 100)))
+            high = max(100, min(900, int(round(high / 100.0) * 100)))
+            weights = [f"{low} {high}"]
+        else:
+            weights = [parts[0] if parts else "400"]
+        style = str(face.get("style") or "normal")
+        unicode_range = str(face.get("unicodeRange") or "").strip()
+        pending = [weight for weight in weights
+                   if (fam.lower(), weight, style, unicode_range) not in seen]
+        if not pending:
             continue
         for url in face.get("urls") or []:
             data = _download_font(str(url))
             if not data:
                 continue
-            seen.add(key)
-            out.append({"family": fam, "weight": weight,
-                        "style": str(face.get("style") or "normal"),
-                        "url": "/fonts/" + _store_font(data)})
+            stored_url = "/fonts/" + _store_font(data)
+            for weight in pending:
+                seen.add((fam.lower(), weight, style, unicode_range))
+                resolved = {"family": fam, "weight": weight,
+                            "style": style, "url": stored_url}
+                if unicode_range:
+                    resolved["unicodeRange"] = unicode_range
+                out.append(resolved)
+                if len(out) >= 12:
+                    break
             break
         if len(out) >= 12:
             break
@@ -950,14 +1105,36 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) ->
     bg = _css_color_to_hex(root_style.get("background", ""), "#ffffff")
     text = _css_color_to_hex(root_style.get("color", ""), "#171717")
     structured = capture.get("nodes")
-    children = copy.deepcopy(structured) if isinstance(structured, list) else [{
-        "type": "rect",
-        "fill": bg,
-        "radius": float(root_style.get("radius", 0) or 0),
-        "style": {"background": bg},
-        "frame": {"absolute": True, "x": 0, "y": 0,
-                  "width": root["width"], "height": root["height"]},
-    }]
+    source_preview = capture.get("preview") or ""
+    if isinstance(structured, list) and structured:
+        children = copy.deepcopy(structured)
+    elif source_preview.startswith("data:image"):
+        # A visible block with no editable children (canvas-only aside, pseudo-
+        # only panel, etc.) becomes a locked raster fallback instead of a hard
+        # import error. It stays selectable and keeps the source screenshot as
+        # evidence; editable:false + lockedReason mark it as an intrinsically
+        # non-editable surface (AI/repair ops stay locked via intentLocks too).
+        children = [{
+            "type": "image",
+            "src": source_preview,
+            "alt": f"Raster fallback for {block.get('label') or name}",
+            "editable": False,
+            "lockedReason": "no editable DOM layers captured: locked raster fallback",
+            "sourceMeta": {"kind": "dom", "reason": "raster-fallback"},
+            "style": {},
+            "frame": {"absolute": True, "x": 0, "y": 0,
+                      "width": root["width"], "height": root["height"]},
+            "constraints": {"intentLocks": ["appearance", "source-link"]},
+        }]
+    else:
+        children = [{
+            "type": "rect",
+            "fill": bg,
+            "radius": float(root_style.get("radius", 0) or 0),
+            "style": {"background": bg},
+            "frame": {"absolute": True, "x": 0, "y": 0,
+                      "width": root["width"], "height": root["height"]},
+        }]
     by_id: dict[str, dict] = {}
 
     def make_node(layer: dict) -> dict:
@@ -1048,10 +1225,13 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) ->
 
     # шрифты источника: только использованные в блоке семьи, файлы — в базе /fonts
     used_families: set = set()
+    used_font_weights: dict[str, set[int]] = {}
     for ch in children:
         _collect_used_families(ch, used_families)
+        _collect_used_font_weights(ch, used_font_weights)
     _collect_used_families({"style": root_style}, used_families)
-    font_faces = _resolve_font_faces(capture.get("fontFaces") or [], used_families)
+    _collect_used_font_weights({"style": root_style}, used_font_weights)
+    font_faces = _resolve_font_faces(capture.get("fontFaces") or [], used_families, used_font_weights)
 
     return {
         "version": "1.0",
@@ -1063,7 +1243,10 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) ->
         # The browser measures this block as its own artboard. Keeping the same
         # root frame prevents Editor from falling back to the generic 960px
         # design canvas and makes section coordinates true artboard coordinates.
-        "frame": copy.deepcopy(root_frame),
+        # The section itself owns the captured padding. Repeating it on the
+        # outer artboard shifts/scales the entire source block while relative
+        # leaf bbox checks remain deceptively green.
+        "frame": {k: copy.deepcopy(v) for k, v in root_frame.items() if k != "padding"},
         "tokens": tokens,
         "tree": [{"id": "imported-block", "type": "source-block", "variant": "dom-capture",
                   "semantic": semantic, "props": {"sourcePreview": source_preview},
@@ -1117,6 +1300,8 @@ def _responsive_override(node: dict) -> dict:
         override["frame"] = copy.deepcopy(node["frame"])
     if isinstance(node.get("style"), dict) and node["style"]:
         override["style"] = copy.deepcopy(node["style"])
+    if node.get("type") == "image" and isinstance(node.get("src"), str) and node["src"]:
+        override["src"] = node["src"]
     return override
 
 
@@ -1226,7 +1411,8 @@ def _merge_responsive_irs(variants: dict[str, dict], viewport_meta: dict[str, di
 
 def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                       viewport_h: int = 900, timeout_ms: int = 20000,
-                      return_tokens: bool = False, viewports: list[dict] | None = None):
+                      return_tokens: bool = False, viewports: list[dict] | None = None,
+                      cookies: list[dict] | None = None):
     """Compile rendered DOM into compact responsive Design IR.
 
     Text is collected from direct text nodes, so it always remains inside its
@@ -1239,6 +1425,7 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
     viewport_defs = _normalize_source_viewports(viewports)
     captures: dict[str, dict[str, dict]] = {}
     token_signals = None
+    compiler_js = (Path(__file__).resolve().parent / "source_import_compiler.js").read_text(encoding="utf-8")
     with sync_playwright() as p:
         browser = None
         context = None
@@ -1248,347 +1435,120 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                 browser,
                 {"width": viewport_defs[0]["width"], "height": viewport_defs[0]["height"]},
             )
+            source_cookies = _normalize_source_cookies(cookies, url)
+            if cookies is not None and not source_cookies:
+                raise ValueError("Authenticated Source Import session has no valid cookies for this URL")
+            if source_cookies:
+                context.add_cookies(source_cookies)
+            # Один Chromium-сеанс, ОДНА навигация: все viewport-ы снимаются с
+            # того же DOM через resize + settle (fonts/images/2rAF). Повторный
+            # goto недетерминирован (lazy-hydration, A/B) и вдвое дороже.
+            # networkidle у живых storefront-ов не наступает (analytics/websocket),
+            # поэтому DOMContentLoaded + детерминированный settle.
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            validate_public_url(page.url)
+            _wait_capture_settle(page)
+            page.add_style_tag(content="""
+              *, *::before, *::after { animation:none !important; transition:none !important; }
+              html { scroll-behavior:auto !important; }
+            """)
             for index, viewport in enumerate(viewport_defs):
                 if index:
                     page.set_viewport_size({"width": viewport["width"], "height": viewport["height"]})
-                # Modern storefronts keep analytics/websocket requests alive, so
-                # networkidle can turn one capture into two full navigations.
-                # DOMContentLoaded plus a short render settle is deterministic and
-                # still measures the final Svelte/React layout used by the block.
-                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-                validate_public_url(page.url)
-                page.wait_for_timeout(900)
-                page.add_style_tag(content="""
-                  *, *::before, *::after { animation:none !important; transition:none !important; }
-                  html { scroll-behavior:auto !important; }
-                """)
+                    # после resize могут догрузиться responsive images/шрифты
+                    _wait_capture_settle(page)
                 if index == 0:
                     # дизайн-токены страницы снимаем один раз, на desktop-проходе
                     try:
                         token_signals = page.evaluate(_PAGE_TOKEN_SIGNALS_JS)
                     except Exception:
                         token_signals = None
-                raw = page.evaluate("""(blocks) => {
-                  const num = (v) => Number.parseFloat(v) || 0;
-                  const hex = (v) => {
-                    const value=String(v||'');
-                    const rgb=value.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/);
-                    if(rgb){
-                      if(rgb[4]!==undefined && Number(rgb[4])<=.05) return null;
-                      return '#'+rgb.slice(1,4).map(x=>(+x).toString(16).padStart(2,'0')).join('');
-                    }
-                    const srgb=value.match(/color\\(srgb\\s+([\\d.]+)\\s+([\\d.]+)\\s+([\\d.]+)(?:\\s*\\/\\s*([\\d.]+))?\\)/);
-                    if(!srgb || (srgb[4]!==undefined && Number(srgb[4])<=.05)) return null;
-                    return '#'+srgb.slice(1,4).map(x=>Math.round(Math.max(0,Math.min(1,Number(x)))*255).toString(16).padStart(2,'0')).join('');
-                  };
-                  const visible = (el,r,cs) => r.width>=1 && r.height>=1 && cs.display!=='none' &&
-                    cs.visibility!=='hidden' && Number(cs.opacity)!==0;
-                  const safeEnum = (v, allowed, fallback) => allowed.includes(v) ? v : fallback;
-                  const styleOf = (cs, warnings) => {
-                    if (cs.backgroundImage && cs.backgroundImage !== 'none') warnings.add('complex background');
-                    const deco=(cs.textDecorationLine||'none').split(' ')[0];
-                    const style={
-                      color:hex(cs.color), background:hex(cs.backgroundColor),
-                      fontFamily:String(cs.fontFamily||'').replace(/["']/g,'').slice(0,160),
-                      fontSize:Math.min(512,Math.max(1,num(cs.fontSize))),
-                      fontWeight:Math.min(900,Math.max(100,Number.parseInt(cs.fontWeight,10)||400)),
-                      lineHeight:(()=>{const lh=num(cs.lineHeight);return lh>0?Math.min(10,Math.max(.5,lh/Math.max(1,num(cs.fontSize)))):1.2})(),
-                      letterSpacing:Math.max(-20,Math.min(100,num(cs.letterSpacing))),
-                      borderColor:hex(cs.borderTopColor) || (num(cs.borderTopWidth)>0 ? '#e0e0e0' : null),
-                      borderWidth:Math.min(64,Math.max(0,num(cs.borderTopWidth))),
-                      borderRadius:Math.min(1000,Math.max(0,num(cs.borderTopLeftRadius))),
-                      boxShadow:cs.boxShadow && cs.boxShadow!=='none' ? cs.boxShadow.slice(0,300) : null,
-                      textDecoration:safeEnum(deco,['none','underline','line-through','overline'],'none'),
-                      whiteSpace:safeEnum(cs.whiteSpace,['normal','nowrap','pre','pre-wrap','pre-line','break-spaces'],'normal'),
-                      overflow:safeEnum(cs.overflow,['visible','hidden','clip','scroll','auto'],'visible'),
-                      textTransform:safeEnum(cs.textTransform,['none','uppercase','lowercase','capitalize'],'none'),
-                      opacity:Math.min(1,Math.max(0,num(cs.opacity))),
-                      objectFit:safeEnum(cs.objectFit,['contain','cover','fill','none','scale-down'],'fill')
-                    };
-                    return Object.fromEntries(Object.entries(style).filter(([,v])=>v!==null && v!==''));
-                  };
-                  const cleanTextStyle = (s) => {
-                    const out = Object.assign({}, s);
-                    delete out.background; delete out.borderColor; delete out.borderWidth;
-                    delete out.borderRadius; delete out.boxShadow;
-                    return out;
-                  };
-                  const pathOf = (el,root) => {
-                    if(el===root) return 'root'; const parts=[]; let cur=el;
-                    while(cur && cur!==root){ const p=cur.parentElement; if(!p) break;
-                      const same=[...p.children].filter(x=>x.tagName===cur.tagName);
-                      parts.push(cur.tagName.toLowerCase()+':' + (same.indexOf(cur)+1)); cur=p; }
-                    return 'root/'+parts.reverse().join('/');
-                  };
-                  const justify = (v) => ({'flex-start':'start','flex-end':'end','space-evenly':'space-around'}[v]||v);
-                  const align = (v) => ({'flex-start':'start','flex-end':'end','normal':'stretch'}[v]||v);
-                  const paddingOf = (cs) => [num(cs.paddingTop),num(cs.paddingRight),num(cs.paddingBottom),num(cs.paddingLeft)].map(v=>Math.round(v));
-                  const svgDataUri = (el) => {
-                    try {
-                      const clone=el.cloneNode(true);
-                      clone.setAttribute('xmlns','http://www.w3.org/2000/svg');
-                      clone.querySelectorAll('script,foreignObject').forEach(node=>node.remove());
-                      const sourceNodes=[el,...el.querySelectorAll('*')];
-                      const cloneNodes=[clone,...clone.querySelectorAll('*')];
-                      sourceNodes.forEach((source,index)=>{
-                        const target=cloneNodes[index]; if(!target) return;
-                        const computed=getComputedStyle(source);
-                        if(computed.fill && computed.fill!=='none') target.setAttribute('fill',computed.fill);
-                        if(computed.stroke && computed.stroke!=='none') target.setAttribute('stroke',computed.stroke);
-                        if(computed.strokeWidth) target.setAttribute('stroke-width',computed.strokeWidth);
-                        if(computed.strokeLinecap) target.setAttribute('stroke-linecap',computed.strokeLinecap);
-                        if(computed.strokeLinejoin) target.setAttribute('stroke-linejoin',computed.strokeLinejoin);
-                        if(computed.opacity && computed.opacity!=='1') target.setAttribute('opacity',computed.opacity);
-                        target.removeAttribute('class');
-                      });
-                      const svg=new XMLSerializer().serializeToString(clone);
-                      return 'data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(svg)));
-                    } catch(_) { return ''; }
-                  };
-                  const overlaps = (a,b) => !(a.right<=b.left+1 || b.right<=a.left+1 || a.bottom<=b.top+1 || b.bottom<=a.top+1);
-                  const layoutOf = (el,cs,childRects) => {
-                    const explicitFlex=cs.display==='flex'||cs.display==='inline-flex';
-                    const explicitGrid=cs.display==='grid'||cs.display==='inline-grid';
-                    const positionedKids=[...el.children].some(c=>{ const ccs=getComputedStyle(c); return ['absolute','fixed'].includes(ccs.position) || ccs.transform!=='none'; });
-                    let direction='column', wrap=false;
-                    if(explicitFlex){ direction=cs.flexDirection.startsWith('row')?'row':'column'; wrap=cs.flexWrap!=='nowrap'; }
-                    else if(explicitGrid){ direction='row'; wrap=true; }
-                    else if(childRects.length>1){
-                      const row=childRects.slice(1).every(r=>Math.abs((r.top+r.height/2)-(childRects[0].top+childRects[0].height/2))<Math.max(6,childRects[0].height*.45));
-                      direction=row?'row':'column';
-                    }
-                    const sorted=[...childRects].sort((a,b)=>direction==='row' ? (a.left-b.left || a.top-b.top) : (a.top-b.top || a.left-b.left));
-                    const hasOverlap=sorted.some((r,i)=>sorted.slice(i+1).some(o=>overlaps(r,o)));
-                    // явный flex/grid с margin-ами на детях: CSS gap не учитывает
-                    // margins → flow не соберёт исходные позиции → free + пиннинг
-                    const marginedKids=(explicitFlex||explicitGrid) && [...el.children].some(c=>{
-                      const m=getComputedStyle(c);
-                      return parseFloat(m.marginTop)||parseFloat(m.marginRight)||parseFloat(m.marginBottom)||parseFloat(m.marginLeft);
-                    });
-                    let auto=(explicitFlex||explicitGrid||childRects.length>0) && !positionedKids && !hasOverlap && !marginedKids;
-                    // не-flex контейнеры: дети могут быть разведены MARGIN-ами (не gap).
-                    // Меряем фактические зазоры: равномерные → auto с measuredGap;
-                    // неравномерные → free с пиннингом детей (pixel-perfect).
-                    let measuredGap=0;
-                    if(auto && !explicitFlex && !explicitGrid && sorted.length>1){
-                      const gaps=[];
-                      for(let i=1;i<sorted.length;i++){
-                        const a=sorted[i-1], b=sorted[i];
-                        gaps.push(direction==='row' ? (b.left-(a.left+a.width)) : (b.top-(a.top+a.height)));
-                      }
-                      if(gaps.some(g=>Math.abs(g-gaps[0])>1.5)) auto=false;
-                      else measuredGap=Math.max(0,gaps[0]);
-                    }
-                    return {layout:auto?'auto':'free',direction,wrap,explicit:explicitFlex||explicitGrid,measuredGap};
-                  };
-                  const frameFor = (r,parentRect,cs,parentAuto,isContainer,layout) => {
-                    // x/y снимаем ВСЕГДА (даже в auto-родителях): рендерер в auto их
-                    // игнорирует, но QA-пасс при дрейфе flow переводит контейнер в free
-                    // и пиннит детей по этим координатам = pixel-perfect по конструкции.
-                    const frame={width:Math.round(r.width),height:Math.round(r.height),
-                      x:Math.round(r.left-parentRect.left),y:Math.round(r.top-parentRect.top)};
-                    const positioned=['absolute','fixed'].includes(cs.position)||cs.transform!=='none';
-                    if(positioned || !parentAuto){ frame.absolute=true; }
-                    if(isContainer){
-                      frame.layout=layout.layout; frame.direction=layout.direction;
-                      // gap: у flex/grid — CSS-значения; у блочных — измеренные зазоры
-                      frame.gap=layout.explicit
-                        ? Math.round(layout.direction==='row'?num(cs.columnGap):num(cs.rowGap))
-                        : Math.round(layout.measuredGap||0);
-                      frame.padding=paddingOf(cs);
-                      frame.justify=safeEnum(justify(cs.justifyContent),['start','center','end','space-between','space-around'],'start');
-                      frame.align=safeEnum(align(cs.alignItems),['start','center','end','stretch','baseline'],'start');
-                      if(layout.wrap) frame.wrap=true;
-                    }
-                    if(cs.overflow==='hidden'||cs.overflow==='clip') frame.clip=true;
-                    return frame;
-                  };
-                  const collectFontFaces = () => {
-                    // Шрифты страницы как в html.to.design: читаем @font-face из
-                    // доступных CSSOM-листов (same-origin и CORS-листы), абсолютизируем
-                    // url — сервер скачает файлы и положит в базу /fonts.
-                    const out = []; const seen = new Set();
-                    const abs = (u, base) => { try { return new URL(u, base || document.baseURI).href; } catch (_) { return u; } };
-                    const walk = (list, base) => {
-                      for (const r of Array.from(list || [])) {
-                        if (r.cssRules && r.cssRules.length) { try { walk(r.cssRules, base); } catch (_) {} continue; }
-                        const isFace = (typeof CSSFontFaceRule !== 'undefined' && r instanceof CSSFontFaceRule) ||
-                          (r.type === CSSRule.FONT_FACE_RULE);
-                        if (!isFace) continue;
-                        const fam = (r.style.getPropertyValue('font-family') || '').replace(/["']/g, '').trim();
-                        if (!fam) continue;
-                        const weight = (r.style.getPropertyValue('font-weight') || '400').trim();
-                        const fstyle = (r.style.getPropertyValue('font-style') || 'normal').trim();
-                        const src = r.style.getPropertyValue('src') || '';
-                        const urls = []; const re = /url\\((['"]?)([^'")]+)\\1\\)/g; let m;
-                        while ((m = re.exec(src))) urls.push(abs(m[2], base));
-                        const key = (fam + '|' + weight + '|' + fstyle).toLowerCase();
-                        if (urls.length && !seen.has(key)) { seen.add(key); out.push({ family: fam, weight, style: fstyle, urls: urls.slice(0, 4) }); }
-                      }
-                    };
-                    for (const sheet of Array.from(document.styleSheets)) {
-                      let rules = null; try { rules = sheet.cssRules; } catch (_) {}
-                      if (rules) walk(rules, sheet.href);
-                    }
-                    return out.slice(0, 24);
-                  };
-                  const compileBlock = (block) => {
-                    const root=document.querySelector(block.selector); if(!root) return {selector:block.selector,error:'DOM element not found'};
-                    const rr=root.getBoundingClientRect(), rcs=getComputedStyle(root); if(!visible(root,rr,rcs)) return {selector:block.selector,error:'DOM block is not visible'};
-                    const warnings=new Set(); let layerCount=0, candidateCount=0;
-                    const compile = (el,parentRect,parentAuto,rootEl) => {
-                      const tag=String(el.tagName||'').toUpperCase();
-                      if(['SCRIPT','STYLE','NOSCRIPT','TEMPLATE'].includes(tag)) return null;
-                      const r=el.getBoundingClientRect(), cs=getComputedStyle(el); if(!visible(el,r,cs)) return null;
-                      candidateCount++;
-                      const key=pathOf(el,rootEl), rawChildren=[];
-                      const childRects=[...el.children].map(c=>c.getBoundingClientRect()).filter(x=>x.width>=1&&x.height>=1);
-                      const layout=layoutOf(el,cs,childRects);
-                      const childParentAuto=layout.layout==='auto';
-                      [...el.childNodes].forEach((child,idx)=>{
-                        if(child.nodeType===Node.TEXT_NODE){
-                          const text=(child.textContent||'').replace(/\\s+/g,' ').trim(); if(!text) return;
-                          const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect(); if(tr.width<1||tr.height<1) return;
-                          // +2px эпсилон к ширине: рендерер при повторном переносе не
-                          // должен заворачивать лишнюю строку на границе округления
-                          const textFrame={width:Math.ceil(tr.width)+2,height:Math.round(tr.height),
-                            x:Math.round(tr.left-r.left),y:Math.round(tr.top-r.top)};
-                          if(!childParentAuto){ textFrame.absolute=true; }
-                          rawChildren.push({type:'text',text:text.slice(0,1000),sourceKey:key+'::text'+idx,style:cleanTextStyle(styleOf(cs,warnings)),frame:textFrame}); layerCount++; candidateCount++;
-                        } else if(child.nodeType===Node.ELEMENT_NODE){
-                          const compiled=compile(child,r,childParentAuto,rootEl); if(compiled) rawChildren.push(compiled);
-                        }
-                      });
-                      let type='card', role=tag.toLowerCase();
-                      if(/^H[1-4]$/.test(tag)) type='heading';
-                      else if(el.matches('button,[role="button"]')) type='button';
-                      else if(el.matches('input,select,textarea')) type='input';
-                      else if(['IMG','SVG','CANVAS','VIDEO'].includes(tag)) type='image';
-                      else if(tag==='A' && (hex(cs.backgroundColor)||num(cs.borderTopWidth)>0)) type='button';
-                      const style=styleOf(cs,warnings);
-                      const directText=String(el.innerText||el.textContent||'').replace(/\\s+/g,' ').trim();
-                      const hasElementChildren=[...el.children].some(c=>{
-                        const cr=c.getBoundingClientRect(), ccs=getComputedStyle(c);
-                        return visible(c,cr,ccs);
-                      });
-                      const neutralTextTag=el.matches('span,strong,em,b,i,small,label,p');
-                      // inline-flow collapse: абзац с <strong>/<a>/<em> внутри — ОДИН
-                      // text-узел с полным текстом, иначе рендерер сложит фрагменты
-                      // стеком блоков и получит лишние переносы/наезды
-                      const INLINE_TAGS=new Set(['strong','em','b','i','a','span','mark','code','small','br','sub','sup']);
-                      const inlineOnly=[...el.children].length>0 &&
-                        [...el.children].every(c=>INLINE_TAGS.has(String(c.tagName||'').toLowerCase()));
-                      const textOnly=directText && type==='card' && neutralTextTag &&
-                        (!hasElementChildren || inlineOnly) &&
-                        !hex(cs.backgroundColor) && num(cs.borderTopWidth)===0 && (!cs.boxShadow || cs.boxShadow==='none');
-                      if(textOnly) type='text';
-                      if(type==='button' && childParentAuto && directText && rawChildren.length){
-                        const collectText=(item)=>{
-                          if(!item || typeof item!=='object') return '';
-                          if(item.type==='text' || item.type==='heading') return String(item.text||'');
-                          return (item.children||[]).map(collectText).filter(Boolean).join(' ');
-                        };
-                        const childText=rawChildren.map(collectText).filter(Boolean).join(' ').replace(/\\s+/g,' ').trim();
-                        let missing='', atStart=false;
-                        if(childText && directText!==childText && directText.endsWith(childText)){
-                          missing=directText.slice(0,directText.length-childText.length).trim(); atStart=true;
-                        } else if(childText && directText!==childText && directText.startsWith(childText)){
-                          missing=directText.slice(childText.length).trim();
-                        }
-                        if(missing){
-                          const canvas=document.createElement('canvas'), ctx=canvas.getContext('2d');
-                          if(ctx) ctx.font=String(cs.fontWeight)+' '+String(cs.fontSize)+' '+String(cs.fontFamily);
-                          const linePx=Math.max(1,Math.round(num(cs.lineHeight)||num(cs.fontSize)*1.2));
-                          const implicit={type:'text',text:missing.slice(0,120),sourceKey:key+(atStart?'::implicit-prefix':'::implicit-suffix'),
-                            style:cleanTextStyle(styleOf(cs,warnings)),frame:{width:Math.max(1,Math.ceil(ctx ? ctx.measureText(missing).width : num(cs.fontSize))),height:linePx}};
-                          if(atStart) rawChildren.unshift(implicit); else rawChildren.push(implicit);
-                          layerCount++; candidateCount++;
-                        }
-                      }
-                      const isContainer=type==='card'||type==='button'||type==='input';
-                      const node={type,sourceKey:key,style,frame:frameFor(r,parentRect,cs,parentAuto,isContainer,layout)};
-                      if(type==='heading'){ node.level=Number(tag.slice(1)); node.text=directText.slice(0,1000); }
-                      if(type==='text') node.text=directText.slice(0,1000);
-                      if(type==='button') node.text=String(el.innerText||'').replace(/\\s+/g,' ').trim().slice(0,1000);
-                      if(type==='input'){
-                        node.placeholder=(el.value||el.placeholder||el.options?.[el.selectedIndex]?.text||'').slice(0,1000);
-                        const value=node.placeholder;
-                        if(value && !rawChildren.length){
-                          const pad=paddingOf(cs), linePx=Math.max(1,Math.round(num(cs.lineHeight)||num(cs.fontSize)*1.2));
-                          const textStyle=cleanTextStyle(Object.assign({},style,{whiteSpace:'nowrap',overflow:'hidden'}));
-                          rawChildren.push({type:'text',text:value,sourceKey:key+'::value',style:textStyle,frame:{
-                            width:Math.max(1,Math.round(r.width)-pad[1]-pad[3]),height:Math.min(Math.max(1,Math.round(r.height)),linePx),
-                            absolute:true,x:pad[3],y:Math.max(0,Math.round((r.height-linePx)/2))
-                          }});
-                        }
-                      }
-                      if(type==='button' && node.text && !rawChildren.length){
-                        const linePx=Math.max(1,Math.round(num(cs.lineHeight)||num(cs.fontSize)*1.2));
-                        rawChildren.push({type:'text',text:node.text,sourceKey:key+'::text',style:cleanTextStyle(styleOf(cs,warnings)),frame:{
-                          width:Math.max(1,Math.round(r.width)),height:Math.min(Math.max(1,Math.round(r.height)),linePx),
-                          absolute:true,x:0,y:Math.max(0,Math.round((r.height-linePx)/2))
-                        }});
-                      }
-                      if(type==='image'){
-                        if(tag==='IMG') node.src=el.currentSrc||el.src||'';
-                        else if(tag==='SVG') node.src=svgDataUri(el);
-                        else if(tag==='CANVAS'){ try{node.src=el.toDataURL('image/png');warnings.add('canvas raster fallback');}catch(_){warnings.add('canvas unavailable');} }
-                        else { node.src=el.poster||''; warnings.add('video poster fallback'); }
-                        node.alt=el.alt||el.getAttribute('aria-label')||'';
-                      }
-                      if(isContainer && rawChildren.length) node.children=rawChildren;
-                      if(type==='card') node.role=role;
-                      layerCount++;
-                      const pad=node.frame.padding||[0,0,0,0]; const neutral=!style.background && !style.borderWidth && !style.boxShadow && pad.every(x=>x===0);
-                      const semantic=el.matches('nav,form,header,footer,main,section,article,button,input,select,textarea,a,[role]')||!!el.id;
-                      const explicitLayout=['flex','inline-flex','grid','inline-grid'].includes(cs.display);
-                      if(type==='card' && rawChildren.length===0 && neutral && !explicitLayout) return null;
-                      if(type==='card' && rawChildren.length===1 && neutral && !semantic && !explicitLayout && layout.layout!=='auto') {
-                        const only=rawChildren[0];
-                        const of=only.frame||{};
-                        only.frame=Object.assign({}, of, {
-                          absolute:true,
-                          x:Math.round(r.left-parentRect.left+(Number(of.x)||0)),
-                          y:Math.round(r.top-parentRect.top+(Number(of.y)||0))
-                        });
-                        return only;
-                      }
-                      return node;
-                    };
-                    const rootChildRects=[...root.children].map(c=>c.getBoundingClientRect()).filter(x=>x.width>=1&&x.height>=1);
-                    const rootLayout=layoutOf(root,rcs,rootChildRects);
-                    const rootAuto=rootLayout.layout==='auto';
-                    const rootCentered=rootAuto && rootLayout.direction==='column' && rootChildRects.length>0 &&
-                      rootChildRects.every(r=>Math.abs((r.left+r.width/2)-(rr.left+rr.width/2))<=2);
-                    const rootAlign=rootCentered ? 'center' : safeEnum(align(rcs.alignItems),['start','center','end','stretch','baseline'],'start');
-                    const rootChildren=[]; [...root.childNodes].forEach((child,idx)=>{
-                      if(child.nodeType===Node.TEXT_NODE){
-                        const text=(child.textContent||'').replace(/\\s+/g,' ').trim();
-                        if(text){
-                          const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect();
-                          const textFrame={width:Math.ceil(tr.width)+2,height:Math.round(tr.height),
-                            x:Math.round(tr.left-rr.left),y:Math.round(tr.top-rr.top)};
-                          if(!rootAuto){ textFrame.absolute=true; }
-                          rootChildren.push({type:'text',text:text.slice(0,1000),sourceKey:'root::text'+idx,style:cleanTextStyle(styleOf(rcs,warnings)),frame:textFrame});
-                          layerCount++; candidateCount++;
-                        }
-                      }
-                      else if(child.nodeType===Node.ELEMENT_NODE){ const node=compile(child,rr,rootAuto,root); if(node) rootChildren.push(node); }
-                    });
-                    return {selector:block.selector,sourceKey:'root',root:{width:Math.round(rr.width),height:Math.round(rr.height),style:styleOf(rcs,warnings)},nodes:rootChildren,layout:rootLayout.layout,direction:rootLayout.direction,gap:Math.round(rootLayout.explicit?(rootLayout.direction==='row'?num(rcs.columnGap):num(rcs.rowGap)):(rootLayout.measuredGap||0)),padding:paddingOf(rcs),justify:safeEnum(justify(rcs.justifyContent),['start','center','end','space-between','space-around'],'start'),align:rootAlign,pixelPerfect:true,layerCount,candidateCount,warnings:[...warnings],fontFaces:collectFontFaces()};
-                  };
-                  return blocks.map(compileBlock);
-                }""", blocks)
+                raw = page.evaluate(compiler_js, blocks)
                 by_selector = {item["selector"]: item for item in raw}
                 for block in blocks:
                     item = by_selector.get(block["selector"])
                     if not item or item.get("error"):
                         continue
+                    # Capture inherited backdrop before the reference while the
+                    # locator establishes its scroll position. The reference is
+                    # then taken immediately at the identical fixed-background
+                    # phase/offset (critical for mobile pages).
+                    for req in item.get("rasterRequests") or []:
+                        if req.get("mode") != "backdrop":
+                            continue
+                        node = _find_source_node(item.get("nodes"), req.get("sourceKey"))
+                        if node is None:
+                            continue
+                        locator = page.locator(block["selector"]).first
+                        try:
+                            locator.scroll_into_view_if_needed()
+                            previous_visibility = locator.evaluate(
+                                "el => Array.from(el.children).map(child => child.style.visibility)")
+                            locator.evaluate(
+                                "el => Array.from(el.children).forEach(child => child.style.setProperty('visibility','hidden','important'))")
+                            try:
+                                backdrop_shot = locator.screenshot(type="png")
+                            finally:
+                                locator.evaluate(
+                                    "(el, values) => Array.from(el.children).forEach((child, i) => { "
+                                    "child.style.removeProperty('visibility'); "
+                                    "if (values[i]) child.style.visibility = values[i]; })",
+                                    previous_visibility)
+                            node["src"] = "data:image/png;base64," + base64.b64encode(backdrop_shot).decode()
+                        except Exception:
+                            pass
                     try:
-                        shot = page.locator(block["selector"]).first.screenshot(type="jpeg", quality=82)
-                        item["preview"] = "data:image/jpeg;base64," + base64.b64encode(shot).decode()
+                        shot = page.locator(block["selector"]).first.screenshot(type="png")
+                        target_w = int(item["root"]["width"])
+                        target_h = int(item["root"]["height"])
+                        with Image.open(io.BytesIO(shot)) as captured_image:
+                            # Element screenshots snap fractional CSS bounds to
+                            # device pixels and may gain one bottom/right pixel.
+                            # Crop only (never resize) to the exact measured IR
+                            # artboard so reference and render use identical dims.
+                            if (captured_image.width, captured_image.height) != (target_w, target_h) \
+                                    and captured_image.width >= target_w and captured_image.height >= target_h \
+                                    and captured_image.width - target_w <= 2 \
+                                    and captured_image.height - target_h <= 2:
+                                normalized = captured_image.convert("RGB").crop((0, 0, target_w, target_h))
+                                out = io.BytesIO()
+                                normalized.save(out, format="PNG")
+                                shot = out.getvalue()
+                        item["preview"] = "data:image/png;base64," + base64.b64encode(shot).decode()
                     except Exception:
                         pass
+                    # raster fallback для неeditable-поверхностей (canvas/webgl/
+                    # iframe/closed shadow): компилятор не может их сериализовать,
+                    # поэтому просит element-screenshot. Слой остаётся видимым.
+                    for req in item.get("rasterRequests") or []:
+                        node = _find_source_node(item.get("nodes"), req.get("sourceKey"))
+                        if node is None or str(node.get("src") or "").startswith("data:image"):
+                            continue
+                        selector = f"{block['selector']} {req.get('selector')}".strip()
+                        try:
+                            locator = page.locator(selector).first
+                            previous_visibility = None
+                            if req.get("mode") == "backdrop":
+                                previous_visibility = locator.evaluate(
+                                    "el => Array.from(el.children).map(child => child.style.visibility)")
+                                locator.evaluate(
+                                    "el => Array.from(el.children).forEach(child => child.style.setProperty('visibility','hidden','important'))")
+                            try:
+                                shot = locator.screenshot(type="png")
+                            finally:
+                                if previous_visibility is not None:
+                                    locator.evaluate(
+                                        "(el, values) => Array.from(el.children).forEach((child, i) => { "
+                                        "child.style.removeProperty('visibility'); "
+                                        "if (values[i]) child.style.visibility = values[i]; })",
+                                        previous_visibility)
+                            node["src"] = "data:image/png;base64," + base64.b64encode(shot).decode()
+                        except Exception:
+                            item.setdefault("extras", []).append({
+                                "sourceKey": str(req.get("sourceKey") or ""),
+                                "reason": "raster-unavailable", "visual": True,
+                                "rect": {"x": 0, "y": 0, "width": 0, "height": 0}})
+                    _namespace_block_keys(item, re.sub(r"[^A-Za-z0-9_-]+", "-", str(block.get("name") or "block")))
                 captures[viewport["name"]] = by_selector
         finally:
             if context is not None:
@@ -1606,19 +1566,36 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
         meta = {}
         warnings = set()
         layers_by_viewport = {}
+        editable_layers_by_viewport: dict[str, int] = {}
+        component_boundaries_by_viewport: dict[str, int] = {}
+        visited_by_viewport: dict[str, int] = {}
+        dropped_by_viewport: dict[str, list] = {}
+        extras_by_viewport: dict[str, list] = {}
+        paint_coverage: dict[str, int] = {}
+        coverage: dict[str, int] = {}
+        leaf_boxes_by_viewport: dict[str, list] = {}
         for viewport in viewport_defs:
             name = viewport["name"]
             item = captures.get(name, {}).get(selector)
-            if not item or item.get("error") or not item.get("nodes"):
+            # Empty editable nodes are OK when we have a source screenshot: the
+            # block becomes a locked raster fallback instead of a hard error.
+            if not item or item.get("error") or (
+                not item.get("nodes") and not str(item.get("preview") or "").startswith("data:image")
+            ):
                 continue
             ir = _captured_ir(block, item, page_tokens)
             variants[name] = ir
-            candidates = max(1, int(item.get("candidateCount") or item.get("layerCount") or 1))
-            coverage = max(0, min(100, round(100 * int(item.get("layerCount") or 0) / candidates)))
             meta[name] = {"width": item["root"]["width"], "height": item["root"]["height"],
-                          "preview": item.get("preview", ""), "coverage": coverage}
+                          "preview": item.get("preview", "")}
             warnings.update(item.get("warnings") or [])
-            layers_by_viewport[name] = int(item.get("layerCount", 0))
+            editable_layers_by_viewport[name] = int(item.get("emitted") or 0)
+            component_boundaries_by_viewport[name] = int(item.get("componentBoundaries") or 0)
+            visited_by_viewport[name] = int(item.get("visited") or 0)
+            dropped_by_viewport[name] = item.get("dropped") or []
+            extras_by_viewport[name] = item.get("extras") or []
+            paint_coverage[name] = int(item.get("paintCoverage") or 0)
+            coverage[name] = int(item.get("coverage") or paint_coverage[name])
+            leaf_boxes_by_viewport[name] = item.get("leafBoxes") or []
         if not variants:
             result[selector] = {"error": "DOM block has no editable visible layers in selected viewports"}
             continue
@@ -1626,13 +1603,20 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
         base_name = "desktop" if "desktop" in meta else next(iter(meta))
         result[selector] = {
             "ir": merged,
-            "layer_count": max(layers_by_viewport.values(), default=0),
-            "layers_by_viewport": layers_by_viewport,
+            "layer_count": max(editable_layers_by_viewport.values(), default=0),
+            "layers_by_viewport": editable_layers_by_viewport,
+            "editable_layers_by_viewport": editable_layers_by_viewport,
+            "component_boundaries_by_viewport": component_boundaries_by_viewport,
+            "visited_by_viewport": visited_by_viewport,
+            "dropped_by_viewport": dropped_by_viewport,
+            "extras_by_viewport": extras_by_viewport,
+            "paint_coverage": paint_coverage,
+            "coverage": coverage,
+            "leaf_boxes_by_viewport": leaf_boxes_by_viewport,
             "width": meta[base_name]["width"], "height": meta[base_name]["height"],
             "preview": meta[base_name].get("preview", ""),
             "previews": {name: value.get("preview", "") for name, value in meta.items()},
             "sizes": {name: {"width": value["width"], "height": value["height"]} for name, value in meta.items()},
-            "coverage": {name: value["coverage"] for name, value in meta.items()},
             "warnings": sorted(warnings),
         }
     try:
@@ -1703,6 +1687,47 @@ def ir_fidelity(ir: dict, reference_jpeg_data_url: str, width: int, height: int,
         return None
 
 
+def _p95_layout_error(page, leaf_boxes: list[dict]) -> float | None:
+    """Structural layout error: 95th percentile of |Δx|,|Δy|,|Δw|,|Δh| for
+    matched source keys between captured leaf boxes and the rendered IR."""
+    try:
+        rendered = page.evaluate("""() => {
+          const sec = document.querySelector('[data-ir-sec="0"]');
+          if (!sec) return {};
+          const root = sec.getBoundingClientRect();
+          const out = {};
+          sec.querySelectorAll('[data-ir-path]').forEach(el => {
+            const r = el.getBoundingClientRect();
+            out[el.getAttribute('data-ir-path')] = {
+              x: Math.round(r.left - root.left),
+              y: Math.round(r.top - root.top),
+              width: Math.round(r.width),
+              height: Math.round(r.height)
+            };
+          });
+          return out;
+        }""")
+    except Exception:
+        return None
+    if not leaf_boxes:
+        return None
+    diffs: list[float] = []
+    for box in leaf_boxes:
+        ref = rendered.get(str(box.get("sourceKey") or ""))
+        if ref:
+            diffs.append(max(
+                abs(float(box.get("x", 0)) - ref["x"]),
+                abs(float(box.get("y", 0)) - ref["y"]),
+                abs(float(box.get("width", 0)) - ref["width"]),
+                abs(float(box.get("height", 0)) - ref["height"]),
+            ))
+        else:
+            diffs.append(max(float(box.get("width", 100)), float(box.get("height", 100)), 100.0))
+    diffs.sort()
+    idx = max(0, int(math.ceil(0.95 * len(diffs))) - 1)
+    return float(diffs[idx])
+
+
 def _attach_block_fidelity(result: dict) -> None:
     """Fidelity base-viewport (desktop): merged IR против скриншота источника.
 
@@ -1717,7 +1742,7 @@ def _attach_block_fidelity(result: dict) -> None:
         width, height = item.get("width"), item.get("height")
         if not preview.startswith("data:image") or not width or not height:
             continue
-        jobs.append((selector, item["ir"], preview, int(width), int(height)))
+        jobs.append((selector, item, preview, int(width), int(height)))
     if not jobs:
         return
     from playwright.sync_api import sync_playwright
@@ -1725,15 +1750,31 @@ def _attach_block_fidelity(result: dict) -> None:
         browser = p.chromium.launch(headless=True)
         try:
             page = browser.new_page(viewport={"width": 1440, "height": 900})
-            for selector, ir, preview, width, height in jobs:
-                score = ir_fidelity(ir, preview, width, height, page=page)
-                if score is None:
-                    continue
-                result[selector]["fidelity"] = score
-                viewports = result[selector]["ir"].get("responsive", {}).get("viewports") or {}
-                base = "desktop" if "desktop" in viewports else next(iter(viewports), None)
-                if base and isinstance(viewports.get(base), dict):
-                    viewports[base]["fidelity"] = score
+            for selector, item, preview, width, height in jobs:
+                try:
+                    shot = _render_ir_jpeg(page, item["ir"], width, height)
+                    score = _pixel_similarity(shot, preview)
+                except Exception:
+                    score = None
+                viewports = item.get("coverage") or {}
+                base_name = "desktop" if "desktop" in viewports else next(iter(viewports))
+                leaf_boxes = (item.get("leaf_boxes_by_viewport") or {}).get(base_name, [])
+                p95 = None
+                if leaf_boxes:
+                    try:
+                        p95 = _p95_layout_error(page, leaf_boxes)
+                    except Exception:
+                        p95 = None
+                item["fidelity"] = {vp: None for vp in viewports}
+                item["p95_layout_error"] = {vp: None for vp in viewports}
+                if score is not None:
+                    item["fidelity"][base_name] = score
+                if p95 is not None:
+                    item["p95_layout_error"][base_name] = round(p95, 2)
+                # Mirror into the IR responsive payload for the editor/schema.
+                ir_viewports = item["ir"].get("responsive", {}).get("viewports") or {}
+                if base_name and isinstance(ir_viewports.get(base_name), dict):
+                    ir_viewports[base_name]["fidelity"] = item["fidelity"][base_name]
         finally:
             browser.close()
 

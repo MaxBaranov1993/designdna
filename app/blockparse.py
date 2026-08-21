@@ -15,11 +15,13 @@ import hashlib
 import json
 import traceback
 from pathlib import Path
+from typing import Any
 
 from bs4 import BeautifulSoup
 
 import llm_client as llm
 import cache_store
+import fidelity_harness
 import ir
 from ir import ensure_current as ensure_current_ir
 from scraper import fetch_html, detect_blocks, rendered_html, capture_block_irs
@@ -36,10 +38,20 @@ _EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
 _SEMANTIC_ROLES = {
     "header", "footer", "carousel", "categories", "product-grid", "services-grid",
     "journal", "how-it-works", "faq", "cta", "trust", "pricing", "testimonials",
-    "gallery", "section",
+    "gallery", "navigation", "status", "toolbar", "profile", "panel", "section",
 }
 
-SOURCE_COMPILER_VERSION = "dom-v23"
+SOURCE_COMPILER_VERSION = "dom-v27"
+
+# Hidden blocks (display:none / zero box / no visual content) are not import
+# errors; they are omitted from Source Import outputs. Both English compiler
+# diagnostics and the legacy Russian guard are recognized.
+_HIDDEN_BLOCK_ERRORS = ("not visible", "не виден", "no editable visible layers")
+
+
+def _is_hidden_block_error(error: Any) -> bool:
+    text = str(error).lower()
+    return any(marker in text for marker in _HIDDEN_BLOCK_ERRORS)
 
 
 def _validate(doc: dict) -> list[str]:
@@ -146,7 +158,8 @@ def _refine_ambiguous_blocks(html: str, blocks: list[dict], provider: str) -> li
 
 def parse_blocks(url: str, blocks: list | None = None,
                  provider: str = DEFAULT_PROVIDER,
-                 viewports: list[dict] | None = None) -> dict:
+                 viewports: list[dict] | None = None,
+                 auth_cookies: list[dict] | None = None) -> dict:
     """BlockParse: список блоков-IR + design-токены по URL.
 
     blocks — опциональный список {name, selector}: клонировать только их
@@ -154,6 +167,8 @@ def parse_blocks(url: str, blocks: list | None = None,
     Ошибка отдельного блока возвращается в его записи, остальные продолжаются.
     """
     url = url.strip()
+    authenticated = auth_cookies is not None
+    cache_enabled = not authenticated
 
     wanted = None
     if blocks is not None:
@@ -170,7 +185,7 @@ def parse_blocks(url: str, blocks: list | None = None,
     # Не читаем результаты v1: там лежат LLM-аппроксимации, а не DOM-слои.
     viewport_key = json.dumps(viewports or "default", sort_keys=True, separators=(",", ":"))
     full_key = cache_store.key_url(SOURCE_COMPILER_VERSION + "|" + viewport_key + "|" + url)
-    if wanted is None:
+    if wanted is None and cache_enabled:
         hit = cache_store.get("blockparse_url", full_key)
         # Ошибочный частичный ответ никогда не должен выглядеть как успешный
         # «кэш»: иначе временный 429/timeout навсегда блокирует повторный запуск.
@@ -184,10 +199,12 @@ def parse_blocks(url: str, blocks: list | None = None,
         # HTML делало их хрупкими. При сбое рендера — тихий fallback на httpx
         # (у payload нет warnings-канала).
         try:
-            html = rendered_html(url)  # внутри SSRF-гард
+            html = rendered_html(url, cookies=auth_cookies)  # внутри SSRF-гард
         except ValueError:
             raise
         except Exception:
+            if authenticated:
+                raise
             try:
                 html = fetch_html(url)  # внутри SSRF-гард
             except ValueError:
@@ -208,7 +225,8 @@ def parse_blocks(url: str, blocks: list | None = None,
     # styles и bbox каждого блока. Это даёт редактируемый фрейм, а не догадку
     # LLM о том, к какому из 19 шаблонов отнести произвольный компонент.
     try:
-        captured, rendered_tokens = capture_block_irs(url, wanted, return_tokens=True, viewports=viewports)
+        captured, rendered_tokens = capture_block_irs(
+            url, wanted, return_tokens=True, viewports=viewports, cookies=auth_cookies)
         tokens = _normalize_captured_page_tokens(rendered_tokens, source=url)
     except Exception as e:
         traceback.print_exc()
@@ -217,14 +235,17 @@ def parse_blocks(url: str, blocks: list | None = None,
         tokens = None
 
     results = []
+    pending_block_writes = []  # (key, payload, selector) — запись после fidelity-гейта
+    final_items: dict = {}     # selector → capture item с финальным (enriched) IR
     for b in wanted:  # порядок детекции остаётся порядком выходных портов
         head = {"name": b["name"], "selector": b["selector"],
                 "label": b.get("label") or b["name"], "kind": b.get("kind", "section")}
         item = captured.get(b["selector"], {"error": "DOM-слепок не получен"})
         if item.get("error"):
             # Responsive duplicates that are hidden at the canonical desktop viewport
-            # are not meaningful Source Import outputs.
-            if "не виден" in str(item["error"]):
+            # are not meaningful Source Import outputs. The compiler emits English
+            # diagnostics; the legacy Russian guard is kept for backward compatibility.
+            if _is_hidden_block_error(item["error"]):
                 continue
             results.append({**head, "error": item["error"]})
             continue
@@ -249,11 +270,14 @@ def parse_blocks(url: str, blocks: list | None = None,
                 "layersByViewport": item.get("layers_by_viewport", {}),
             },
         )
-        cache_store.put(
-            "clone_block",
-            _block_cache_key(url, b["name"], b["selector"]),
-            {"ir": ir, "parserContract": parser_contract},
-        )
+        if cache_enabled:
+            pending_block_writes.append((
+                _block_cache_key(url, b["name"], b["selector"]),
+                {"ir": ir, "parserContract": parser_contract,
+                 "rasterFallback": fidelity_harness.is_raster_fallback(ir)},
+                b["selector"],
+            ))
+        final_items[b["selector"]] = {**item, "ir": ir}
         results.append({**head, "ir": ir, "cached": False, "source": "dom",
                         "parserContract": parser_contract,
                         "layers": item.get("layer_count", 0), "size": {
@@ -261,8 +285,14 @@ def parse_blocks(url: str, blocks: list | None = None,
                         "preview": item.get("preview"), "previews": item.get("previews", {}),
                         "sizes": item.get("sizes", {}),
                         "layersByViewport": item.get("layers_by_viewport", {}),
+                        "editableLayersByViewport": item.get("editable_layers_by_viewport", {}),
+                        "componentBoundariesByViewport": item.get("component_boundaries_by_viewport", {}),
                         "coverage": item.get("coverage", {}),
+                        "paintCoverage": item.get("paint_coverage", {}),
                         "fidelity": item.get("fidelity"),
+                        "p95LayoutError": item.get("p95_layout_error"),
+                        "droppedByViewport": item.get("dropped_by_viewport", {}),
+                        "extrasByViewport": item.get("extras_by_viewport", {}),
                         "warnings": item.get("warnings", []), "repeat": item.get("repeat")})
 
     payload_tokens = tokens
@@ -272,9 +302,29 @@ def parse_blocks(url: str, blocks: list | None = None,
                 payload_tokens = block["ir"].get("tokens")
                 if payload_tokens:
                     break
-    payload = {"url": url, "blocks": results, "tokens": payload_tokens}
+    payload = {"url": url, "blocks": results, "tokens": payload_tokens,
+               "authenticated": authenticated}
+    # Fail-closed прогрев кэша: harness рендерит финальные IR в точном размере
+    # каждого viewport и сравнивает со скриншотами источника. Нет обязательных
+    # метрик или gate не пройден → записи нет, но IR всё равно возвращается.
+    fidelity_reports: dict = {}
+    if final_items:
+        try:
+            fidelity_reports = fidelity_harness.evaluate_captures(final_items)
+        except Exception:
+            traceback.print_exc()
+            fidelity_reports = {}
+    for cache_key, cache_payload, selector in pending_block_writes:
+        cache_store.put_gated("clone_block", cache_key, cache_payload,
+                              fidelity_reports.get(selector))
     # Сохраняем только полностью успешный разбор. Отдельные удачные блоки уже
     # имеют свой clone_block-кэш; неудачные должны иметь шанс на повтор.
-    if blocks is None and not any(block.get("error") for block in results if isinstance(block, dict)):
-        cache_store.put("blockparse_url", full_key, payload)
+    if cache_enabled and blocks is None and not any(block.get("error") for block in results if isinstance(block, dict)):
+        aggregate = {"blocks": [
+            {"name": block.get("name"), "selector": block.get("selector"),
+             **(fidelity_reports.get(block.get("selector")) or {})}
+            for block in results
+            if isinstance(block, dict) and block.get("ir")
+        ]}
+        cache_store.put_gated("blockparse_url", full_key, payload, aggregate)
     return {**payload, "cached": False}

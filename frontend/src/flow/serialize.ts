@@ -14,6 +14,7 @@ import type {
   LegacyView,
   NodeType,
   IRObject,
+  SourceImportNodeData,
 } from "./types";
 
 /* РћРўР”Р•Р›Р¬РќР«Р™ РєР»СЋС‡ СЃРµР№РІР° РЅРѕРІРѕРіРѕ UI: legacy-РіСЂР°С„ (designai-graph-v1) РЅРµ Р·Р°С‚РёСЂР°РµС‚СЃСЏ.
@@ -166,8 +167,15 @@ function dataForStorage(type: NodeType, data: AnyNodeData): AnyNodeData {
 }
 
 function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
-  if (type !== "motion") return data;
-  return { ...defaultData("motion"), ...data, renderJob: null } as AnyNodeData;
+  if (type === "motion") return { ...defaultData("motion"), ...data, renderJob: null } as AnyNodeData;
+  if (type === "sourceimport") {
+    const source = { ...defaultData("sourceimport"), ...data } as SourceImportNodeData;
+    // Older saved projects already contain the complete local result but predate
+    // importedUrl. Treat those blocks as hydrated instead of reloading the site.
+    if (!("importedUrl" in (data as object)) && source.blocks.length > 0) source.importedUrl = source.url;
+    return source;
+  }
+  return data;
 }
 
 function legacyNodes(nodes: FlowNode[]): LegacyNodePayload[] {

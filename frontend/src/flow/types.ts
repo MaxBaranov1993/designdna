@@ -111,6 +111,17 @@ export type MixNodeData = {
   ir: IRObject | null;
 };
 /* Блок Source Import: lit — «зажжён» ли выходной порт блока. */
+export type DroppedRecord = {
+  sourceKey: string;
+  reason: string;
+  visual: boolean;
+};
+export type ExtraPaintRecord = {
+  sourceKey: string;
+  reason: string;
+  visual: boolean;
+  rect: { x: number; y: number; width: number; height: number };
+};
 export type BlockParseBlock = {
   name: string;
   label?: string;
@@ -126,8 +137,14 @@ export type BlockParseBlock = {
   previews?: Partial<Record<SourceViewport, string>>;
   sizes?: Partial<Record<SourceViewport, { width?: number; height?: number }>>;
   layersByViewport?: Partial<Record<SourceViewport, number>>;
+  editableLayersByViewport?: Partial<Record<SourceViewport, number>>;
+  componentBoundariesByViewport?: Partial<Record<SourceViewport, number>>;
   coverage?: Partial<Record<SourceViewport, number>>;
-  fidelity?: Partial<Record<SourceViewport, number>>;
+  paintCoverage?: Partial<Record<SourceViewport, number>>;
+  fidelity?: Partial<Record<SourceViewport, number | null>>;
+  p95LayoutError?: Partial<Record<SourceViewport, number | null>>;
+  droppedByViewport?: Partial<Record<SourceViewport, DroppedRecord[]>>;
+  extrasByViewport?: Partial<Record<SourceViewport, ExtraPaintRecord[]>>;
   warnings?: string[];
   repeat?: { count?: number; kind?: string } | null;
   parserContract?: ParserSourceEnvelope;
@@ -139,8 +156,11 @@ export type SourceImportNodeData = {
   image: string | null;
   fileName: string;
   mine: boolean;
+  authenticatedSession: boolean;
   activeViewport: SourceViewport;
   previewMode: "reference" | "ir" | "compare";
+  /** Last URL whose parsed blocks are already present in this node. */
+  importedUrl?: string | null;
   blocks: BlockParseBlock[];
   tokens: Record<string, unknown> | null;
 };

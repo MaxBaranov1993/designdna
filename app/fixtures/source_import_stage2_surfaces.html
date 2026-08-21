@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; }
+    /* Translate уже включён в measured bbox; rotate/scale требуют raster fallback. */
+    #fixture-transform { width: 640px; padding: 16px; background: #ffffff; }
+    #fixture-transform .tilted {
+      width: 200px; height: 80px; padding: 8px; background: #fde68a; color: #111827;
+      transform: rotate(6deg) translateX(20px);
+    }
+    #fixture-transform .translated {
+      width: 180px; height: 54px; padding: 8px; margin-top: 20px; background: #bfdbfe;
+      transform: translate(-24px, 9px);
+    }
+    /* Этап 2: stacking/z-index переносится в frame.z. */
+    #fixture-stack { width: 640px; padding: 16px; background: #ffffff; position: relative; height: 180px; }
+    #fixture-stack .under, #fixture-stack .over { position: absolute; width: 120px; height: 120px; padding: 8px; }
+    #fixture-stack .under { left: 0; top: 0; background: #bfdbfe; z-index: 1; }
+    #fixture-stack .over { left: 60px; top: 20px; background: #f87171; z-index: 5; }
+    /* Этап 2: clip-path и gradient mask — в style (schema + renderer). */
+    #fixture-clip { width: 640px; padding: 16px; background: #ffffff; }
+    #fixture-clip .clipped {
+      width: 200px; height: 80px; padding: 8px; background: #34d399; color: #064e3b;
+      clip-path: polygon(0 0, 100% 0, 80% 100%, 0 100%);
+    }
+    #fixture-clip .masked {
+      width: 200px; height: 60px; padding: 8px; background: #6366f1; color: #ffffff;
+      mask-image: linear-gradient(to right, black, transparent);
+      -webkit-mask-image: linear-gradient(to right, black, transparent);
+    }
+    /* Этап 2: intrinsically non-editable surfaces — видимый selectable raster
+       fallback (editable:false + причина + source metadata). */
+    #fixture-raster { width: 640px; padding: 16px; background: #ffffff; }
+    #fixture-raster canvas { width: 160px; height: 80px; display: block; margin-bottom: 12px; }
+    #fixture-raster iframe { width: 200px; height: 90px; border: 0; display: block; margin-bottom: 12px; }
+    #fixture-raster x-closed-widget { display: block; width: 140px; height: 60px; }
+    /* Этап 2 repair: многослойный background — КАЖДЫЙ слой становится IR-слоем
+       в CSS paint order (первый в CSS = верхний) с уникальным sourceKey. */
+    #fixture-multibg {
+      width: 640px; padding: 16px; background-color: #ffffff;
+      background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI4IiBoZWlnaHQ9IjgiIGZpbGw9IiNmOTczMTYiLz48L3N2Zz4="),
+        linear-gradient(135deg, #fee2e2, #dbeafe);
+    }
+    #fixture-multibg .layered {
+      width: 300px; height: 120px; padding: 12px; color: #111827;
+      background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI4IiBoZWlnaHQ9IjgiIGZpbGw9IiMwYTk2ZTMiLz48L3N2Zz4="),
+        linear-gradient(to right, #f59e0b, #10b981);
+    }
+    /* Этап 2 repair: url()-mask — не warning-only, а locked raster fallback. */
+    #fixture-urlmask { width: 640px; padding: 16px; background: #ffffff; }
+    #fixture-urlmask .urlmasked {
+      width: 220px; height: 70px; padding: 8px; background: #8b5cf6; color: #ffffff;
+      mask-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI4IiBoZWlnaHQ9IjgiIGZpbGw9IiMxMTE4MjciLz48L3N2Zz4=");
+      -webkit-mask-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI4IiBoZWlnaHQ9IjgiIGZpbGw9IiMxMTE4MjciLz48L3N2Zz4=");
+    }
+    /* Этап 2 repair: open shadow root — locked raster fallback, видимое
+       shadow-содержимое не исчезает молча. */
+    #fixture-open-shadow { width: 640px; padding: 16px; background: #ffffff; }
+    #fixture-open-shadow x-open-widget { display: block; width: 180px; height: 60px; }
+  </style>
+</head>
+<body>
+  <section id="fixture-transform"><div class="tilted">Tilted</div><div class="translated">Translated</div></section>
+  <section id="fixture-stack"><div class="under">U</div><div class="over">O</div></section>
+  <section id="fixture-clip"><div class="clipped">Clip</div><div class="masked">Mask</div></section>
+  <section id="fixture-raster">
+    <canvas id="fx-canvas" width="160" height="80"></canvas>
+    <iframe id="fx-iframe" title="cross origin frame"></iframe>
+    <x-closed-widget id="fx-shadow"></x-closed-widget>
+  </section>
+  <section id="fixture-multibg"><div class="layered">Layered text</div></section>
+  <section id="fixture-urlmask"><div class="urlmasked">Masked text</div></section>
+  <section id="fixture-open-shadow"><x-open-widget id="fx-open-shadow"></x-open-widget></section>
+  <script>
+    (function () {
+      var c = document.getElementById('fx-canvas');
+      var ctx = c.getContext('2d');
+      ctx.fillStyle = '#f97316'; ctx.fillRect(0, 0, 160, 80);
+      ctx.fillStyle = '#111827'; ctx.fillRect(20, 20, 60, 40);
+      // cross-origin iframe: URL приходит query-параметром от теста (другой порт
+      // того же 127.0.0.1 = другой origin).
+      var q = location.search.replace(/^\?/, '');
+      if (q) document.getElementById('fx-iframe').src = decodeURIComponent(q);
+      // closed shadow root: содержимое недоступно DOM-сериализации.
+      var host = document.getElementById('fx-shadow');
+      var sh = host.attachShadow({ mode: 'closed' });
+      sh.innerHTML = '<div style="width:140px;height:60px;background:#0ea5e9;color:#fff">closed</div>';
+      // open shadow root: дерево доступно, но обход пока небезопасен → raster.
+      var openHost = document.getElementById('fx-open-shadow');
+      var openSh = openHost.attachShadow({ mode: 'open' });
+      openSh.innerHTML = '<div style="width:180px;height:60px;background:#10b981;color:#fff">open shadow</div>';
+    })();
+  </script>
+</body>
+</html>
