@@ -1,5 +1,5 @@
 export type AssistAction = "adapt" | "overflow" | "content-fit" | "align" | "style" | "custom";
-export type AssistScopeMode = "single" | "selection";
+export type AssistScopeMode = "single" | "selection" | "document";
 export type AssistStage = "prepare" | "provider" | "validate";
 
 export interface AssistProgress {
@@ -37,4 +37,6 @@ export interface AssistRequest {
   action: AssistAction;
   scopeMode: AssistScopeMode;
   constraints: AssistConstraints;
+  /** модель/аккаунт: auto | codex | kimi | openai | glm (desktop передаёт в providers.chat) */
+  provider?: string;
 }

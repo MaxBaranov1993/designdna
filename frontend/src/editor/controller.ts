@@ -136,6 +136,7 @@ let aiAssistFormState: AssistRequest = {
   action: "custom",
   scopeMode: "single",
   constraints: { allowContent: true, allowStyle: true, allowFrame: true, allowColor: true },
+  provider: "auto",
 };
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
@@ -168,6 +169,7 @@ export function getAiAssistFormState(): AssistRequest {
 }
 
 export function setAiAssistFormState(next: Partial<AssistRequest>) {
+  if (next.provider !== undefined && !["auto", "codex", "kimi", "openai", "glm"].includes(String(next.provider))) next.provider = "auto";
   aiAssistFormState = {
     ...aiAssistFormState,
     ...next,
@@ -1612,8 +1614,17 @@ function isAncestorRef(parent: GeoRef, child: GeoRef) {
   return child.path.startsWith(parent.path + sep);
 }
 
-export function getAiScopeView(mode: "single" | "selection") {
+export function getAiScopeView(mode: "single" | "selection" | "document") {
   if (!state) return { items: [], excluded: [] };
+  if (mode === "document") {
+    // весь артборд: скоуп = все секции верхнего уровня
+    const items = (state.ir.tree || []).map((section: any, secIdx: number) => ({
+      ref: { secIdx, path: null } as GeoRef,
+      label: sectionLabel(section, secIdx),
+      sourceKey: sourceKeyForSelection({ ref: { secIdx, path: null }, node: section, label: "" } as GeoSel),
+    })).filter((item: any) => item.sourceKey);
+    return { items, excluded: [] };
+  }
   const selected = mode === "single" ? state.sel.slice(0, 1) : state.sel;
   const excluded = mode === "selection"
     ? selected.filter((candidate) => selected.some((other) => candidate !== other && isAncestorRef(candidate.ref, other.ref)))
@@ -1623,8 +1634,8 @@ export function getAiScopeView(mode: "single" | "selection") {
   return { items: items.map(map).filter((item) => item.sourceKey), excluded: excluded.map(map) };
 }
 
-function selectedSourceKeys(mode: "single" | "selection") {
-  return getAiScopeView(mode).items.map((item) => item.sourceKey);
+function selectedSourceKeys(mode: "single" | "selection" | "document") {
+  return getAiScopeView(mode).items.map((item: { sourceKey: string }) => item.sourceKey);
 }
 
 export function removeFromAiSelection(ref: GeoRef) {
@@ -1658,7 +1669,8 @@ async function postAiAssist(payload: Record<string, unknown>) {
 }
 
 export async function requestAiAssist(request: AssistRequest) {
-  if (!state || !state.sel.length) return;
+  // document-режим работает без выделения — скоуп это все секции
+  if (!state || (request.scopeMode !== "document" && !state.sel.length)) return;
   const prompt = request.prompt.trim();
   if (!prompt) { ui.setAiError("Опишите, что нужно изменить"); return; }
   ui.setAiBusy(true);
@@ -1683,7 +1695,8 @@ export async function requestAiAssist(request: AssistRequest) {
       const prepared = await postAiAssist({ ...payload, prepareOnly: true });
       if (Array.isArray(prepared.messages)) {
         ui.setAiProgress({ stage: "provider", label: "AI анализирует объект и готовит правки", startedAt });
-        const answer = await window.designDNA.providers.chat("auto", prepared.messages, 0.2);
+        const assistProvider = ["auto", "codex", "kimi", "openai", "glm"].includes(String(request.provider)) ? request.provider as "auto" | "codex" | "kimi" | "openai" | "glm" : "auto";
+        const answer = await window.designDNA.providers.chat(assistProvider, prepared.messages, 0.2);
         ui.setAiProgress({ stage: "validate", label: "Проверяю ответ и строю предпросмотр", startedAt });
         data = await postAiAssist({ ...payload, rawOutput: answer.content });
       } else data = prepared;

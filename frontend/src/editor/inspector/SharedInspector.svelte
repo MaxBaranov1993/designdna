@@ -55,9 +55,9 @@
   }
   function run(action: AssistAction, text: string) {
     confirmed = false;
-    ctl.setAiAssistFormState({ prompt: text, action, scopeMode, constraints: { allowContent, allowStyle, allowFrame, allowColor } });
+    ctl.setAiAssistFormState({ prompt: text, action, scopeMode, provider, constraints: { allowContent, allowStyle, allowFrame, allowColor } });
     void ctl.requestAiAssist({
-      action, prompt: text, scopeMode,
+      action, prompt: text, scopeMode, provider,
       constraints: { allowContent, allowStyle, allowFrame, allowColor },
     });
   }
@@ -89,6 +89,8 @@
   const textColor = hex(style.color, "#111111");
   const savedAiForm = ctl.getAiAssistFormState();
   let scopeMode = $state<AssistScopeMode>(sels.length > 1 ? (ctl.hasExplicitAiAssistScopeMode() ? savedAiForm.scopeMode : "selection") : "single");
+  let provider = $state<string>(["auto", "codex", "kimi", "openai", "glm"].includes(String(savedAiForm.provider)) ? String(savedAiForm.provider) : "auto");
+  const desktopAssist = typeof window !== "undefined" && !!window.designDNA?.providers;
   let prompt = $state(savedAiForm.prompt);
   let allowContent = $state(savedAiForm.constraints.allowContent);
   let allowStyle = $state(isScalarProp ? false : savedAiForm.constraints.allowStyle);
@@ -119,13 +121,28 @@
 
 <div class="ai-inspector" data-ai-inspector>
   <section class="ai-scope" aria-label="Область изменения">
-    <div class="ai-scope-copy"><span class="ai-scope-kicker">AI изменит</span><strong>{scopeMode === "selection" ? `выбранные объекты · ${scope.items.length}` : scope.items[0]?.label}</strong></div>
-    {#if sels.length > 1}
-      <div class="ai-scope-switch"><button aria-pressed={scopeMode === "single"} class:active={scopeMode === "single"} onclick={() => { scopeMode = "single"; ctl.setAiAssistScopeMode(scopeMode); }}>Один</button><button aria-pressed={scopeMode === "selection"} class:active={scopeMode === "selection"} onclick={() => { scopeMode = "selection"; ctl.setAiAssistScopeMode(scopeMode); }}>Группа</button></div>
-    {:else}<span class="ai-scope-lock">1 объект</span>{/if}
+    <div class="ai-scope-copy"><span class="ai-scope-kicker">AI изменит</span><strong>{scopeMode === "document" ? `весь артборд · ${scope.items.length} секц.` : scopeMode === "selection" ? `выбранные объекты · ${scope.items.length}` : scope.items[0]?.label}</strong></div>
+    <div class="ai-scope-switch">
+      {#if sels.length > 1 && scopeMode !== "document"}
+        <button aria-pressed={scopeMode === "single"} class:active={scopeMode === "single"} onclick={() => { scopeMode = "single"; ctl.setAiAssistScopeMode(scopeMode); }}>Один</button>
+        <button aria-pressed={scopeMode === "selection"} class:active={scopeMode === "selection"} onclick={() => { scopeMode = "selection"; ctl.setAiAssistScopeMode(scopeMode); }}>Группа</button>
+      {/if}
+      <button aria-pressed={scopeMode === "document"} class:active={scopeMode === "document"} title="AI изменит все секции артборда в одном согласованном проходе" onclick={() => { scopeMode = scopeMode === "document" ? (sels.length > 1 ? "selection" : "single") : "document"; }}>Вся страница</button>
+    </div>
   </section>
+  <div class="ai-provider-row" aria-label="Модель">
+    <span class="ai-scope-kicker">Модель</span>
+    <select bind:value={provider} onchange={() => ctl.setAiAssistFormState({ provider })} disabled={busy || !!preview}>
+      <option value="auto">Auto · подключённый аккаунт</option>
+      {#if desktopAssist}<option value="codex">GPT Codex · ChatGPT</option>{/if}
+      <option value="kimi">Kimi K3</option>
+      <option value="openai">GPT-5.6-sol</option>
+      <option value="glm">GLM-5.3</option>
+    </select>
+  </div>
   <div class="ai-scope-list" aria-label="Элементы для AI">
-    {#each scope.items as item (item.sourceKey)}
+    {#if scopeMode === "document"}<span class="ai-scope-chip">все секции · согласованно</span>{/if}
+    {#each scopeMode === "document" ? [] : scope.items as item (item.sourceKey)}
       <span class="ai-scope-chip">{item.label}{#if scopeMode === "selection" && scope.items.length > 1}<button title="Убрать из группы" aria-label={`Убрать ${item.label} из группы`} onclick={() => ctl.removeFromAiSelection(item.ref)}>×</button>{/if}</span>
     {/each}
   </div>
@@ -143,8 +160,8 @@
       <label><input type="checkbox" bind:checked={allowFrame} disabled={isScalarProp} onchange={() => ctl.setAiAssistFormState({ constraints: { allowFrame } as any })} /> Размеры</label>
       <label><input type="checkbox" bind:checked={allowColor} disabled={isScalarProp} onchange={() => ctl.setAiAssistFormState({ constraints: { allowColor } as any })} /> Цвета</label>
     </fieldset>
-    {#if isScalarProp}<small>Для этого текстового свойства AI меняет только текст.</small>{:else}<div class="ai-quick-row">{#each QUICK as item (item.action)}<button disabled={busy || !!preview || !scope.items.length} onclick={() => run(item.action, item.prompt)}>{item.label}</button>{/each}</div>{/if}
-    <button class="ai-run" disabled={busy || !!preview || !prompt.trim() || !scope.items.length} onclick={() => run("custom", prompt)}>{busy ? `AI работает · ${elapsedLabel(elapsedSeconds)}` : "Показать результат"}</button>
+    {#if isScalarProp}<small>Для этого текстового свойства AI меняет только текст.</small>{:else}<div class="ai-quick-row">{#each QUICK as item (item.action)}<button disabled={busy || !!preview || (scopeMode !== "document" && !scope.items.length)} onclick={() => run(item.action, item.prompt)}>{item.label}</button>{/each}</div>{/if}
+    <button class="ai-run" disabled={busy || !!preview || !prompt.trim() || (scopeMode !== "document" && !scope.items.length)} onclick={() => run("custom", prompt)}>{busy ? `AI работает · ${elapsedLabel(elapsedSeconds)}` : "Показать результат"}</button>
     {#if busy && progress}
       <div class="ai-progress" data-ai-progress={progress.stage} role="status" aria-live="polite">
         <span class="ai-progress-spinner" aria-hidden="true"></span>

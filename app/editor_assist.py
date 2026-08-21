@@ -36,6 +36,8 @@ class AssistRequest(BaseModel):
     constraints: AssistConstraints = Field(default_factory=AssistConstraints)
     prepareOnly: bool = False
     rawOutput: str | None = None
+    # web-фолбэк: какой провайдер использовать в llm.chat (desktop гоняет чат сам)
+    provider: str = "auto"
 
 
 ALLOWED_ACTIONS = {"adapt", "overflow", "content-fit", "align", "style", "custom"}
@@ -363,6 +365,75 @@ def _adapt(base: dict, scope: AssistScope) -> tuple[dict, list[dict], str]:
     return candidate, ops, "Адаптивные настройки выделения подготовлены"
 
 
+# ---------- детерминированный дизайн-линтер (анти-«нейрослоп») ----------
+# Проверяет РЕЗУЛЬТАТ AI (previewIr) и обогащает warnings предпросмотра:
+# ловит типовые дешёвые приёмы, отличающие сгенерированный дизайн от работы студии.
+
+_EMOJI_RE = None
+_LOREM_RE = None
+
+
+def _design_lint(ir: dict) -> list[dict]:
+    warnings: list[dict] = []
+    try:
+        import re as _re
+        global _EMOJI_RE, _LOREM_RE
+        if _EMOJI_RE is None:
+            _EMOJI_RE = _re.compile(
+                "[" "🌀-🫿" "☀-➿" "🇦-🇿" "⬀-⯿" "]")
+        if _LOREM_RE is None:
+            _LOREM_RE = _re.compile("lorem|ipsum|placeholder text|ваш текст|здесь будет", _re.IGNORECASE)
+
+        tokens = ir.get("tokens") or {}
+        palette = set()
+        for value in (tokens.get("color") or {}).values():
+            if isinstance(value, dict) and isinstance(value.get("value"), str):
+                palette.add(str(value["value"]).lower().strip())
+
+        font_sizes = set()
+        off_palette = set()
+        emoji_hits = []
+        lorem_hits = []
+
+        def visit(node):
+            if not isinstance(node, dict):
+                return
+            text = str(node.get("text") or node.get("title") or node.get("label") or "")
+            if text:
+                if _EMOJI_RE.search(text):
+                    emoji_hits.append(text[:40])
+                if _LOREM_RE.search(text):
+                    lorem_hits.append(text[:40])
+            style = node.get("style")
+            if isinstance(style, dict):
+                size = style.get("fontSize")
+                if isinstance(size, (int, float)):
+                    font_sizes.add(round(float(size), 1))
+                for key in ("background", "borderColor"):
+                    value = style.get(key)
+                    if isinstance(value, str) and value.startswith("#") and len(value) >= 7:
+                        hexv = value.lower().strip()
+                        if palette and hexv not in palette:
+                            off_palette.add(hexv)
+            for child in node.get("children") or []:
+                visit(child)
+
+        for section in ir.get("tree") or []:
+            visit(section)
+
+        if emoji_hits:
+            warnings.append({"code": "design_lint", "message": "Эмодзи в тексте выглядят дёшево: замените на иконки или уберите (" + "; ".join(emoji_hits[:2]) + ")"})
+        if lorem_hits:
+            warnings.append({"code": "design_lint", "message": "Шаблонный текст-заглушка: замените на конкретику (" + "; ".join(lorem_hits[:2]) + ")"})
+        if len(font_sizes) > 8:
+            warnings.append({"code": "design_lint", "message": "На артборде " + str(len(font_sizes)) + " размеров шрифта — обычно хватает 4-6 (display/h2/h3/body/caption)"})
+        if len(off_palette) > 4:
+            warnings.append({"code": "design_lint", "message": "Много новых цветов вне палитры токенов — дизайн рассыпается; закрепите 1-2 акцента через Style DNA"})
+    except Exception:
+        pass
+    return warnings
+
+
 def _messages(base: dict, req: AssistRequest) -> list[dict]:
     _, safe_keys, _ = _normalized_scope(base, req.scope.sourceKeys)
     system = (
@@ -370,7 +441,7 @@ def _messages(base: dict, req: AssistRequest) -> list[dict]:
         "{command:'update', targetSourceKey, viewport:'shared|tablet|mobile', changes, reason}. "
         "changes may contain frame, style, styleBindings, props, text, title, placeholder, value, label, name, alt, ariaLabel. "
         "Use only selected sourceKeys. Never change hierarchy, ids, types, sourceKeys, children, or array order. "
-        "Preserve the current design and make the smallest coherent change. Obey the supplied constraints exactly."
+        'Preserve the current design and make the smallest coherent change. Obey the supplied constraints exactly.\nDESIGN QUALITY RULES (how top studios edit, no AI slop):\n- Consistency beats novelty: reuse the palette, radii, shadows and type scale already present in the IR tokens and neighbouring sections. Never introduce a new font family or a color outside tokens.\n- Spacing rhythm: paddings and gaps snap to the 4/8 scale used nearby (8/16/24/32/48/64); align edges to the same rails as siblings.\n- Typography: one display size per level, tighter tracking on large headlines, body 15-17px line-height 1.4-1.6; do not add more than 2 distinct font sizes in one edit.\n- Copy like a real product: concrete, in the page language, no filler, no emoji as icons.\n- Banned: purple-blue gradients, glow blobs, glassmorphism, everything centered, everything in cards, icon-in-circle x3 filler rows, decorative 01/02/03 without a real sequence.\n- Whole-page scope: keep changes globally coherent, same section rhythm, same CTA styling, primary CTA uses the brand token.\n- Prefer restraint: fewer, well-grounded edits. Every command needs a human-plausible reason.'
     )
     scope = req.scope.model_dump() if hasattr(req.scope, "model_dump") else req.scope.dict()
     scope["sourceKeys"] = safe_keys
@@ -401,10 +472,11 @@ def editor_assist(req: AssistRequest):
         else:
             messages = _messages(req.ir, req)
             if req.prepareOnly: return {"messages": messages}
-            raw = req.rawOutput if req.rawOutput is not None else llm.chat("auto", messages, 0.2, role="edit")
+            fallback_provider = req.provider if req.provider in ("openai", "kimi", "glm") else "auto"
+            raw = req.rawOutput if req.rawOutput is not None else llm.chat(fallback_provider, messages, 0.2, role="edit")
             candidate, ops, summary = _parse_result(raw, req.ir, req)
         ops = [op for op in ops if not (op.get("op") == "add" and op.get("after") == {})]
-        warnings = []
+        warnings = _design_lint(candidate)
         if dropped_scope:
             warnings.append({"code": "nested_scope_normalized", "message": "Родительский контейнер исключён: AI изменяет выбранные вложенные элементы."})
         if len(ops) > 8 or any(_is_high_impact_op(op) for op in ops):
