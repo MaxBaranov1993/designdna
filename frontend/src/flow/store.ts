@@ -551,8 +551,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const styleHint = styleRaw ? String(styleRaw) : undefined;
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
     const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as Record<string, unknown>) : undefined;
-    const selectedProvider = data.provider === "kimi" || data.provider === "openai"
-      ? data.provider
+    const selectedProvider: "auto" | "codex" | "kimi" | "openai" | "glm" = ["kimi", "openai", "glm"].includes(data.provider)
+      ? (data.provider as "kimi" | "openai" | "glm")
       : data.provider === "auto" ? "auto" : "codex";
     const desktop = window.designDNA;
     const provider = desktop
@@ -561,7 +561,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const count = Math.max(1, Math.min(2, Number(data.count) || 1));
     const providerLabel = provider === "kimi"
       ? "Kimi K3"
-      : provider === "openai" ? "GPT-5.6-sol" : provider === "auto" ? "Auto route" : "GPT Codex";
+      : provider === "openai" ? "GPT-5.6-sol"
+      : provider === "glm" ? "GLM-5.3"
+      : provider === "auto" ? "Auto route" : "GPT Codex";
     get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
     get().setBusy(id, true);
     try {
@@ -577,7 +579,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       if (!desktop) {
         res = await api<GenerateResp>("/api/generate", request);
       } else {
-        const desktopProvider: "auto" | "codex" | "kimi" | "openai" = provider;
+        const desktopProvider: "auto" | "codex" | "kimi" | "openai" | "glm" = provider;
         const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true });
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы генератора");
         const rawOutputs: string[] = [];
@@ -900,7 +902,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           "/api/reskin", { ...payload, prepareOnly: true },
         );
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить промпт рестайла");
-        const answer = await desktop.providers.chat("auto", prepared.prompts[0].messages, 0.7);
+        const reskinProvider = ["kimi", "openai", "glm"].includes(String(data.provider)) ? data.provider as "kimi" | "openai" | "glm" : "auto";
+        const answer = await desktop.providers.chat(reskinProvider, prepared.prompts[0].messages, 0.7);
         res = await api<ReskinResp>("/api/reskin", { ...payload, rawOutput: answer.content });
       }
       const log = Array.isArray(res.log) ? res.log : [];

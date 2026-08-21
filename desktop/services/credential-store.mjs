@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const PROVIDERS = new Set(["openai", "kimi"]);
+const PROVIDERS = new Set(["openai", "kimi", "glm"]);
 
 export class CredentialStore {
   constructor({ userDataPath, safeStorage }) {

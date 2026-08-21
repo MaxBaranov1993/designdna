@@ -28,8 +28,8 @@
   const desktop = typeof window !== "undefined" && !!window.designDNA;
   let provider = $derived(
     desktop
-      ? ["auto", "codex", "kimi", "openai"].includes(data.provider) ? data.provider : "codex"
-      : data.provider === "kimi" || data.provider === "openai" ? data.provider : "auto",
+      ? ["auto", "codex", "kimi", "openai", "glm"].includes(data.provider) ? data.provider : "codex"
+      : ["kimi", "openai", "glm"].includes(data.provider) ? data.provider : "auto",
   );
   let count = $derived(Math.max(1, Math.min(2, Number(data.count) || 1)));
 </script>
@@ -61,6 +61,7 @@
       {/if}
       <option value="kimi">Kimi K3 · аккаунт</option>
       <option value="openai">GPT-5.6-sol · OpenAI API</option>
+      <option value="glm">GLM-5.3 · Zhipu API</option>
     </select>
   </div>
   <div class="ctl-row">

@@ -99,3 +99,51 @@ test("explicit Codex route does not fall back after a chat error", async () => {
     /Codex request failed/,
   );
 });
+
+test("auto provider uses a GLM key when Codex is signed out and Kimi is absent", async () => {
+  let called = false;
+  const result = await chatWithProvider({
+    provider: "auto",
+    messages,
+    credentials: credentials(["glm"]),
+    codex: { account: async () => ({ account: null }) },
+    glmChat: async () => { called = true; return '{"score":86}'; },
+  });
+  assert.equal(result.provider, "glm");
+  assert.equal(called, true);
+});
+
+test("explicit glm routes to glmChat and disconnected glm falls back", async () => {
+  let glmCalls = 0;
+  const result = await chatWithProvider({
+    provider: "glm",
+    messages,
+    credentials: credentials(["glm"]),
+    codex: { account: async () => ({ account: null }) },
+    glmChat: async () => { glmCalls += 1; return "ok-glm"; },
+  });
+  assert.equal(result.provider, "glm");
+  assert.equal(result.content, "ok-glm");
+  assert.equal(glmCalls, 1);
+
+  const fallback = await chatWithProvider({
+    provider: "glm",
+    messages,
+    credentials: credentials(["openai"]),
+    codex: { account: async () => ({ account: null }) },
+    openaiChat: async () => "ok-openai",
+  });
+  assert.equal(fallback.provider, "openai");
+});
+
+test("glm tool-calls pass through to the caller (MCP agent loop)", async () => {
+  const result = await chatWithProvider({
+    provider: "glm",
+    messages,
+    credentials: credentials(["glm"]),
+    codex: { account: async () => ({ account: null }) },
+    tools: [{ type: "function", function: { name: "mcp_list_files", description: "list", parameters: { type: "object", properties: {} } } }],
+    glmChat: async () => ({ content: "", toolCalls: [{ id: "1", name: "mcp_list_files", arguments: "{}" }] }),
+  });
+  assert.deepEqual(result.toolCalls, [{ id: "1", name: "mcp_list_files", arguments: "{}" }]);
+});

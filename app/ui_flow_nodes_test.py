@@ -219,7 +219,7 @@ def main():
               pg.locator(".n-generator .f-provider-select option:checked").inner_text().strip() == "Auto · server routing")
         check("Browser Generator offers only portable routes",
               pg.locator(".n-generator .f-provider-select option").evaluate_all(
-                  "els => els.map(e => e.value)") == ["auto", "kimi", "openai"])
+                  "els => els.map(e => e.value)") == ["auto", "kimi", "openai", "glm"])
         check("New browser Generator stores auto",
               pg.evaluate("""(() => {
                   const n = window.GraphDev.state().nodes.find(x => x.type === 'generator');

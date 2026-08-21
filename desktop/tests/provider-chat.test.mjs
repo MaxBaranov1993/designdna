@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chatWithKimi, chatWithOpenAI } from "../services/provider-chat.mjs";
+import { chatWithGlm, chatWithKimi, chatWithOpenAI } from "../services/provider-chat.mjs";
 
 const okResponse = { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '{"ok":true}' } }] }) };
 
@@ -77,6 +77,49 @@ test("OpenAI chat posts to api.openai.com with the stored key and gpt-5.6-sol", 
 test("OpenAI chat reports an actionable missing-key error", async () => {
   await assert.rejects(
     chatWithOpenAI({ credentials: { get: () => null }, messages: [{ role: "user", content: "Generate" }] }),
+    /Agents → Connections/,
+  );
+});
+
+
+test("GLM chat posts to bigmodel.cn with the stored key and glm-5.3", async () => {
+  let request;
+  const content = await chatWithGlm({
+    credentials: { get: () => "secret-glm-key" },
+    messages: [{ role: "user", content: "Generate JSON" }],
+    fetchImpl: async (url, options) => { request = { url, options }; return okResponse; },
+    environment: {},
+  });
+  assert.equal(content, '{"ok":true}');
+  assert.equal(request.url, "https://open.bigmodel.cn/api/paas/v4/chat/completions");
+  assert.equal(request.options.headers.Authorization, "Bearer secret-glm-key");
+  assert.equal(JSON.parse(request.options.body).model, "glm-5.3");
+  assert.ok(JSON.parse(request.options.body).response_format);
+});
+
+test("GLM tool mode returns tool_calls instead of forcing json_object", async () => {
+  const toolResponse = {
+    ok: true, status: 200,
+    json: async () => ({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", function: { name: "mcp_list", arguments: "{\"path\":\".\"}" } }] } }] }),
+  };
+  let request;
+  const result = await chatWithGlm({
+    credentials: { get: () => "secret-glm-key" },
+    messages: [{ role: "user", content: "list files" }],
+    tools: [{ type: "function", function: { name: "mcp_list", description: "list", parameters: { type: "object", properties: {} } } }],
+    returnToolCalls: true,
+    fetchImpl: async (url, options) => { request = { url, options }; return toolResponse; },
+    environment: {},
+  });
+  assert.deepEqual(result.toolCalls, [{ id: "c1", name: "mcp_list", arguments: '{"path":"."}' }]);
+  const body = JSON.parse(request.options.body);
+  assert.ok(Array.isArray(body.tools));
+  assert.ok(!body.response_format);
+});
+
+test("GLM chat reports an actionable missing-key error", async () => {
+  await assert.rejects(
+    chatWithGlm({ credentials: { get: () => null }, messages: [{ role: "user", content: "Generate" }] }),
     /Agents → Connections/,
   );
 });

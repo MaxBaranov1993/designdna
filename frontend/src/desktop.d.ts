@@ -11,7 +11,7 @@ type RepoCanvasSnapshot = {
   work: Array<{ id: string; title?: string; task?: string; status?: string; actor?: string }>;
 };
 
-type DesktopProvider = "openai" | "kimi";
+type DesktopProvider = "openai" | "kimi" | "glm";
 type KimiAccountStatus = { connected: boolean; kind: "oauth" | "api-key" | null; expiresAt: number | null };
 
 declare global {
@@ -24,13 +24,14 @@ declare global {
       sourceAuth: { open(url: string): Promise<{ opened: boolean }>; clear(): Promise<{ cleared: boolean }> };
       repoCanvas: { snapshot(): Promise<RepoCanvasSnapshot>; check(): Promise<Record<string, unknown>>; refresh(options?: Record<string, unknown>): Promise<Record<string, unknown>> };
       providers: {
-        status(): Promise<{ runtimes: Array<Record<string, any>>; credentials: Record<DesktopProvider, boolean>; kimiAccount: KimiAccountStatus; encryptedStorage: boolean }>;
+        status(): Promise<{ runtimes: Array<Record<string, any>>; credentials: Record<"openai" | "kimi" | "glm", boolean>; kimiAccount: KimiAccountStatus; encryptedStorage: boolean }>;
         credentials(): Promise<Record<string, any>>;
-        setCredential(provider: DesktopProvider, value: string): Promise<Record<string, unknown>>;
-        deleteCredential(provider: DesktopProvider): Promise<Record<string, unknown>>;
+        setCredential(provider: "openai" | "kimi" | "glm", value: string): Promise<Record<string, unknown>>;
+        deleteCredential(provider: "openai" | "kimi" | "glm"): Promise<Record<string, unknown>>;
         importKimiCli(): Promise<KimiAccountStatus>;
-        chat(provider: "auto" | "codex" | "kimi" | "openai", messages: Array<{ role: string; content: string }>, temperature?: number,
-          profile?: "generator" | "quality_judge" | "quality_repair"): Promise<{ content: string }>;
+        chat(provider: "auto" | "codex" | "kimi" | "openai" | "glm", messages: Array<{ role: string; content: string }>, temperature?: number,
+          profile?: "generator" | "quality_judge" | "quality_repair", tools?: Array<Record<string, unknown>> | null):
+          Promise<{ content: string; toolCalls?: Array<{ id: string; name: string; arguments: string }> }>;
       };
       codex: {
         account(): Promise<Record<string, any>>; login(type?: "chatgpt" | "apiKey"): Promise<Record<string, any>>;

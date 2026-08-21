@@ -345,7 +345,7 @@ class ProjectLoadReq(BaseModel):
 def generate(req: GenerateReq):
     # Browser mode may explicitly select a direct API account. Codex is a
     # desktop-only transport, so unknown/desktop values fall back to ROUTING.
-    provider = req.provider if req.provider in ("openai", "kimi") else "auto"
+    provider = req.provider if req.provider in ("openai", "kimi", "glm") else "auto"
     brief = req.brief.strip()
     if not brief:
         return err(422, "Пустой бриф: опишите, что нужно сгенерировать.")
@@ -677,7 +677,7 @@ def reskin(req: ReskinReq):
         user += f"\n\n## Пожелания по новому стилю\n{req.prompt.strip()}"
 
     # выбор пользователя в ноде (openai/kimi) — фильтр цепочки ROUTING, auto = вся цепочка
-    provider = req.provider if req.provider in ("openai", "kimi") else "auto"
+    provider = req.provider if req.provider in ("openai", "kimi", "glm") else "auto"
     reskin_messages = [
         {"role": "system", "content": llm.build_system_prompt("edit")},
         {"role": "user", "content": user},

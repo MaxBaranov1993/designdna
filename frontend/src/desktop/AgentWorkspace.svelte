@@ -20,6 +20,11 @@
   let codexAccount = $state<Record<string, any> | null>(null);
   let openaiKey = $state("");
   let kimiKey = $state("");
+  let glmKey = $state("");
+  // агентский бэкенд: codex (threads) | glm (чат-цикл с MCP-инструментами)
+  let agentBackend = $state<"codex" | "glm">("codex");
+  let glmHistory = $state<Array<{ role: "user" | "assistant" | "tool"; content: string }>>([]);
+  let glmRunning = $state(false);
   let kimiImportError = $state("");
   let error = $state("");
   let busy = $state(false);
@@ -27,6 +32,7 @@
   onMount(() => {
     if (!desktop) return;
     void desktop.mcp.list().then((servers) => (mcpConfig = JSON.stringify(servers, null, 2)));
+    void desktop.mcp.tools().then((list) => (tools = list)).catch(() => undefined);
     void desktop.providers.status().then((state) => (providerState = state));
     void desktop.codex.account().then((account) => (codexAccount = account)).catch((reason) => (error = reason instanceof Error ? reason.message : String(reason)));
     const offEvent = desktop.codex.onEvent(({ method, params }: { method: string; params: any }) => {
@@ -60,13 +66,69 @@
 
   async function send() {
     if (!desktop || !prompt.trim()) return;
-    busy = true; error = ""; stream = ""; items = {};
+    error = "";
+    if (agentBackend === "glm") { await sendGlm(); return; }
+    busy = true; stream = ""; items = {};
     try {
       const id = await ensureThread();
       const response = await desktop.codex.startTurn({ threadId: id, input: [{ type: "text", text: prompt.trim() }] });
       turnId = String(response.turn?.id || ""); prompt = "";
     } catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
     finally { busy = false; }
+  }
+
+  /** GLM-агент: чат-цикл с MCP-инструментами (function calling). Модель видит
+   *  подключённые MCP-серверы как свои инструменты; tool_calls исполняются
+   *  через mcp:call (с approval-гейтом), результат возвращается в контекст,
+   *  цикл продолжается до финального ответа (кап 8 раундов). */
+  async function sendGlm() {
+    if (!desktop || !prompt.trim()) return;
+    glmRunning = true; error = "";
+    const question = prompt.trim();
+    prompt = "";
+    try {
+      const toolDefs = tools.map((tool) => ({
+        type: "function",
+        function: {
+          name: String(tool.qualifiedName || tool.name || "").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64),
+          description: `[${tool.serverName || "mcp"}] ${String(tool.description || tool.name || "").slice(0, 500)}`,
+          parameters: tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : { type: "object", properties: {} },
+        },
+      }));
+      glmHistory.push({ role: "user", content: question });
+      glmHistory = [...glmHistory];
+      for (let round = 0; round < 8; round++) {
+        const answer = await desktop.providers.chat("glm", glmHistory, 0.4, "generator", toolDefs.length ? toolDefs : null);
+        const calls = answer.toolCalls || [];
+        if (!calls.length) {
+          glmHistory.push({ role: "assistant", content: answer.content || "(пустой ответ)" });
+          glmHistory = [...glmHistory];
+          return;
+        }
+        if (answer.content?.trim()) {
+          glmHistory.push({ role: "assistant", content: answer.content });
+          glmHistory = [...glmHistory];
+        }
+        for (const call of calls) {
+          let resultText = "";
+          try {
+            const args = JSON.parse(call.arguments || "{}");
+            const result = await desktop.mcp.call(call.name, args);
+            resultText = JSON.stringify(result).slice(0, 16_000);
+          } catch (reason) {
+            resultText = `tool error: ${reason instanceof Error ? reason.message : String(reason)}`;
+          }
+          glmHistory.push({ role: "tool", content: `tool ${call.name} → ${resultText}` });
+          glmHistory = [...glmHistory];
+        }
+      }
+      glmHistory.push({ role: "assistant", content: "(достигнут лимит раундов инструментов — переформулируйте задачу)" });
+      glmHistory = [...glmHistory];
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      glmRunning = false;
+    }
   }
 
   async function answer(request: (typeof requests)[number], decision: "accept" | "acceptForSession" | "decline" | "cancel") {
@@ -84,11 +146,12 @@
     } catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
   }
 
-  async function saveKey(provider: "openai" | "kimi", value: string) {
+  async function saveKey(provider: "openai" | "kimi" | "glm", value: string) {
     if (!desktop || !value.trim()) return;
     await desktop.providers.setCredential(provider, value.trim());
     if (provider === "openai") openaiKey = "";
-    else kimiKey = "";
+    else if (provider === "kimi") kimiKey = "";
+    else glmKey = "";
     providerState = await desktop.providers.status();
   }
 
@@ -118,8 +181,12 @@
 {:else}
   <section class="agent-shell">
     <aside class="agent-sidebar">
-      <div><span class="agent-eyebrow">Local agent runtime</span><h1>Codex + MCP</h1><p>Streaming, approvals и локальные инструменты без отдельного сервера.</p></div>
-      <Button variant="outline" onclick={() => { threadId = ""; stream = ""; items = {}; }}>Новая сессия</Button>
+      <div><span class="agent-eyebrow">Local agent runtime</span><h1>Agents + MCP</h1><p>Streaming, approvals и локальные инструменты без отдельного сервера.</p></div>
+      <div class="agent-backend">
+        <button class:active={agentBackend === "codex"} onclick={() => (agentBackend = "codex")} disabled={glmRunning}>Codex</button>
+        <button class:active={agentBackend === "glm"} onclick={() => (agentBackend = "glm")} disabled={busy}>GLM-5.3</button>
+      </div>
+      <Button variant="outline" onclick={() => { threadId = ""; stream = ""; items = {}; glmHistory = []; }}>Новая сессия</Button>
       <div class="agent-connections">
         <h2>Connections</h2>
         <Button variant="outline" onclick={() => void loginWithChatGPT()} disabled={busy}>
@@ -132,6 +199,8 @@
         <Button variant="outline" onclick={() => void saveKey("openai", openaiKey)}>Сохранить OpenAI key</Button>
         <label><span>Kimi API key {providerState.credentials?.kimi ? "· saved" : ""}</span><input type="password" bind:value={kimiKey} placeholder="Moonshot key" /></label>
         <Button variant="outline" onclick={() => void saveKey("kimi", kimiKey)}>Сохранить Kimi key</Button>
+        <label><span>GLM API key (Zhipu) {providerState.credentials?.glm ? "· saved" : ""}</span><input type="password" bind:value={glmKey} placeholder="Zhipu bigmodel.cn key" /></label>
+        <Button variant="outline" onclick={() => void saveKey("glm", glmKey)}>Сохранить GLM key</Button>
         <Button variant="outline" onclick={() => void importKimiCli()} disabled={busy}>Импорт из Kimi CLI</Button>
         {#if providerState.kimiAccount?.connected}
           <span class="agent-connection-status">
@@ -157,20 +226,26 @@
     <main class="agent-main">
       {#if error}<div class="agent-error">{error}</div>{/if}
       <div class="agent-timeline">
-        {#if !stream && timeline.length === 0}
-          <div class="agent-welcome"><h2>Рабочая сессия DesignDNA</h2><p>Попросите Codex проанализировать проект, изменить код или использовать подключённый MCP-инструмент.</p></div>
+        {#if !stream && timeline.length === 0 && glmHistory.length === 0}
+          <div class="agent-welcome"><h2>Рабочая сессия DesignDNA</h2><p>Попросите агента проанализировать проект, изменить код или использовать подключённый MCP-инструмент.</p></div>
         {/if}
         {#each timeline as item (item.id)}
           {@render timelineRow(item)}
         {/each}
+        {#each glmHistory as message, index (index)}
+          <article class="agent-message" class:agent-tool-message={message.role === "tool"}><span>{message.role === "user" ? "Вы" : message.role === "tool" ? "MCP tool" : "GLM-5.3"}</span><div>{message.content}</div></article>
+        {/each}
         {#if stream}
           <article class="agent-message"><span>Codex</span><div>{stream}</div></article>
+        {/if}
+        {#if glmRunning}
+          <article class="agent-message"><span>GLM-5.3</span><div>думает… {tools.length ? `· ${tools.length} MCP инструментов` : ""}</div></article>
         {/if}
       </div>
       <div class="agent-composer">
         <textarea bind:value={prompt} placeholder="Что нужно сделать в DesignDNA?" onkeydown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void send(); }}></textarea>
         {#if turnId}<Button variant="outline" onclick={() => void desktop.codex.interruptTurn(threadId, turnId)}>Стоп</Button>{/if}
-        <Button onclick={() => void send()} disabled={busy || !prompt.trim()}>Отправить</Button>
+        <Button onclick={() => void send()} disabled={busy || glmRunning || !prompt.trim()}>Отправить</Button>
       </div>
     </main>
     {#if requests[0]}

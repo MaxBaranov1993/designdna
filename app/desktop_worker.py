@@ -143,7 +143,12 @@ async def dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
             os.environ["KIMI_API_KEY"] = kimi_key
         else:
             os.environ.pop("KIMI_API_KEY", None)
-        return {"ok": True, "openaiConfigured": bool(openai_key), "kimiConfigured": bool(kimi_key)}
+        glm_key = str(params.get("glmApiKey") or "").strip()
+        if glm_key:
+            os.environ["GLM_API_KEY"] = glm_key
+        else:
+            os.environ.pop("GLM_API_KEY", None)
+        return {"ok": True, "openaiConfigured": bool(openai_key), "kimiConfigured": bool(kimi_key), "glmConfigured": bool(glm_key)}
     if method == "http.request":
         return await asgi_request(params)
     if method == "shutdown":

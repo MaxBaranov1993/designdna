@@ -67,6 +67,7 @@
       <option value="auto">Auto · аккаунт</option>
       <option value="kimi">Kimi K3</option>
       <option value="openai">GPT-5.6-sol</option>
+      <option value="glm">GLM-5.3</option>
     </select>
     <button
       class="btn-node primary small f-run nodrag"

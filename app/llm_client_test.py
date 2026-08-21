@@ -20,6 +20,14 @@ FAILS = []
 RECORDED = []
 
 
+def _raises(fn):
+    try:
+        fn()
+        return False
+    except Exception:
+        return True
+
+
 def check(name, cond, extra=""):
     tag = "OK " if cond else "FAIL"
     print(f"[{tag}] {name}" + (f" — {extra}" if extra and not cond else ""))
@@ -63,6 +71,11 @@ def main():
     llm_client.PROVIDERS["kimi"] = {
         "url": f"http://127.0.0.1:{port}/kimi/chat/completions",
         "env": "MOCK_KIMI_KEY",
+    }
+    os.environ["MOCK_GLM_KEY"] = "test-glm-key"
+    llm_client.PROVIDERS["glm"] = {
+        "url": f"http://127.0.0.1:{port}/glm/chat/completions",
+        "env": "MOCK_GLM_KEY",
     }
 
     msgs = [
@@ -109,7 +122,7 @@ def main():
         and llm_client.routing_models("source_semantics")[0] == "openai/gpt-5.6-sol"
         and llm_client.routing_models("reskin")[0] == "openai/gpt-5.6-sol"
         and llm_client.routing_models("reproduce")[0] == "openai/gpt-5.6-sol"
-        and llm_client.routing_models("vision") == ["openai/gpt-5.6-sol", "kimi/k3"],
+        and llm_client.routing_models("vision") == ["openai/gpt-5.6-sol", "kimi/k3", "glm/glm-5.3"],
     )
     check("routing_models: все роли — композитные slug'и известных провайдеров",
           all(slug.partition("/")[0] in llm_client.PROVIDERS and slug.partition("/")[2]
@@ -177,6 +190,23 @@ def main():
           llm_client.extract_json("```json\n{\"a\": 1}\n```") == '{"a": 1}')
     check("build_system_prompt собирается", "Design IR" in llm_client.build_system_prompt()
           or len(llm_client.build_system_prompt()) > 1000)
+
+    # ---------- glm: прямой провайдер, slug в цепочке, пропуск без ключа ----------
+    glm_out = llm_client.chat("glm", msgs, 0.2, timeout=10)
+    check("chat напрямую через glm-провайдера", json.loads(glm_out) == {"ok": "glm-5.3"}, glm_out)
+    from llm_client import _resolve_chain
+    from llm_client import _resolve_chain as _chain
+    glm_chain = _chain("generator", None, "glm")
+    check("glm/glm-5.3 входит в цепочку generator и резолвится провайдером glm",
+          [f"{p_}/{m}" for p_, m, _cfg in glm_chain] == ["glm/glm-5.3"])
+    glm_env = llm_client.PROVIDERS["glm"]["env"]
+    saved_glm = os.environ.pop(glm_env, None)
+    try:
+        check("без GLM-ключа прямой glm-вызов даёт понятную ошибку",
+              _raises(lambda: llm_client.chat("glm", msgs, 0.2, timeout=10)))
+    finally:
+        if saved_glm:
+            os.environ[glm_env] = saved_glm
 
     srv.shutdown()
     print()

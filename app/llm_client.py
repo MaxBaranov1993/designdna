@@ -52,6 +52,12 @@ PROVIDERS = {
         "env": "KIMI_API_KEY",
         "base_env": "KIMI_BASE_URL",  # опциональный оверрайд базового URL
     },
+    "glm": {
+        # Zhipu GLM: OpenAI-совместимый v4 endpoint
+        "url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        "env": "GLM_API_KEY",
+        "base_env": "GLM_BASE_URL",
+    },
 }
 
 # Роутинг моделей по ролям (роль ноды → [основная, fallback]).
@@ -61,7 +67,7 @@ PROVIDERS = {
 # Любую роль можно переопределить env: LLM_MODELS_<ROLE> (через запятую).
 # Текущий роутинг: все роли — openai/gpt-5.6-sol с запасным kimi/k3
 # (обе модели vision-capable).
-STRONG = CHEAP = VISION = ["openai/gpt-5.6-sol", "kimi/k3"]
+STRONG = CHEAP = VISION = ["openai/gpt-5.6-sol", "kimi/k3", "glm/glm-5.3"]
 ROUTING = {
     # канонические роли владельца
     "prompt_enhancer": STRONG,

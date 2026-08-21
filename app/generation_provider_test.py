@@ -45,6 +45,7 @@ def test_browser_generate_honors_direct_api_provider_and_maps_codex_to_auto(monk
     for requested, expected in (
         ("kimi", "kimi"),
         ("openai", "openai"),
+        ("glm", "glm"),
         ("codex", "auto"),
         ("openrouter", "auto"),
         ("auto", "auto"),

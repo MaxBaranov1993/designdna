@@ -371,11 +371,12 @@ function registerIpc() {
           console.warn(`Kimi token unavailable for api:request: ${error.message}`);
         }
       }
-      const fingerprint = `${worker.spawnCount}:${kimiApiKey ? "kimi" : "-"}:${credentials.has("openai") ? "oa" : "-"}`;
+      const fingerprint = `${worker.spawnCount}:${kimiApiKey ? "kimi" : "-"}:${credentials.has("openai") ? "oa" : "-"}:${credentials.has("glm") ? "glm" : "-"}`;
       if (configureFingerprints.get(worker) !== fingerprint) {
         await worker.request("runtime.configure", {
           openaiApiKey: credentials.get("openai") || "",
           kimiApiKey,
+          glmApiKey: credentials.get("glm") || "",
         });
         configureFingerprints.set(worker, fingerprint);
       }
@@ -417,8 +418,22 @@ function registerIpc() {
   handleTrusted("providers:delete-credential", (_event, { provider }) => credentials.delete(provider));
   // Import OAuth tokens from the Kimi CLI; returns account status only, never the tokens.
   handleTrusted("providers:import-kimi-cli", (_event) => importFromCli(credentials));
-  handleTrusted("providers:chat", async (_event, { provider, messages, temperature, profile }) => {
-    return chatWithProvider({ provider, messages, temperature, profile, codex, credentials });
+  handleTrusted("providers:chat", async (_event, { provider, messages, temperature, profile, tools }) => {
+    // tools — MCP-описания для GLM-цикла Agent Workspace; валидируем схему,
+    // чтобы рендерер не мог протолкнуть произвольные поля в API-запрос
+    const safeTools = Array.isArray(tools)
+      ? tools.slice(0, 64).map((tool) => ({
+        type: "function",
+        function: {
+          name: String(tool?.function?.name || "").slice(0, 128),
+          description: String(tool?.function?.description || "").slice(0, 1024),
+          parameters: (tool?.function?.parameters && typeof tool.function.parameters === "object")
+            ? tool.function.parameters
+            : { type: "object", properties: {} },
+        },
+      })).filter((tool) => tool.function.name)
+      : null;
+    return chatWithProvider({ provider, messages, temperature, profile, tools: safeTools, codex, credentials });
   });
   handleTrusted("codex:account", () => codex.account());
   handleTrusted("codex:login", async (_event, { type }) => {
