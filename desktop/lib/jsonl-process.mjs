@@ -1,6 +1,16 @@
 import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
 
+/**
+ * JSONL-процесс с бинарными фреймами (протокол v2).
+ *
+ * Фрейм = header-строка JSON (UTF-8, `\\n`-терминированная); если в header
+ * есть bodyLen > 0 — за ней следуют ровно bodyLen сырых байт. Тела запросов
+ * и бинарные ответы идут этими байтами, а не base64-строкой внутри JSON:
+ * на мегабайтных payload это убирает +33% инфляции и двойной JSON-эскейпинг.
+ *
+ * Чистые JSON-фреймы (без bodyLen) полностью совместимы с v1 — их используют
+ * repo-canvas worker и health/configure-вызовы.
+ */
 export class JsonlProcess {
   constructor({ command, args = [], cwd, env = {}, name = command, timeoutMs = 30_000 }) {
     this.command = command;
@@ -14,11 +24,19 @@ export class JsonlProcess {
     this.sequence = 0;
     this.stderr = [];
     this.spawnCount = 0;
+    this.#resetReader();
+  }
+
+  #resetReader() {
+    this.rxBuffer = Buffer.alloc(0);
+    this.rxExpectBytes = 0;
+    this.rxHeader = null;
   }
 
   start() {
     if (this.child) return;
     this.spawnCount += 1;
+    this.#resetReader();
     const child = spawn(this.command, this.args, {
       cwd: this.cwd,
       env: { ...process.env, ...this.env },
@@ -26,8 +44,8 @@ export class JsonlProcess {
       windowsHide: true,
     });
     this.child = child;
-    createInterface({ input: child.stdout }).on("line", (line) => this.#handleLine(line));
-    createInterface({ input: child.stderr }).on("line", (line) => {
+    child.stdout.on("data", (chunk) => this.#onStdout(chunk));
+    createLineReader(child.stderr, (line) => {
       this.stderr.push(line);
       if (this.stderr.length > 40) this.stderr.shift();
     });
@@ -42,13 +60,22 @@ export class JsonlProcess {
   request(method, params = {}, timeoutMs = this.timeoutMs) {
     this.start();
     const id = `${process.pid}-${++this.sequence}`;
+    // bodyBytes (Uint8Array) выносим из JSON в сырой кусок фрейма
+    const frameParams = { ...params };
+    let bodyBytes = null;
+    if (frameParams.bodyBytes instanceof Uint8Array) {
+      bodyBytes = Buffer.from(frameParams.bodyBytes);
+      delete frameParams.bodyBytes;
+    }
+    const header = JSON.stringify(bodyBytes ? { id, method, params: { ...frameParams, bodyLen: bodyBytes.length } } : { id, method, params: frameParams });
+    const frame = Buffer.concat([Buffer.from(header + "\n"), ...(bodyBytes ? [bodyBytes] : [])]);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`${this.name} request timed out: ${method}`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      this.child.stdin.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
+      this.child.stdin.write(frame, (error) => {
         if (!error) return;
         clearTimeout(timer);
         this.pending.delete(id);
@@ -79,14 +106,42 @@ export class JsonlProcess {
     }
   }
 
-  #handleLine(line) {
-    let message;
-    try {
-      message = JSON.parse(line);
-    } catch {
-      this.stderr.push(`invalid JSONL: ${line.slice(0, 300)}`);
-      return;
+  #onStdout(chunk) {
+    this.rxBuffer = this.rxBuffer.length ? Buffer.concat([this.rxBuffer, chunk]) : chunk;
+    while (true) {
+      if (this.rxExpectBytes > 0) {
+        if (this.rxBuffer.length < this.rxExpectBytes) return;
+        const body = this.rxBuffer.subarray(0, this.rxExpectBytes);
+        this.rxBuffer = this.rxBuffer.subarray(this.rxExpectBytes);
+        this.rxExpectBytes = 0;
+        this.#dispatch(this.rxHeader, body);
+        this.rxHeader = null;
+        continue;
+      }
+      const newline = this.rxBuffer.indexOf(0x0a);
+      if (newline < 0) return;
+      const line = this.rxBuffer.subarray(0, newline).toString("utf-8");
+      this.rxBuffer = this.rxBuffer.subarray(newline + 1);
+      if (!line.trim()) continue;
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        this.stderr.push(`invalid frame: ${line.slice(0, 300)}`);
+        continue;
+      }
+      const result = message.result;
+      const bodyLen = result && typeof result === "object" ? Number(result.bodyLen) : 0;
+      if (Number.isInteger(bodyLen) && bodyLen > 0) {
+        this.rxHeader = message;
+        this.rxExpectBytes = bodyLen;
+        continue;
+      }
+      this.#dispatch(message, null);
     }
+  }
+
+  #dispatch(message, body) {
     const pending = this.pending.get(String(message.id));
     if (!pending) return;
     clearTimeout(pending.timer);
@@ -96,6 +151,8 @@ export class JsonlProcess {
       error.code = message.error.code;
       error.data = message.error.data;
       pending.reject(error);
+    } else if (body) {
+      pending.resolve({ ...message.result, bodyBytes: body });
     } else {
       pending.resolve(message.result);
     }
@@ -108,4 +165,18 @@ export class JsonlProcess {
     }
     this.pending.clear();
   }
+}
+
+function createLineReader(stream, onLine) {
+  let buffer = Buffer.alloc(0);
+  stream.on("data", (chunk) => {
+    buffer = buffer.length ? Buffer.concat([buffer, chunk]) : chunk;
+    while (true) {
+      const newline = buffer.indexOf(0x0a);
+      if (newline < 0) return;
+      const line = buffer.subarray(0, newline).toString("utf-8");
+      buffer = buffer.subarray(newline + 1);
+      if (line.trim()) onLine(line);
+    }
+  });
 }

@@ -45,13 +45,18 @@ async def asgi_request(params: dict[str, Any]) -> dict[str, Any]:
     else:
         query_string = str(query or inline_query)
 
-    body = params.get("body", "")
-    if params.get("encoding") == "base64":
-        body_bytes = base64.b64decode(str(body))
-    elif isinstance(body, (dict, list)):
-        body_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    else:
-        body_bytes = str(body or "").encode("utf-8")
+    # Тело приходит либо сырыми байтами бинарного фрейма (bodyBytes, v2),
+    # либо legacy-строкой (base64/utf8) для совместимости со старым main
+    body_bytes = params.get("bodyBytes")
+    if not isinstance(body_bytes, (bytes, bytearray)):
+        body = params.get("body", "")
+        if params.get("encoding") == "base64":
+            body_bytes = base64.b64decode(str(body))
+        elif isinstance(body, (dict, list)):
+            body_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        else:
+            body_bytes = str(body or "").encode("utf-8")
+        body_bytes = bytes(body_bytes)
 
     request_headers = {
         str(key).lower(): str(value)
@@ -107,11 +112,20 @@ async def asgi_request(params: dict[str, Any]) -> dict[str, Any]:
     normalized_headers = {key.decode("latin-1"): value.decode("latin-1") for key, value in response_headers}
     content_type = normalized_headers.get("content-type", "")
     textual = content_type.startswith("text/") or "json" in content_type or "javascript" in content_type or "xml" in content_type
+    if textual:
+        return {
+            "status": response_status,
+            "headers": normalized_headers,
+            "body": content.decode("utf-8", errors="replace"),
+            "encoding": "utf8",
+        }
+    # Бинарный ответ уходит сырыми байтами бинарного фрейма (encoding=raw,
+    # bodyLen) — без base64-инфляции на мегабайтных скриншотах/рендерах
     return {
         "status": response_status,
         "headers": normalized_headers,
-        "body": content.decode("utf-8", errors="replace") if textual else base64.b64encode(content).decode("ascii"),
-        "encoding": "utf8" if textual else "base64",
+        "encoding": "raw",
+        "bodyBytes": bytes(content),
     }
 
 
@@ -137,19 +151,49 @@ async def dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
     raise ValueError(f"Unknown method: {method}")
 
 
+def _read_exact(stream, count: int) -> bytes:
+    chunks = []
+    remaining = count
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            raise EOFError("worker stdin closed mid-frame")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
 def write_frame(frame: dict[str, Any]) -> None:
-    # Keep the JSONL transport ASCII-only. Windows may give a hidden Python
-    # worker a legacy stdout code page; escaped JSON still restores Unicode.
-    sys.stdout.write(json.dumps(frame, ensure_ascii=True, separators=(",", ":")) + "\n")
-    sys.stdout.flush()
+    """Протокол v2: header-строка JSON; если в result есть bytes (bodyBytes),
+    они уходят сырыми байтами сразу после header (bodyLen). Чистые JSON-фреймы
+    остаются однострочными — repo-canvas и health их используют как раньше."""
+    payload = frame.get("result")
+    raw: bytes | None = None
+    if isinstance(payload, dict) and isinstance(payload.get("bodyBytes"), (bytes, bytearray)):
+        raw = bytes(payload.pop("bodyBytes"))
+        payload["bodyLen"] = len(raw)
+    header = json.dumps(frame, ensure_ascii=True, separators=(",", ":")) + "\n"
+    out = sys.stdout.buffer
+    out.write(header.encode("ascii"))
+    if raw is not None:
+        out.write(raw)
+    out.flush()
 
 
 def main() -> int:
-    for line in sys.stdin:
+    stdin = sys.stdin.buffer
+    while True:
+        line = stdin.readline()
+        if not line:
+            return 0
         message: dict[str, Any] | None = None
         try:
             message = json.loads(line)
-            result = asyncio.run(dispatch(str(message.get("method", "")), message.get("params") or {}))
+            params = message.get("params") or {}
+            body_len = params.pop("bodyLen", 0)
+            if isinstance(body_len, int) and body_len > 0:
+                params["bodyBytes"] = _read_exact(stdin, body_len)
+            result = asyncio.run(dispatch(str(message.get("method", "")), params))
             write_frame({"id": message.get("id"), "result": result})
             if result.get("shutdown"):
                 return 0
@@ -158,7 +202,6 @@ def main() -> int:
                 "id": message.get("id") if message else None,
                 "error": {"code": type(error).__name__, "message": str(error)},
             })
-    return 0
 
 
 if __name__ == "__main__":

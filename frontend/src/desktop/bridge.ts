@@ -4,21 +4,12 @@ type DesktopHttpResponse = {
   status: number;
   headers: Record<string, string>;
   body: string | Uint8Array;
-  encoding: "utf8" | "base64";
+  encoding: "utf8" | "base64" | "raw";
 };
 
 function decodeBase64(value: string): ArrayBuffer {
   const binary = window.atob(value);
   return Uint8Array.from(binary, (character) => character.charCodeAt(0)).buffer as ArrayBuffer;
-}
-
-function encodeBase64(value: ArrayBuffer): string {
-  const bytes = new Uint8Array(value);
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 32_768) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
-  }
-  return window.btoa(binary);
 }
 
 export function installDesktopFetchBridge(): void {
@@ -41,19 +32,22 @@ export function installDesktopFetchBridge(): void {
 
     const request = input instanceof Request ? input.clone() : new Request(url.toString(), init);
     const method = request.method.toUpperCase();
-    let requestBody = new Set(["GET", "HEAD"]).has(method) ? "" : encodeBase64(await request.arrayBuffer());
+    // Тело — UTF-8 JSON (все DesignDNA API): текст нужен для разворота блобов,
+    // в IPC уходит Uint8Array (structured clone, без base64-инфляции)
+    let requestText = new Set(["GET", "HEAD"]).has(method) ? "" : await request.text();
     // В LS блобы живут короткими ddna://-ссылками; серверный рендер (fidelity,
     // QA, reproduce) должен видеть настоящие data:-URL — разворачиваем во всех
     // исходящих телах, кроме persist-путей проекта (там ссылки и должны храниться)
-    if (requestBody && !url.pathname.startsWith("/api/project/")) {
-      requestBody = await expandBlobRefs(requestBody);
+    if (requestText && !url.pathname.startsWith("/api/project/")) {
+      requestText = await expandBlobRefs(requestText);
     }
+    const requestBody = requestText ? new TextEncoder().encode(requestText) : "";
     const response = await bridge.request({
       method,
       path: `${url.pathname}${url.search}`,
       headers: Object.fromEntries(request.headers.entries()),
       body: requestBody,
-      encoding: "base64",
+      encoding: "raw",
     }) as DesktopHttpResponse;
     // main отдаёт бинарные тела уже Uint8Array (structured clone без base64);
     // строка с encoding=base64 — fallback для старых main-процессов

@@ -223,7 +223,12 @@ function validateApiRequest(request) {
   const pathname = rawPath.split("?", 1)[0];
   if (!new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]).has(method)) throw new Error(`Unsupported API method: ${method}`);
   if (!pathname.startsWith("/api/") || pathname.includes("..")) throw new Error("Desktop bridge only accepts DesignDNA API paths");
-  if (String(request?.body || "").length > 96 * 1024 * 1024) throw new Error("Desktop API request is too large");
+  // v2: тело — Uint8Array (structured clone без base64); length — в байтах.
+  // Строковые тела legacy-рендереров проверяются по длине строки.
+  const bodyLength = request?.body instanceof Uint8Array
+    ? request.body.byteLength
+    : String(request?.body || "").length;
+  if (bodyLength > 96 * 1024 * 1024) throw new Error("Desktop API request is too large");
   return { ...request, method, path: rawPath };
 }
 
@@ -377,9 +382,19 @@ function registerIpc() {
       // Source Import / generation pipelines legitimately take minutes
       // (Playwright captures multiple viewports, font downloads, LLM steps),
       // so the HTTP call gets a wider budget than the default worker timeout.
-      const response = await worker.request("http.request", preparedRequest, interactive ? 120_000 : 600_000);
-      // Бинарные тела отдаём как Uint8Array: structured clone переносит их
-      // без base64, и рендерер не платит посимвольный atob-декод на мегабайтах
+      // Тело уходит бинарным фреймом (bodyBytes), ответ приходит так же:
+      // bodyBytes — уже Uint8Array для structured clone в рендерер.
+      const requestParams = { ...preparedRequest };
+      if (requestParams.body instanceof Uint8Array) {
+        requestParams.bodyBytes = requestParams.body;
+        delete requestParams.body;
+        delete requestParams.encoding;
+      }
+      const response = await worker.request("http.request", requestParams, interactive ? 120_000 : 600_000);
+      if (response && response.bodyBytes instanceof Uint8Array) {
+        return { ...response, body: response.bodyBytes, encoding: "raw" };
+      }
+      // legacy-строчные ответы (base64) — конвертируем один раз в Uint8Array
       if (response && response.encoding === "base64" && typeof response.body === "string") {
         return { ...response, body: Buffer.from(response.body, "base64") };
       }

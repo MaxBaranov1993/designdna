@@ -11,10 +11,14 @@ export function validateSourceAuthUrl(rawUrl) {
 }
 
 function decodeRequestBody(request) {
-  const body = String(request?.body || "");
-  const text = request?.encoding === "base64"
-    ? Buffer.from(body, "base64").toString("utf8")
-    : body;
+  // v2-транспорт несёт тело как Uint8Array; legacy-строки (base64/utf8) —
+  // только для старых рендереров
+  let text = "";
+  if (request?.body instanceof Uint8Array) text = Buffer.from(request.body).toString("utf8");
+  else {
+    const body = String(request?.body || "");
+    text = request?.encoding === "base64" ? Buffer.from(body, "base64").toString("utf8") : body;
+  }
   if (!text) return {};
   const parsed = JSON.parse(text);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -62,11 +66,11 @@ export function attachSourceAuthCookies(request, cookies, targetUrl) {
   const authCookies = normalizeSourceAuthCookies(cookies, targetUrl);
   if (authCookies.length) payload.authCookies = authCookies;
   else payload.authSessionFallback = true;
-  const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
+  const bodyBytes = Buffer.from(JSON.stringify(payload), "utf8");
   return {
     ...request,
-    body,
-    encoding: "base64",
-    headers: { ...(request.headers || {}), "content-length": String(Buffer.byteLength(body, "base64")) },
+    body: bodyBytes,
+    encoding: "raw",
+    headers: { ...(request.headers || {}), "content-length": String(bodyBytes.length) },
   };
 }
