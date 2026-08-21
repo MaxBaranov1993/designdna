@@ -120,7 +120,34 @@ are generated for tablet/mobile, and the normal editor history provides Undo.
 rail while section backgrounds remain full-bleed. Imported reproduction blocks
 are not rescaled; the alignment is applied to editable generic section wraps.
 
-## Next implementation boundary
+## Capture contract additions (IR 1.1)
 
-The next P2 phase adds the cross-source Harmonizer, visual quality gates and
-the remaining designer/vibecoder AI advantages from the product roadmap.
+The Source Import rework (compiler `dom-v27`) extended the 1.1 schema instead
+of bumping the version:
+
+- `frame.transform` (full CSS transform string, takes priority over rotation)
+  and `frame.z` (z-index);
+- element `editable: false` + `lockedReason` — locked raster layers for
+  canvas/WebGL, cross-origin iframes, closed shadow DOM, url() masks and
+  complex transforms; visible and selectable, never editable by the editor,
+  geoedit or AI assist;
+- element `sourceMeta` — per-layer provenance (kind, url, reason, component
+  boundary/role, repeat group, background layer index);
+- `responsiveOverrides.src` per viewport for images; `elementStyle`
+  `backgroundImage`/`maskImage`/`clipPath`;
+- variable-font weight ranges and `unicodeRange` subsets in `@font-face`.
+
+Capture honesty is enforced out-of-band by the fidelity harness
+(`app/fidelity_harness.py`): the IR is re-rendered by the editor engine and
+compared to the source screenshot at exact viewport size. A capture whose
+report fails the gate cannot enter the cache (`cache_store.put_gated`).
+
+## Status
+
+- Shipped foundations: multi-source Edit + Source Lens, Smart Axis,
+  Harmonizer, Quality Copilot, Responsive Autopilot, Intent Locks, semantic
+  selection, selection-scoped AI editing.
+- Remaining roadmap (states, content realism, code contracts, taste memory,
+  outcome branches) is tracked in `docs/AI-EDITOR-ROADMAP.md`.
+- Parser migration to stable identities is still pending before 2.0 becomes
+  the runtime default; the runtime version remains 1.1.

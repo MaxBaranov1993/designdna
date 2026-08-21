@@ -2,7 +2,7 @@
 
 Repo Canvas is the semantic **Project Map** surface of DesignDNA. It is no longer a
 separate product runtime: Electron starts it as an internal JSONL/stdio worker and
-renders its data in the same React application as the Design IR editor.
+renders its data in the same SvelteKit application as the Design IR editor.
 
 ## Provenance
 

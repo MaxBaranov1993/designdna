@@ -43,6 +43,6 @@ Unsigned artifacts are suitable only for internal testing: Windows SmartScreen a
 
 ## Standalone runtime
 
-The `0.4.x` Forge layout includes the React bundle, Repo Canvas worker, a platform-native PyInstaller `onedir` Python sidecar and the matching Playwright Chromium headless shell as a sibling resource. Every browser call in DesignDNA is headless, so the full browser is intentionally omitted. Keeping Chromium outside PyInstaller preserves its native macOS bundle structure for Electron signing. Installed applications do not use a system Python. The release workflow starts the bundled sidecar and verifies its JSONL health response before creating an installer.
+The `0.4.x` Forge layout includes the SvelteKit bundle, Repo Canvas worker, a platform-native PyInstaller `onedir` Python sidecar and the matching Playwright Chromium headless shell as a sibling resource. Every browser call in DesignDNA is headless, so the full browser is intentionally omitted. Keeping Chromium outside PyInstaller preserves its native macOS bundle structure for Electron signing. Installed applications do not use a system Python. The release workflow starts the bundled sidecar and verifies its JSONL health response before creating an installer.
 
 Application code and schema assets are read from the signed resource bundle. Projects remain user-selected workspaces; databases, captured fonts and rendered media are written below Electron's per-user `userData/data` directory.

@@ -15,10 +15,13 @@ flowchart TD
 
 The production application opens no local HTTP port. Electron loads the compiled SvelteKit bundle from disk. Existing FastAPI routes run in-process through the ASGI protocol in `app/desktop_worker.py`, so the editor keeps its current contracts without Uvicorn or `localhost`. The browser/FastAPI launch remains a development and compatibility mode.
 
+The Python worker speaks JSONL over stdio and handles one request at a time. The host therefore runs a second interactive Python worker for fast routes (editor AI assist), serialized per worker through `desktop/lib/serial-request-queue.mjs`, so quick round-trips never queue behind multi-minute Source Import captures.
+
 ## Trust boundaries
 
 - The renderer has no Node.js access. `contextIsolation`, sandboxing and a narrow preload API are mandatory.
 - Provider secrets never cross into the renderer. They are encrypted with Electron `safeStorage` and only referenced by provider id.
+- Source Import login ("Source Login") runs in an isolated, sandboxed Electron session partition; the extracted cookies are host-scoped and sanitized (`desktop/services/source-auth.mjs`) before being injected into the capture request, and are never exposed to the renderer.
 - Repo Canvas owns its event store but runs as a child worker. Its old HTTP server is not started by the desktop app.
 - Design IR remains the source of truth. Desktop integration does not introduce a second document model.
 - MCP definitions are validated before persistence. Secrets belong in the encrypted credential store, not in MCP settings JSON.
@@ -33,7 +36,7 @@ The production application opens no local HTTP port. Electron loads the compiled
 
 ## Migration phases
 
-1. **Runtime convergence (this change):** Electron host, ASGI bridge, Repo Canvas worker, safe IPC, Design/Project Map switch.
+1. **Runtime convergence (implemented):** Electron host, ASGI bridge, Repo Canvas worker, safe IPC, Design/Project Map switch.
 2. **Provider orchestration (implemented):** Codex threads/turns, streamed item events, command/file approvals, MCP tool discovery/calls and dynamic-tool routing.
 3. **Distribution (implemented):** Electron Forge produces Squirrel.Windows and macOS ZIP/DMG artifacts with a PyInstaller Python sidecar and bundled Playwright Chromium. Signing and notarization activate only when CI secrets are present.
-4. **Legacy retirement:** remove the standalone Repo Canvas HTTP entry point after desktop parity is verified.
+4. **Legacy retirement (pending):** remove the standalone Repo Canvas HTTP entry point after desktop parity is verified.
