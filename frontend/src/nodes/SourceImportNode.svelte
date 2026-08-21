@@ -2,6 +2,7 @@
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { flow } from "../flow/state";
+  import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import { useFlowStore } from "../flow/store";
   import type { SourceImportFlowNode, SourceViewport } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
@@ -18,8 +19,11 @@
   let desktopAuth = $derived(typeof window !== "undefined" ? window.designDNA?.sourceAuth : undefined);
   let expandedBlock = $state<string | null>(null);
 
+  // Сбрасываем раскрытие только если блок исчез (напр. re-import).
+  // selected здесь не условие: selection нод — runtime-only и не всегда
+  // доходит до пропа, из-за чего превью мгновенно схлопывалось.
   $effect(() => {
-    if (!selected || (expandedBlock && !data.blocks.some((block) => block.name === expandedBlock))) {
+    if (expandedBlock && !data.blocks.some((block) => block.name === expandedBlock)) {
       expandedBlock = null;
     }
   });
@@ -80,8 +84,12 @@
       class="f-url nodrag"
       placeholder="https://site.com/page"
       value={data.url}
-      oninput={(e) => $flow.setNodeData(Number(id), { url: e.currentTarget.value })}
+      oninput={(e) => {
+        const value = e.currentTarget.value;
+        commitNodeText(`sourceimport:${id}:url`, () => $flow.setNodeData(Number(id), { url: value }));
+      }}
       onblur={(e) => {
+        flushNodeText(`sourceimport:${id}:url`);
         const value = e.currentTarget.value.trim();
         if (value && !/^[a-z][a-z\d+.-]*:\/\//i.test(value)) {
           $flow.setNodeData(Number(id), { url: value.startsWith("//") ? `https:${value}` : `https://${value}` });

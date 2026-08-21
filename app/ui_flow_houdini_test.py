@@ -139,6 +139,8 @@ def main():
         pg.reload()
         pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        pg.evaluate("window.GraphDev.clear()")
 
         # ---------- создание нод из контекстного меню (14 типов, с Recorder, Motion и Page Bridge) ----------
         pg.click(".svelte-flow__pane", button="right", position={"x": 300, "y": 120})
@@ -186,8 +188,10 @@ def main():
         )
 
         # превью у блоков с IR; блок с ошибкой — текст ошибки, чекбокс недоступен.
-        # В SourceImport-ноде превью по умолчанию — «Reference» (скриншот, у моков его нет);
+        # Превью блока теперь раскрывается по требованию (кнопка «Preview»), внутри —
+        # режимы; по умолчанию «Reference» (скриншот, у моков его нет),
         # миниатюра IR рендерится в режиме «IR» — переключаем.
+        pg.click(".n-sourceimport .bp-block[data-block='hero'] button:text-is('Preview')")
         pg.click(".n-sourceimport .bp-block[data-block='hero'] .source-preview-mode button:text-is('IR')")
         pg.wait_for_selector(
             ".n-sourceimport .bp-block[data-block='hero'] .bp-preview .ir-preview-inner div[class^='ir-']",
