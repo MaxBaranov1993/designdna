@@ -2,6 +2,7 @@
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { flow } from "../flow/state";
+  import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { GeneratorFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -39,7 +40,11 @@
     class="f-own nodrag nowheel"
     placeholder="Свой промпт (если нет провода)"
     value={data.ownPrompt}
-    oninput={(e) => $flow.setNodeData(Number(id), { ownPrompt: e.currentTarget.value })}
+    oninput={(e) => {
+      const value = e.currentTarget.value;
+      commitNodeText(`generator:${id}:ownPrompt`, () => $flow.setNodeData(Number(id), { ownPrompt: value }));
+    }}
+    onblur={() => flushNodeText(`generator:${id}:ownPrompt`)}
   ></textarea>
   <div class="generator-model-row">
     <select

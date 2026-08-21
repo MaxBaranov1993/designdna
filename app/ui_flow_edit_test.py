@@ -71,6 +71,8 @@ def main():
         pg.reload()
         pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        pg.evaluate("window.GraphDev.clear()")
         pg.wait_for_function("window.GraphDev && window.IRRenderer && window.DNAEditor")
 
         e1 = pg.evaluate("window.GraphDev.add('edit', 80, 60).id")

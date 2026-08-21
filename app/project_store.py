@@ -22,6 +22,9 @@ DEFAULT_PROJECT_ID = "default"
 
 _lock = threading.Lock()
 
+# (user_id, project_id) -> (sha256(payload text), updated_at) последнего сейва
+_LAST_SAVE_SHA: dict[tuple[str, str], tuple[str, str]] = {}
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -191,20 +194,36 @@ def _sample_ir(
 
 
 def save_project(payload: dict[str, Any], user_id: str = DEFAULT_USER_ID, project_id: str = DEFAULT_PROJECT_ID) -> dict[str, Any]:
-    profile = build_taste_profile(payload if isinstance(payload, dict) else {})
-    now = _now()
+    if not isinstance(payload, dict):
+        payload = {}
+    # Один dumps на всё (INSERT + размер); sha пропускает full-IR taste-walk,
+    # когда фронт прислал байт-в-байт тот же проект (например, повторный сейв).
+    text = json.dumps(payload, ensure_ascii=False)
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    size = len(text.encode("utf-8"))
     with _lock:
+        cached = _LAST_SAVE_SHA.get((user_id, project_id))
+        if cached and cached[0] == digest:
+            with _db() as con:
+                row = con.execute(
+                    "SELECT 1 FROM projects WHERE user_id=? AND project_id=?",
+                    (user_id, project_id),
+                ).fetchone()
+            if row:
+                return {"ok": True, "bytes": size, "updated_at": cached[1], "unchanged": True}
+        profile = build_taste_profile(payload)
+        now = _now()
         with _db() as con:
             con.execute(
                 "INSERT OR REPLACE INTO projects (user_id, project_id, payload, version, updated_at) VALUES (?,?,?,?,?)",
-                (user_id, project_id, json.dumps(payload, ensure_ascii=False), str(payload.get("version", "unknown")), now),
+                (user_id, project_id, text, str(payload.get("version", "unknown")), now),
             )
             con.execute(
                 "INSERT OR REPLACE INTO taste_profiles (user_id, project_id, profile, updated_at) VALUES (?,?,?,?)",
                 (user_id, project_id, json.dumps(profile, ensure_ascii=False), now),
             )
             _record_prompt_events(con, payload, user_id, project_id)
-    size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        _LAST_SAVE_SHA[(user_id, project_id)] = (digest, now)
     return {"ok": True, "bytes": size, "updated_at": now, "taste": profile}
 
 

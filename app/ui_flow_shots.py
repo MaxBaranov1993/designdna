@@ -37,6 +37,8 @@ def main():
         pg.reload()
         pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        pg.evaluate("window.GraphDev.clear()")
 
         gid = int(pg.evaluate("window.GraphDev.add('generator', 80, 60).id"))
         eid = int(pg.evaluate("window.GraphDev.add('edit', 620, 80).id"))

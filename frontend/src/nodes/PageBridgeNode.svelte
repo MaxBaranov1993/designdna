@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import { flow } from "../flow/state";
+  import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { PageBridgeFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -27,8 +28,14 @@
     <input
       class="nodrag"
       value={data.channel}
-      oninput={(e) => $flow.setNodeData(Number(id), { channel: e.currentTarget.value })}
-      onblur={() => $flow.runNode(Number(id))}
+      oninput={(e) => {
+        const value = e.currentTarget.value;
+        commitNodeText(`pagebridge:${id}:channel`, () => $flow.setNodeData(Number(id), { channel: value }));
+      }}
+      onblur={() => {
+        flushNodeText(`pagebridge:${id}:channel`);
+        $flow.runNode(Number(id));
+      }}
       placeholder="shared-component"
     />
   </label>

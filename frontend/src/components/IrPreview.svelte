@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { deepClone } from "../flow/dataflow";
   import type { IRObject, SourceViewport } from "../flow/types";
   import { cn } from "../lib/utils";
   import { IRRenderer } from "../engine/renderer";
@@ -61,7 +60,8 @@
       (meta.activeViewport === "desktop" || meta.activeViewport === "tablet" || meta.activeViewport === "mobile"
         ? (meta.activeViewport as SourceViewport)
         : undefined);
-    IRRenderer.renderIR(el, deepClone(currentIr), activeViewport ? { viewport: activeViewport } : undefined);
+    // renderIR сам работает на глубокой копии — второй clone здесь мегабайтный простой
+    IRRenderer.renderIR(el, currentIr, activeViewport ? { viewport: activeViewport } : undefined);
     const frame = requestAnimationFrame(syncPreviewSize);
     return () => cancelAnimationFrame(frame);
   });

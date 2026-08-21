@@ -2,6 +2,7 @@
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { flow } from "../flow/state";
+  import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { ReskinFlowNode, ReskinMask } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -35,7 +36,11 @@
     class="f-prompt nodrag nowheel"
     placeholder="Пожелания по новому стилю"
     value={data.prompt}
-    oninput={(e) => $flow.setNodeData(Number(id), { prompt: e.currentTarget.value })}
+    oninput={(e) => {
+      const value = e.currentTarget.value;
+      commitNodeText(`reskin:${id}:prompt`, () => $flow.setNodeData(Number(id), { prompt: value }));
+    }}
+    onblur={() => flushNodeText(`reskin:${id}:prompt`)}
   ></textarea>
   <div class="rs-mask">
     {#each MASK_FIELDS as f (f.key)}

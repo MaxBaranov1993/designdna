@@ -3,6 +3,7 @@
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { flow } from "../flow/state";
+  import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { MixFlowNode } from "../flow/types";
   import { cn } from "../lib/utils";
   import NodeShell from "./NodeShell.svelte";
@@ -30,11 +31,13 @@
         max={100}
         value={weight}
         class="nodrag"
-        oninput={(e) =>
-          $flow.setNodeData(Number(id), {
-            weights: { ...data.weights, [name]: Number(e.currentTarget.value) },
-          })
-        }
+        oninput={(e) => {
+          const value = Number(e.currentTarget.value);
+          commitNodeText(`mix:${id}:w:${name}`, () =>
+            $flow.setNodeData(Number(id), { weights: { ...data.weights, [name]: value } }),
+          );
+        }}
+        onchange={() => flushNodeText(`mix:${id}:w:${name}`)}
       />
       <span class="wv">{weight}</span>
       <button class="mx nodrag" title="Убрать вход" onclick={() => $flow.removeMixInput(Number(id), name)}>✕</button>

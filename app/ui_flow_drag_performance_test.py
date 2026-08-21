@@ -39,6 +39,8 @@ def main() -> None:
         page.reload()
         page.wait_for_selector(".svelte-flow__pane")
         page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        page.evaluate("window.GraphDev.clear()")
 
         target_id = page.evaluate(
             """() => {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import { flow } from "../flow/state";
+  import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import { toast } from "../flow/toast";
   import type { ReferenceFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
@@ -46,9 +47,13 @@
     placeholder="Описание стиля / что взять из референса (уходит в провод)"
     value={data.brief}
     oninput={(e) => {
-      $flow.setNodeData(Number(id), { brief: e.currentTarget.value });
-      $flow.propagate(Number(id));
+      const value = e.currentTarget.value;
+      commitNodeText(`reference:${id}:brief`, () => {
+        $flow.setNodeData(Number(id), { brief: value });
+        $flow.propagate(Number(id));
+      });
     }}
+    onblur={() => flushNodeText(`reference:${id}:brief`)}
   ></textarea>
   <label class="ref-decompose nodrag">
     <input type="checkbox" class="f-decompose" checked={!!data.decomposed} onchange={onDecompose} />

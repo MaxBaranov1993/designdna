@@ -32,6 +32,8 @@ def check(name, cond, extra=""):
 def wait_flow_ready(pg):
     pg.wait_for_selector(".svelte-flow__pane")
     pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+    # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+    pg.evaluate("window.GraphDev.clear()")
 
 
 def no_legacy_markers(pg):

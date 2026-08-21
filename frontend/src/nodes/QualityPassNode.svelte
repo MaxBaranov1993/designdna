@@ -2,6 +2,7 @@
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { flow } from "../flow/state";
+  import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { QualityPassFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -30,7 +31,11 @@
     class="f-prompt nodrag nowheel"
     placeholder="Бриф для оценки (необязательно, но повышает точность)"
     value={data.brief}
-    oninput={(e) => $flow.setNodeData(Number(id), { brief: e.currentTarget.value })}
+    oninput={(e) => {
+      const value = e.currentTarget.value;
+      commitNodeText(`qualitypass:${id}:brief`, () => $flow.setNodeData(Number(id), { brief: value }));
+    }}
+    onblur={() => flushNodeText(`qualitypass:${id}:brief`)}
   ></textarea>
   <div class="ctl-row qp-controls">
     <label class="qp-label nodrag"
