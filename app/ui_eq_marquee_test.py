@@ -181,8 +181,11 @@ def main():
         pg.wait_for_timeout(350)
         check("eq-метки убраны после drop",
               pg.evaluate("document.querySelectorAll('.dna-editor .geo-eq').length === 0"))
-        fx = pg.evaluate("window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id))"
-                         ".data.ir.tree[1].children[2].frame.x")
+        # правки редактора живут в черновике (модель ревизий, da39b79):
+        # читаем _editorDraft.ir с фолбэком на data.ir
+        fx = pg.evaluate(
+            "(() => { const d = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data;"
+            "return ((d._editorDraft && d._editorDraft.ir) || d.ir).tree[1].children[2].frame.x; })()")
         check("drag записал frame.x ≈ 500", isinstance(fx, (int, float)) and 497 <= fx <= 503,
               str(fx))
 

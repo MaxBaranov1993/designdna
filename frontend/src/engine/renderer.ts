@@ -921,7 +921,15 @@ import { isLockedNode } from "./locked";
       return renderSection(sec, uid, rootFree).replace(/^<(\w+)/, `<$1 data-ir-sec="${i}"`);
     }).join("");
 
-    const viewportClass = artW <= 639 ? "ir-mobile" : artW <= 1023 ? "ir-tablet" : "ir-desktop";
+    // Класс вьюпорта — из ЯВНО запрошенного режима (редактор передаёт
+    // options.viewport). Вывод из ширины артборда ломал редактор: дефолтный
+    // холст 960px (DESIGN_WIDTH) всегда получал ir-tablet и tablet-рефлоу
+    // (sec-free -> column gap:28, absolute -> flow) — геометрия, eq-метки и
+    // marquee расходились с IR. Ширина остаётся fallback'ом для превью-миниатюр
+    // без явного viewport.
+    const vpName = (options && options.viewport) ||
+      (artW <= 639 ? "mobile" : artW <= 1023 ? "tablet" : "desktop");
+    const viewportClass = "ir-" + vpName;
     container.innerHTML = `<style>${css}</style><div class="ir-${uid} ${viewportClass}" data-design-width="${artW}" style="${artStyle.join(";")}">${body}</div>`;
     const inner = container.firstElementChild ? container.querySelector(".ir-" + uid) : null;
     applyFrameOverrides(container, tree);

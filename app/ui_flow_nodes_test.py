@@ -77,6 +77,25 @@ def drag_wire(pg, src_sel, dst_sel):
     pg.wait_for_timeout(250)
 
 
+def drop_point_on_node(pg, selector):
+    """Точка внутри ноды, не перекрытая другими нодами (grow нод после
+    реworks делает центр часто перекрытым; snap-to-node цепляет верхнюю)."""
+    box = pg.query_selector(selector).bounding_box()
+    derive_id = pg.evaluate(
+        "(s) => document.querySelector(s).closest('.fnode').dataset.id", selector)
+    for fy in (0.8, 0.7, 0.9, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1):
+        for fx in (0.2, 0.5, 0.8):
+            x = box["x"] + box["width"] * fx
+            y = box["y"] + box["height"] * fy
+            hit = pg.evaluate(
+                "(pt) => { const el = document.elementFromPoint(pt.x, pt.y);"
+                " const n = el && el.closest ? el.closest('.fnode') : null;"
+                " return n ? n.dataset.id : null; }", {"x": x, "y": y})
+            if hit == derive_id:
+                return x, y
+    raise AssertionError(f"no unobstructed drop point on {selector}")
+
+
 def drag_wire_to_node(pg, src_sel, node_sel):
     src = pg.wait_for_selector(src_sel)
     dst = pg.wait_for_selector(node_sel)
@@ -239,7 +258,14 @@ def main():
         check("connect Source Import tokens → Style DNA", connect_types(pg, "sourceimport", "tokens", "styledna", "tokens"))
         check("connect Style DNA → Derive", connect_types(pg, "styledna", "tokens", "derive", "tokens"))
         check("connect prompt → Derive", connect_types(pg, "prompt", "out", "derive", "prompt"))
-        drag_wire_to_node(pg, ".n-sourceimport .pp-out-hero", ".n-derive")
+        # дроп в неперекрытую точку Derive: ноды выросли и центр часто перекрыт
+        _sx, _sy = center(pg.query_selector(".n-sourceimport .pp-out-hero").bounding_box())
+        _dx, _dy = drop_point_on_node(pg, ".n-derive")
+        pg.mouse.move(_sx, _sy)
+        pg.mouse.down()
+        pg.mouse.move(_dx, _dy, steps=18)
+        pg.mouse.up()
+        pg.wait_for_timeout(300)
         check("snap-to-node connects hero to Derive.reference", pg.evaluate("""(() => {
             const st = window.GraphDev.state();
             const si = st.nodes.find(n => n.type === 'sourceimport');

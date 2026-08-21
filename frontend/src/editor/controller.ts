@@ -2011,7 +2011,7 @@ function syncSelectedActiveGeometry() {
 function renderCanvas() {
   if (!state || !dom.canvasInner) return;
   const inner = dom.canvasInner;
-  IRRenderer.renderIR(inner, buildActiveIR(), { fit: false }); // _frames применяет сам рендерер
+  IRRenderer.renderIR(inner, buildActiveIR(), { fit: false, viewport: state.viewport }); // _frames применяет сам рендерер
   applyLayerFlags();
   applyTransform();
   attachGeoEdit();
@@ -2251,7 +2251,7 @@ function attachGeoEdit() {
       syncSelectedActiveGeometry();
       persistDraft();
       const savedRefs = state.sel.map((s) => s.ref);
-      IRRenderer.renderIR(inner, buildActiveIR(), { fit: false });
+      IRRenderer.renderIR(inner, buildActiveIR(), { fit: false, viewport: state.viewport });
       applyLayerFlags();
       applyTransform();
       attachGeoEdit();
@@ -2574,7 +2574,7 @@ export function rerenderEditorCanvas() {
       ? IRRenderer.materializeResponsiveIR(aiAssistState.previewIr, state.viewport)
       : aiAssistState.previewIr;
   }
-  IRRenderer.renderIR(inner, canvasIr, { fit: false });
+  IRRenderer.renderIR(inner, canvasIr, { fit: false, viewport: state.viewport });
   if (aiAssistState?.ops?.length) {
     const marked = new Set<string>();
     aiAssistState.ops.forEach((op) => {

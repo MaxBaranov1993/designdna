@@ -103,7 +103,17 @@
     // effect and performs any pending measurement once.
     if (nodeDragActive) return;
     const ids = nodes.map((node) => node.id);
-    const signature = ids.join("|");
+    // Сигнатура включает и количество портов: динамические порты Source Import
+    // (блоки) появляются ПОСЛЕ монтирования ноды — без пересчёта
+    // updateNodeInternals библиотека не узнаёт о новых handle и молча
+    // игнорирует pointerdown (провода из блочных портов не тянутся)
+    const portsSig = nodes
+      .map((node) => {
+        const ports = portsOfNode({ type: node.type, data: node.data });
+        return `${node.id}:${ports.in.length}/${ports.out.length}`;
+      })
+      .join("|");
+    const signature = ids.join("|") + "#" + portsSig;
     if (signature === measuredNodeIds) return;
     measuredNodeIds = signature;
     void tick().then(() => {
