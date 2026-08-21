@@ -1,5 +1,6 @@
 import { defaultData } from "./ports";
 import { edgeKindOf, WIRE_COLORS } from "./dataflow";
+import { offloadBlobsInPlace } from "../desktop/blobStore";
 import { toast } from "./toast";
 import type { ProjectLoadResp } from "./api";
 import type {
@@ -124,8 +125,9 @@ function cancelIdleWrite(): void {
   idleWriteHandle = null;
 }
 
-function writeProjectNow(provider: () => PagesProjectPayload): void {
-  const payload = provider();
+/** Синхронная запись (путь beforeunload): без offload — страница может
+ *  закрыться до завершения асинхронного шага, данные обязаны попасть в LS. */
+function writeProjectSync(payload: PagesProjectPayload): void {
   const compact = compactForStorage(payload);
   const text = JSON.stringify(compact);
   lastDbProjectText = text;
@@ -143,6 +145,22 @@ function writeProjectNow(provider: () => PagesProjectPayload): void {
       toast("localStorage переполнен - проект сохраняется в SQLite.", "error");
     }
   }
+}
+
+function writeProjectNow(provider: () => PagesProjectPayload): void {
+  // Десктоп: длинные inline data:-URL выносим в blob-store ДО сериализации —
+  // LS и SQLite-копия хранят короткие ddna://-ссылки. Offload мутирует живые
+  // node.data на месте (img-src грузит блобы по протоколу); при недоступном
+  // мосте просто пишем как есть — данные не теряются.
+  void (async () => {
+    const payload = provider();
+    try {
+      await offloadBlobsInPlace(payload);
+    } catch {
+      /* offload — оптимизация, не транзакция */
+    }
+    writeProjectSync(payload);
+  })();
 }
 
 function scheduleDbProjectSave(): void {
@@ -189,7 +207,8 @@ window.addEventListener("beforeunload", () => {
     projectSaveTimer = null;
   }
   cancelIdleWrite();
-  if (lastProjectProvider) writeProjectNow(lastProjectProvider);
+  // Синхронный путь: offload не успеет до выгрузки страницы — пишем как есть
+  if (lastProjectProvider) writeProjectSync(lastProjectProvider());
   if (dbSaveTimer) {
     clearTimeout(dbSaveTimer);
     dbSaveTimer = null;

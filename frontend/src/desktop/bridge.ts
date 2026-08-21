@@ -1,7 +1,9 @@
+import { expandBlobRefs } from "./blobStore";
+
 type DesktopHttpResponse = {
   status: number;
   headers: Record<string, string>;
-  body: string;
+  body: string | Uint8Array;
   encoding: "utf8" | "base64";
 };
 
@@ -39,7 +41,13 @@ export function installDesktopFetchBridge(): void {
 
     const request = input instanceof Request ? input.clone() : new Request(url.toString(), init);
     const method = request.method.toUpperCase();
-    const requestBody = new Set(["GET", "HEAD"]).has(method) ? "" : encodeBase64(await request.arrayBuffer());
+    let requestBody = new Set(["GET", "HEAD"]).has(method) ? "" : encodeBase64(await request.arrayBuffer());
+    // В LS блобы живут короткими ddna://-ссылками; серверный рендер (fidelity,
+    // QA, reproduce) должен видеть настоящие data:-URL — разворачиваем во всех
+    // исходящих телах, кроме persist-путей проекта (там ссылки и должны храниться)
+    if (requestBody && !url.pathname.startsWith("/api/project/")) {
+      requestBody = await expandBlobRefs(requestBody);
+    }
     const response = await bridge.request({
       method,
       path: `${url.pathname}${url.search}`,
@@ -47,7 +55,14 @@ export function installDesktopFetchBridge(): void {
       body: requestBody,
       encoding: "base64",
     }) as DesktopHttpResponse;
-    const body = response.encoding === "base64" ? decodeBase64(response.body) : response.body;
+    // main отдаёт бинарные тела уже Uint8Array (structured clone без base64);
+    // строка с encoding=base64 — fallback для старых main-процессов
+    let body: ArrayBuffer | string;
+    const rawBody: unknown = response.body;
+    if (rawBody instanceof Uint8Array) body = rawBody.slice().buffer as ArrayBuffer;
+    else if (response.encoding === "base64" && typeof response.body === "string") body = decodeBase64(response.body);
+    else if (typeof response.body === "string") body = response.body;
+    else body = "";
     return new Response(body, { status: response.status, headers: response.headers });
   };
 

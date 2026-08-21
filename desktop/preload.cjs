@@ -2,7 +2,14 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("designDNA", Object.freeze({
   app: Object.freeze({ info: () => ipcRenderer.invoke("app:info") }),
-  api: Object.freeze({ request: (request) => ipcRenderer.invoke("api:request", request) }),
+  api: Object.freeze({
+    request: (request) => ipcRenderer.invoke("api:request", request),
+    cancel: () => ipcRenderer.invoke("api:cancel"),
+  }),
+  blobs: Object.freeze({
+    put: (name, base64) => ipcRenderer.invoke("blobs:put", { name, base64 }),
+    getMany: (names) => ipcRenderer.invoke("blobs:getMany", { names }),
+  }),
   files: Object.freeze({
     save: (name, base64) => ipcRenderer.invoke("files:save", { name, base64 }),
   }),

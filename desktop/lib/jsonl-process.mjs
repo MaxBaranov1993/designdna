@@ -67,6 +67,18 @@ export class JsonlProcess {
     }
   }
 
+  /** Немедленная отмена: процесс убивается, все ожидающие запросы отклоняются
+   *  с reason. Следующий request() лениво поднимет свежий процесс. */
+  abort(reason) {
+    const child = this.child;
+    this.#failAll(new Error(reason || "aborted"));
+    if (child) {
+      child.removeAllListeners("exit");
+      child.kill();
+      this.child = null;
+    }
+  }
+
   #handleLine(line) {
     let message;
     try {

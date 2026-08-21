@@ -1598,3 +1598,9 @@
 .edit-source-list { display: flex; flex-wrap: wrap; gap: 5px; padding: 7px 10px 2px; }
 .edit-source-chip { max-width: 100%; display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px 3px 4px; border: 1px solid #33333c; border-radius: 999px; color: #b9b9c4; background: #1c1c22; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .edit-source-chip b { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: #343440; color: #fff; font-size: 8px; }
+
+.n-status-row { display:flex; align-items:center; gap:6px; }
+.n-status-row .n-status { flex:1; min-width:0; }
+.n-cancel { flex:none; width:18px; height:18px; line-height:1; border-radius:6px; border:1px solid hsl(var(--border));
+  background:transparent; color:hsl(var(--muted-foreground)); cursor:pointer; font-size:10px; }
+.n-cancel:hover { color:hsl(var(--primary)); border-color:hsl(var(--primary)); }

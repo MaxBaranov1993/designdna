@@ -220,6 +220,8 @@ class ReskinReq(BaseModel):
     tokens: dict | None = None  # источник нового стиля (design-токены)
     mask: dict = {}             # чекбоксы: colors/fonts/radii/shadows/texts/images
     provider: str = "auto"      # фильтр цепочки ROUTING: auto | openai | kimi
+    prepareOnly: bool = False     # desktop: вернуть промпты вместо LLM-вызова
+    rawOutput: str | None = None  # desktop: ответ подключённого аккаунта
 
 
 class QualityGateReq(BaseModel):
@@ -676,11 +678,16 @@ def reskin(req: ReskinReq):
 
     # выбор пользователя в ноде (openai/kimi) — фильтр цепочки ROUTING, auto = вся цепочка
     provider = req.provider if req.provider in ("openai", "kimi") else "auto"
+    reskin_messages = [
+        {"role": "system", "content": llm.build_system_prompt("edit")},
+        {"role": "user", "content": user},
+    ]
+    # desktop-транспорт: LLM гоняет main-процесс через подключённый аккаунт
+    # (codex/kimi/openai); сервер готовит промпт и валидирует результат
+    if req.prepareOnly:
+        return {"prompts": [{"messages": reskin_messages}]}
     try:
-        raw = llm.chat(provider, [
-            {"role": "system", "content": llm.build_system_prompt("edit")},
-            {"role": "user", "content": user},
-        ], 0.7, role="reskin")
+        raw = req.rawOutput if req.rawOutput else llm.chat(provider, reskin_messages, 0.7, role="reskin")
     except Exception as e:
         return err(502, str(e))
     model_ir, parse_error = parse_ir_response(raw)

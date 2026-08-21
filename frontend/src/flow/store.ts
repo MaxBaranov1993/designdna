@@ -824,13 +824,29 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     get().setStatus(id, `Derive: ${data.count} вариант(а) через подключённый аккаунт…`);
     get().setBusy(id, true);
     try {
-      const res = await api<GenerateResp>("/api/generate", {
+      const request = {
         brief: prompt,
         count: data.count,
         provider: "auto",
         styleHint: styleHint || undefined,
         tokens: tokens && typeof tokens === "object" ? tokens : undefined,
-      });
+      };
+      let res: GenerateResp;
+      const desktop = window.designDNA;
+      if (!desktop) {
+        res = await api<GenerateResp>("/api/generate", request);
+      } else {
+        // тот же transport-контракт, что у Generator: сервер готовит промпты,
+        // LLM отвечает через подключённый аккаунт, сервер валидирует и чинит
+        const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true });
+        if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы Derive");
+        const rawOutputs: string[] = [];
+        for (const p of prepared.prompts) {
+          const answer = await desktop.providers.chat("auto", p.messages, 0.8);
+          rawOutputs.push(answer.content);
+        }
+        res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs });
+      }
       const variants = Array.isArray(res.variants) ? res.variants : [];
       get().setNodeData(id, { variants, active: 0 });
       get().setStatus(id, `Готово: вариантов ${variants.length}`, "ok");
@@ -873,7 +889,20 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         mask: data.mask,
       };
       if (tokensRaw && typeof tokensRaw === "object") payload.tokens = tokensRaw;
-      const res = await api<ReskinResp>("/api/reskin", payload);
+      let res: ReskinResp;
+      const desktop = window.designDNA;
+      if (!desktop) {
+        res = await api<ReskinResp>("/api/reskin", payload);
+      } else {
+        // desktop: сервер готовит reskin-промпт, аккаунт отвечает, сервер
+        // делает merge-back/валидацию — креденшелы не покидают main-процесс
+        const prepared = await api<{ prompts: Array<{ messages: Array<{ role: string; content: string }> }> }>(
+          "/api/reskin", { ...payload, prepareOnly: true },
+        );
+        if (!prepared.prompts?.length) throw new Error("Не удалось подготовить промпт рестайла");
+        const answer = await desktop.providers.chat("auto", prepared.prompts[0].messages, 0.7);
+        res = await api<ReskinResp>("/api/reskin", { ...payload, rawOutput: answer.content });
+      }
       const log = Array.isArray(res.log) ? res.log : [];
       get().setNodeData(id, { ir: res.ir || null, log });
       get().setStatus(id, `Готово · журнал merge-back: ${log.length}`, "ok");

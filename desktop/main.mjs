@@ -39,6 +39,21 @@ const mcpApprovals = new Map();
 const codexRequests = new Map();
 const pythonApiQueue = new SerialRequestQueue();
 const pythonInteractiveQueue = new SerialRequestQueue();
+const repoCanvasQueue = new SerialRequestQueue();
+let prewarmed = false;
+
+/* Прогрев: холодный старт Python-воркера (импорт FastAPI-стека) стоит ~1.5 с;
+ * гоняем health-запрос обоим воркерам сразу после показа окна, чтобы первый
+ * реальный вызов не платил этот тариф. Через очереди — чтобы не спорить с
+ * пользовательскими запросами. */
+function prewarmWorkers() {
+  if (prewarmed) return;
+  prewarmed = true;
+  void pythonInteractiveQueue.run(() => pythonInteractiveWorker.request("health", {}, 30_000))
+    .catch(() => undefined);
+  void pythonApiQueue.run(() => pythonWorker.request("health", {}, 30_000))
+    .catch(() => undefined);
+}
 const SOURCE_AUTH_PARTITION = "designdna-source-auth";
 let sourceAuthWindow = null;
 let quitting = false;
@@ -69,25 +84,41 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const FONT_MIME = { ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf" };
+const BLOB_MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".mp4": "video/mp4", ".webm": "video/webm" };
+
+/* Блобы (inline data:image в node.data) исторически раздували localStorage до
+ * десятков МБ: каждый бут парсит блоб целиком, каждый автосейв сериализует.
+ * Десктоп выносит их в userData/data/blobs и кладёт в LS короткие ссылки
+ * ddna://blobs/<name>; рендерер грузит их через тот же протокол. */
+function blobsDir() {
+  return path.join(app.getPath("userData"), "data", "blobs");
+}
+
+function safeBlobName(raw) {
+  const name = path.basename(String(raw || ""));
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name) ? name : null;
+}
 
 function registerFontsProtocol() {
   const fontsDir = path.join(app.getPath("userData"), "data", "fonts");
   protocol.handle("ddna", async (request) => {
     const url = new URL(request.url);
-    if (url.host !== "fonts") return new Response("not found", { status: 404 });
-    const name = path.basename(decodeURIComponent(url.pathname.replace(/^\/+/, "")));
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name)) return new Response("bad font name", { status: 400 });
+    if (url.host !== "fonts" && url.host !== "blobs") return new Response("not found", { status: 404 });
+    const name = safeBlobName(decodeURIComponent(url.pathname.replace(/^\/+/, "")));
+    if (!name) return new Response("bad name", { status: 400 });
+    const dir = url.host === "fonts" ? fontsDir : blobsDir();
+    const ext = path.extname(name).toLowerCase();
     try {
-      const data = await readFile(path.join(fontsDir, name));
+      const data = await readFile(path.join(dir, name));
       return new Response(data, {
         headers: {
-          "Content-Type": FONT_MIME[path.extname(name).toLowerCase()] || "application/octet-stream",
+          "Content-Type": (url.host === "fonts" ? FONT_MIME : BLOB_MIME)[ext] || "application/octet-stream",
           "Access-Control-Allow-Origin": "*",
           "Cache-Control": "immutable",
         },
       });
     } catch {
-      return new Response("font not found", { status: 404 });
+      return new Response("not found", { status: 404 });
     }
   });
 }
@@ -261,6 +292,43 @@ function registerIpc() {
   });
   // Скачать бинарник (видео Motion и т.п.): в desktop нет HTTP, якорь href
   // "/api/.../download" под file:// не работает — сохраняем через диалог.
+  // Отмена длинных задач (Source Import / reproduce минутами держат серийный
+  // Python-воркер). Воркер stateless: честная отмена = рестарт процесса — все
+  // ожидающие запросы длинной очереди отклоняются как cancelled, кэш и проект
+  // живут в SQLite/файлах и переживают рестарт. configure-фингерпринт
+  // сбрасывается автоматически через spawnCount.
+  handleTrusted("api:cancel", () => {
+    pythonWorker.abort("cancelled by user");
+    return { cancelled: true };
+  });
+  // Вынос inline-блобов из localStorage: рендерер кладёт содержимое, LS хранит
+  // только ddna://blobs/<name>. getMany возвращает ПОЛНЫЕ data:-URL обратно —
+  // мост разворачивает их в исходящие /api-тела (кроме project/save), чтобы
+  // серверный рендер (fidelity/QA) продолжал видеть картинки.
+  handleTrusted("blobs:put", async (_event, { name, base64 }) => {
+    const safe = safeBlobName(name);
+    if (!safe) throw new Error("Invalid blob name");
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    await mkdir(blobsDir(), { recursive: true });
+    await writeFile(path.join(blobsDir(), safe), Buffer.from(String(base64 || ""), "base64"));
+    return { stored: true, name: safe };
+  });
+  handleTrusted("blobs:getMany", async (_event, { names }) => {
+    const out = {};
+    for (const raw of Array.isArray(names) ? names.slice(0, 500) : []) {
+      const safe = safeBlobName(raw);
+      if (!safe) continue;
+      try {
+        const data = await readFile(path.join(blobsDir(), safe));
+        const ext = path.extname(safe).toLowerCase();
+        const mime = BLOB_MIME[ext] || "application/octet-stream";
+        out[safe] = `data:${mime};base64,${data.toString("base64")}`;
+      } catch {
+        // отсутствующий блоб не должен ронять весь запрос
+      }
+    }
+    return out;
+  });
   handleTrusted("files:save", async (_event, { name, base64 }) => {
     const safeName = path.basename(String(name || "file")).replace(/[\\/:*?"<>|]/g, "_") || "file";
     const window = BrowserWindow.getAllWindows()[0];
@@ -309,12 +377,20 @@ function registerIpc() {
       // Source Import / generation pipelines legitimately take minutes
       // (Playwright captures multiple viewports, font downloads, LLM steps),
       // so the HTTP call gets a wider budget than the default worker timeout.
-      return worker.request("http.request", preparedRequest, interactive ? 120_000 : 600_000);
+      const response = await worker.request("http.request", preparedRequest, interactive ? 120_000 : 600_000);
+      // Бинарные тела отдаём как Uint8Array: structured clone переносит их
+      // без base64, и рендерер не платит посимвольный atob-декод на мегабайтах
+      if (response && response.encoding === "base64" && typeof response.body === "string") {
+        return { ...response, body: Buffer.from(response.body, "base64") };
+      }
+      return response;
     });
   });
-  handleTrusted("repo-canvas:snapshot", () => repoCanvasWorker.request("snapshot"));
-  handleTrusted("repo-canvas:check", () => repoCanvasWorker.request("check"));
-  handleTrusted("repo-canvas:refresh", (_event, options) => repoCanvasWorker.request("architect.refresh", options || {}));
+  handleTrusted("repo-canvas:snapshot", () => repoCanvasQueue.run(() => repoCanvasWorker.request("snapshot")));
+  handleTrusted("repo-canvas:check", () => repoCanvasQueue.run(() => repoCanvasWorker.request("check")));
+  // LLM-обновление архитектора занимает минуты — без очереди оно блокировало
+  // снапшоты Project Map напрямую
+  handleTrusted("repo-canvas:refresh", (_event, options) => repoCanvasQueue.run(() => repoCanvasWorker.request("architect.refresh", options || {}, 180_000)));
   handleTrusted("providers:status", async () => ({
     runtimes: await getProviderStatus(),
     credentials: credentials.status(),
@@ -412,7 +488,16 @@ function createWindow() {
   };
   window.webContents.on("will-navigate", enforceRendererNavigation);
   window.webContents.on("will-redirect", enforceRendererNavigation);
-  window.once("ready-to-show", () => window.show());
+  window.once("ready-to-show", () => {
+    window.show();
+    prewarmWorkers();
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    console.error(`Renderer gone (${details.reason}): ${details.exitCode}`);
+    // Белое окно без воркеров хуже перезагрузки страницы: перезагружаем
+    if (!window.isDestroyed()) window.webContents.reload();
+  });
+  window.webContents.on("unresponsive", () => console.warn("Renderer unresponsive"));
   if (rendererDevUrl) void window.loadURL(rendererDevUrl);
   else void window.loadFile(rendererEntry);
 }
