@@ -63,6 +63,10 @@
     await desktopAuth.open(url);
   };
 
+  const createDesignSystem = () => {
+    void useFlowStore.getState().createDesignSystemFromSource(Number(id));
+  };
+
   const refreshImport = () => {
     $flow.setNodeData(Number(id), { importedUrl: null });
     queueMicrotask(() => $flow.runNode(Number(id)));
@@ -146,6 +150,11 @@
     {#if data.mode === "url" && data.importedUrl && data.blocks.length}
       <button class="btn-node small f-refresh nodrag" disabled={busy} onclick={refreshImport} title="Повторно загрузить страницу и обновить локальный результат">
         Обновить
+      </button>
+
+      <button class="btn-node small f-create-ds nodrag" disabled={busy || !data.blocks?.length}
+              title="Собрать UI Kit и дизайн-систему из этого Source" onclick={createDesignSystem}>
+        ◈ UI Kit &amp; DS
       </button>
     {/if}
     <button

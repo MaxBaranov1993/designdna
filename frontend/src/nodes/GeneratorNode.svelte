@@ -3,6 +3,7 @@
   import IrPreview from "../components/IrPreview.svelte";
   import { flow } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
+import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   import type { GeneratorFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -120,6 +121,7 @@
     </div>
   {/if}
   <IrPreview class="f-preview" ir={activeIr} height={180} empty="Варианты появятся после запуска" />
+  <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} onChange={(v) => $flow.setNodeData(Number(id), { designSystemSelection: v } as any)} />
   <div class="gen-actions">
     <button class="btn-node small f-to-editor nodrag" onclick={() => $flow.sendToNode(Number(id), "edit")}>
       → Editor

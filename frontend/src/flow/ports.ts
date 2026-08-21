@@ -18,6 +18,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   recorder: { title: "Interaction Recorder", icon: "REC", w: 420 },
   motion: { title: "Motion Editor", icon: "M", w: 390 },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300 },
+  designsystem: { title: "Design System", icon: "◈", w: 320 },
 };
 
 /* Зеркало PORTS (nodes.js:35-48); у mix входы динамические — из data.inputs (portsOfNode),
@@ -42,6 +43,9 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   },
   mix: { in: [], out: [{ name: "ir", label: "IR", kind: "ir" }] },
   page: { in: [], out: [{ name: "ir", label: "страница", kind: "ir" }] },
+  // ТЗ §11.4: у Design System-ноды нет выходных портов — использование
+  // только через project registry и DesignSystemPicker
+  designsystem: { in: [], out: [] },
   sourceimport: { in: [], out: [{ name: "tokens", label: "style DNA", kind: "tokens" }] },
   styledna: {
     in: [
@@ -178,6 +182,9 @@ export function defaultData(type: NodeType): AnyNodeData {
         composition: { width: 1920, height: 1080, fps: 30 },
         renderSettings: { format: "mp4", quality: "high" }, renderJob: null, sceneSettings: {},
       };
+    case "designsystem":
+      return ({ systemId: null, name: "", status: "draft", revision: 0, summary: null,
+               sourceNodeId: null, defaultSet: false, sourceUpdate: false } as unknown as AnyNodeData);
     case "pagebridge":
       return { channel: "shared-component", mode: "send", ir: null };
   }
@@ -199,4 +206,5 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "recorder", note: "IR actions -> Interaction IR" },
   { type: "motion", note: "Interaction IR -> editable timeline" },
   { type: "pagebridge", note: "передать компонент между страницами" },
+  { type: "designsystem", note: "UI Kit и дизайн-система из Source" },
 ];

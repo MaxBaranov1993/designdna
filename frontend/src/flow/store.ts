@@ -40,6 +40,7 @@ import type {
   PageNodeData,
   NodeType,
   ReskinNodeData,
+  DesignSystemNodeData,
   SourceImportNodeData,
   DeriveNodeData,
   EditNodeData,
@@ -77,6 +78,7 @@ export interface FlowStoreState {
   pages: FlowPage[];
   activePageId: string;
   channels: Record<string, IRObject | null>;
+  designSystems: DesignSystemsRegistry;
   statuses: Record<number, NodeStatus>;
   /* run-based ноды в полёте запроса (спиннер на ноде); runtime-поле, в сейв не попадает */
   busy: Record<number, boolean>;
@@ -131,6 +133,8 @@ export interface FlowStoreState {
   renamePage: (id: string, name: string) => void;
   deletePage: (id: string) => void;
   loadPersistedProject: () => Promise<void>;
+  refreshDesignSystems: () => Promise<void>;
+  createDesignSystemFromSource: (sourceId: number, options?: { name?: string }) => Promise<number | null>;
 }
 
 /* Стартовое состояние — из сейва designai-flow-v1 (битый сейв → пустой граф) */
@@ -158,6 +162,25 @@ const initialPages: FlowPage[] = projectSaved?.pages || [
 const initialActivePageId = projectSaved?.activePageId || initialPages[0].id;
 const initialActiveGraph = initialPages.find((page) => page.id === initialActivePageId) || initialPages[0];
 const initialChannels = projectSaved?.channels || {};
+const initialDesignSystems: DesignSystemsRegistry =
+  (projectSaved as unknown as { designSystems?: DesignSystemsRegistry } | null)?.designSystems
+  || { systems: [], defaultSystemRef: null };
+
+export interface DesignSystemsRegistry {
+  systems: Array<Record<string, unknown> & { systemId: string; name: string; status: string; revision: number; contentHash?: string }>;
+  defaultSystemRef: { systemId: string; revision: number } | null;
+}
+
+async function fetchDesignSystemsList(): Promise<DesignSystemsRegistry> {
+  try {
+    const resp = await fetch("/api/design-system/list");
+    if (!resp.ok) return { systems: [], defaultSystemRef: null };
+    const data = await resp.json();
+    return { systems: data.systems || [], defaultSystemRef: data.defaultSystemRef || null };
+  } catch {
+    return { systems: [], defaultSystemRef: null };
+  }
+}
 
 function pageId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
@@ -260,6 +283,7 @@ function summarizeStyleDna(tokens: Record<string, unknown>): string {
 let localDirtySinceInit = false;
 
 export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
+  designSystems: initialDesignSystems,
   nodes: hydratePageBridgeNodes(initialActiveGraph.nodes, initialChannels),
   edges: initialActiveGraph.edges,
   view: initialActiveGraph.view,
@@ -567,6 +591,24 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
     get().setBusy(id, true);
     try {
+      // Design System: разрешение выбора в pinned ref на момент старта (ТЗ §16.2)
+      let designSystemRef: Record<string, unknown> | null = null;
+      const dsSelection = (data as unknown as { designSystemSelection?: string }).designSystemSelection || "inherit";
+      if (dsSelection !== "none") {
+        const reg = (get() as unknown as { designSystems?: DesignSystemsRegistry }).designSystems
+          || { systems: [], defaultSystemRef: null };
+        const target = dsSelection === "inherit" ? reg.defaultSystemRef?.systemId : dsSelection;
+        const system = reg.systems?.find((sys) => sys.systemId === target && sys.status === "published");
+        if (system) {
+          const revision = dsSelection === "inherit" ? (reg.defaultSystemRef?.revision ?? system.revision) : system.revision;
+          designSystemRef = {
+            systemId: system.systemId, revision,
+            contentHash: system.contentHash || "",
+            usageMode: (data as unknown as { designSystemUsageMode?: string }).designSystemUsageMode || "strict",
+            mockFixtureProfile: (data as unknown as { designSystemFixture?: string }).designSystemFixture || "typical",
+          };
+        }
+      }
       const request = {
         brief,
         count,
@@ -574,6 +616,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         styleHint,
         tokens,
         preset: data.preset || undefined,
+        designSystem: designSystemRef,
       };
       let res: GenerateResp;
       if (!desktop) {
@@ -1316,6 +1359,58 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     }));
   },
 
+  refreshDesignSystems: async () => {
+    const list = await fetchDesignSystemsList();
+    set({ designSystems: list });
+  },
+
+  /* Создание Design System из Source (ТЗ §7.1): нода рядом с Source,
+   * сборка draft на сервере, карточка заполняется summary. */
+  createDesignSystemFromSource: async (sourceId, options) => {
+    const st = get();
+    const source = st.nodes.find((n) => Number(n.id) === Number(sourceId));
+    if (!source || source.type !== "sourceimport") return null;
+    const data = source.data as SourceImportNodeData;
+    if (!data.blocks?.length) {
+      get().setStatus(sourceId, "Source не содержит блоков — сначала импорт", "err");
+      return null;
+    }
+    const node = get().addNode("designsystem", source.position.x + 380, source.position.y);
+    const dsId = Number(node.id);
+    get().setStatus(dsId, "Собираю UI Kit из Source…");
+    get().setBusy(dsId, true);
+    try {
+      const resp = await fetch("/api/design-system/build", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceNodeId: String(sourceId), sourceUrl: data.url || "",
+          blocks: data.blocks, tokens: data.tokens || {},
+          name: options?.name || `UI Kit · ${data.url || "Source"}`,
+        }),
+      });
+      const result = await resp.json();
+      if (result.error) {
+        get().setStatus(dsId, "Ошибка: " + result.error, "err");
+        get().deleteNode(dsId);
+        return null;
+      }
+      get().setNodeData(dsId, {
+        systemId: result.document.id, name: result.document.name, status: "draft",
+        revision: 0, summary: result.summary, sourceNodeId: sourceId,
+        defaultSet: false, sourceUpdate: false,
+        document: result.document,
+      } as unknown as Partial<DesignSystemNodeData>);
+      get().setStatus(dsId, `Черновик готов: ${result.summary.components} компонентов · ${result.summary.variants} вариантов`, "ok");
+      return dsId;
+    } catch (e) {
+      get().setStatus(dsId, "Ошибка: " + (e instanceof Error ? e.message : String(e)), "err");
+      return null;
+    } finally {
+      get().setBusy(dsId, false);
+    }
+  },
+
   clearGraph: () => {
     get().loadGraph({ nodes: [], edges: [], view: { ...DEFAULT_VIEW }, nextId: 1 });
   },
@@ -1394,6 +1489,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   loadPersistedProject: async () => {
+    void get().refreshDesignSystems(); // registry не блокирует загрузку проекта
     const project = await loadPagesProjectFromDb();
     if (!project) return;
     // Гонка гидратации: пока шёл fetch, локальный граф мог измениться (пользователь

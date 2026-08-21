@@ -38,6 +38,8 @@ class AssistRequest(BaseModel):
     rawOutput: str | None = None
     # web-фолбэк: какой провайдер использовать в llm.chat (desktop гоняет чат сам)
     provider: str = "auto"
+    # ТЗ §19: закреплённая дизайн-система {systemId, revision, contentHash, usageMode}
+    designSystem: dict | None = None
 
 
 ALLOWED_ACTIONS = {"adapt", "overflow", "content-fit", "align", "style", "custom"}
@@ -443,10 +445,19 @@ def _messages(base: dict, req: AssistRequest) -> list[dict]:
         "Use only selected sourceKeys. Never change hierarchy, ids, types, sourceKeys, children, or array order. "
         'Preserve the current design and make the smallest coherent change. Obey the supplied constraints exactly.\nDESIGN QUALITY RULES (how top studios edit, no AI slop):\n- Consistency beats novelty: reuse the palette, radii, shadows and type scale already present in the IR tokens and neighbouring sections. Never introduce a new font family or a color outside tokens.\n- Spacing rhythm: paddings and gaps snap to the 4/8 scale used nearby (8/16/24/32/48/64); align edges to the same rails as siblings.\n- Typography: one display size per level, tighter tracking on large headlines, body 15-17px line-height 1.4-1.6; do not add more than 2 distinct font sizes in one edit.\n- Copy like a real product: concrete, in the page language, no filler, no emoji as icons.\n- Banned: purple-blue gradients, glow blobs, glassmorphism, everything centered, everything in cards, icon-in-circle x3 filler rows, decorative 01/02/03 without a real sequence.\n- Whole-page scope: keep changes globally coherent, same section rhythm, same CTA styling, primary CTA uses the brand token.\n- Prefer restraint: fewer, well-grounded edits. Every command needs a human-plausible reason.'
     )
+    ds_block = ""
+    if isinstance(req.designSystem, dict) and req.designSystem.get("systemId"):
+        from design_system import resolver as ds_resolver, store as ds_store
+        ds_doc, ds_error = ds_store.resolve_ref(req.designSystem)
+        if ds_error:
+            raise ValueError(f"Design System: {ds_error}")
+        ds_ctx = ds_resolver.resolve_context(ds_doc, req.prompt,
+            usage_mode=str(req.designSystem.get("usageMode") or "strict"))
+        ds_block = chr(10) + chr(10) + ds_resolver.compact_prompt_block(ds_ctx)
     scope = req.scope.model_dump() if hasattr(req.scope, "model_dump") else req.scope.dict()
     scope["sourceKeys"] = safe_keys
     constraints = req.constraints.model_dump() if hasattr(req.constraints, "model_dump") else req.constraints.dict()
-    return [{"role": "system", "content": system}, {"role": "user", "content": json.dumps({"action": req.action, "prompt": req.prompt, "scope": scope, "constraints": constraints, "ir": base}, ensure_ascii=False)}]
+    return [{"role": "system", "content": system + ds_block}, {"role": "user", "content": json.dumps({"action": req.action, "prompt": req.prompt, "scope": scope, "constraints": constraints, "ir": base}, ensure_ascii=False)}]
 
 
 def _parse_result(raw: str, base: dict, req: AssistRequest):
@@ -477,6 +488,15 @@ def editor_assist(req: AssistRequest):
             candidate, ops, summary = _parse_result(raw, req.ir, req)
         ops = [op for op in ops if not (op.get("op") == "add" and op.get("after") == {})]
         warnings = _design_lint(candidate)
+        if isinstance(req.designSystem, dict) and req.designSystem.get("systemId"):
+            from design_system import resolver as ds_resolver, store as ds_store
+            ds_doc, ds_error = ds_store.resolve_ref(req.designSystem)
+            if ds_error:
+                return _error(422, f"Design System: {ds_error}")
+            ds_ctx = ds_resolver.resolve_context(ds_doc, req.prompt,
+                usage_mode=str(req.designSystem.get("usageMode") or "strict"))
+            check = ds_resolver.validate_generation(candidate, ds_ctx)
+            warnings.extend(check["errors"] or check["warnings"])
         if dropped_scope:
             warnings.append({"code": "nested_scope_normalized", "message": "Родительский контейнер исключён: AI изменяет выбранные вложенные элементы."})
         if len(ops) > 8 or any(_is_high_impact_op(op) for op in ops):

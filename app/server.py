@@ -78,6 +78,9 @@ app.add_middleware(
 )
 app.include_router(editor_assist_router)
 
+from design_system.api import router as design_system_router  # noqa: E402
+app.include_router(design_system_router)
+
 COLOR_TOKEN_KEYS = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"]
 MAX_CLONE_HTML_BYTES = 2_000_000
 
@@ -193,6 +196,8 @@ class GenerateReq(BaseModel):
     preset: str = ""  # стилевой пресет: minimal|bento|editorial|brutal|glass
     prepareOnly: bool = False
     rawOutputs: list[str] | None = None
+    # ТЗ §19: закреплённая ревизия дизайн-системы {systemId, revision, contentHash, usageMode}
+    designSystem: dict | None = None
 
 
 class MixReq(BaseModel):
@@ -369,6 +374,20 @@ def generate(req: GenerateReq):
             prefer=(preset.get("font") if preset else None) or pinfo["fonts"][0])
     scale = typography.type_scale()
 
+    # Design System: закрепляем ревизию на момент старта (§16.2) и строим
+    # компактный контекст один раз; в промпт уходит prompt-block, не весь документ
+    ds_context = None
+    ds_prompt_block = ""
+    if isinstance(req.designSystem, dict) and req.designSystem.get("systemId"):
+        from design_system import resolver as ds_resolver, store as ds_store
+        ds_doc, ds_error = ds_store.resolve_ref(req.designSystem)
+        if ds_error:
+            return err(422, f"Design System: {ds_error}")
+        usage_mode = str(req.designSystem.get("usageMode") or "strict")
+        ds_context = ds_resolver.resolve_context(ds_doc, brief, usage_mode=usage_mode)
+        ds_prompt_block = ds_resolver.compact_prompt_block(ds_context)
+
+
     def gen_one(n: int):
         if mode == "edit":
             user = (
@@ -421,6 +440,8 @@ def generate(req: GenerateReq):
                          + "\n".join("- " + r for r in pinfo["rules"])
                          + "\n\nАнти-паттерны — НИКОГДА так не делай:\n"
                          + "\n".join("- " + a for a in designkb.ANTI_AI))
+        if ds_prompt_block:
+            user += "\n\n" + ds_prompt_block
         if req.prepareOnly:
             return user, None, None
         if req.rawOutputs is not None:
@@ -481,8 +502,24 @@ def generate(req: GenerateReq):
             errors.append({"index": i + 1, "error": error})
     if not variants:
         return err(502, f"Ни один вариант не сгенерирован. {errors[0]['error'] if errors else ''}")
+    design_system_report = None
+    if ds_context is not None:
+        from design_system import resolver as ds_resolver
+        design_system_report = {"errors": [], "warnings": []}
+        for variant in variants:
+            check = ds_resolver.validate_generation(variant, ds_context)
+            if check["errors"] or check["warnings"]:
+                variant.setdefault("meta", {})
+                if check["errors"]:
+                    variant["meta"]["designSystemErrors"] = check["errors"]
+                if check["warnings"]:
+                    variant["meta"]["designSystemWarnings"] = check["warnings"]
+            design_system_report["errors"].extend(check["errors"])
+            design_system_report["warnings"].extend(check["warnings"])
+        design_system_report["ref"] = ds_context.get("systemRef")
     return {"variants": variants, "errors": errors, "qa": qa,
-            "design": {"type": ptype, "label": pinfo["label"]}}
+            "design": {"type": ptype, "label": pinfo["label"]},
+            **({"designSystem": design_system_report} if design_system_report else {})}
 
 
 @app.post("/api/mix")

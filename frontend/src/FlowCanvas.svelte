@@ -24,6 +24,7 @@
   import MixNode from "./nodes/MixNode.svelte";
   import PageNode from "./nodes/PageNode.svelte";
   import SourceImportNode from "./nodes/SourceImportNode.svelte";
+import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
   import StyleDnaNode from "./nodes/StyleDnaNode.svelte";
   import DeriveNode from "./nodes/DeriveNode.svelte";
   import ReskinNode from "./nodes/ReskinNode.svelte";
@@ -41,6 +42,7 @@
     mix: MixNode,
     page: PageNode,
     sourceimport: SourceImportNode,
+    designsystem: DesignSystemNode,
     styledna: StyleDnaNode,
     derive: DeriveNode,
     reskin: ReskinNode,

@@ -20,7 +20,8 @@ export type NodeType =
   | "qualitypass"
   | "recorder"
   | "motion"
-  | "pagebridge";
+  | "pagebridge"
+  | "designsystem";
 
 export type IRObject = Record<string, unknown>;
 export type SourceViewport = "desktop" | "tablet" | "mobile";
@@ -198,6 +199,17 @@ export type QualityPassNodeData = {
   ir: IRObject | null;
   result: Record<string, unknown> | null;
 };
+export type DesignSystemNodeData = {
+  systemId: string | null;
+  name: string;
+  status: "draft" | "published" | "outdated" | "archived";
+  revision: number;
+  summary: Record<string, unknown> | null;
+  sourceNodeId: number | string | null;
+  defaultSet: boolean;
+  sourceUpdate: boolean;
+} & Record<string, unknown>;
+
 export type PageBridgeNodeData = {
   channel: string;
   mode: "send" | "receive";
@@ -282,7 +294,8 @@ export type AnyNodeData =
   | QualityPassNodeData
   | RecorderNodeData
   | MotionNodeData
-  | PageBridgeNodeData;
+  | PageBridgeNodeData
+  | DesignSystemNodeData;
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
 export type ReferenceFlowNode = Node<ReferenceNodeData, "reference">;
@@ -298,6 +311,7 @@ export type QualityPassFlowNode = Node<QualityPassNodeData, "qualitypass">;
 export type RecorderFlowNode = Node<RecorderNodeData, "recorder">;
 export type MotionFlowNode = Node<MotionNodeData, "motion">;
 export type PageBridgeFlowNode = Node<PageBridgeNodeData, "pagebridge">;
+export type DesignSystemFlowNode = Node<DesignSystemNodeData, "designsystem">;
 
 export type FlowNode =
   | PromptFlowNode

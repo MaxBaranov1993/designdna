@@ -40,6 +40,7 @@ export const NODE_TYPES: NodeType[] = [
   "recorder",
   "motion",
   "pagebridge",
+  "designsystem",
 ];
 
 /* Р—РµСЂРєР°Р»Рѕ stripHeavy (nodes.js:1161-1172): РїСЂРё РєРІРѕС‚Рµ РІС‹РєРёРґС‹РІР°РµРј base64/data-URL
@@ -298,6 +299,7 @@ export type PagesProjectPayload = {
     graph: LegacyGraphPayload;
   }[];
   channels?: Record<string, IRObject | null>;
+  designSystems?: { systems: Array<Record<string, unknown>>; defaultSystemRef: { systemId: string; revision: number } | null };
 };
 
 export function buildPagesProjectPayload(st: {
@@ -325,6 +327,7 @@ export function buildPagesProjectPayload(st: {
       return { id: page.id, name: page.name, graph };
     }),
     channels: st.channels,
+    designSystems: (st as any).designSystems || { systems: [], defaultSystemRef: null },
   };
 }
 
