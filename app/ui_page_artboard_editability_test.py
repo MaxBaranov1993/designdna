@@ -59,6 +59,8 @@ def main():
         page.reload()
         page.wait_for_selector(".svelte-flow__pane")
         page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        page.evaluate("window.GraphDev.clear()")
 
         ids = page.evaluate("""() => {
           const first = window.GraphDev.add('edit', 40, 40).id;

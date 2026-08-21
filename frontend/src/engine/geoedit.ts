@@ -176,6 +176,8 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
 
   function attach(opts) {
     const { previewEl, getIR, getScale, onCommit, onSelect } = opts;
+    // () => void — отменить последний onCommit-шаг, если мутация не применилась
+    const cancelCommit = opts.cancelCommit || null;
     const scrollEl = opts.scrollEl || null;          // скролл-контейнер для инструмента «рука»
     const onToolChange = opts.onToolChange || null; // уведомление владельца о смене инструмента
     const toolsEnabled = !!opts.tools;              // хоткеи V/R/T/F/H только там, где есть панель
@@ -1921,7 +1923,9 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
     /** Копии выделенных children/секций/sourceKey-слоёв вставляются рядом с
      *  оригиналами. НЕ зовёт onCommit/onMutated — владелец решает сам.
      *  Возвращает ref'ы копий. */
-    function duplicateSelections() {
+    /** Немодифицирующий сбор целей дублирования — чтобы решить ДО мутации,
+     *  нужен ли undo-шаг (отказ не должен создавать фантомную историю). */
+    function collectDuplicateTargets() {
       const targets = [];
       selections.forEach(sel => {
         if (sel.ref.secIdx == null) return;
@@ -1935,6 +1939,11 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         targets.push({ ref: sel.ref, arr: parent.siblings, idx,
                        source: isSourceKeyPath(sel.ref.path) });
       });
+      return targets;
+    }
+
+    function duplicateSelections() {
+      const targets = collectDuplicateTargets();
       // в пределах одного массива идём от головы: каждая вставка сдвигает индексы
       targets.sort((a, b) => (a.arr === b.arr ? a.idx - b.idx : 0));
       const shifts = new Map();
@@ -2089,7 +2098,12 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       const gx = Math.min(...meas.map(m => m.x)), gy = Math.min(...meas.map(m => m.y));
       const gw = Math.max(...meas.map(m => m.x + m.w)) - gx;
       const gh = Math.max(...meas.map(m => m.y + m.h)) - gy;
-      const sourceMode = isSourceKeyPath(refs[0].path);
+      // Источник режима адресации — сама секция (как annotatePaths): внутри
+      // source-block/dom-capture DOM адресуется sourceKey, и группа обязана
+      // получить sourceKey, иначе она будет неадресуема/невыделяема. Правило по
+      // первому ref пропускало смешанные выделения (числовой + sourceKey сиблинг).
+      const groupSec = getIR().tree[secIdx];
+      const sourceMode = !!(groupSec && (groupSec.type === "source-block" || groupSec.variant === "dom-capture"));
       onCommit();
       const taken = idxs.map(i => parent.siblings[i]);
       const group = {
@@ -2172,6 +2186,9 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
     /** Alt+drag: оригиналы остаются, копии уходят на дельту (один undo-шаг).
      *  В auto-родителе копия без x/y встаёт в поток — как в Figma auto-layout. */
     function commitDuplicateMove(dx, dy) {
+      // undo-снапшот берём до мутации, но только если дублирование реально
+      // применится: отказ (заблокированные слои) не оставит фантомный шаг
+      if (!collectDuplicateTargets().length) return;
       onCommit();
       const newRefs = duplicateSelections();
       newRefs.forEach(r => {
@@ -2522,7 +2539,6 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
      *  children.*, секции и sourceKey-слои (структурный индекс через parentOf). */
     function deleteSelections() {
       if (!selections.length) return;
-      onCommit();
       const targets = [];
       selections.forEach(sel => {
         if (sel.ref.secIdx == null) return;
@@ -2537,6 +2553,10 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         if (!Number.isInteger(idx) || idx < 0 || idx >= parent.siblings.length) return;
         targets.push({ arr: parent.siblings, idx });
       });
+      // История — только для реально применённых мутаций: пустой delete не должен
+      // создавать фантомный undo-шаг, который «откатывает» без изменений и сбрасывает выделение
+      if (!targets.length) return;
+      onCommit();
       // в пределах одного массива удаляем с хвоста, чтобы индексы не съехали
       targets.sort((a, b) => (a.arr === b.arr ? b.idx - a.idx : 0));
       targets.forEach(t => t.arr.splice(t.idx, 1));
@@ -2626,7 +2646,12 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       if (!ir || !ir.tree || !ir.tree.length) return;
       onCommit();
       const newRefs = insertItems(geoClipboard);
-      if (newRefs.length) selectMulti(newRefs);
+      if (!newRefs.length) {
+        // ничего не применилось (адресация/блокировки) — фантомный undo не нужен
+        if (cancelCommit) cancelCommit();
+        return;
+      }
+      selectMulti(newRefs);
       onMutated();
     }
 

@@ -196,7 +196,12 @@ function sourceColor(sourceId: string): string {
 function sourceIdForNode(node: any): string | null {
   if (!state || !node || typeof node !== "object") return null;
   const ref = node.sourceKey || node.id;
-  return ref ? state.sourceContext.nodeSources[ref] || null : null;
+  if (ref && state.sourceContext.nodeSources[ref]) return state.sourceContext.nodeSources[ref];
+  // дубликаты/вставки несут свежие ключи (rekeyCloneKeys): атрибуция —
+  // через исходный ключ поддерева, сохранённый в sourceMeta.derivedFromKey
+  const derived = node.sourceMeta && node.sourceMeta.derivedFromKey;
+  if (derived && state.sourceContext.nodeSources[derived]) return state.sourceContext.nodeSources[derived];
+  return null;
 }
 
 export function sourceForRef(ref: GeoRef | null) {
@@ -399,6 +404,9 @@ export function semanticSelect(query: string): number {
       if (props.text) add({ secIdx, path: "props.text" });
       if (props.subheading) add({ secIdx, path: "props.subheading" });
     }
+    // Адресация должна совпадать с data-ir-path рендера (annotatePaths):
+    // внутри source-block/dom-capture секций путь — sourceKey, иначе числовой.
+    const sourceSec = section.type === "source-block" || section.variant === "dom-capture";
     const visit = (node: any, path: string) => {
       const sourceId = sourceIdForNode(node) || sectionSource;
       if (sourceIds.length && (!sourceId || !sourceIds.includes(sourceId))) return;
@@ -407,9 +415,11 @@ export function semanticSelect(query: string): number {
         (wantsImage && ["image", "media"].includes(type)) || (wantsCard && type === "card") ||
         (wantsText && ["text", "heading"].includes(type));
       if (semanticMatch || (!semanticRequested && !sourceIds.length && searchableNodeText(node).includes(normalized))) add({ secIdx, path });
-      (node.children || []).forEach((child: any, index: number) => visit(child, `${path}.children.${index}`));
+      (node.children || []).forEach((child: any, index: number) =>
+        visit(child, sourceSec && child.sourceKey ? child.sourceKey : `${path}.children.${index}`));
     };
-    (section.children || []).forEach((child: any, index: number) => visit(child, `children.${index}`));
+    (section.children || []).forEach((child: any, index: number) =>
+      visit(child, sourceSec && child.sourceKey ? child.sourceKey : `children.${index}`));
     if (!semanticRequested && sourceIds.length) add({ secIdx, path: null });
     if (!semanticRequested && !sourceIds.length && searchableNodeText(section).includes(normalized)) add({ secIdx, path: null });
   });
@@ -1595,7 +1605,11 @@ function isAncestorRef(parent: GeoRef, child: GeoRef) {
   if (parent.secIdx == null) return child.secIdx != null;
   if (parent.secIdx !== child.secIdx) return false;
   if (parent.path == null) return child.path != null;
-  return !!child.path && child.path.startsWith(parent.path + ".");
+  if (!child.path) return false;
+  // sourceKey-пути адресуются через '/', числовые — через '.'; бэкенд
+  // (editor_assist nested_scope_normalized) нормализует так же
+  const sep = isSourceKeyPath(parent.path) ? "/" : ".";
+  return child.path.startsWith(parent.path + sep);
 }
 
 export function getAiScopeView(mode: "single" | "selection") {
@@ -1762,37 +1776,52 @@ export function pushHistory() {
   updateUndoBtn();
 }
 
+/** Общий сценарий undo/redo: восстановить снапшот и сохранить выделение,
+ *  которое всё ещё резолвится в восстановленном IR (Figma-паттерн: undo не
+ *  сбрасывает выбранный объект — иначе за undo нельзя продолжить правку). */
+function restoreSnapshot(snap: any) {
+  if (!state) return;
+  // geoedit хранит свою operative selection (applyNum/delete и т.д. работают
+  // по ней) — берём ссылки оттуда, state.sel мог не обновиться из-за
+  // state_unsafe_mutation в onSelect
+  const keepRefs = (state.geo ? state.geo.selections : []).map((s: any) => s.ref);
+  const fallbackRefs = state.sel.map((s) => s.ref);
+  state.ir = snap;
+  persistDraft();
+  if (state.geo) { state.geo.destroy(); state.geo = null; }
+  renderCanvas(); // пересоздаёт geoedit с ПУСТОЙ selection
+  const refs = keepRefs.length ? keepRefs : fallbackRefs;
+  state.sel = refs
+    .map((ref) => {
+      const node = canonicalNode(ref);
+      return node ? ({ ref, node, label: searchableNodeText(node).slice(0, 60) } as GeoSel) : null;
+    })
+    .filter((s): s is GeoSel => !!s);
+  // без этого инспектор/applyNum после undo работают вхолостую: слушатели
+  // geoedit применяют правки к его собственной (пустой) selection
+  const restoredGeo = state.geo as GeoHandle | null;
+  if (state.sel.length && restoredGeo) restoredGeo.selectMulti(state.sel.map((s) => s.ref));
+  renderLayers();
+  renderInspector();
+  updateUndoBtn();
+  updateAlignVisibility();
+}
+
 function undo() {
   if (!state) return;
   const snap = state.history.undo(() => state!.ir);
   if (!snap) return;
-  state.ir = snap;
-  persistDraft();
-  if (state.geo) { state.geo.destroy(); state.geo = null; }
-  renderCanvas();
-  renderLayers();
-  state.sel = [];
-  renderInspector();
-  updateUndoBtn();
-  updateAlignVisibility();
+  restoreSnapshot(snap);
 }
 
 function redo() {
   if (!state) return;
   const snap = state.history.redo(() => state!.ir);
   if (!snap) return;
-  state.ir = snap;
-  persistDraft();
-  if (state.geo) { state.geo.destroy(); state.geo = null; }
-  renderCanvas();
-  renderLayers();
-  state.sel = [];
-  renderInspector();
-  updateUndoBtn();
-  updateAlignVisibility();
+  restoreSnapshot(snap);
 }
 
-function updateUndoBtn() {
+export function updateUndoBtn() {
   if (!state) return;
   if (dom.undoBtn) dom.undoBtn.disabled = !state.history.canUndo();
   if (dom.redoBtn) dom.redoBtn.disabled = !state.history.canRedo();
@@ -2211,6 +2240,11 @@ function attachGeoEdit() {
       return w > 0 ? w / dw : 1;
     },
     onCommit: () => pushHistory(),
+    cancelCommit: () => {
+      if (!state) return;
+      state.history.cancelLast();
+      updateUndoBtn();
+    },
     onMutated: () => {
       if (!state) return;
       syncActiveIR();
@@ -2551,9 +2585,19 @@ export function rerenderEditorCanvas() {
       const marker = `${sectionIndex}:${nodeParts.join(".")}`;
       if (marked.has(marker)) return;
       marked.add(marker);
+      // В source-секциях DOM адресуется sourceKey, а op-пути бэкенда числовые:
+      // резолвим узел в отрендеренном IR и подсвечиваем его sourceKey-элемент.
+      // Правило адресации — как в annotatePaths: только внутри source-block/
+      // dom-capture; в generic-секциях DOM остаётся числовым (узлы могут нести
+      // sourceKey, но data-ir-path там числовой).
+      const opSection = (canvasIr.tree || [])[sectionIndex];
+      const opSourceSec = !!(opSection && (opSection.type === "source-block" || opSection.variant === "dom-capture"));
       let target: HTMLElement | null = null;
       while (nodeParts.length && !target) {
-        target = domAtCanvas({ secIdx: sectionIndex, path: nodeParts.join(".") });
+        const numericPath = nodeParts.join(".");
+        const node = opSection ? getByPath(opSection, numericPath) : null;
+        const domPath = opSourceSec && node && node.sourceKey ? node.sourceKey : numericPath;
+        target = domAtCanvas({ secIdx: sectionIndex, path: domPath });
         if (!target) nodeParts.pop();
       }
       if (!target) target = domAtCanvas({ secIdx: sectionIndex, path: null });

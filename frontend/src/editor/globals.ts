@@ -59,4 +59,6 @@ export interface IRHistoryHandle {
   canUndo: () => boolean;
   canRedo: () => boolean;
   clear: () => void;
+  /** Отменить последний push, если мутация после него не применилась. */
+  cancelLast: () => void;
 }

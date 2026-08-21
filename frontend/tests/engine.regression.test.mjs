@@ -187,8 +187,13 @@ check("geoedit refuses content/geometry mutations on locked layers", () => {
     const idx = src.indexOf(`function ${guard}(`);
     assert.ok(idx >= 0, `${guard} must exist`);
     const body = src.slice(idx, idx + 1200);
-    assert.ok(/refuseLocked|lockedNodeFor|isLockedNode/.test(body), `${guard} must consult the lock guard`);
+    // duplicateSelections фильтрует цели (включая lock-guard) в collectDuplicateTargets
+    const accept = guard === "duplicateSelections" ? /refuseLocked|lockedNodeFor|isLockedNode|collectDuplicateTargets/ : /refuseLocked|lockedNodeFor|isLockedNode/;
+    assert.ok(accept.test(body), `${guard} must consult the lock guard`);
   }
+  const collectIdx = src.indexOf("function collectDuplicateTargets(");
+  assert.ok(collectIdx >= 0 && /lockedNodeFor/.test(src.slice(collectIdx, collectIdx + 1200)),
+    "collectDuplicateTargets must apply the lock guard (duplicateSelections delegates to it)");
 });
 
 check("geoedit refuses locked duplication on the copy/cut/paste path", () => {

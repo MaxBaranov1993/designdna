@@ -78,6 +78,12 @@
   const frame = first && geo ? geo.frameOf(first.ref) || {} : {};
   const style = node.style || {};
   const canUngroup = sels.length === 1 && Array.isArray(node.children) && node.children.length > 0 && frame.layout === "free";
+  // Ручная геометрия (data-pi — контракт wireInspector/тестов): у секций
+  // x/y/rotation неприменимы, у контейнеров показываем раскладку
+  const isRootSel = first?.ref.path == null;
+  const isContainer = Array.isArray(node.children) && node.children.length > 0;
+  const dir = frame.layout === "free" ? "free" : String(frame.direction || "row");
+  const radioName = "pi-just-" + (first?.ref.secIdx ?? "x") + "-" + (first?.ref.path ?? "root");
   const padding = paddingOf(frame.padding);
   const fill = hex(style.background || node.fill, "#ffffff");
   const textColor = hex(style.color, "#111111");
@@ -166,15 +172,52 @@
   </section>
 
   {#if !preview}
-    <details class="manual-controls"><summary><span>Точно вручную</span><small>{isFormField ? "группа · цвета · padding · align" : isFormLabel ? "подпись · шрифт · цвет · padding" : isFormControl ? "поле ввода · шрифт · цвета · padding" : isFormSubmit ? "кнопка · текст · шрифт · цвета · padding" : "шрифт · цвета · padding · merge · align"}</small></summary>
+    {#if sels.length}
+    <details class="manual-controls"><summary><span>Точно вручную</span><small>{isFormField ? "группа · цвета · padding · align" : isFormLabel ? "подпись · шрифт · цвет · padding" : isFormControl ? "поле ввода · шрифт · цвета · padding" : isFormSubmit ? "кнопка · текст · шрифт · цвета · padding" : "position · flex · шрифт · цвета · padding · merge · align"}</small></summary>
       <div class="manual-body pi">
         {#if isFormField}<div class="manual-group field-content"><span class="manual-label">Группа поля</span><p>Выберите вложенную подпись или поле ввода на холсте либо в слоях.</p></div>{/if}
+        <div class="manual-group"><span class="manual-label">Position</span>
+          <div class="pi-row">
+            <div class="pi-field"><label title="Тяни горизонтально — scrub; можно выражения: 100*2">X</label><input type="text" inputMode="decimal" data-pi="x" value={frame.x ?? ""} disabled={isRootSel} /></div>
+            <div class="pi-field"><label title="Тяни горизонтально — scrub; можно выражения: 100*2">Y</label><input type="text" inputMode="decimal" data-pi="y" value={frame.y ?? ""} disabled={isRootSel} /></div>
+          </div>
+          <div class="pi-row">
+            <div class="pi-field"><label title="Можно выражения: 960/3">W</label><input type="text" inputMode="decimal" data-pi="width" value={frame.width ?? ""} /></div>
+            <div class="pi-field"><label title="Можно выражения: 960/3">H</label><input type="text" inputMode="decimal" data-pi="height" value={frame.height ?? ""} /></div>
+          </div>
+          <div class="pi-row">
+            <div class="pi-field"><label>R</label><input type="text" inputMode="decimal" data-pi="rotation" value={frame.rotation ?? ""} disabled={isRootSel} /></div>
+            <div class="pi-field"><label>Gap</label><input type="text" inputMode="decimal" data-pi="gap" value={typeof frame.gap === "number" ? frame.gap : ""} /></div>
+          </div>
+          {#if !isRootSel}
+            <div class="pi-row"><label class="pi-check"><input type="checkbox" data-pi="absolute" checked={!!frame.absolute} /> Absolute</label></div>
+          {/if}
+        </div>
+        {#if isContainer}
+          <div class="manual-group"><span class="manual-label">Flex Layout</span>
+            <div class="pi-btnrow">
+              <button class={"pi-ibtn" + (dir === "free" ? " active" : "")} data-pi-dir="free" title="Без раскладки: дети по x/y">⊞</button>
+              <button class={"pi-ibtn" + (dir === "column" ? " active" : "")} data-pi-dir="column" title="Колонка (vertical)">↓</button>
+              <button class={"pi-ibtn" + (dir === "row" ? " active" : "")} data-pi-dir="row" title="Ряд (horizontal)">→</button>
+            </div>
+            <div class="pi-grid3">
+              {#each ["start", "center", "end"] as a}
+                {#each ["start", "center", "end"] as j}
+                  <button class={"pi-ibtn" + (frame.justify === j && frame.align === a ? " active" : "")} data-pi-ja={j + "|" + a} title={"justify:" + j + " align:" + a}><span class="dot"></span></button>
+                {/each}
+              {/each}
+            </div>
+            <div class="pi-row"><label class="pi-radio"><input type="radio" name={radioName} data-pi-justify="space-between" checked={frame.justify === "space-between"} /> Space Between</label></div>
+            <div class="pi-row"><label class="pi-radio"><input type="radio" name={radioName} data-pi-justify="space-around" checked={frame.justify === "space-around"} /> Space Around</label></div>
+          </div>
+        {/if}
         {#if isFormLabel}<div class="manual-group field-content"><span class="manual-label">Подпись</span><label><span>Текст</span><input data-el-prop="text" value={node.text ?? formField.label ?? ""} /></label></div>{/if}
         {#if isFormControl}<div class="manual-group field-content"><span class="manual-label">Поле ввода</span><label><span>Подсказка</span><input data-el-prop="placeholder" value={node.placeholder ?? formField.placeholder ?? ""} /></label></div>{/if}
         {#if isFormSubmit}<div class="manual-group field-content"><span class="manual-label">Кнопка формы</span><label><span>Текст</span><input data-el-prop="text" value={node.text ?? sess?.ir?.tree?.[first.ref.secIdx!]?.props?.submitText ?? "Отправить"} /></label></div>{/if}
         <div class="manual-group"><span class="manual-label">Align</span><div class="align-grid">
           <button data-act="align-left" title="По левому краю">⇤</button><button data-act="align-center-h" title="По центру горизонтали">↔</button><button data-act="align-right" title="По правому краю">⇥</button>
           <button data-act="align-top" title="По верхнему краю">↥</button><button data-act="align-center-v" title="По центру вертикали">↕</button><button data-act="align-bottom" title="По нижнему краю">↧</button>
+          <button data-act="distribute-h" title="Распределить по горизонтали" disabled={sels.length < 3}>↹</button><button data-act="distribute-v" title="Распределить по вертикали" disabled={sels.length < 3}>⇕</button>
         </div></div>
         <div class="manual-group"><span class="manual-label">Merge</span><div class="merge-row"><button data-act="group" disabled={sels.length < 2}>Объединить</button><button data-act="ungroup" disabled={!canUngroup}>Разъединить</button></div></div>
         <div class="manual-group"><span class="manual-label">Padding</span><div class="padding-grid">{#each ["T", "R", "B", "L"] as label, index}<label><span>{label}</span><input data-padding={label.toLowerCase()} type="number" min="0" value={padding[index]} onchange={(event) => setPadding(index, event)} /></label>{/each}</div></div>
@@ -182,5 +225,6 @@
         <div class="manual-group"><span class="manual-label">Шрифт</span><label class="font-family"><span>Семейство</span><select data-style-select="fontFamily" value={style.fontFamily || ""}><FontOptions autoLabel="Как в теме" /></select></label><div class="font-pair"><label><span>Размер</span><input type="number" min="1" data-style-num="fontSize" value={typeof style.fontSize === "number" ? style.fontSize : ""} placeholder="auto" /></label><label><span>Вес</span><input type="number" min="100" max="900" step="100" data-style-num="fontWeight" value={typeof style.fontWeight === "number" ? style.fontWeight : ""} placeholder="auto" /></label></div></div>
       </div>
     </details>
+    {/if}
   {/if}
 </div>

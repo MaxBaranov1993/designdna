@@ -74,6 +74,8 @@ def main():
         page.evaluate("localStorage.clear()")
         page.reload()
         page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        page.evaluate("window.GraphDev.clear()")
         edit_id = page.evaluate("window.GraphDev.add('edit', 60, 40).id")
         page.evaluate("(v) => window.GraphDev.setIR(v.id, v.ir)", {"id": edit_id, "ir": ir})
         page.click(f'.svelte-flow__node[data-id="{edit_id}"] .f-open-editor')

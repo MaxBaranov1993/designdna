@@ -49,6 +49,8 @@ def main():
         page.reload()
         page.wait_for_selector(".svelte-flow__pane")
         page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        page.evaluate("window.GraphDev.clear()")
         edit_id = int(page.evaluate("window.GraphDev.add('edit', 40, 40).id"))
         recorder_id = int(page.evaluate("window.GraphDev.add('recorder', 560, 40).id"))
         page.evaluate("(args) => window.GraphDev.setIR(args.id, args.ir)", {"id": edit_id, "ir": fixture})

@@ -108,5 +108,9 @@ export function rekeyCloneKeys(root, uidFn) {
     (n.children || []).forEach((c) => walk(c, false));
   };
   walk(root, true);
+  // lineage для Source Lens / инспектора: свежий ключ отсутствует в реестре
+  // провенанса (nodeSources), поэтому помечаем исходный ключ корня поддерева.
+  // kind обязателен по схеме — по умолчанию "dom" (обычный захваченный слой).
+  root.sourceMeta = Object.assign({ kind: "dom" }, root.sourceMeta, { derivedFromKey: origRoot });
   return root;
 }

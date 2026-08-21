@@ -54,6 +54,8 @@ def main():
         page.evaluate("localStorage.clear()")
         page.reload()
         page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        page.evaluate("window.GraphDev.clear()")
         edit_id = int(page.evaluate("window.GraphDev.add('edit', 30, 40).id"))
         recorder_id = int(page.evaluate("window.GraphDev.add('recorder', 520, 40).id"))
         motion_id = int(page.evaluate("window.GraphDev.add('motion', 1010, 40).id"))

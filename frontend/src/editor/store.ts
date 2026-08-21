@@ -120,8 +120,13 @@ ctl.bindUi({
     if (ctl.dom.overlay) ctl.dom.overlay.style.display = v ? "flex" : "none";
     useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null, aiProgress: null }) });
   },
-  bumpInspector: () => useEditorStore.setState((s) => ({ inspectorTick: s.inspectorTick + 1 })),
-  bumpSources: () => useEditorStore.setState((s) => ({ sourceTick: s.sourceTick + 1 })),
+  // queueMicrotask: setState синхронно внутри стека события geoedit (onSelect)
+  // флашит подписчиков Svelte в контексте, где пересоздание {#key tick}-инспектора
+  // даёт state_unsafe_mutation; в микротаске контекст события уже снят
+  bumpInspector: () =>
+    queueMicrotask(() => useEditorStore.setState((s) => ({ inspectorTick: s.inspectorTick + 1 }))),
+  bumpSources: () =>
+    queueMicrotask(() => useEditorStore.setState((s) => ({ sourceTick: s.sourceTick + 1 }))),
   setSmartAxisProposal: (smartAxisProposal) => useEditorStore.setState({ smartAxisProposal }),
   setQualityProposal: (qualityProposal) => useEditorStore.setState({ qualityProposal }),
   setHarmonizerProposal: (harmonizerProposal) => useEditorStore.setState({ harmonizerProposal }),

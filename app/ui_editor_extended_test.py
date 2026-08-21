@@ -70,6 +70,8 @@ def main():
         pg.reload()
         pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        pg.evaluate("window.GraphDev.clear()")
 
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
@@ -102,6 +104,7 @@ def main():
         check("redo срабатывает", True)
 
         # --- gap + undo ---
+        pg.evaluate("document.querySelector('.manual-controls') && (document.querySelector('.manual-controls').open = true)")
         gin = pg.query_selector('.fe-inspector .fe-shared-insp input[data-pi="gap"]')
         if gin:
             gin.fill("42")
@@ -116,6 +119,7 @@ def main():
             check("gap input не найден", False)
 
         # --- закрытие без сохранения откатывает изменения ---
+        pg.evaluate("document.querySelector('.manual-controls') && (document.querySelector('.manual-controls').open = true)")
         gin2 = pg.query_selector('.fe-inspector .fe-shared-insp input[data-pi="gap"]')
         if gin2:
             gin2.fill("77")
@@ -136,6 +140,7 @@ def main():
             cb = card.bounding_box()
             pg.mouse.click(cb["x"] + 8, cb["y"] + 8)
             pg.wait_for_timeout(400)
+        pg.evaluate("document.querySelector('.manual-controls') && (document.querySelector('.manual-controls').open = true)")
         gin3 = pg.query_selector('.fe-inspector .fe-shared-insp input[data-pi="gap"]')
         if gin3:
             gin3.fill("99")

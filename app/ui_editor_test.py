@@ -44,6 +44,8 @@ def main():
         pg.reload()
         pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        pg.evaluate("window.GraphDev.clear()")
         pg.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(pg.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
         pg.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, ir)
@@ -110,6 +112,8 @@ def main():
         d = max(abs(box["x"] - cb2["x"]), abs(box["y"] - cb2["y"]))
         check("рамка выделения совпадает", d < 4, f"d={d:.1f}")
 
+        # gap через инспектор (manual-контролы свёрнуты по умолчанию — раскрываем)
+        pg.evaluate("document.querySelector('.manual-controls') && (document.querySelector('.manual-controls').open = true)")
         # gap через инспектор
         gin = pg.query_selector('.fe-inspector .fe-shared-insp input[data-pi="gap"]')
         gin.fill("24")

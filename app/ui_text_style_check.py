@@ -104,6 +104,8 @@ def main() -> None:
         # Проверяем Inspector: transparent-кнопка и opacity slider — в React-инспекторе
         # открытого DNA-редактора (legacy window.Inspector удалён вместе с vanilla-движками)
         page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        page.evaluate("window.GraphDev.clear()")
         page.evaluate("window.GraphDev.add('edit', 60, 40)")
         nid = int(page.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
         page.evaluate("(ir) => window.GraphDev.setIR(%d, ir)" % nid, IR)

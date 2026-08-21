@@ -85,6 +85,8 @@ def main():
         page.evaluate("localStorage.clear()")
         page.reload()
         page.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        page.evaluate("window.GraphDev.clear()")
         page.evaluate("window.GraphDev.add('edit', 60, 40)")
         node_id = int(page.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
         page.evaluate("([id, ir]) => window.GraphDev.setIR(id, ir)", [node_id, IR])

@@ -25,6 +25,16 @@
   });
   let contentRoot = $state<HTMLDivElement | null>(null);
   const wiredRoots = new WeakSet<HTMLDivElement>();
+  let undoBtn: HTMLButtonElement | null = $state(null);
+  let redoBtn: HTMLButtonElement | null = $state(null);
+
+  // История доступна всегда (не только при выделении): disabled-состояние
+  // обновляет контроллер через dom-refs
+  $effect(() => {
+    ctl.dom.undoBtn = undoBtn;
+    ctl.dom.redoBtn = redoBtn;
+    ctl.updateUndoBtn();
+  });
 
   $effect(() => {
     const version = tick;
@@ -47,6 +57,20 @@
 </script>
 
 <div class="fe-inspector">
+  <div class="fe-insp-actions">
+    <button class="fe-abtn" data-act="semantic-select" title="Выделить элементы обычным текстовым запросом" onclick={() => ctl.handleAct("semantic-select")}>⌘ Умное выделение</button>
+    <button class="fe-abtn" data-act="smart-axis" title="AI найдёт общую ось контента и покажет безопасный патч" onclick={() => ctl.handleAct("smart-axis")}>✦ Выровнять ширину</button>
+    <button class="fe-abtn" data-act="quality-gate" title="Проверить сетку, overflow и ограничения; показать исправления до применения" onclick={() => ctl.handleAct("quality-gate")}>✓ AI‑проверка</button>
+    <button class="fe-abtn" data-act="harmonize" title="Свести цвета, типографику, радиусы и тени разных источников в одну Style DNA" onclick={() => ctl.handleAct("harmonize")}>✦ Сделать цельно</button>
+    <button class="fe-abtn" data-act="responsive-autopilot" title="AI подготовит tablet/mobile constraints и проверит их до применения" onclick={() => ctl.handleAct("responsive-autopilot")}>▣ Адаптировать</button>
+    <button class="fe-abtn" data-act="intent-locks" title="Защитить выбранные блоки от изменений AI" onclick={() => ctl.handleAct("intent-locks")}>🔒 Не менять</button>
+    <button class="fe-abtn" data-act="style-dna" title="Style DNA" onclick={() => ctl.handleAct("style-dna")}>🧬 Style DNA</button>
+    <span class="fe-abtn-sep"></span>
+    <button class="fe-abtn" data-act="undo" bind:this={undoBtn} title="Отменить (Ctrl+Z)" onclick={() => ctl.handleAct("undo")}>↩ Отменить</button>
+    <button class="fe-abtn" data-act="redo" bind:this={redoBtn} title="Повторить (Ctrl+Shift+Z)" onclick={() => ctl.handleAct("redo")}>↪ Вернуть</button>
+    <button class="fe-abtn" data-act="forward" title="Выше (])" onclick={() => ctl.handleAct("forward")}>⇈ Выше</button>
+    <button class="fe-abtn" data-act="backward" title="Ниже ([)" onclick={() => ctl.handleAct("backward")}>⇊ Ниже</button>
+  </div>
   {#if selCount}
     {#key tick}
       <div bind:this={contentRoot}>

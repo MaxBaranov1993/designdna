@@ -84,6 +84,8 @@ def main():
         pg.reload()
         pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        pg.evaluate("window.GraphDev.clear()")
 
         # правый клик по канвасу — контекстное меню создания ноды
         pg.click(".svelte-flow__pane", button="right", position={"x": 320, "y": 300})
