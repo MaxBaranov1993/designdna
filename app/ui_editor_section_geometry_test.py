@@ -66,6 +66,8 @@ def main():
         page.reload()
         page.wait_for_selector(".svelte-flow__pane")
         page.wait_for_function("window.GraphDev && window.DNAEditor")
+        # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
+        page.evaluate("window.GraphDev.clear()")
         page.evaluate("window.GraphDev.add('edit', 60, 40)")
         node_id = int(page.evaluate("window.GraphDev.state().nodes.find(n => n.type === 'edit').id"))
         page.evaluate("(a) => window.GraphDev.setIR(a.id, a.ir)", {"id": node_id, "ir": IR})

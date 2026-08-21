@@ -971,7 +971,12 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       // to sit exactly on top of the N/E/S/W resize handles (higher z-index),
       // making the selected artboard look resizable while every drag changed
       // padding instead of width/height.
-      const handleInset = 10 / overlayScale();
+      // Инсет держит постоянные 10 экранных px, но на мелких/отдалённых
+      // боксах 10/scale разрастается до середины элемента и хендл начинает
+      // перехватывать клики/драги по центру. Клампим до 20% стороны бокса.
+      const insetPx = 10 / overlayScale();
+      const insetY = Math.min(insetPx, Math.max(2, (box.offsetHeight || 40) * 0.2));
+      const insetX = Math.min(insetPx, Math.max(2, (box.offsetWidth || 40) * 0.2));
       ["top", "right", "bottom", "left"].forEach(side => {
         const guide = box.querySelector(`.geo-pad-guide.pad-${side}`);
         const handle = box.querySelector(`.geo-pad.pad-${side}`);
@@ -980,16 +985,16 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         handle.dataset.value = `${Math.round(value)} px`;
         if (side === "top") {
           guide.style.cssText = `top:${value}px;left:${left}px;right:${right}px`;
-          handle.style.top = (value + handleInset) + "px"; handle.style.left = "50%";
+          handle.style.top = (value + insetY) + "px"; handle.style.left = "50%";
         } else if (side === "bottom") {
           guide.style.cssText = `bottom:${value}px;left:${left}px;right:${right}px`;
-          handle.style.bottom = (value + handleInset) + "px"; handle.style.left = "50%";
+          handle.style.bottom = (value + insetY) + "px"; handle.style.left = "50%";
         } else if (side === "left") {
           guide.style.cssText = `left:${value}px;top:${top}px;bottom:${bottom}px`;
-          handle.style.left = (value + handleInset) + "px"; handle.style.top = "50%";
+          handle.style.left = (value + insetX) + "px"; handle.style.top = "50%";
         } else {
           guide.style.cssText = `right:${value}px;top:${top}px;bottom:${bottom}px`;
-          handle.style.right = (value + handleInset) + "px"; handle.style.top = "50%";
+          handle.style.right = (value + insetX) + "px"; handle.style.top = "50%";
         }
       });
     }
@@ -1515,7 +1520,18 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       }
       d.el.style.width = w + "px";
       d.el.style.height = h + "px";
-      d.el.style.transform = (tx || ty) ? `translate(${tx}px, ${ty}px)` : "";
+      // угловой drag с контентом — живое превью масштабирования через CSS scale
+      // (origin в противоположном углу); commit пишет реальные числа в IR
+      const node = irNodeAt(d.ref);
+      const hasKids = node && Array.isArray(node.children) && node.children.length;
+      if (d.dir.length === 2 && hasKids && d.w0 > 0 && d.h0 > 0) {
+        const ksx = Math.max(0.1, w / d.w0), ksy = Math.max(0.1, h / d.h0);
+        const origin = { se: "0 0", sw: "100% 0", ne: "0 100%", nw: "100% 100%" }[d.dir] || "0 0";
+        d.el.style.transformOrigin = origin;
+        d.el.style.transform = `translate(${tx}px, ${ty}px) scale(${ksx}, ${ksy})`;
+      } else {
+        d.el.style.transform = (tx || ty) ? `translate(${tx}px, ${ty}px)` : "";
+      }
       const chip = overlay().querySelector(".geo-box.selected:last-child .geo-chip");
       if (chip) chip.textContent = `${Math.round(w)}×${Math.round(h)}`;
     }
@@ -1587,6 +1603,12 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       }
       setFrameData(d.ref, f);
       applyConstraints(d.ref, oldW, oldH, f.width, f.height);
+      // Адаптивный контент: угловой хендл масштабирует поддерево целиком,
+      // боковой — подтягивает детей вдоль своей оси (детали в scaleDescendants)
+      const isCorner = d.dir.length === 2;
+      if (isCorner) scaleDescendants(d.ref, f.width / (oldW || f.width), f.height / (oldH || f.height), "full");
+      else if (d.dir === "e" || d.dir === "w") scaleDescendants(d.ref, f.width / (oldW || f.width), 1, "x");
+      else if (d.dir === "n" || d.dir === "s") scaleDescendants(d.ref, 1, f.height / (oldH || f.height), "y");
       onMutated();
     }
 
@@ -1626,7 +1648,60 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         f.height = Math.max(1, Math.round(it.h * sy));
         setFrameData(it.ref, f);
       });
+      // контент внутри каждого выделенного узла адаптируется вместе с ним
+      const multiCorner = d.dir.length === 2;
+      d.items.forEach(it => {
+        if (multiCorner) scaleDescendants(it.ref, sx, sy, "full");
+        else if (d.dir === "e" || d.dir === "w") scaleDescendants(it.ref, sx, 1, "x");
+        else if (d.dir === "n" || d.dir === "s") scaleDescendants(it.ref, 1, sy, "y");
+      });
       onMutated();
+    }
+
+    /** Адаптивный resize контента: пропорционально масштабирует ПОДдерево
+     *  контейнера при изменении его размера. Пишет конкретные числа в frame
+     *  каждого узла (никаких scale-трюков) — после правки всё правится руками,
+     *  жест целиком ложится в один undo-шаг.
+     *  mode: 'full' (угловой хендл — x/y/w/h + шрифт), 'x' (боковой e/w —
+     *  только горизонталь), 'y' (n/s — только вертикаль). Узлы с явными
+     *  constraints не трогаем — ими управляет applyConstraints. */
+    function scaleDescendants(ref, sx, sy, mode) {
+      if (!Number.isFinite(sx) || !Number.isFinite(sy) || Math.abs(sx - 1) < 0.001 && Math.abs(sy - 1) < 0.001) return;
+      const root = irNodeAt(ref);
+      if (!root || !Array.isArray(root.children) || !root.children.length) return;
+      sx = Math.max(0.1, Math.min(8, sx));
+      sy = Math.max(0.1, Math.min(8, sy));
+      const fontK = mode === "full" ? Math.min(sx, sy) : 1;
+      const scaleFrame = (frame) => {
+        const f = Object.assign({}, frame);
+        if (mode !== "y") {
+          if (typeof f.x === "number") f.x = Math.round(f.x * sx);
+          if (typeof f.width === "number") f.width = Math.max(4, Math.round(f.width * sx));
+        }
+        if (mode !== "x") {
+          if (typeof f.y === "number") f.y = Math.round(f.y * sy);
+          if (typeof f.height === "number") f.height = Math.max(4, Math.round(f.height * sy));
+        }
+        if (typeof f.padding === "number" && mode === "full") f.padding = Math.max(0, Math.round(f.padding * fontK));
+        else if (Array.isArray(f.padding) && mode === "full") f.padding = f.padding.map(v => Math.max(0, Math.round(v * fontK)));
+        if (typeof f.gap === "number") f.gap = Math.max(0, Math.round(f.gap * (mode === "y" ? sy : sx)));
+        if (typeof f.borderRadius === "number" && mode === "full") f.borderRadius = Math.max(0, Math.round(f.borderRadius * fontK));
+        return f;
+      };
+      const scaleStyle = (style) => {
+        if (!style || typeof style !== "object") return style;
+        const out = Object.assign({}, style);
+        if (fontK !== 1 && typeof out.fontSize === "number") out.fontSize = Math.max(8, Math.round(out.fontSize * fontK));
+        if (mode === "full" && typeof out.borderRadius === "number") out.borderRadius = Math.max(0, Math.round(out.borderRadius * fontK));
+        return out;
+      };
+      const walk = (node) => {
+        if (!node || typeof node !== "object" || node.editable === false) return; // locked — не трогаем
+        if (node.frame && !(node.frame.constraints)) node.frame = scaleFrame(node.frame);
+        if (fontK !== 1 && node.style) node.style = scaleStyle(node.style);
+        (node.children || []).forEach(walk);
+      };
+      root.children.forEach(walk);
     }
 
     /** Constraints (модель Figma): как дети реагируют на resize родителя.
@@ -1674,8 +1749,24 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
 
       const paddingHandle = e.target instanceof Element ? e.target.closest(".geo-pad") : null;
       if (paddingHandle && overlay().contains(paddingHandle)) {
-        startPadding(paddingHandle.dataset.side, e, paddingHandle.closest(".geo-box"));
-        return;
+        // Пад-хендл валиден только у своей кромки: на мелких боксах/зуме
+        // инсет может занести его к центру и тогда он перехватывал бы
+        // обычные клики/драги. Сверяем расстояние до края бокса.
+        const padBox = paddingHandle.closest(".geo-box");
+        const side = paddingHandle.dataset.side;
+        const br = padBox && padBox.getBoundingClientRect();
+        let edgeDist = Infinity;
+        if (br && side) {
+          if (side === "top") edgeDist = e.clientY - br.top;
+          else if (side === "bottom") edgeDist = br.bottom - e.clientY;
+          else if (side === "left") edgeDist = e.clientX - br.left;
+          else if (side === "right") edgeDist = br.right - e.clientX;
+        }
+        if (br && Number.isFinite(edgeDist) && edgeDist <= Math.max(22, 0.35 * (side === "top" || side === "bottom" ? br.height : br.width))) {
+          startPadding(side, e, padBox);
+          return;
+        }
+        // далеко от кромки — падаем сквозь к обычному hit-test
       }
 
       // 1) Проверяем resize-хендлы (геометрически)
@@ -1691,20 +1782,45 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       let ref = hitRef;
       let clickRef = null;
 
-      // A selected semantic section owns a drag that starts anywhere inside
-      // its box. Otherwise props.heading/cta/etc. win the fresh hit-test and
-      // silently replace the section before the move gesture is created.
-      // Preserve ordinary click-to-select-child behavior by deferring that
-      // nested selection until pointer-up when the gesture did not move.
-      if (!deep && !e.shiftKey && selections.length === 1) {
-        const selectedRef = selections[0].ref;
-        if (selectedRef.secIdx != null && selectedRef.path == null) {
-          const selectedEl = domAt(selectedRef);
-          const r = selectedEl && selectedEl.getBoundingClientRect();
-          if (r && e.clientX >= r.left && e.clientX <= r.right &&
-              e.clientY >= r.top && e.clientY <= r.bottom) {
-            ref = selectedRef;
-            if (hitRef && refKey(hitRef) !== refKey(selectedRef)) clickRef = hitRef;
+      // ВЫДЕЛЕНИЕ ВЛАДЕЕТ DRAG'ОМ ВНУТРИ СЕБЯ (группа/секция/мультивыбор):
+      // клик по любому ребёнку выделенного контейнера НЕ сбрасывает выделение —
+      // тащится вся группа целиком; выбор вложенного элемента откладывается
+      // до pointer-up (жест без движения = клик-выбор, как в Figma).
+      if (!deep && !e.shiftKey && selections.length) {
+        const owns = selections.some(sel => {
+          const sr = sel.ref;
+          if (sr.secIdx == null) return false;
+          // «владеют» drag'ом только секции (path==null) и free-группы
+          // (card layout:free — то, что создаёт groupSelection). Auto-layout
+          // контейнеры пропускают клик к ребёнку сразу (как фреймы в Figma).
+          const sNode = irNodeAt(sr);
+          if (sr.path != null) {
+            const isFreeGroup = sNode && (sNode.type === "card" || sNode.type === "button")
+              && sNode.frame && sNode.frame.layout === "free";
+            if (!isFreeGroup) return false;
+          }
+          const el = domAt(sr);
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          if (!r || e.clientX < r.left || e.clientX > r.right ||
+              e.clientY < r.top || e.clientY > r.bottom) return false;
+          // hit должен быть выделением или его потомком (не соседом сверху)
+          if (!hitRef) return true;
+          if (refKey(hitRef) === refKey(sr)) return true;
+          if (hitRef.secIdx !== sr.secIdx) return false;
+          // секция (path==null) владеет всем содержимым; узел — своими потомками
+          if (sr.path == null) return true;
+          return String(hitRef.path || "").startsWith(String(sr.path) + ".");
+        });
+        if (owns) {
+          // одиночное выделение — тащим его; мультивыделение — сохраняем весь набор
+          if (selections.length === 1) {
+            ref = selections[0].ref;
+            if (hitRef && refKey(hitRef) !== refKey(ref)) clickRef = hitRef;
+          } else {
+            ref = null; // набор уже установлен ниже по коду (alreadySelected)
+            ref = selections[0].ref;
+            if (hitRef) clickRef = hitRef;
           }
         }
       }
