@@ -452,6 +452,22 @@ export function parsePagesPayload(input: unknown): {
   return { activePageId, pages, channels };
 }
 
+/** Разовая миграция legacy-блоба: проекты, сохранённые до compact-автосейва,
+ *  несут мегабайты base64-превью в localStorage. Каждый бут распарсивал такой
+ *  блоб целиком (замер: 18 МБ → FCP 3.2 с), поэтому при обнаружении —
+ *  перезаписываем скомпакченной версией. Правки/данные не трогаем. */
+export function compactLegacyLocalStorage(): void {
+  try {
+    const raw = localStorage.getItem(FLOW_PAGES_LS_KEY) || "";
+    if (raw.length < 400_000) return;
+    if (!raw.includes('"preview"') && !raw.includes("data:image/")) return;
+    const compacted = JSON.stringify(compactForStorage(JSON.parse(raw)));
+    if (compacted.length < raw.length) localStorage.setItem(FLOW_PAGES_LS_KEY, compacted);
+  } catch {
+    // битый блоб оставляем как есть — load обработает отказ
+  }
+}
+
 export function loadPagesProjectFromStorage(): {
   activePageId: string;
   pages: FlowPage[];

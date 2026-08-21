@@ -19,6 +19,7 @@ declare global {
     designDNA?: {
       app: { info(): Promise<Record<string, unknown>> };
       api: { request(request: Record<string, unknown>): Promise<Record<string, unknown>> };
+      files: { save(name: string, base64: string): Promise<{ saved: boolean; path?: string }> };
       sourceAuth: { open(url: string): Promise<{ opened: boolean }>; clear(): Promise<{ cleared: boolean }> };
       repoCanvas: { snapshot(): Promise<RepoCanvasSnapshot>; check(): Promise<Record<string, unknown>>; refresh(options?: Record<string, unknown>): Promise<Record<string, unknown>> };
       providers: {

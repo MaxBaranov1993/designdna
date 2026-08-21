@@ -874,9 +874,14 @@ import { isLockedNode } from "./locked";
       document.head.appendChild(ffEl);
     }
     ffEl.textContent = customFaces.map((f) => {
-      const url = String(f.url);
-      const format = /\.woff2$/i.test(url) ? "woff2" : /\.woff$/i.test(url) ? "woff" : "truetype";
+      const rawUrl = String(f.url);
+      const format = /\.woff2$/i.test(rawUrl) ? "woff2" : /\.woff$/i.test(rawUrl) ? "woff" : "truetype";
       const unicode = f.unicodeRange ? "unicode-range:" + String(f.unicodeRange) + ";" : "";
+      // Desktop: рендерер живёт на file://, корневой '/fonts/...' резолвится в
+      // корень файловой системы. Привилегированная схема ddna://fonts отдаёт
+      // захваченные шрифты из userData/main-процесса с CORS-заголовком.
+      const isDesktop = typeof window !== "undefined" && !!(window as any).designDNA;
+      const url = isDesktop && rawUrl.startsWith("/fonts/") ? "ddna://" + rawUrl.slice(1) : rawUrl;
       return "@font-face{font-family:'" + String(f.family) + "';" +
         "font-style:" + String(f.style) + ";font-weight:" + String(f.weight) + ";" +
         unicode + "src:url('" + url + "') format('" + format + "');font-display:swap;}";

@@ -3,6 +3,9 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("designDNA", Object.freeze({
   app: Object.freeze({ info: () => ipcRenderer.invoke("app:info") }),
   api: Object.freeze({ request: (request) => ipcRenderer.invoke("api:request", request) }),
+  files: Object.freeze({
+    save: (name, base64) => ipcRenderer.invoke("files:save", { name, base64 }),
+  }),
   sourceAuth: Object.freeze({
     open: (url) => ipcRenderer.invoke("source-auth:open", { url }),
     clear: () => ipcRenderer.invoke("source-auth:clear"),

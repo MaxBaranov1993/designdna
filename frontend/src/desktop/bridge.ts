@@ -50,4 +50,39 @@ export function installDesktopFetchBridge(): void {
     const body = response.encoding === "base64" ? decodeBase64(response.body) : response.body;
     return new Response(body, { status: response.status, headers: response.headers });
   };
+
+  // beforeunload-флэш сейва идёт через navigator.sendBeacon — под file:// он
+  // не доходит ни до воркера, ни куда-либо ещё; гоняем его через IPC-мост.
+  const navigatorWithBeacon = navigator as Navigator & { __designDNABeaconBridge?: boolean };
+  if (!navigatorWithBeacon.__designDNABeaconBridge) {
+    navigatorWithBeacon.__designDNABeaconBridge = true;
+    const nativeBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = (url: string | URL, data?: BodyInit): boolean => {
+      let parsed: URL;
+      try {
+        parsed = new URL(String(url), "http://designdna.local");
+      } catch {
+        return nativeBeacon(url, data);
+      }
+      if (parsed.origin !== "http://designdna.local" || !parsed.pathname.startsWith("/api/")) {
+        return nativeBeacon(url, data);
+      }
+      void (async () => {
+        try {
+          const text = typeof data === "string" ? data : data instanceof Blob ? await data.text() : null;
+          if (text == null) return;
+          await bridge.request({
+            method: "POST",
+            path: `${parsed.pathname}${parsed.search}`,
+            headers: { "Content-Type": "application/json" },
+            body: text,
+            encoding: "utf8",
+          });
+        } catch {
+          // best-effort: компакт-копия уже в localStorage
+        }
+      })();
+      return true;
+    };
+  }
 }

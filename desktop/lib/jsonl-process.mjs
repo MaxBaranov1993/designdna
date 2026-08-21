@@ -13,10 +13,12 @@ export class JsonlProcess {
     this.pending = new Map();
     this.sequence = 0;
     this.stderr = [];
+    this.spawnCount = 0;
   }
 
   start() {
     if (this.child) return;
+    this.spawnCount += 1;
     const child = spawn(this.command, this.args, {
       cwd: this.cwd,
       env: { ...process.env, ...this.env },

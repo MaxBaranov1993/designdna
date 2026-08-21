@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from "electron";
+import { readFile } from "node:fs/promises";
+import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, session, shell } from "electron";
 import { JsonlProcess } from "./lib/jsonl-process.mjs";
 import { isAllowedRendererUrl } from "./lib/renderer-policy.mjs";
 import { pythonWorkerEnvironment, pythonWorkerSpec } from "./lib/runtime-paths.mjs";
@@ -40,6 +41,56 @@ const pythonApiQueue = new SerialRequestQueue();
 const pythonInteractiveQueue = new SerialRequestQueue();
 const SOURCE_AUTH_PARTITION = "designdna-source-auth";
 let sourceAuthWindow = null;
+let quitting = false;
+
+/* Кэш runtime.configure: одинаковые credentials не гоняем лишним JSONL-раундтрипом
+ * перед каждым API-вызовом; spawnCount отличает перезапущенный воркер. */
+const configureFingerprints = new Map();
+
+/* Быстрые routes уходят на интерактивный воркер: они обязаны отвечать за десятки
+ * миллисекунд даже когда длинный воркер минутами держит Source Import / reproduce.
+ * project/* целиком на интерактивном — projects.db остаётся single-writer. */
+const INTERACTIVE_API_PATHS = new Set([
+  "/api/editor/assist",
+  "/api/project/save",
+  "/api/project/load",
+  "/api/project/taste",
+  "/api/config",
+  "/api/cache/stats",
+  "/api/quality-pass/codex-step",
+  "/api/generate", // desktop-поток — это быстрые prepareOnly/rawOutputs-шаги
+]);
+
+// Captured source fonts live in userData/data/fonts and are unreachable from a
+// file:// renderer ('/fonts/...' would resolve to the filesystem root). A
+// privileged scheme serves them cross-origin with an explicit CORS header.
+protocol.registerSchemesAsPrivileged([
+  { scheme: "ddna", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
+]);
+
+const FONT_MIME = { ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf" };
+
+function registerFontsProtocol() {
+  const fontsDir = path.join(app.getPath("userData"), "data", "fonts");
+  protocol.handle("ddna", async (request) => {
+    const url = new URL(request.url);
+    if (url.host !== "fonts") return new Response("not found", { status: 404 });
+    const name = path.basename(decodeURIComponent(url.pathname.replace(/^\/+/, "")));
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name)) return new Response("bad font name", { status: 400 });
+    try {
+      const data = await readFile(path.join(fontsDir, name));
+      return new Response(data, {
+        headers: {
+          "Content-Type": FONT_MIME[path.extname(name).toLowerCase()] || "application/octet-stream",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "immutable",
+        },
+      });
+    } catch {
+      return new Response("font not found", { status: 404 });
+    }
+  });
+}
 
 /* Точная политика доверенного renderer-URL: dev-сервер (когда задан
  * DESIGNDNA_RENDERER_URL) или ровно файл собранного renderer'а. Используется и
@@ -125,9 +176,13 @@ function createWorkers() {
       }
       return;
     }
+    // Гигиена map'а: записи, на которые renderer не ответил (закрытый диалог),
+    // не должны копиться вечно; рестарт codex-сервера обнуляет всё.
+    if (codexRequests.size > 200) codexRequests.clear();
     codexRequests.set(String(message.id), message.method);
     broadcast("codex:request", message);
   });
+  codex.on("serverError", () => codexRequests.clear());
   codex.on("serverError", (error) => broadcast("codex:event", { method: "desktop/error", params: { message: error.message } }));
 }
 
@@ -204,9 +259,22 @@ function registerIpc() {
     await sourceAuthSession().clearStorageData();
     return { cleared: true };
   });
+  // Скачать бинарник (видео Motion и т.п.): в desktop нет HTTP, якорь href
+  // "/api/.../download" под file:// не работает — сохраняем через диалог.
+  handleTrusted("files:save", async (_event, { name, base64 }) => {
+    const safeName = path.basename(String(name || "file")).replace(/[\\/:*?"<>|]/g, "_") || "file";
+    const window = BrowserWindow.getAllWindows()[0];
+    const result = await (window
+      ? dialog.showSaveDialog(window, { defaultPath: safeName })
+      : dialog.showSaveDialog({ defaultPath: safeName }));
+    if (result.canceled || !result.filePath) return { saved: false };
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(result.filePath, Buffer.from(String(base64 || ""), "base64"));
+    return { saved: true, path: result.filePath };
+  });
   handleTrusted("api:request", (_event, request) => {
     const validatedRequest = validateApiRequest(request);
-    const interactive = validatedRequest.path.split("?", 1)[0] === "/api/editor/assist";
+    const interactive = INTERACTIVE_API_PATHS.has(validatedRequest.path.split("?", 1)[0]);
     const queue = interactive ? pythonInteractiveQueue : pythonApiQueue;
     const worker = interactive ? pythonInteractiveWorker : pythonWorker;
     return queue.run(async () => {
@@ -217,8 +285,9 @@ function registerIpc() {
         preparedRequest = attachSourceAuthCookies(validatedRequest, cookies, authIntent.url);
       }
       // Keep provider credentials inside the trusted main/sidecar boundary.
-      // Reconfigure before every API call so credential rotation and worker
-      // restarts take effect without exposing the secrets to the renderer.
+      // Reconfigure only when the fingerprint (credentials + worker restart)
+      // changed: identical configure round-trips before every call added ~30ms
+      // of latency to each request.
       let kimiApiKey = "";
       if (credentials.has("kimi")) {
         // Best-effort: a token refresh failure must not break the API request;
@@ -229,10 +298,14 @@ function registerIpc() {
           console.warn(`Kimi token unavailable for api:request: ${error.message}`);
         }
       }
-      await worker.request("runtime.configure", {
-        openaiApiKey: credentials.get("openai") || "",
-        kimiApiKey,
-      });
+      const fingerprint = `${worker.spawnCount}:${kimiApiKey ? "kimi" : "-"}:${credentials.has("openai") ? "oa" : "-"}`;
+      if (configureFingerprints.get(worker) !== fingerprint) {
+        await worker.request("runtime.configure", {
+          openaiApiKey: credentials.get("openai") || "",
+          kimiApiKey,
+        });
+        configureFingerprints.set(worker, fingerprint);
+      }
       // Source Import / generation pipelines legitimately take minutes
       // (Playwright captures multiple viewports, font downloads, LLM steps),
       // so the HTTP call gets a wider budget than the default worker timeout.
@@ -345,6 +418,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  registerFontsProtocol();
   credentials = new CredentialStore({ userDataPath: app.getPath("userData"), safeStorage });
   settings = new SettingsStore(app.getPath("userData"));
   mcpActivation = createMcpActivationApprover({
@@ -366,10 +440,33 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
-  void pythonWorker?.stop();
-  void pythonInteractiveWorker?.stop();
-  void repoCanvasWorker?.stop();
+// Второй запуск фокусирует существующее окно вместо второго набора воркеров
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const [window] = BrowserWindow.getAllWindows();
+    if (window) {
+      if (window.isMinimized()) window.restore();
+      window.focus();
+    }
+  });
+}
+
+// await-завершение вместо fire-and-forget: отброшенные stop()-промисы не убивали
+// детей на Windows и оставляли зомби-процессы python/repo-canvas после выхода
+app.on("before-quit", (event) => {
+  if (quitting) return;
+  quitting = true;
+  event.preventDefault();
   codex?.stop();
   mcp?.stop();
+  const stops = Promise.allSettled([
+    pythonWorker?.stop(),
+    pythonInteractiveWorker?.stop(),
+    repoCanvasWorker?.stop(),
+  ]);
+  const forceExit = new Promise((resolve) => setTimeout(resolve, 3_000));
+  void Promise.race([stops, forceExit]).then(() => app.exit(0));
 });

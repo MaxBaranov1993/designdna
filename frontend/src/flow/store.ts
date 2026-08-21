@@ -17,6 +17,7 @@ import {
   DEFAULT_VIEW,
   FLOW_LS_KEY,
   buildPagesProjectPayload,
+  compactLegacyLocalStorage,
   loadPagesProjectFromDb,
   loadPagesProjectFromStorage,
   loadFromStorage,
@@ -134,6 +135,7 @@ export interface FlowStoreState {
 
 /* Стартовое состояние — из сейва designai-flow-v1 (битый сейв → пустой граф) */
 const emptyGraph = { nodes: [] as FlowNode[], edges: [] as FlowEdge[], view: { ...DEFAULT_VIEW }, nextId: 1 };
+compactLegacyLocalStorage();
 const projectSaved = loadPagesProjectFromStorage();
 if (projectSaved) {
   /* pages-проект полностью заменяет legacy-ключ: убираем мёртвый блоб,

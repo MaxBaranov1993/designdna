@@ -33,6 +33,18 @@
   let renderSettings = $derived(data.renderSettings || { format: "mp4" as const, quality: "high" as const });
   let renderJob = $derived(data.renderJob);
   let rendering = $derived(renderJob?.status === "queued" || renderJob?.status === "rendering");
+  // Desktop: якорь href="/api/.../download" под file:// не работает (нет HTTP и
+  // навигация закрыта политикой) — качаем через IPC и системный диалог сохранения.
+  const desktopFiles = typeof window !== "undefined" ? window.designDNA?.files : undefined;
+  const downloadVideo = async () => {
+    if (!renderJob?.downloadUrl || !desktopFiles) return;
+    const resp = await fetch(renderJob.downloadUrl);
+    if (!resp.ok) return;
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < buf.length; i += 32_768) binary += String.fromCharCode(...buf.subarray(i, i + 32_768));
+    await desktopFiles.save(renderJob.filename || "motion.mp4", btoa(binary));
+  };
   let transition = $derived(activeScene?.transition || { type: "cut" as const, duration: 0, easing: "linear" as const });
 
   $effect(() => {
@@ -129,7 +141,11 @@
     <div class="motion-actions">
       {#if rendering}<span class="motion-render-progress">Rendering {renderJob?.progress || 0}%</span>{/if}
       {#if renderJob?.status === "complete" && renderJob.downloadUrl}
-        <a class="motion-download" href={renderJob.downloadUrl} download={renderJob.filename}><span class="motion-desktop-label">Download {renderJob.result?.bytes ? formatBytes(renderJob.result.bytes) : "video"}</span><span class="motion-mobile-label">Save</span></a>
+        {#if desktopFiles}
+          <button class="motion-download" onclick={downloadVideo}><span class="motion-desktop-label">Download {renderJob.result?.bytes ? formatBytes(renderJob.result.bytes) : "video"}</span><span class="motion-mobile-label">Save</span></button>
+        {:else}
+          <a class="motion-download" href={renderJob.downloadUrl} download={renderJob.filename}><span class="motion-desktop-label">Download {renderJob.result?.bytes ? formatBytes(renderJob.result.bytes) : "video"}</span><span class="motion-mobile-label">Save</span></a>
+        {/if}
       {/if}
       <button class="motion-export" disabled={busy || rendering || !data.motion} onclick={startRender}>{rendering ? "Exporting..." : `Export ${renderSettings.format.toUpperCase()}`}</button>
       <button class="motion-inspector-toggle" onclick={() => (inspectorOpen = !inspectorOpen)}>{inspectorOpen ? "Canvas" : "Inspector"}</button>
