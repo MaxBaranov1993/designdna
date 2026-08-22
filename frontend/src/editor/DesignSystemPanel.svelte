@@ -2,7 +2,7 @@
   /* Design System Editor (ТЗ §12): библиотека foundations/компонентов/states/mock,
    * канвас мастер-компонента с viewport-переключением, инспектор, validation,
    * publish. Переиспользует IrPreview (тот же рендерер, что DNA Editor). */
-    import IrPreview from "../components/IrPreview.svelte";
+    
   import type { DesignSystemNodeData } from "../flow/types";
 
   let { nodeId, onClose }: { nodeId: number; onClose: () => void } = $props();
@@ -28,7 +28,55 @@
   const foundations = $derived(doc.foundations || {});
   const mockSchemas = $derived(Object.entries(doc.mockData?.schemas || {}) as Array<[string, any]>);
   let selectedComp = $state<any>(null);
-  let previewKey = $state(0);
+  let hasSelection = $state(false);
+  let previewHost = $state<HTMLElement | null>(null);
+  let currentIr: any = null;
+
+  /** Прямой DOM-рендер выбранного мастер-компонента через IRRenderer —
+   *  минуя Svelte-реактивность (производные от zustand-стора ненадёжны) */
+  let rendererReady = false;
+  async function loadRenderer() {
+    if (rendererReady) return;
+    // engine.js — IIFE-бандл рендерера, тот же что использует DNA Editor
+    const existing = document.querySelector('script[data-engine]');
+    if (!existing) {
+      const script = document.createElement("script");
+      script.src = "/static/flow/engine.js";
+      script.dataset.engine = "1";
+      document.head.appendChild(script);
+      await new Promise((resolve) => { script.onload = resolve; script.onerror = resolve; });
+    }
+    rendererReady = !!(window as any).IRRenderer;
+  }
+
+  function renderSelected() {
+    if (!previewHost) return;
+    previewHost.innerHTML = "";
+    if (!currentIr) { hasSelection = false; return; }
+    hasSelection = true;
+    const container = document.createElement("div");
+    container.className = "ir-preview";
+    container.style.cssText = "flex:1;min-height:0;overflow:auto;";
+    previewHost.appendChild(container);
+    try {
+      const renderer = (window as any).IRRenderer;
+      if (renderer) {
+        renderer.renderIR(container, JSON.parse(JSON.stringify(currentIr)), { viewport });
+      } else {
+        container.textContent = "IRRenderer не загружен";
+      }
+    } catch (e) {
+      container.textContent = "Ошибка рендера: " + String(e).slice(0, 100);
+    }
+  }
+
+  function selectComponent(comp: any) {
+    selectedComp = comp;
+    currentIr = comp?.templateIr || null;
+    hasSelection = !!comp;
+    // рендер в следующем кадре — previewHost должен существовать
+    requestAnimationFrame(async () => { await loadRenderer(); renderSelected(); });
+  }
 
   const originIcon = (origin: string) => origin === "observed" ? "⬤" : origin === "inferred" ? "◐" : "◇";
 
@@ -118,7 +166,7 @@
         <ul class="ds-comp-list">
           {#each components as [key, comp] (key)}
             <li>
-              <button class:active={selectedKey === key} onclick={() => { selectedKey = key; selectedComp = comp; previewKey++; }}>
+              <button class:active={selectedKey === key} onclick={() => { selectedKey = key; selectComponent(comp); }}>
                 <span class="ds-origin" data-origin={comp.origin} title={comp.origin}>{originIcon(comp.origin)}</span>
                 <span class="ds-comp-name">{comp.name}</span>
                 <span class="ds-comp-cat">{comp.category}</span>
@@ -168,24 +216,20 @@
     </aside>
 
     <main class="ds-editor-canvas">
-      <div class="ds-canvas-head" style:display={selectedComp ? "flex" : "none"}>
+      <div class="ds-canvas-head" style:display={hasSelection ? "flex" : "none"}>
         <div class="ds-viewport-switch">
           {#each ["desktop", "tablet", "mobile"] as vp ("desktop-tablet-mobile")}
-            <button class:active={viewport === vp} onclick={() => (viewport = vp as "desktop" | "tablet" | "mobile")}>{vp}</button>
+            <button class:active={viewport === vp} onclick={() => { viewport = vp as "desktop" | "tablet" | "mobile"; renderSelected(); }}>{vp}</button>
           {/each}
         </div>
         <button class="ds-edit-master" onclick={editMaster}>✎ Редактировать мастер</button>
       </div>
-      <div class="ds-canvas-empty" style:display={selectedComp ? "none" : "grid"}>Выберите компонент слева</div>
-      <div class="ds-canvas-preview" style:display={selectedComp ? "flex" : "none"}>
-        {#key previewKey}
-        {#if selectedComp}<IrPreview ir={selectedComp.templateIr} viewport={viewport} height={480} empty="" />{/if}
-        {/key}
-      </div>
+      <div class="ds-canvas-empty" style:display={hasSelection ? "none" : "grid"}>Выберите компонент слева</div>
+      <div class="ds-canvas-preview" bind:this={previewHost}></div>
     </main>
 
     <aside class="ds-editor-inspector">
-      <div style:display={selectedComp ? "block" : "none"}>
+      <div style:display={hasSelection ? "block" : "none"}>
         <h3>{selectedComp.name}</h3>
         <dl>
           <dt>Key</dt><dd><code>{selectedComp.componentKey}</code></dd>
@@ -204,7 +248,7 @@
           {#if selectedComp.provenance?.sourceBlock}<dt>Source</dt><dd>{selectedComp.provenance.sourceBlock}</dd>{/if}
         </dl>
       </div>
-      <p class="ds-insp-empty" style:display={selectedComp ? "none" : "block"}>Инспектор компонента</p>
+      <p class="ds-insp-empty" style:display={hasSelection ? "none" : "block"}>Инспектор компонента</p>
     </aside>
   </div>
 </div>

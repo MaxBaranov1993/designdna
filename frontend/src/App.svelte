@@ -24,7 +24,7 @@
   let ProjectMapComponent = $state<LazyComponent | null>(null);
   let AgentComponent = $state<LazyComponent | null>(null);
   let editorLoad: Promise<LazyComponent> | null = null;
-  let dsEditorNodeId: number | null = null;
+  let dsEditorNodeId = $state<number | null>(null);
   let DsEditorComponent: any = $state(null);
   async function ensureDsEditor() {
     if (!DsEditorComponent) {
