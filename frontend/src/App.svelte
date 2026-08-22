@@ -24,6 +24,14 @@
   let ProjectMapComponent = $state<LazyComponent | null>(null);
   let AgentComponent = $state<LazyComponent | null>(null);
   let editorLoad: Promise<LazyComponent> | null = null;
+  let dsEditorNodeId: number | null = null;
+  let DsEditorComponent: any = $state(null);
+  async function ensureDsEditor() {
+    if (!DsEditorComponent) {
+      const mod = await import("./editor/DesignSystemPanel.svelte");
+      DsEditorComponent = mod.default;
+    }
+  }
 
   const ensureEditor = () => {
     if (EditorComponent) return;
@@ -49,6 +57,10 @@
 
   onMount(() => {
     const onEditorRequest = () => ensureEditor();
+    window.addEventListener("designdna:open-ds-editor", (event: Event) => {
+      dsEditorNodeId = (event as CustomEvent).detail?.nodeId ?? null;
+      void ensureDsEditor();
+    });
     window.addEventListener("designdna:ensure-editor", onEditorRequest);
     installGraphDev();
     void useFlowStore.getState().loadPersistedProject();
@@ -105,6 +117,9 @@
         </SvelteFlowProvider>
         <ToastViewport />
         {#if EditorComponent}<EditorComponent />{/if}
+        {#if DsEditorComponent && dsEditorNodeId != null}
+          <DsEditorComponent nodeId={dsEditorNodeId} onClose={() => (dsEditorNodeId = null)} />
+        {/if}
       </div>
     {:else if surface === "map"}
       {#if ProjectMapComponent}

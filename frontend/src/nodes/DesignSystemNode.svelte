@@ -92,6 +92,9 @@
     <div class="ds-update">Source изменился — доступна синхронизация</div>
   {/if}
   <div class="ds-actions">
+      <button class="btn-node primary small nodrag" disabled={!data.systemId} onclick={() => {
+        window.dispatchEvent(new CustomEvent("designdna:open-ds-editor", { detail: { nodeId: Number(id) } }));
+      }}>Открыть</button>
     {#if data.systemId}
       <button class="btn-node small nodrag" onclick={() => run("publish")} disabled={busy || data.status === "published"}>
         {busy ? "…" : "Опубликовать"}
