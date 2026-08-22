@@ -527,16 +527,26 @@ def _wait_capture_settle(page, budget_ms: int = 5000) -> None:
     """Deterministic pre-measure settle: fonts, images, then two rAF.
 
     Один ритуал для всех viewport-проходов вместо фиксированного sleep:
-    document.fonts.ready + decode() всех <img> + два requestAnimationFrame,
+    document.fonts.ready + decode() видимых <img> + два requestAnimationFrame,
     с жёстким bail-таймером (оживлённые страницы не подвешивают capture).
+
+    Ждём ТОЛЬКО картинки в текущем viewport: lazy-loading изображения
+    ниже фолда никогда не грузятся и заставляли settle бить в bail-timer
+    на каждом проходе (замер: rsale.net — 52 из 56 lazy → 5 сек × 3
+    viewport = 15 секунд чистого ожидания ничего).
     """
     try:
         page.evaluate("""(budgetMs) => new Promise((resolve) => {
           const finish = () => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
           const bail = setTimeout(finish, budgetMs);
           const fonts = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
-          const imgs = Promise.all(Array.from(document.images || []).slice(0, 200).map((img) => {
-            if (img.complete) return Promise.resolve();
+          const vw = window.innerWidth, vh = window.innerHeight;
+          const visible = (img) => {
+            if (img.complete) return false;
+            const r = img.getBoundingClientRect();
+            return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
+          };
+          const imgs = Promise.all(Array.from(document.images || []).filter(visible).slice(0, 100).map((img) => {
             return (img.decode ? img.decode() : Promise.resolve()).catch(() => {});
           }));
           Promise.all([fonts.catch(() => {}), imgs]).then(() => { clearTimeout(bail); finish(); });
