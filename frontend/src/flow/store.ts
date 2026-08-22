@@ -1563,3 +1563,7 @@ useFlowStore.subscribe((state, prev) => {
   localDirtySinceInit = true;
   scheduleProjectSave(() => buildPagesProjectPayload(useFlowStore.getState()));
 });
+
+
+// AI-ассист редактора читает registry дизайн-систем отсюда (§16.2)
+if (typeof window !== "undefined") (window as unknown as { __flowStore?: unknown }).__flowStore = useFlowStore;

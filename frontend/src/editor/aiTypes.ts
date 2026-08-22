@@ -39,4 +39,6 @@ export interface AssistRequest {
   constraints: AssistConstraints;
   /** модель/аккаунт: auto | codex | kimi | openai | glm (desktop передаёт в providers.chat) */
   provider?: string;
+  designSystemSelection?: string;
+  designSystemUsageMode?: string;
 }

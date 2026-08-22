@@ -137,6 +137,7 @@ let aiAssistFormState: AssistRequest = {
   scopeMode: "single",
   constraints: { allowContent: true, allowStyle: true, allowFrame: true, allowColor: true },
   provider: "auto",
+  designSystemSelection: "inherit",
 };
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
@@ -1689,6 +1690,26 @@ export async function requestAiAssist(request: AssistRequest) {
     scope: { sourceKeys: requestScopeKeys, viewport: state.viewport },
     constraints: { allowStructure: false, ...request.constraints },
   };
+  // Design System: разрешение в pinned ref (ТЗ §16.2)
+  const dsSel = request.designSystemSelection || "inherit";
+  if (dsSel !== "none") {
+    // registry лежит в flow store — берём через глобальный стор
+    try {
+      const reg2 = (window as any).__flowStore?.getState?.()?.designSystems;
+      if (reg2) {
+        const target = dsSel === "inherit" ? reg2.defaultSystemRef?.systemId : dsSel;
+        const system = reg2.systems?.find((sys: any) => sys.systemId === target && sys.status === "published");
+        if (system) {
+          (payload as any).designSystem = {
+            systemId: system.systemId,
+            revision: dsSel === "inherit" ? (reg2.defaultSystemRef?.revision ?? system.revision) : system.revision,
+            contentHash: system.contentHash || "",
+            usageMode: request.designSystemUsageMode || "strict",
+          };
+        }
+      }
+    } catch { /* нет registry — без системы */ }
+  }
   try {
     let data: any;
     if (window.designDNA?.providers && request.action !== "adapt") {

@@ -3,6 +3,7 @@
   import IrPreview from "../components/IrPreview.svelte";
   import { flow } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
+import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   import type { ReskinFlowNode, ReskinMask } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -57,6 +58,7 @@
       </label>
     {/each}
   </div>
+  <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} onChange={(v) => $flow.setNodeData(Number(id), { designSystemSelection: v } as any)} />
   <div class="ctl-row">
     <select
       class="f-provider-select nodrag"

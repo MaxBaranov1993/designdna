@@ -3,7 +3,8 @@
   import { editorUi } from "../state";
   import type { AssistAction, AssistScopeMode } from "../aiTypes";
   import type { GeoRef, GeoSel } from "../globals";
-  import ColorPicker from "./ColorPicker.svelte";
+  import DesignSystemPicker from "../../components/DesignSystemPicker.svelte";
+import ColorPicker from "./ColorPicker.svelte";
   import FontOptions from "./FontOptions.svelte";
   import { findByKey, isSourceKeyPath } from "../../engine/sourcepath";
 
@@ -55,7 +56,7 @@
   }
   function run(action: AssistAction, text: string) {
     confirmed = false;
-    ctl.setAiAssistFormState({ prompt: text, action, scopeMode, provider, constraints: { allowContent, allowStyle, allowFrame, allowColor } });
+    ctl.setAiAssistFormState({ prompt: text, action, scopeMode, provider, designSystemSelection: dsSelection, constraints: { allowContent, allowStyle, allowFrame, allowColor } });
     void ctl.requestAiAssist({
       action, prompt: text, scopeMode, provider,
       constraints: { allowContent, allowStyle, allowFrame, allowColor },
@@ -90,6 +91,7 @@
   const savedAiForm = ctl.getAiAssistFormState();
   let scopeMode = $state<AssistScopeMode>(sels.length > 1 ? (ctl.hasExplicitAiAssistScopeMode() ? savedAiForm.scopeMode : "selection") : "single");
   let provider = $state<string>(["auto", "codex", "kimi", "openai", "glm", "zcode"].includes(String(savedAiForm.provider)) ? String(savedAiForm.provider) : "auto");
+  let dsSelection = $state<string>((savedAiForm as any).designSystemSelection || "inherit");
   const desktopAssist = typeof window !== "undefined" && !!window.designDNA?.providers;
   let prompt = $state(savedAiForm.prompt);
   let allowContent = $state(savedAiForm.constraints.allowContent);
@@ -151,6 +153,7 @@
     <div class="ai-scope-warning">Контейнер «{scope.excluded.map((item) => item.label).join(", ")}» исключён: выбрана вложенная часть.</div>
   {/if}
 
+  <div class="ai-ds-row"><DesignSystemPicker selection={dsSelection} onChange={(v) => { dsSelection = v; ctl.setAiAssistFormState({ designSystemSelection: v } as any); }} /></div>
   <section class="ai-command-card">
     <div class="ai-command-title"><span class="ai-spark">✦</span><div><strong>Что изменить?</strong><small>Сначала покажу результат. Вы решаете, применять ли его.</small></div></div>
     <textarea bind:value={prompt} oninput={() => ctl.setAiAssistFormState({ prompt })} disabled={busy || !!preview} placeholder="Например: сделай карточку компактнее и легче" aria-label="Задача для AI"></textarea>

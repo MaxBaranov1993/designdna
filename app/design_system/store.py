@@ -63,6 +63,13 @@ def publish(document: dict) -> dict:
         return {"ok": False, "errors": errors}
     with _LOCK:
         with _conn() as con:
+            existing = con.execute(
+                "SELECT revision, document FROM design_system_revisions WHERE system_id=? AND content_hash=?",
+                (document["id"], dsdoc.content_hash(document))).fetchone()
+            if existing:
+                # тот же контент уже опубликован — возвращаем существующую ревизию
+                stored = json.loads(existing[1])
+                return {"ok": True, "document": stored, "summary": dsdoc.summary(stored), "duplicate": True}
             hashes = [row[0] for row in con.execute(
                 "SELECT content_hash FROM design_system_revisions WHERE system_id=?", (document["id"],)).fetchall()]
             published = dsdoc.next_revision(document, hashes)

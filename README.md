@@ -34,6 +34,11 @@ development/compatibility. See [desktop runtime architecture](docs/architecture/
   through deterministic code.
 - **LLM generation** directly via the OpenAI and Kimi APIs with role-based model routing
   (fallback chains, env-overridable) and a token-saving cache (`/api/cache/stats`).
+- **ZCode provider (no API key)**: if no API account is connected, generation
+  automatically runs through the locally installed, logged-in ZCode CLI
+  (Z.AI coding plan) — `provider: "zcode"` is also selectable explicitly in the
+  node pickers. Text roles only; vision roles stay on direct APIs. First call
+  bootstraps `~/.zcode/cli/config.json` from the ZCode app config.
 - **Quality pipeline**: deterministic Quality Gate (autofix without an LLM) plus an
   LLM judge pass with a repair/re-judge loop.
 - **Source Import** (pixel-faithful DOM capture of real sites):
