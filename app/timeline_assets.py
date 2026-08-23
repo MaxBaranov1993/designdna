@@ -9,7 +9,11 @@
   ``DESIGNDNA_DATA_DIR/blobs``; перед использованием проверяются ПОЛНЫЙ
   SHA-256 и размер файла, битый/чужой хэш — отказ;
 * ``/fonts/<stored-name>`` и ``ddna://fonts/<stored-name>`` — локальные
-  шрифты из ``DESIGNDNA_DATA_DIR/fonts`` (формат имён серверного /fonts);
+  шрифты из ``DESIGNDNA_DATA_DIR/fonts``; имена — скреперный формат
+  ``<первые 16 hex sha1(байтов)>.<ext>``, поэтому материализация хеширует
+  ВСЕ байты и требует ``sha1(data).hexdigest()[:16] == имя`` — валидный,
+  но подменённый шрифт отказывает ещё до Chromium (полный SHA-256 для
+  легаси-имён не заявляется);
 * мелкие ``data:`` URL (инкапсулированы, сети не требуют);
 * всё остальное — включая удалённые http(s) с «хэшеподобными» путями —
   отклоняется: байты удалённого URL невозможно верифицировать детерминизмом
@@ -48,6 +52,12 @@ BLOB_URL_RE = re.compile(r"^ddna://blobs/([0-9a-f]{64})\.(png|jpg|jpeg|gif|webp|
 FONT_NAME_RE = re.compile(r"^[0-9a-f]{16}\.(woff2|woff|ttf|otf)$")
 FONT_URL_RE = re.compile(r"^(?:ddna://fonts/|/fonts/)([0-9a-f]{16}\.(woff2|woff|ttf|otf))$")
 FONT_EXT_MIME = {"woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf", "otf": "font/otf"}
+
+# Канонические ddna://-ссылки внутри произвольного текста (в т.ч. CSS url(...)):
+# только точные форматы блобов/шрифтов, ничего вокруг не трокается.
+DDNA_ASSET_URL_RE = re.compile(
+    r"ddna://(?:blobs/[0-9a-f]{64}\.(?:png|jpg|jpeg|gif|webp|svg|woff2?|ttf|otf)"
+    r"|fonts/[0-9a-f]{16}\.(?:woff2|woff|ttf|otf))")
 
 URL_IN_STYLE_RE = re.compile(r"url\(\s*['\"]?([^'\")\s]+)", re.IGNORECASE)
 DATA_URL_MIME_RE = re.compile(r"^data:([a-z0-9.+-]+/[a-z0-9.+-]+)?", re.IGNORECASE)
@@ -234,6 +244,16 @@ def materialize_render_assets(design_ir: dict, data_dir: Path | None = None
             if len(data) > MAX_FONT_BYTES:
                 errors.append(f"{where}: шрифт {url!r} больше {MAX_FONT_BYTES} байт")
                 continue
+            # Скреперный формат имени: <первые 16 hex sha1(байтов)>.<ext>.
+            # Валидный, но подменённый файл не совпадёт по хэшу и откажет
+            # ДО Chromium — дрейф на фолбэк-шрифт исключён.
+            stem = name.rsplit(".", 1)[0]
+            digest = hashlib.sha1(data).hexdigest()[:16]
+            if digest != stem:
+                errors.append(
+                    f"{where}: шрифт {url!r} повреждён или подменён — sha1-префикс содержимого "
+                    f"{digest} не совпадает с именем файла {stem}")
+                continue
             ext = name.rsplit(".", 1)[-1]
             assets[url] = MaterializedAsset(url=url, data=data, mime=FONT_EXT_MIME[ext], source=str(path))
             continue
@@ -247,17 +267,32 @@ def rewrite_local_asset_urls(design_ir: dict) -> dict:
     На странице рендера (локальный документ, см. timeline_render) ``/fonts/…``
     и ``/blobs/…`` резолвятся в обычные http-запросы, которые гард исполняет
     из материализованных байт; кастомная схема ddna:// для этого не нужна.
+
+    Перезаписываются все канонические ddna-ссылки: поля ``src``/``href``,
+    ``meta.fontFaces[].url`` и CSS ``url(...)`` внутри стилей — как в
+    dict-форме (каждое строковое значение), так и в строковой форме; прочий
+    CSS (градиенты, цвета, раскладка) не изменяется.
     """
     import copy
     rewritten = copy.deepcopy(design_ir)
+
+    def rewrite_text(value: str) -> str:
+        return DDNA_ASSET_URL_RE.sub(lambda match: _relative_local_url(match.group(0)), value)
 
     def walk(node):
         if not isinstance(node, dict):
             return
         for key in ("src", "href"):
             value = node.get(key)
-            if isinstance(value, str) and value.startswith("ddna://"):
-                node[key] = _relative_local_url(value)
+            if isinstance(value, str):
+                node[key] = rewrite_text(value)
+        style = node.get("style")
+        if isinstance(style, dict):
+            for prop, value in style.items():
+                if isinstance(value, str):
+                    style[prop] = rewrite_text(value)
+        elif isinstance(style, str):
+            node["style"] = rewrite_text(style)
         children = node.get("children")
         if isinstance(children, list):
             for child in children:
@@ -271,8 +306,8 @@ def rewrite_local_asset_urls(design_ir: dict) -> dict:
     faces = meta.get("fontFaces") if isinstance(meta, dict) else None
     if isinstance(faces, list):
         for face in faces:
-            if isinstance(face, dict) and isinstance(face.get("url"), str) and face["url"].startswith("ddna://"):
-                face["url"] = _relative_local_url(face["url"])
+            if isinstance(face, dict) and isinstance(face.get("url"), str):
+                face["url"] = rewrite_text(face["url"])
     return rewritten
 
 

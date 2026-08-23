@@ -204,11 +204,20 @@ def test_materialize_verifies_sha_size_and_traversal(tmp_path: Path) -> None:
 
     fonts = tmp_path / "fonts"
     fonts.mkdir()
-    (fonts / "0011223344556677.woff2").write_bytes(b"font-bytes")
+    font_bytes = b"font-bytes"
+    font_name = _hashlib.sha1(font_bytes).hexdigest()[:16] + ".woff2"  # скреперный формат имени
+    (fonts / font_name).write_bytes(font_bytes)
     ir_font = {"meta": {"fontFaces": [{"family": "X", "weight": "400", "style": "normal",
-                                       "url": "/fonts/0011223344556677.woff2"}]}, "tree": []}
+                                       "url": f"/fonts/{font_name}"}]}, "tree": []}
     assets, errors = timeline_assets.materialize_render_assets(ir_font, tmp_path)
-    assert errors == [] and assets["/fonts/0011223344556677.woff2"].mime == "font/woff2"
+    assert errors == [] and assets[f"/fonts/{font_name}"].mime == "font/woff2"
+    # валидный файл под чужим именем (подмена) — отказ по sha1-префиксу
+    alien_name = _hashlib.sha1(b"other-font-bytes").hexdigest()[:16] + ".woff2"
+    (fonts / alien_name).write_bytes(font_bytes)
+    ir_font_alien = {"meta": {"fontFaces": [{"family": "X", "weight": "400", "style": "normal",
+                                             "url": f"/fonts/{alien_name}"}]}, "tree": []}
+    _assets, errors = timeline_assets.materialize_render_assets(ir_font_alien, tmp_path)
+    assert errors and "подменён" in errors[0] and "sha1" in errors[0]
     ir_font_missing = {"meta": {"fontFaces": [{"family": "X", "weight": "400", "style": "normal",
                                               "url": "/fonts/ffffffffffffffff.woff2"}]}, "tree": []}
     _assets, errors = timeline_assets.materialize_render_assets(ir_font_missing, tmp_path)
