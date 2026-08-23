@@ -49,6 +49,7 @@ import type {
   RecorderNodeData,
   InteractionLiveAction,
   MotionNodeData,
+  TimelineNodeData,
 } from "./types";
 
 function friendlyProviderError(error: unknown) {
@@ -114,6 +115,7 @@ export interface FlowStoreState {
   runRecorder: (id: number) => Promise<void>;
   runLiveRecorder: (id: number, actions: InteractionLiveAction[]) => Promise<boolean>;
   runMotion: (id: number) => Promise<void>;
+  runTimeline: (id: number) => Promise<void>;
   runPageBridge: (id: number) => void;
   sendToNode: (id: number, targetType: "edit" | "reference") => void;
   addMixInput: (id: number) => void;
@@ -531,6 +533,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           sceneIrs: [],
         });
         get().setStatus(consId, designIr && interaction ? "Motion inputs ready" : "Connect Design IR and Interaction IR");
+      } else if (cons.type === "timeline") {
+        const designIr = pullInput(nodes, edges, cons, "ir") as IRObject | null;
+        get().setNodeData(consId, { ir: designIr ? deepClone(designIr) : null, timeline: null });
+        get().setStatus(consId, designIr ? "Design IR получен — соберите таймлайн" : "Подключите Design IR (страница/компонент)");
       } else if (cons.type === "pagebridge") {
         get().runPageBridge(consId);
         get().propagate(consId, visited);
@@ -552,6 +558,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     else if (n.type === "qualitypass") void get().runQualityPass(id);
     else if (n.type === "recorder") void get().runRecorder(id);
     else if (n.type === "motion") void get().runMotion(id);
+    else if (n.type === "timeline") void get().runTimeline(id);
     else if (n.type === "pagebridge") get().runPageBridge(id);
   },
 
@@ -1128,6 +1135,39 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       const message = error instanceof Error ? error.message : String(error);
       get().setStatus(id, "Motion: " + message, "err");
       toast("Motion: " + message, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  runTimeline: async (id) => {
+    const st = get();
+    const n = st.nodes.find((node) => Number(node.id) === id);
+    if (!n || n.type !== "timeline" || st.busy[id]) return;
+    const data = n.data as TimelineNodeData;
+    const designIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
+    if (!designIr) {
+      get().setStatus(id, "Подключите Design IR (страница или компонент)", "err");
+      return;
+    }
+    get().setBusy(id, true);
+    get().setStatus(id, "Сборка таймлайна: слои и группы из компонентов...");
+    try {
+      const response = await api<{ timeline?: IRObject }>("/api/timeline/build", {
+        ir: designIr,
+        settings: data.settings,
+      });
+      const timeline = response.timeline || null;
+      get().setNodeData(id, { ir: deepClone(designIr), timeline, renderJob: null });
+      const layers = Array.isArray((timeline as { layers?: unknown[] } | null)?.layers)
+        ? ((timeline as { layers: unknown[] }).layers).length : 0;
+      const composition = (timeline as { composition?: { duration?: number } } | null)?.composition;
+      get().setStatus(id, `Таймлайн готов · ${layers} слоёв · ${((Number(composition?.duration || 0)) / 1000).toFixed(1)}s`, "ok");
+      get().propagate(id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      get().setStatus(id, "Timeline: " + message, "err");
+      toast("Timeline: " + message, "error");
     } finally {
       get().setBusy(id, false);
     }

@@ -4,7 +4,7 @@ import type { Edge, Node } from "@xyflow/svelte";
  * Runtime-поля legacy (el/geo/history) в React Flow state не переносятся. */
 
 /* kind tokens: design-токены из Source Import/Style DNA в Reskin/Derive. */
-export type PortKind = "text" | "ir" | "tokens" | "interaction" | "motion";
+export type PortKind = "text" | "ir" | "tokens" | "interaction" | "motion" | "timeline";
 
 export type NodeType =
   | "prompt"
@@ -21,7 +21,8 @@ export type NodeType =
   | "recorder"
   | "motion"
   | "pagebridge"
-  | "designsystem";
+  | "designsystem"
+  | "timeline";
 
 export type IRObject = Record<string, unknown>;
 export type SourceViewport = "desktop" | "tablet" | "mobile";
@@ -280,6 +281,14 @@ export type MotionNodeData = {
   sceneSettings: Record<string, Partial<MotionSceneSettings>>;
 };
 
+/* Video Editor: авторский таймлайн поверх входных компонентов (Timeline IR). */
+export type TimelineNodeData = {
+  ir: IRObject | null;
+  timeline: IRObject | null;
+  settings: { width: number; height: number; fps: number; duration: number };
+  renderJob: MotionRenderJob | null;
+};
+
 export type AnyNodeData =
   | PromptNodeData
   | ReferenceNodeData
@@ -294,6 +303,7 @@ export type AnyNodeData =
   | QualityPassNodeData
   | RecorderNodeData
   | MotionNodeData
+  | TimelineNodeData
   | PageBridgeNodeData
   | DesignSystemNodeData;
 
@@ -310,6 +320,7 @@ export type ReskinFlowNode = Node<ReskinNodeData, "reskin">;
 export type QualityPassFlowNode = Node<QualityPassNodeData, "qualitypass">;
 export type RecorderFlowNode = Node<RecorderNodeData, "recorder">;
 export type MotionFlowNode = Node<MotionNodeData, "motion">;
+export type TimelineFlowNode = Node<TimelineNodeData, "timeline">;
 export type PageBridgeFlowNode = Node<PageBridgeNodeData, "pagebridge">;
 export type DesignSystemFlowNode = Node<DesignSystemNodeData, "designsystem">;
 
@@ -327,6 +338,7 @@ export type FlowNode =
   | QualityPassFlowNode
   | RecorderFlowNode
   | MotionFlowNode
+  | TimelineFlowNode
   | PageBridgeFlowNode;
 
 /* Ребро RF: id строится по формату из спеки — e<from.node>:<from.port>-<to.node>:<to.port> */

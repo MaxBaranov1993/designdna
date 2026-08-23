@@ -31,6 +31,7 @@ import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
   import QualityPassNode from "./nodes/QualityPassNode.svelte";
   import RecorderNode from "./nodes/RecorderNode.svelte";
   import MotionNode from "./nodes/MotionNode.svelte";
+  import TimelineNode from "./nodes/TimelineNode.svelte";
   import PageBridgeNode from "./nodes/PageBridgeNode.svelte";
 
   /* Реестр кастомных нод — вне компонента, ключи = legacy type (конвертация данных не нужна) */
@@ -49,6 +50,7 @@ import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
     qualitypass: QualityPassNode,
     recorder: RecorderNode,
     motion: MotionNode,
+    timeline: TimelineNode,
     pagebridge: PageBridgeNode,
   };
 

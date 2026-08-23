@@ -116,6 +116,9 @@ ROUTING = {
     "reproduce":  VISION,
     "a11y":       STRONG,
     "docs":       CHEAP,
+    # Video Editor: AI-режиссёр таймлайна предлагает план монтажа
+    # (пресеты/слои/тайминги); кейфреймы детерминированные.
+    "timeline_director": STRONG,
     # legacy-роли (старые вызовы и env-оверрайды)
     "mechanics":  CHEAP,
     "taste":      STRONG,

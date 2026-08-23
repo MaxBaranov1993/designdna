@@ -9,6 +9,7 @@ export const WIRE_COLORS: Record<PortKind, string> = {
   tokens: "#d6a13b",
   interaction: "#2fbf9f",
   motion: "#e05fb0",
+  timeline: "#ff5f56",
 };
 
 /* Глубокое копирование значения между нодами. */

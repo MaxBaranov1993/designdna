@@ -39,6 +39,7 @@ export const NODE_TYPES: NodeType[] = [
   "qualitypass",
   "recorder",
   "motion",
+  "timeline",
   "pagebridge",
   "designsystem",
 ];
@@ -241,13 +242,14 @@ export function makeRfEdge(
 }
 
 function dataForStorage(type: NodeType, data: AnyNodeData): AnyNodeData {
-  if (type !== "motion") return data;
+  if (type !== "motion" && type !== "timeline") return data;
   const { renderJob: _runtime, ...persistent } = data as AnyNodeData & { renderJob?: unknown };
   return persistent as AnyNodeData;
 }
 
 function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
   if (type === "motion") return { ...defaultData("motion"), ...data, renderJob: null } as AnyNodeData;
+  if (type === "timeline") return { ...defaultData("timeline"), ...data, renderJob: null } as AnyNodeData;
   if (type === "sourceimport") {
     const source = { ...defaultData("sourceimport"), ...data } as SourceImportNodeData;
     // Older saved projects already contain the complete local result but predate
