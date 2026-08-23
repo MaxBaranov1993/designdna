@@ -265,16 +265,44 @@
     }
   }
 
-  /* ---------- рендер ролика ---------- */
+  /* ---------- рендер ролика и экспорт веб-анимации ---------- */
+
+  function downloadText(filename: string, text: string, mime: string) {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  async function exportCss() {
+    if (!doc || busy) return;
+    busy = true;
+    try {
+      const resp = await api<{ files?: Record<string, string>; error?: string }>(
+        "/api/timeline/export", { timeline: doc, mode: "css" });
+      if (resp.error || !resp.files?.["timeline.css"]) throw new Error(resp.error || "пустой экспорт");
+      downloadText("timeline.css", resp.files["timeline.css"], "text/css");
+      say("CSS-анимация выгружена: подключите файл и разметку с data-timeline-layer");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      say("Экспорт: " + msg);
+    } finally {
+      busy = false;
+    }
+  }
 
   async function renderVideo(format: string) {
     if (!doc || busy) return;
+    if (!designIr) { say("Нет входного Design IR для рендера"); return; }
     busy = true;
     renderState = { status: "starting" };
     say("Рендер запущен...");
     try {
       const resp = await api<{ renderId?: string; error?: string }>(
-        "/api/timeline/render", { timeline: doc, format });
+        "/api/timeline/render", { timeline: doc, ir: designIr, format });
       if (resp.error || !resp.renderId) throw new Error(resp.error || "нет renderId");
       const renderId = resp.renderId;
       for (let i = 0; i < 600; i++) {
@@ -392,7 +420,7 @@
     <button class="tlw-btn" onclick={undo}>Undo</button>
     {#if lastChangeSet}<button class="tlw-btn" onclick={() => void undoAi()}>Откатить ИИ-патч</button>{/if}
     <button class="tlw-btn" disabled={busy || !doc} onclick={() => void renderVideo("mp4")}>Рендер MP4</button>
-    <button class="tlw-btn" disabled={busy || !doc} onclick={() => void renderVideo("css")}>Экспорт CSS</button>
+    <button class="tlw-btn" disabled={busy || !doc} onclick={() => void exportCss()}>Экспорт CSS</button>
   </div>
 
   <div class="tlw-ai">

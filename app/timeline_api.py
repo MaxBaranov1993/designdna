@@ -7,11 +7,18 @@
 """
 from __future__ import annotations
 
+import copy
+import json
+import os
+import uuid
+from pathlib import Path
+
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from config import FEATURE_FLAGS
+from ir.hash import content_hash
 from ir.timeline import (
     PRESET_NAMES,
     apply_change_set,
@@ -20,8 +27,21 @@ from ir.timeline import (
     revert_change_set,
     validate,
 )
+from timeline_render import (
+    JOBS,
+    JOBS_LOCK,
+    export_css,
+    export_waapi,
+    register_job,
+    submit_render,
+    validate_timeline_render,
+)
 
 router = APIRouter()
+
+_APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
+_ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or _APP_ROOT.parent)
+TIMELINE_RENDER_DIR = Path(os.environ.get("DESIGNDNA_DATA_DIR") or _ROOT / "data") / "renders"
 
 PRESET_LABELS = {
     "fade-in": "Появление (прозрачность)",
@@ -58,6 +78,17 @@ class TimelineDocumentRequest(BaseModel):
 class TimelineAssistRequest(BaseModel):
     timeline: dict
     prompt: str
+
+
+class TimelineRenderRequest(BaseModel):
+    timeline: dict
+    ir: dict
+    format: str = "mp4"
+
+
+class TimelineExportRequest(BaseModel):
+    timeline: dict
+    mode: str = "css"
 
 
 def _err(status: int, message: str):
@@ -156,3 +187,84 @@ def timeline_assist(req: TimelineAssistRequest):
     except ValueError as e:
         return _err(422, str(e))
     return {"timeline": applied, "changeSet": change_set}
+
+
+@router.post("/api/timeline/render")
+def timeline_render(req: TimelineRenderRequest):
+    """Очередь детерминированного локального рендера ролика."""
+    blocked = _guard()
+    if blocked:
+        return blocked
+    if not FEATURE_FLAGS.is_enabled("videoRender"):
+        return _err(404, "Video render is disabled by feature flag.")
+    errors = validate(req.timeline)
+    if errors:
+        return _err(422, "Таймлайн невалиден: " + "; ".join(errors[:3]))
+    expected = ((req.timeline.get("source") or {}).get("designIrHash")) or ""
+    if expected and expected != content_hash(req.ir):
+        return _err(409, "Таймлайн не принадлежит переданному Design IR")
+    try:
+        total, _fps = validate_timeline_render(req.timeline, req.ir)
+    except ValueError as e:
+        return _err(422, str(e))
+    output_format = "webm" if str(req.format) == "webm" else "mp4"
+    render_id = uuid.uuid4().hex
+    output = TIMELINE_RENDER_DIR / f"{render_id}.{output_format}"
+    register_job(render_id, total, output_format, output)
+    submit_render(render_id, copy.deepcopy(req.timeline), copy.deepcopy(req.ir), output)
+    return {"renderId": render_id, "status": "queued", "framesTotal": total}
+
+
+_STATUS_MAP = {"queued": "queued", "running": "running", "complete": "done", "error": "error"}
+
+
+@router.get("/api/timeline/render/{render_id}")
+def timeline_render_status(render_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(render_id)
+        if not job:
+            return _err(404, "Render job not found.")
+        status = _STATUS_MAP.get(str(job.get("status")), "queued")
+        response = {
+            "status": status,
+            "progress": job.get("progress") or 0.0,
+            "framesDone": job.get("framesDone") or 0,
+            "framesTotal": job.get("framesTotal") or 0,
+        }
+        if status == "done":
+            response["downloadUrl"] = f"/api/timeline/render/{render_id}/download"
+            response["result"] = job.get("result") or {}
+        if status == "error":
+            response["error"] = job.get("error") or "render failed"
+        return response
+
+
+@router.get("/api/timeline/render/{render_id}/download")
+def timeline_render_download(render_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(render_id)
+        if not job:
+            return _err(404, "Render job not found.")
+        if job.get("status") != "complete":
+            return _err(409, "Render is not complete.")
+        output = Path(job["output"])
+        filename = job["filename"]
+    if not output.is_file() or output.parent.resolve() != TIMELINE_RENDER_DIR.resolve():
+        return _err(404, "Rendered artifact not found.")
+    media_type = "video/mp4" if output.suffix == ".mp4" else "video/webm"
+    return FileResponse(output, media_type=media_type, filename=filename)
+
+
+@router.post("/api/timeline/export")
+def timeline_export(req: TimelineExportRequest):
+    """Экспорт веб-анимации: CSS @keyframes или рецепт Web Animations API."""
+    blocked = _guard()
+    if blocked:
+        return blocked
+    errors = validate(req.timeline)
+    if errors:
+        return _err(422, "Таймлайн невалиден: " + "; ".join(errors[:3]))
+    if req.mode == "waapi":
+        recipe = export_waapi(req.timeline)
+        return {"files": {"timeline.waapi.json": json.dumps(recipe, ensure_ascii=False, indent=2)}}
+    return {"files": {"timeline.css": export_css(req.timeline)}}
