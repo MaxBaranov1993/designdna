@@ -142,19 +142,19 @@ def test_director_bounds_layers_per_step_on_huge_timeline() -> None:
 
 
 # --------------------------------------------------------------------------
-# Ассет-гард рендера
+# Ассет-гард рендера: полный офлайн, контент-адресные локальные ассеты
 
 
-def test_asset_guard_rejects_private_and_changing_urls() -> None:
-    # приватный контент-адресный адрес — всё равно отказ (SSRF)
-    with pytest.raises(ValueError, match="внутреннюю сеть"):
+def test_asset_guard_rejects_any_remote_url() -> None:
+    # приватный адрес — отказ (и без того офлайн)
+    with pytest.raises(ValueError, match="не ходит в сеть"):
         timeline_assets.validate_asset_url(f"https://10.0.0.1/assets/{HASH_HEX}.png")
-    # изменяемые параметры — отказ
-    with pytest.raises(ValueError, match="query/fragment"):
+    # «хэшеподобный» удалённый путь — тоже отказ: байты удалённого ответа
+    # верифицировать детерминизмом контракта невозможно
+    with pytest.raises(ValueError, match="ddna://blobs"):
+        timeline_assets.validate_asset_url(f"https://cdn.example.com/assets/{HASH_HEX}.png")
+    with pytest.raises(ValueError, match="ddna://blobs"):
         timeline_assets.validate_asset_url(f"https://cdn.example.com/assets/{HASH_HEX}.png?sig=abc")
-    # нет хэша в пути — недетерминированный
-    with pytest.raises(ValueError, match="контент-адрес"):
-        timeline_assets.validate_asset_url("https://cdn.example.com/img/logo.png")
     # file:/javascript: и прочие схемы
     with pytest.raises(ValueError, match="схема"):
         timeline_assets.validate_asset_url("file:///etc/passwd")
@@ -164,31 +164,63 @@ def test_asset_guard_rejects_private_and_changing_urls() -> None:
         timeline_assets.validate_asset_url(huge)
 
 
-def test_asset_guard_accepts_content_addressed_and_small_data() -> None:
-    assert timeline_assets.validate_asset_url(f"https://1.1.1.1/assets/{HASH_HEX}.png")
+def test_asset_guard_accepts_local_content_addressed_and_small_data() -> None:
+    assert timeline_assets.validate_asset_url(f"ddna://blobs/{HASH_HEX}.png")
+    assert timeline_assets.validate_asset_url("/fonts/0011223344556677.woff2")
+    assert timeline_assets.validate_asset_url("ddna://fonts/0011223344556677.woff2")
     assert timeline_assets.validate_asset_url("data:image/png;base64,QUJD")
-    assert timeline_assets.validate_asset_url("/fonts/inter.woff2")  # локальный инертный путь
+    # неканонические имена блобов/шрифтов отклоняются
+    with pytest.raises(ValueError):
+        timeline_assets.validate_asset_url(f"ddna://blobs/{HASH_HEX[:63]}.png")  # короткий хэш
+    with pytest.raises(ValueError):
+        timeline_assets.validate_asset_url("ddna://blobs/../etc/passwd.png")
+    with pytest.raises(ValueError):
+        timeline_assets.validate_asset_url("/fonts/../../secrets.txt")
+    with pytest.raises(ValueError):
+        timeline_assets.validate_asset_url("/fonts/Inter.woff2")  # не серверный формат имени
 
 
-def test_asset_guard_checks_hostname_dns(monkeypatch) -> None:
-    def fake_resolve(host: str, port: int) -> tuple[str, ...]:
-        if host == "evil.internal":
-            raise ValueError("Хост 'evil.internal' ведёт во внутреннюю сеть (10.1.2.3)")
-        return ("93.184.216.34",)
+def test_materialize_verifies_sha_size_and_traversal(tmp_path: Path) -> None:
+    import hashlib as _hashlib
+    blobs = tmp_path / "blobs"
+    blobs.mkdir()
+    payload = b"\x89PNG fake-but-verifiable-bytes"
+    sha = _hashlib.sha256(payload).hexdigest()
+    (blobs / f"{sha}.png").write_bytes(payload)
+    corrupt_sha = "f" * 64
+    (blobs / f"{corrupt_sha}.png").write_bytes(b"other bytes")
 
-    monkeypatch.setattr(timeline_assets, "resolve_public_ips", fake_resolve)
-    with pytest.raises(ValueError, match="недоступен для рендера"):
-        timeline_assets.validate_asset_url(f"https://evil.internal/assets/{HASH_HEX}.png")
-    assert timeline_assets.validate_asset_url(f"https://cdn.example.com/a/{HASH_HEX}.png")
+    ir_ok = {"tree": [{"id": "s", "type": "hero", "children": [{"type": "image", "src": f"ddna://blobs/{sha}.png"}]}]}
+    assets, errors = timeline_assets.materialize_render_assets(ir_ok, tmp_path)
+    assert errors == [] and assets[f"ddna://blobs/{sha}.png"].data == payload
+
+    ir_bad = {"tree": [{"id": "s", "type": "hero", "children": [{"type": "image", "src": f"ddna://blobs/{corrupt_sha}.png"}]}]}
+    _assets, errors = timeline_assets.materialize_render_assets(ir_bad, tmp_path)
+    assert errors and "повреждён" in errors[0] and "sha256" in errors[0]
+
+    ir_missing = {"tree": [{"id": "s", "type": "hero", "children": [{"type": "image", "src": f"ddna://blobs/{'a' * 64}.png"}]}]}
+    _assets, errors = timeline_assets.materialize_render_assets(ir_missing, tmp_path)
+    assert errors and "не найден" in errors[0]
+
+    fonts = tmp_path / "fonts"
+    fonts.mkdir()
+    (fonts / "0011223344556677.woff2").write_bytes(b"font-bytes")
+    ir_font = {"meta": {"fontFaces": [{"family": "X", "weight": "400", "style": "normal",
+                                       "url": "/fonts/0011223344556677.woff2"}]}, "tree": []}
+    assets, errors = timeline_assets.materialize_render_assets(ir_font, tmp_path)
+    assert errors == [] and assets["/fonts/0011223344556677.woff2"].mime == "font/woff2"
+    ir_font_missing = {"meta": {"fontFaces": [{"family": "X", "weight": "400", "style": "normal",
+                                              "url": "/fonts/ffffffffffffffff.woff2"}]}, "tree": []}
+    _assets, errors = timeline_assets.materialize_render_assets(ir_font_missing, tmp_path)
+    assert errors and "не найден" in errors[0]
 
 
-def test_validate_render_assets_reports_paths_and_blocks_render(client, silent_submit) -> None:
+def test_render_blocks_remote_asset_endpoints(client, silent_submit) -> None:
     bad_ir = copy.deepcopy(DESIGN_IR)
-    # контент-адресный путь, но приватный хост — отказ именно по SSRF-правилу
-    bad_ir["tree"][0]["children"][0]["src"] = f"https://127.0.0.1:8420/assets/{HASH_HEX}.png"
+    bad_ir["tree"][0]["children"][0]["src"] = f"https://cdn.example.com/assets/{HASH_HEX}.png"
     errors = timeline_assets.validate_render_assets(bad_ir)
     assert errors and "/tree/0/children/0/src" in errors[0]
-    assert "внутреннюю сеть" in errors[0]
+    assert "не ходит в сеть" in errors[0]
 
     # таймлайн собирается поверх того же IR, чтобы хэш-связка сошлась
     timeline = build(bad_ir, {"duration": 500})
@@ -197,15 +229,28 @@ def test_validate_render_assets_reports_paths_and_blocks_render(client, silent_s
     assert "ассеты" in resp.json()["error"].lower()
 
 
-def test_render_accepts_content_addressed_asset(client, silent_submit) -> None:
-    timeline = _timeline(duration=500)
-    # пересобираем таймлайн поверх IR с ассетом, чтобы хэши сошлись
+def test_render_accepts_verified_local_blob(client, silent_submit, tmp_path: Path, monkeypatch) -> None:
+    import hashlib as _hashlib
+    blobs = tmp_path / "blobs"
+    blobs.mkdir()
+    payload = b"\x89PNG local-blob"
+    sha = _hashlib.sha256(payload).hexdigest()
+    (blobs / f"{sha}.png").write_bytes(payload)
+    monkeypatch.setenv("DESIGNDNA_DATA_DIR", str(tmp_path))
+
     ir = copy.deepcopy(DESIGN_IR)
-    ir["tree"][0]["children"][0]["src"] = f"https://1.1.1.1/assets/{HASH_HEX}.png"
+    ir["tree"][0]["children"][0]["src"] = f"ddna://blobs/{sha}.png"
     timeline = build(ir, {"duration": 500})
     resp = client.post("/api/timeline/render", json={"timeline": timeline, "ir": ir})
     assert resp.status_code == 200, resp.text
     assert resp.json()["renderId"]
+
+    # отсутствующий блоб отклоняется ещё на входе (fail closed)
+    ir_missing = copy.deepcopy(DESIGN_IR)
+    ir_missing["tree"][0]["children"][0]["src"] = f"ddna://blobs/{'b' * 64}.png"
+    timeline_missing = build(ir_missing, {"duration": 500})
+    resp = client.post("/api/timeline/render", json={"timeline": timeline_missing, "ir": ir_missing})
+    assert resp.status_code == 422 and "не найден" in resp.json()["error"]
 
 
 # --------------------------------------------------------------------------

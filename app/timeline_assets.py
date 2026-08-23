@@ -1,49 +1,77 @@
-"""Гард ассетов для рендера Timeline IR: только детерминированные ассеты.
+"""Ассеты рендера Timeline IR: офлайн-детерминизм без внешних сетей.
 
-Рендер агентского таймлайна прогоняет Design IR через headless Chromium.
-Любой сетевой запрос из этой страницы — это недетерминизм ролика (контент
-может измениться между рендерами) и SSRF-поверхность (ИИ-план или
-пользовательский IR может сослаться на внутренний адрес). Политика:
+Рендер агентского таймлайна прогоняет Design IR через headless Chromium и
+обязан быть детерминированным: ноль произвольных сетевых запросов, никаких
+приватных адресов (SSRF), никакого дрейфа на fallback-шрифты.
 
-* ``data:`` URL — только мелкие (изображения/шрифты, инкапсулированы);
-* ``http(s)`` — только контент-адресные ассеты: хэш ≥32 hex-символов в пути,
-  без query/fragment (signed-параметры = изменяемый контент), хост резолвится
-  только в публичные IP;
-* локальные пути (``/fonts/...``) — инертны на странице ``about:blank``;
-* всё остальное (приватные адреса, изменяемые URL, file:/javascript:) —
-  отказ с человекочитаемой ошибкой, где именно и что чинить.
+Политика ассетов:
+* ``ddna://blobs/<полный-sha256>.<ext>`` — контент-адресные блобы из
+  ``DESIGNDNA_DATA_DIR/blobs``; перед использованием проверяются ПОЛНЫЙ
+  SHA-256 и размер файла, битый/чужой хэш — отказ;
+* ``/fonts/<stored-name>`` и ``ddna://fonts/<stored-name>`` — локальные
+  шрифты из ``DESIGNDNA_DATA_DIR/fonts`` (формат имён серверного /fonts);
+* мелкие ``data:`` URL (инкапсулированы, сети не требуют);
+* всё остальное — включая удалённые http(s) с «хэшеподобными» путями —
+  отклоняется: байты удалённого URL невозможно верифицировать детерминизмом
+  контракта, поэтому такие ассеты сначала сохраняются в локальное
+  контент-адресное хранилище.
 
-Статическая проверка (``validate_render_assets``) выполняется до запуска
-браузера; маршрутный гард (``install_render_asset_guard``) — защита вглубь на
-случай запросов, которые генерирует сам движок рендера.
+Разрешение идёт через материализацию (``materialize_render_assets``):
+байты читаются с диска, проверяются и передаются рендеру, который
+исполняет их через Playwright route.fulfill; любые другие запросы
+браузера абортируются (``install_render_asset_guard``).
 """
 from __future__ import annotations
 
-import ipaddress
+import hashlib
+import os
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
-from urlguard import resolve_public_ips
-
-# data: URL ограничен, чтобы агентский IR не протаскивал гигабайты инлайн:
-# ~150 КБ после base64-декодирования достаточно для иконки/текстуры.
+# Крупные инлайн-ассеты недопустимы: ~150 КБ после base64 достаточно для
+# иконки/текстуры, остальное — в контент-адресные блобы.
 MAX_DATA_URL_CHARS = 200_000
 MAX_URL_CHARS = 2048
+MAX_BLOB_BYTES = 10 * 1024 * 1024
+MAX_FONT_BYTES = 5 * 1024 * 1024
 
-# Контент-адресность: ≥32 строчных hex-символов подряд в пути (короткие хэши
-# дают коллизии и не гарантируют неизменность контента).
-CONTENT_HASH_RE = re.compile(r"[0-9a-f]{32,}")
+# Канонический контент-адресный блоб: полный sha256 (64 hex) + расширение.
+BLOB_EXT_MIME = {
+    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+    "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf", "otf": "font/otf",
+}
+BLOB_URL_RE = re.compile(r"^ddna://blobs/([0-9a-f]{64})\.(png|jpg|jpeg|gif|webp|svg|woff2?|ttf|otf)$")
+# Зеркало серверного /fonts/{name} (app/server.py): 16 hex + расширение.
+FONT_NAME_RE = re.compile(r"^[0-9a-f]{16}\.(woff2|woff|ttf|otf)$")
+FONT_URL_RE = re.compile(r"^(?:ddna://fonts/|/fonts/)([0-9a-f]{16}\.(woff2|woff|ttf|otf))$")
+FONT_EXT_MIME = {"woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf", "otf": "font/otf"}
+
 URL_IN_STYLE_RE = re.compile(r"url\(\s*['\"]?([^'\")\s]+)", re.IGNORECASE)
 DATA_URL_MIME_RE = re.compile(r"^data:([a-z0-9.+-]+/[a-z0-9.+-]+)?", re.IGNORECASE)
-LOCAL_PATH_RE = re.compile(r"^(\.{0,2}/)?[a-z0-9@._/-]+$", re.IGNORECASE)
 ALLOWED_DATA_MIME_PREFIXES = ("image/", "font/", "application/")
 
 
-def iter_asset_urls(design_ir: dict):
-    """Все URL, которые Design IR попросит загрузить при рендере.
+def _data_root() -> Path:
+    return Path(os.environ.get("DESIGNDNA_DATA_DIR") or Path(__file__).resolve().parent.parent / "data")
 
-    Источники: ``src``/``href`` узлов (картинки) и ``url(...)`` в инлайн-стилях.
-    Возвращает пары ``(путь-в-дереве, url)`` для человекочитаемых ошибок.
+
+@dataclass(frozen=True)
+class MaterializedAsset:
+    url: str
+    data: bytes
+    mime: str
+    source: str  # путь на диске — для диагностики
+
+
+def iter_asset_urls(design_ir: dict):
+    """Все ассет-ссылки, которые Design IR попросит при рендере.
+
+    Источники: ``src``/``href`` узлов, ``url(...)`` в инлайн-стилях и
+    ``meta.fontFaces[].url`` (локальные шрифты источника). Пары
+    ``(путь-в-дереве, url)`` позволяют давать человекочитаемые ошибки.
     """
     def walk(node: dict, path: str):
         if not isinstance(node, dict):
@@ -67,28 +95,26 @@ def iter_asset_urls(design_ir: dict):
                 if isinstance(child, dict):
                     yield from walk(child, f"{path}/children/{index}")
 
-    tree = design_ir.get("tree") if isinstance(design_ir, dict) else None
-    if not isinstance(tree, list):
+    if not isinstance(design_ir, dict):
         return
-    for index, section in enumerate(tree):
-        if isinstance(section, dict):
-            yield from walk(section, f"/tree/{index}")
+    tree = design_ir.get("tree")
+    if isinstance(tree, list):
+        for index, section in enumerate(tree):
+            if isinstance(section, dict):
+                yield from walk(section, f"/tree/{index}")
+    faces = (design_ir.get("meta") or {}).get("fontFaces") if isinstance(design_ir.get("meta"), dict) else None
+    if isinstance(faces, list):
+        for index, face in enumerate(faces):
+            if isinstance(face, dict) and isinstance(face.get("url"), str) and face.get("url", "").strip():
+                yield f"/meta/fontFaces/{index}/url", str(face["url"]).strip()
 
 
-def _is_content_addressed_http(parsed) -> bool:
-    return bool(parsed.hostname) and not parsed.query and not parsed.fragment \
-        and bool(CONTENT_HASH_RE.search(parsed.path))
-
-
-def validate_asset_url(url: str, *, resolve_dns: bool = True) -> str:
-    """Проверить один ассет-URL. Бросает ValueError с человекочитаемой причиной."""
+def validate_asset_url(url: str) -> str:
+    """Политика одного ассет-URL. Бросает ValueError с человекочитаемой причиной."""
     url = (url or "").strip()
     if not url:
-        raise ValueError("URL ассета пустой — замените его контент-адресной ссылкой")
-    parsed = urlparse(url)
-    scheme = parsed.scheme.lower()
-
-    if scheme == "data":
+        raise ValueError("URL ассета пустой — замените его локальным контент-адресным ассетом")
+    if url.startswith("data:"):
         match = DATA_URL_MIME_RE.match(url)
         mime = (match.group(1) or "").lower() if match else ""
         if mime and not mime.startswith(ALLOWED_DATA_MIME_PREFIXES):
@@ -97,59 +123,27 @@ def validate_asset_url(url: str, *, resolve_dns: bool = True) -> str:
         if len(url) > MAX_DATA_URL_CHARS:
             raise ValueError(
                 f"data: URL занимает {len(url)} символов (лимит {MAX_DATA_URL_CHARS}) — "
-                "вынесите ассет во внешнее контент-адресное хранилище")
+                "сохраните ассет как контент-адресный блоб ddna://blobs/<sha256>.<ext>")
         return url
-
     if len(url) > MAX_URL_CHARS:
         raise ValueError(
-            f"URL ассета длиннее {MAX_URL_CHARS} символов — "
-            "замените его более короткой контент-адресной ссылкой")
-
+            f"URL ассета длиннее {MAX_URL_CHARS} символов — используйте короткую локальную ссылку")
+    if BLOB_URL_RE.match(url) or FONT_URL_RE.match(url):
+        return url
+    scheme = urlparse(url).scheme.lower()
     if scheme in ("http", "https"):
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("логин и пароль в URL ассета не разрешены")
-        if parsed.query or parsed.fragment:
-            raise ValueError(
-                f"недетерминированный ассет {url!r}: query/fragment-параметры могут менять контент — "
-                "используйте контент-адресную ссылку без параметров")
-        if not _is_content_addressed_http(parsed):
-            raise ValueError(
-                f"недетерминированный ассет {url!r}: разрешены только контент-адресные ассеты "
-                "(хэш ≥32 hex-символов в пути) или data: URL до "
-                f"{MAX_DATA_URL_CHARS} символов")
-        host = parsed.hostname or ""
-        # IP-литерал проверяется без DNS: приватный адрес виден сразу.
-        try:
-            ip = ipaddress.ip_address(host.strip("[]"))
-        except ValueError:
-            ip = None
-        if ip is not None:
-            if not ip.is_global:
-                raise ValueError(
-                    f"ассет {url!r} указывает во внутреннюю сеть ({ip}) — "
-                    "замените его публичным контент-адресным ассетом")
-        elif resolve_dns:
-            try:
-                port = parsed.port or (443 if scheme == "https" else 80)
-                resolve_public_ips(host, port)
-            except ValueError as exc:
-                raise ValueError(
-                    f"ассет {url!r} недоступен для рендера: {exc} — "
-                    "замените его публичным контент-адресным ассетом") from None
-        return url
-
-    if not scheme and LOCAL_PATH_RE.match(url):
-        # Локальный путь рендер-страницы (например /fonts/...): на about:blank
-        # он не резолвится в сетевой запрос — инертен.
-        return url
-
+        raise ValueError(
+            f"удалённый ассет {url!r} не разрешён: офлайн-рендер не ходит в сеть и не может "
+            "верифицировать байты удалённого ответа — скачайте ассет и сохраните его как "
+            "контент-адресный блоб ddna://blobs/<sha256>.<ext> в DESIGNDNA_DATA_DIR/blobs "
+            "или локальный шрифт /fonts/<имя>")
     raise ValueError(
-        f"схема {scheme or '<пусто>'!r} не разрешена для ассетов рендера — "
-        "используйте контент-адресный http(s) ассет или data: URL")
+        f"схема {scheme or '<пусто>'!r} не разрешена для ассетов рендера — используйте "
+        "ddna://blobs/<sha256>.<ext>, /fonts/<имя> или data: URL")
 
 
 def validate_render_assets(design_ir: dict) -> list[str]:
-    """Все ошибки ассетов Design IR (пустой список — рендеру ничего не мешает)."""
+    """Ошибки политики ассетов (без обращения к диску)."""
     errors: list[str] = []
     seen: set[tuple[str, str]] = set()
     for where, url in iter_asset_urls(design_ir):
@@ -164,27 +158,165 @@ def validate_render_assets(design_ir: dict) -> list[str]:
     return errors
 
 
-def _runtime_allowed(url: str) -> bool:
-    """Быстрая структурная проверка для маршрутного гарда (без DNS)."""
-    try:
-        validate_asset_url(url, resolve_dns=False)
-        return True
-    except ValueError:
-        return False
+def _safe_child(base: Path, name: str) -> Path:
+    """Ребёнок каталога без traversal: строгий формат имени + проверка резолва."""
+    resolved = (base / name).resolve()
+    if resolved.parent != base.resolve():
+        raise ValueError(f"путь {name!r} выходит за пределы хранилища")
+    return resolved
 
 
-def install_render_asset_guard(context) -> None:
-    """Блокировать в рендер-браузере любой запрос вне политики ассетов."""
+def materialize_render_assets(design_ir: dict, data_dir: Path | None = None
+                              ) -> tuple[dict[str, MaterializedAsset], list[str]]:
+    """Проверить политику И материализовать локальные ассеты.
+
+    Возвращает ``(карта url -> байты, ошибки)``. Любой отсутствующий или
+    повреждённый объект — ошибка (fail closed): рендер не стартует на
+    полусломанных ассетах и не дрейфит на запасные.
+    """
+    root = Path(data_dir) if data_dir is not None else _data_root()
+    blobs_dir = root / "blobs"
+    fonts_dir = root / "fonts"
+    assets: dict[str, MaterializedAsset] = {}
+    errors: list[str] = []
+    seen: set[str] = set()
+    for where, url in iter_asset_urls(design_ir):
+        if url in seen:
+            continue
+        seen.add(url)
+        try:
+            validate_asset_url(url)
+        except ValueError as exc:
+            errors.append(f"{where}: {exc}")
+            continue
+        if url.startswith("data:"):
+            continue  # инкапсулирован — материализация не нужна
+        blob = BLOB_URL_RE.match(url)
+        if blob:
+            sha, ext = blob.group(1), blob.group(2)
+            try:
+                path = _safe_child(blobs_dir, f"{sha}.{ext}")
+            except ValueError as exc:
+                errors.append(f"{where}: {exc}")
+                continue
+            if not path.is_file():
+                errors.append(
+                    f"{where}: блоб {url!r} не найден — сохраните файл как {path} "
+                    "(имя = полный sha256 содержимого)")
+                continue
+            data = path.read_bytes()
+            if len(data) > MAX_BLOB_BYTES:
+                errors.append(
+                    f"{where}: блоб {url!r} больше {MAX_BLOB_BYTES} байт — рендер не принимает крупные ассеты")
+                continue
+            digest = hashlib.sha256(data).hexdigest()
+            if digest != sha:
+                errors.append(
+                    f"{where}: блоб {url!r} повреждён — sha256 содержимого {digest} не совпадает "
+                    "с именем; пересохраните файл под его настоящим хэшем")
+                continue
+            assets[url] = MaterializedAsset(url=url, data=data, mime=BLOB_EXT_MIME[ext], source=str(path))
+            continue
+        font = FONT_URL_RE.match(url)
+        if font:
+            name = font.group(1)
+            try:
+                path = _safe_child(fonts_dir, name)
+            except ValueError as exc:
+                errors.append(f"{where}: {exc}")
+                continue
+            if not path.is_file():
+                errors.append(
+                    f"{where}: шрифт {url!r} не найден — ожидается файл {path} "
+                    "(локальная база шрифтов DESIGNDNA_DATA_DIR/fonts)")
+                continue
+            data = path.read_bytes()
+            if len(data) > MAX_FONT_BYTES:
+                errors.append(f"{where}: шрифт {url!r} больше {MAX_FONT_BYTES} байт")
+                continue
+            ext = name.rsplit(".", 1)[-1]
+            assets[url] = MaterializedAsset(url=url, data=data, mime=FONT_EXT_MIME[ext], source=str(path))
+            continue
+        errors.append(f"{where}: ассет {url!r} не удалось материализовать для офлайн-рендера")
+    return assets, errors
+
+
+def rewrite_local_asset_urls(design_ir: dict) -> dict:
+    """Заменить ``ddna://…`` ссылки на относительные пути рендер-страницы.
+
+    На странице рендера (локальный документ, см. timeline_render) ``/fonts/…``
+    и ``/blobs/…`` резолвятся в обычные http-запросы, которые гард исполняет
+    из материализованных байт; кастомная схема ddna:// для этого не нужна.
+    """
+    import copy
+    rewritten = copy.deepcopy(design_ir)
+
+    def walk(node):
+        if not isinstance(node, dict):
+            return
+        for key in ("src", "href"):
+            value = node.get(key)
+            if isinstance(value, str) and value.startswith("ddna://"):
+                node[key] = _relative_local_url(value)
+        children = node.get("children")
+        if isinstance(children, list):
+            for child in children:
+                walk(child)
+
+    tree = rewritten.get("tree")
+    if isinstance(tree, list):
+        for section in tree:
+            walk(section)
+    meta = rewritten.get("meta")
+    faces = meta.get("fontFaces") if isinstance(meta, dict) else None
+    if isinstance(faces, list):
+        for face in faces:
+            if isinstance(face, dict) and isinstance(face.get("url"), str) and face["url"].startswith("ddna://"):
+                face["url"] = _relative_local_url(face["url"])
+    return rewritten
+
+
+def _relative_local_url(url: str) -> str:
+    if url.startswith("ddna://blobs/"):
+        return "/blobs/" + url[len("ddna://blobs/"):]
+    if url.startswith("ddna://fonts/"):
+        return "/fonts/" + url[len("ddna://fonts/"):]
+    return url
+
+
+def install_render_asset_guard(context, assets: dict[str, MaterializedAsset],
+                               blocked: list, document_url: str, document_html: str) -> None:
+    """Полный офлайн: документ и ассеты — только из материализованных байтов.
+
+    Любой запрос вне карты ассетов абортируется и запоминается в ``blocked`` —
+    рендер видит попытку внешнего запроса и падает с объяснением вместо
+    тихого дрейфа.
+    """
+    parsed_doc = urlparse(document_url)
+    origin = parsed_doc._replace(path="", query="", fragment="").geturl()
+    asset_by_path: dict[str, MaterializedAsset] = {}
+    for url, asset in assets.items():
+        relative = _relative_local_url(url)
+        asset_by_path[origin + relative] = asset
 
     def guard_route(route, request):
         url = request.url or ""
-        if _runtime_allowed(url):
+        if getattr(request, "resource_type", None) == "document" and url == document_url:
+            route.fulfill(body=document_html, content_type="text/html")
+            return
+        asset = asset_by_path.get(url)
+        if asset is not None:
+            route.fulfill(body=asset.data, content_type=asset.mime)
+            return
+        if url.startswith("data:") or url.startswith("about:"):
             route.continue_()
-        else:
-            route.abort("blockedbyclient")
+            return
+        blocked.append(url)
+        route.abort("blockedbyclient")
 
     def guard_websocket(route):
-        route.close(code=1008, reason="WebSockets are not allowed in timeline render")
+        blocked.append(route.url)
+        route.close(code=1008, reason="Network disabled for offline timeline render")
 
     context.route("**/*", guard_route)
     if hasattr(context, "route_web_socket"):

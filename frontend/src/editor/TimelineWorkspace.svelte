@@ -258,8 +258,16 @@
     mutate((d) => {
       const layer = d.layers.find((l: AnyDoc) => l.id === layerId);
       if (!layer) return;
-      layer[key] = Math.max(0, Math.min(duration, Math.round(value)));
-      if (layer.in >= layer.out) layer[key === "in" ? "out" : "in"] = layer[key] + (key === "in" ? 1 : -1);
+      // Инвариант 0 <= in < out <= duration сохраняется при ЛЮБОМ вводе
+      // (мышь, клавиатура, числа в инспекторе): значение зажимается в допустимый
+      // интервал относительно второго края, промежуточные невалидные состояния
+      // не возникают и не попадают ни в историю, ни в канон ноды.
+      const v = Math.max(0, Math.min(duration, Math.round(value)));
+      if (key === "in") {
+        layer.in = Math.min(v, Math.max(0, Number(layer.out || 0) - 1));
+      } else {
+        layer.out = Math.max(v, Math.min(duration, Number(layer.in || 0) + 1));
+      }
     });
   }
 

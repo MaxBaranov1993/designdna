@@ -61,6 +61,18 @@ def layer_props(timeline: dict | None, layer_id: str) -> dict:
     return (layer or {}).get("transform", {}).get("properties", {})
 
 
+def layer_timing(page, node_id: int, layer_id: str) -> dict | None:
+    return page.evaluate("""(v) => {
+      const tl = window.GraphDev.node(v.id)?.data?.timeline;
+      const layer = (tl?.layers || []).find((l) => l.id === v.layer);
+      return layer ? { in: layer.in, out: layer.out, duration: tl.composition.duration } : null;
+    }""", {"id": node_id, "layer": layer_id})
+
+
+def timing_valid(t: dict | None) -> bool:
+    return bool(t) and 0 <= t["in"] < t["out"] <= t["duration"]
+
+
 def main() -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
@@ -182,7 +194,107 @@ def main() -> None:
         check("после Применить доступен откат ИИ-патча",
               page.locator('.tlw-root [data-act="ai-revert"]').is_visible())
 
-        # --- 5. закрытие сбрасывает несособранный дебаунс ---
+        # --- 5. границы трима: 0 <= in < out <= duration при любом вводе ---
+        page.click('.tlw-root [data-act="layer"] >> nth=0')
+        page.wait_for_timeout(150)
+        pre_timing = layer_timing(page, timeline_id, "layer-hero-1")
+        check("исходный тайминг слоя валиден", timing_valid(pre_timing), str(pre_timing))
+
+        def undo_times(n: int) -> None:
+            for _ in range(n):
+                page.click('.tlw-root [data-act="undo"]')
+                page.wait_for_timeout(120)
+
+        # числовой ввод за верхнюю границу: in не может стать >= out
+        in_input = page.locator("label:has-text('in, с') input")
+        in_input.fill("999")
+        in_input.press("Tab")
+        page.wait_for_timeout(800)
+        t = layer_timing(page, timeline_id, "layer-hero-1")
+        check("числовой in=999с зажат в 0 <= in < out <= duration", timing_valid(t), str(t))
+        undo_times(1)
+        check("Undo вернул тайминг до числовой правки",
+              layer_timing(page, timeline_id, "layer-hero-1") == pre_timing)
+
+        # числовой ввод ниже нуля: out не может стать <= in
+        out_input = page.locator("label:has-text('out, с') input")
+        out_input.fill("0")
+        out_input.press("Tab")
+        page.wait_for_timeout(800)
+        t = layer_timing(page, timeline_id, "layer-hero-1")
+        check("числовой out=0 зажат в 0 <= in < out <= duration", timing_valid(t), str(t))
+        undo_times(1)
+        check("Undo вернул тайминг после числового out=0",
+              layer_timing(page, timeline_id, "layer-hero-1") == pre_timing)
+
+        # клавиатура на границе 0: ещё шаг влево не даёт in=-1
+        in_input.fill("0")
+        in_input.press("Tab")
+        page.wait_for_timeout(800)
+        first_track = page.locator('.tlw-track').nth(0)
+        first_track.locator('.tlw-trim:not(.right)').focus()
+        page.keyboard.press("ArrowLeft")
+        page.wait_for_timeout(800)
+        t = layer_timing(page, timeline_id, "layer-hero-1")
+        check("клавиша влево на границе не даёт in=-1", timing_valid(t) and t["in"] == 0, str(t))
+        undo_times(2)
+        check("Undo вернул тайминг после клавиатурной границы",
+              layer_timing(page, timeline_id, "layer-hero-1") == pre_timing)
+
+        # клавиатура на границе duration: ещё шаг вправо не даёт out=duration+1
+        out_input.fill(str(pre_timing["duration"] / 1000))
+        out_input.press("Tab")
+        page.wait_for_timeout(800)
+        first_track.locator('.tlw-trim.right').focus()
+        page.keyboard.press("ArrowRight")
+        page.wait_for_timeout(800)
+        t = layer_timing(page, timeline_id, "layer-hero-1")
+        check("клавиша вправо на границе не даёт out=duration+1",
+              timing_valid(t) and t["out"] == t["duration"], str(t))
+        undo_times(2)
+        check("Undo вернул тайминг после клавиатурной границы duration",
+              layer_timing(page, timeline_id, "layer-hero-1") == pre_timing)
+
+        # мышь: драг начала клипа далеко влево — коалесция в одну запись, in >= 0
+        trim_in = first_track.locator('.tlw-trim:not(.right)')
+        box = trim_in.bounding_box()
+        if box:
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            page.mouse.down()
+            for step in range(1, 7):
+                page.mouse.move(box["x"] + box["width"] / 2 - step * 500, box["y"] + box["height"] / 2)
+                page.wait_for_timeout(16)
+            page.mouse.up()
+            page.wait_for_timeout(800)
+            t = layer_timing(page, timeline_id, "layer-hero-1")
+            check("драг трима влево держит 0 <= in < out", timing_valid(t) and t["in"] == 0, str(t))
+            undo_times(1)  # весь драг — одна запись истории
+            check("один Undo откатывает весь драг трима",
+                  layer_timing(page, timeline_id, "layer-hero-1") == pre_timing)
+        else:
+            check("драг трима: элемент найден", False, ".tlw-trim не виден")
+
+        # мышь: драг конца клипа далеко вправо — out <= duration
+        trim_out = first_track.locator('.tlw-trim.right')
+        box = trim_out.bounding_box()
+        if box:
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            page.mouse.down()
+            for step in range(1, 7):
+                page.mouse.move(box["x"] + box["width"] / 2 + step * 500, box["y"] + box["height"] / 2)
+                page.wait_for_timeout(16)
+            page.mouse.up()
+            page.wait_for_timeout(800)
+            t = layer_timing(page, timeline_id, "layer-hero-1")
+            check("драг трима вправо держит out <= duration",
+                  timing_valid(t) and t["out"] == t["duration"], str(t))
+            undo_times(1)
+            check("один Undo откатывает весь драг конца клипа",
+                  layer_timing(page, timeline_id, "layer-hero-1") == pre_timing)
+        else:
+            check("драг трима вправо: элемент найден", False, ".tlw-trim.right не виден")
+
+        # --- 6. закрытие сбрасывает несособранный дебаунс ---
         duration_input = page.locator("label:has-text('Длительность, с') input")
         duration_input.fill("8")
         duration_input.press("Tab")  # change ушёл, дебаунс ещё не собрался

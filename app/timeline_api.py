@@ -27,7 +27,7 @@ from ir.timeline import (
     revert_change_set,
     validate,
 )
-from timeline_assets import validate_render_assets
+from timeline_assets import materialize_render_assets
 from timeline_render import (
     JOBS,
     JOBS_LOCK,
@@ -219,7 +219,8 @@ def timeline_render(req: TimelineRenderRequest):
     expected = ((req.timeline.get("source") or {}).get("designIrHash")) or ""
     if expected and expected != content_hash(req.ir):
         return _err(409, "Таймлайн не принадлежит переданному Design IR")
-    asset_errors = validate_render_assets(req.ir)
+    # Fail closed на входе: политика + наличие/целостность локальных ассетов
+    _assets, asset_errors = materialize_render_assets(req.ir)
     if asset_errors:
         return _err(422, "Ассеты рендера не прошли проверку: " + "; ".join(asset_errors[:3]))
     try:
