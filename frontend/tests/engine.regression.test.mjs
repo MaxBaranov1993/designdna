@@ -27,6 +27,7 @@ buildSync({
     path.join(here, "..", "src", "engine", "renderer.ts"),
     path.join(here, "..", "src", "engine", "locked.ts"),
     path.join(here, "..", "src", "engine", "sourcepath.ts"),
+    path.join(here, "..", "src", "engine", "timeline.ts"),
     path.join(here, "..", "src", "flow", "compose.ts"),
   ],
   bundle: true,
@@ -39,6 +40,7 @@ const { IRRenderer, IRRendererTest } = await import(pathToFileURL(path.join(outd
 const { isLockedNode, lockedReason } = await import(pathToFileURL(path.join(outdir, "locked.js")).href);
 const { isSourceKeyPath, sourceParentPath, findByKey, locateByKey, parentKeyByKey, rekeyCloneKeys } =
   await import(pathToFileURL(path.join(outdir, "sourcepath.js")).href);
+const { TimelineEngine, Timeline } = await import(pathToFileURL(path.join(outdir, "timeline.js")).href);
 const { composePage } = await import(pathToFileURL(path.join(outdir, "compose.js")).href);
 
 let passed = 0;
@@ -337,6 +339,111 @@ check("group child parent resolves to the group; ungroup restores a valid parent
     "ungrouped children keep their selectable identities");
   assert.equal(parentKeyByKey(sec, "root/div:99"), undefined,
     "unknown key is structurally refused");
+});
+
+/* ---------- Timeline IR: детерминированный солвер кейфреймов ---------- */
+
+const TIMELINE_DOC = () => ({
+  version: "timeline-ir/1.0",
+  source: { designIrHash: "a".repeat(64), layerManifestHash: "b".repeat(64) },
+  composition: { width: 1920, height: 1080, fps: 30, duration: 4000, background: "#111116", aspect: "16:9" },
+  groups: [{ id: "grp-hero", name: "hero", parent: null }],
+  layers: [
+    {
+      id: "layer-hero", name: "hero", type: "component", ref: "src-hero", parent: "grp-hero",
+      in: 0, out: 4000,
+      transform: {
+        anchor: { x: 0.5, y: 0.5 },
+        properties: {
+          opacity: { keyframes: [{ t: 0, value: 0, easing: "linear" }, { t: 1000, value: 1 }] },
+          x: { keyframes: [{ t: 500, value: -100, easing: "ease-in-out" }, { t: 1500, value: 100 }] },
+        },
+      },
+    },
+    {
+      id: "layer-cta", name: "cta", type: "component", ref: "src-cta", parent: "grp-hero",
+      in: 1000, out: 3000,
+      transform: { anchor: { x: 0.5, y: 0.5 }, properties: {} },
+    },
+  ],
+});
+
+check("timeline solver: empty track holds the deterministic default", () => {
+  assert.equal(Timeline.solveTrack(undefined, 500, 1), 1);
+  assert.equal(Timeline.solveTrack({ keyframes: [] }, 500, 7), 7);
+});
+
+check("timeline solver: holds before first and after last keyframe", () => {
+  const track = { keyframes: [{ t: 1000, value: 10 }, { t: 2000, value: 20 }] };
+  assert.equal(Timeline.solveTrack(track, 0, 0), 10);
+  assert.equal(Timeline.solveTrack(track, 999, 0), 10);
+  assert.equal(Timeline.solveTrack(track, 2000, 0), 20);
+  assert.equal(Timeline.solveTrack(track, 9999, 0), 20);
+});
+
+check("timeline solver: linear interpolation is exact at segment midpoint", () => {
+  const track = { keyframes: [{ t: 0, value: 0, easing: "linear" }, { t: 1000, value: 100 }] };
+  assert.equal(Timeline.solveTrack(track, 250, 0), 25);
+  assert.equal(Timeline.solveTrack(track, 500, 0), 50);
+  assert.equal(Timeline.solveTrack(track, 750, 0), 75);
+});
+
+check("timeline solver: named easings keep endpoints and monotonicity", () => {
+  for (const easing of ["linear", "ease", "ease-in", "ease-out", "ease-in-out"]) {
+    const track = { keyframes: [{ t: 0, value: 0, easing }, { t: 1000, value: 1 }] };
+    assert.equal(Timeline.solveTrack(track, 0, -1), 0, easing);
+    assert.equal(Timeline.solveTrack(track, 1000, -1), 1, easing);
+    let prev = 0;
+    for (let t = 100; t <= 900; t += 100) {
+      const value = Timeline.solveTrack(track, t, -1);
+      assert.ok(value >= prev - 1e-9, `${easing} must be monotonic at ${t}`);
+      prev = value;
+    }
+  }
+  // симметричная кривая ease-in-out в середине даёт 0.5
+  const symmetric = { keyframes: [{ t: 0, value: 0, easing: "ease-in-out" }, { t: 1000, value: 1 }] };
+  assert.ok(Math.abs(Timeline.solveTrack(symmetric, 500, -1) - 0.5) < 1e-3);
+  // ease-in медленнее линейного в начале
+  const easeIn = { keyframes: [{ t: 0, value: 0, easing: "ease-in" }, { t: 1000, value: 1 }] };
+  assert.ok(Timeline.solveTrack(easeIn, 250, -1) < 0.25);
+});
+
+check("timeline solver: custom cubic-bezier is respected", () => {
+  const track = {
+    keyframes: [
+      { t: 0, value: 0, easing: "cubic-bezier", bezier: [0, 0, 1, 1] },
+      { t: 1000, value: 10 },
+    ],
+  };
+  assert.ok(Math.abs(Timeline.solveTrack(track, 500, -1) - 5) < 1e-2,
+    "bezier(0,0,1,1) is linear");
+});
+
+check("solveLayer: visibility window and clamped opacity", () => {
+  const engine = new TimelineEngine(TIMELINE_DOC());
+  const ctaInside = Timeline.solveLayer(engine.layer("layer-cta"), 1500);
+  assert.equal(ctaInside.visible, true);
+  assert.equal(ctaInside.scale, 1);
+  const ctaBefore = Timeline.solveLayer(engine.layer("layer-cta"), 999);
+  assert.equal(ctaBefore.visible, false);
+  const ctaAfter = Timeline.solveLayer(engine.layer("layer-cta"), 3001);
+  assert.equal(ctaAfter.visible, false);
+  const hero = Timeline.solveLayer(engine.layer("layer-hero"), 500);
+  assert.equal(hero.opacity, 0.5);
+  assert.equal(hero.x < 0, true, "ease-in-out at t=500 is still left of center start");
+});
+
+check("TimelineEngine.seek is deterministic and frame math matches fps", () => {
+  const first = new TimelineEngine(TIMELINE_DOC()).seek(1234);
+  const second = new TimelineEngine(TIMELINE_DOC()).seek(1234);
+  assert.deepEqual(first, second);
+  const engine = new TimelineEngine(TIMELINE_DOC());
+  assert.equal(engine.totalFrames(), 121, "4s @ 30fps includes frame 0");
+  assert.equal(engine.frameIndex(1000), 30);
+  assert.equal(engine.timeOfFrame(60), 2000);
+  // скраб за границами клампится в диапазон композиции
+  const tail = engine.seek(999999);
+  assert.equal(tail["layer-hero"].opacity, 1);
 });
 
 console.log(`ALL ENGINE REGRESSION CHECKS PASSED (${passed})`);
