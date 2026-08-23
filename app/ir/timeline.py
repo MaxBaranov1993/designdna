@@ -30,6 +30,14 @@ LAYER_TYPES = ("component", "group", "camera", "overlay")
 EXTRACT_MAX_DEPTH = 2
 EXTRACT_MAX_LAYERS = 256
 
+# Границы сложности документа и патчей: контракт не должен расти бесконечно —
+# ни от ручных правок, ни от ИИ-планов, ни от пресетов по сотням слоёв.
+MAX_GROUPS = 64
+MAX_KEYFRAMES_PER_TRACK = 256
+MAX_TOTAL_KEYFRAMES = 4096
+MAX_CHANGE_SET_OPERATIONS = 512
+MAX_PROMPT_CHARS = 2000
+
 # CSS-совместимые кривые для именованных изингов (паритет с движком рендера).
 EASING_BEZIERS = {
     "linear": (0.0, 0.0, 1.0, 1.0),
@@ -77,6 +85,8 @@ def validate(document: dict) -> list[str]:
     group_ids = [g.get("id") for g in groups if isinstance(g, dict)]
     if len(group_ids) != len(set(group_ids)):
         formatted.append("groups: ids must be unique")
+    if len(groups) > MAX_GROUPS:
+        formatted.append(f"groups: at most {MAX_GROUPS} groups are allowed")
     layer_ids = [layer.get("id") for layer in layers if isinstance(layer, dict)]
     if len(layer_ids) != len(set(layer_ids)):
         formatted.append("layers: ids must be unique")
@@ -91,6 +101,7 @@ def validate(document: dict) -> list[str]:
         if parent is not None and parent not in group_set:
             formatted.append(f"groups/{index}/parent: group does not exist")
 
+    total_keyframes = 0
     for index, layer in enumerate(layers):
         if not isinstance(layer, dict):
             continue
@@ -115,6 +126,10 @@ def validate(document: dict) -> list[str]:
             keyframes = track.get("keyframes") if isinstance(track, dict) else None
             if not isinstance(keyframes, list):
                 continue
+            total_keyframes += len(keyframes)
+            if len(keyframes) > MAX_KEYFRAMES_PER_TRACK:
+                formatted.append(
+                    f"{prefix}/transform/properties/{prop}: at most {MAX_KEYFRAMES_PER_TRACK} keyframes per track are allowed")
             previous_t = -1
             for kf_index, keyframe in enumerate(keyframes):
                 if not isinstance(keyframe, dict):
@@ -136,6 +151,8 @@ def validate(document: dict) -> list[str]:
                         formatted.append(f"{prefix}/transform/properties/opacity/keyframes/{kf_index}: value must be within [0, 1]")
                     if prop == "scale" and float(value) < 0:
                         formatted.append(f"{prefix}/transform/properties/scale/keyframes/{kf_index}: value must be >= 0")
+    if total_keyframes > MAX_TOTAL_KEYFRAMES:
+        formatted.append(f"keyframes: at most {MAX_TOTAL_KEYFRAMES} keyframes are allowed per timeline")
     return formatted
 
 
@@ -285,6 +302,9 @@ def validate_change_set(change_set: dict) -> list[str]:
         return formatted
     operations = change_set.get("operations") if isinstance(change_set.get("operations"), list) else []
     inverse = change_set.get("inverseOperations") if isinstance(change_set.get("inverseOperations"), list) else []
+    if len(operations) > MAX_CHANGE_SET_OPERATIONS:
+        formatted.append(
+            f"operations: at most {MAX_CHANGE_SET_OPERATIONS} operations are allowed per change-set")
     op_ids = [op.get("id") for op in operations if isinstance(op, dict)]
     if len(op_ids) != len(set(op_ids)):
         formatted.append("operations: ids must be unique")
@@ -479,6 +499,10 @@ def build_change_set(document: dict, intent: str, operations: list[dict],
     """
     if not isinstance(document, dict):
         raise ValueError("документ таймлайна обязателен")
+    if len(operations) > MAX_CHANGE_SET_OPERATIONS:
+        raise ValueError(
+            f"слишком много операций ({len(operations)} > {MAX_CHANGE_SET_OPERATIONS}) — "
+            "сократите запрос или разбейте правки на несколько патчей")
     work = copy.deepcopy(document)
     forward: list[dict] = []
     inverse: list[dict] = []

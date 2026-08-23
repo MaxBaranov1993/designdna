@@ -27,12 +27,15 @@ from ir.timeline import (
     revert_change_set,
     validate,
 )
+from timeline_assets import validate_render_assets
 from timeline_render import (
     JOBS,
     JOBS_LOCK,
+    evict_expired_jobs,
     export_css,
     export_waapi,
     register_job,
+    request_cancel,
     submit_render,
     validate_timeline_render,
 )
@@ -174,7 +177,13 @@ def timeline_validate(req: TimelineDocumentRequest):
 
 @router.post("/api/timeline/assist")
 def timeline_assist(req: TimelineAssistRequest):
-    """ИИ-режиссёр: промпт -> обратимый change-set -> применённый таймлайн."""
+    """ИИ-режиссёр: промпт -> превью обратимого change-set.
+
+    Ответ — это ПРЕВЬЮ (``preview: true``): ``timeline`` собран из копий входа,
+    канонический таймлайн ноды не трогается до явного /api/timeline/apply
+    пользователем. ``planSource``/``warning`` показывают, какой провайдер собрал
+    план и был ли фолбэк с LLM на детерминированный разбор.
+    """
     blocked = _guard()
     if blocked:
         return blocked
@@ -183,10 +192,17 @@ def timeline_assist(req: TimelineAssistRequest):
         return _err(422, "Таймлайн невалиден до применения: " + "; ".join(errors[:3]))
     from timeline_director import direct
     try:
-        applied, change_set = direct(req.timeline, req.prompt)
+        preview_timeline, change_set, meta = direct(req.timeline, req.prompt)
     except ValueError as e:
         return _err(422, str(e))
-    return {"timeline": applied, "changeSet": change_set}
+    return {
+        "preview": True,
+        "timeline": preview_timeline,
+        "changeSet": change_set,
+        "planSource": meta.get("planSource") or "deterministic",
+        "warning": meta.get("warning"),
+        "steps": meta.get("steps") or 0,
+    }
 
 
 @router.post("/api/timeline/render")
@@ -203,6 +219,9 @@ def timeline_render(req: TimelineRenderRequest):
     expected = ((req.timeline.get("source") or {}).get("designIrHash")) or ""
     if expected and expected != content_hash(req.ir):
         return _err(409, "Таймлайн не принадлежит переданному Design IR")
+    asset_errors = validate_render_assets(req.ir)
+    if asset_errors:
+        return _err(422, "Ассеты рендера не прошли проверку: " + "; ".join(asset_errors[:3]))
     try:
         total, _fps = validate_timeline_render(req.timeline, req.ir)
     except ValueError as e:
@@ -210,16 +229,20 @@ def timeline_render(req: TimelineRenderRequest):
     output_format = "webm" if str(req.format) == "webm" else "mp4"
     render_id = uuid.uuid4().hex
     output = TIMELINE_RENDER_DIR / f"{render_id}.{output_format}"
-    register_job(render_id, total, output_format, output)
+    job = register_job(render_id, total, output_format, output)
+    if job is None:
+        return _err(429, "Очередь рендера заполнена — отмените лишние задачи или дождитесь завершения текущих")
     submit_render(render_id, copy.deepcopy(req.timeline), copy.deepcopy(req.ir), output)
     return {"renderId": render_id, "status": "queued", "framesTotal": total}
 
 
-_STATUS_MAP = {"queued": "queued", "running": "running", "complete": "done", "error": "error"}
+_STATUS_MAP = {"queued": "queued", "running": "running", "complete": "done",
+               "error": "error", "cancelled": "cancelled"}
 
 
 @router.get("/api/timeline/render/{render_id}")
 def timeline_render_status(render_id: str):
+    evict_expired_jobs()
     with JOBS_LOCK:
         job = JOBS.get(render_id)
         if not job:
@@ -234,13 +257,24 @@ def timeline_render_status(render_id: str):
         if status == "done":
             response["downloadUrl"] = f"/api/timeline/render/{render_id}/download"
             response["result"] = job.get("result") or {}
-        if status == "error":
-            response["error"] = job.get("error") or "render failed"
+        if status in ("error", "cancelled"):
+            response["error"] = job.get("error") or f"render {status}"
         return response
+
+
+@router.post("/api/timeline/render/{render_id}/cancel")
+def timeline_render_cancel(render_id: str):
+    outcome = request_cancel(render_id)
+    if outcome is None:
+        return _err(404, "Render job not found.")
+    if outcome.startswith("conflict:"):
+        return _err(409, f"Render already finished: {outcome.split(':', 1)[1]}.")
+    return {"status": outcome, "renderId": render_id}
 
 
 @router.get("/api/timeline/render/{render_id}/download")
 def timeline_render_download(render_id: str):
+    evict_expired_jobs()
     with JOBS_LOCK:
         job = JOBS.get(render_id)
         if not job:

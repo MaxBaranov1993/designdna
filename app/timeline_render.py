@@ -17,6 +17,7 @@ import json
 import math
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
@@ -24,10 +25,27 @@ from typing import Callable
 import imageio_ffmpeg
 from playwright.sync_api import sync_playwright
 
+from timeline_assets import install_render_asset_guard, validate_render_assets
+
 MAX_RENDER_FRAMES = 10_800
+
+# Очередь рендера ограничена: один воркер + небольшая очередь. Всё, что
+# сверх, отклоняется на входе (429), а завершённые задачи вытесняются по TTL
+# вместе с файлами на диске — память и каталог renders не растут бесконечно.
+MAX_ACTIVE_RENDERS = 4
+JOB_TTL_SECONDS = 3600
 RENDER_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
+
+
+class RenderCancelled(RuntimeError):
+    """Рендер остановлен запросом отмены (браузер и ffmpeg закрыты чисто)."""
+
+
+def _clock() -> float:
+    """Монотонное время задачи; в тестах подменяется для проверки TTL."""
+    return time.monotonic()
 
 # --------------------------------------------------------------------------
 # Python-зеркало солвера (паритет с frontend/src/engine/timeline.ts)
@@ -305,8 +323,17 @@ def render_timeline_video(
     design_ir: dict,
     output: Path,
     on_progress: Callable[[int, int], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict:
-    """Покадровый рендер таймлайна тем же движком, что превью редактора."""
+    """Покадровый рендер таймлайна тем же движком, что превью редактора.
+
+    ``should_cancel`` опрашивается между кадрами: отмена поднимает
+    ``RenderCancelled``, браузер закрывается, ffmpeg убивается, временный
+    файл удаляется — хвостов не остаётся.
+    """
+    asset_errors = validate_render_assets(design_ir)
+    if asset_errors:
+        raise ValueError("ассеты рендера не прошли проверку: " + "; ".join(asset_errors[:3]))
     count, fps = validate_timeline_render(timeline, design_ir)
     composition = timeline["composition"]
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -316,14 +343,19 @@ def render_timeline_video(
 
     command = _ffmpeg_command(temporary, fps, count, output.suffix.lstrip(".").lower() or "mp4", "high")
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    succeeded = False
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             try:
-                page = browser.new_page(viewport={
+                context = browser.new_context(viewport={
                     "width": int(composition["width"]),
                     "height": int(composition["height"]),
                 }, device_scale_factor=1)
+                # Защита вглубь: даже если статическая проверка что-то пропустила,
+                # браузер не ходит ни в приватные сети, ни по изменяемым URL.
+                install_render_asset_guard(context)
+                page = context.new_page()
                 page.set_content(
                     '<style>html,body,#stage{margin:0;width:100%;height:100%;overflow:hidden}'
                     '.timeline-host{position:absolute;left:0;top:0;transform-origin:top left}</style>'
@@ -366,6 +398,8 @@ def render_timeline_video(
                     }"""
                 )
                 for index in range(count):
+                    if should_cancel is not None and should_cancel():
+                        raise RenderCancelled(f"render cancelled at frame {index + 1}/{count}")
                     page.evaluate("t => window.__timelineSeek(t)", index * 1000 / fps)
                     frame = page.screenshot(type="png", animations="disabled", caret="hide")
                     if not process.stdin:
@@ -374,6 +408,7 @@ def render_timeline_video(
                     if on_progress:
                         on_progress(index + 1, count)
             finally:
+                # Браузер закрывается на любом выходе, включая отмену.
                 browser.close()
         if process.stdin:
             process.stdin.close()
@@ -382,6 +417,7 @@ def render_timeline_video(
         if return_code:
             raise RuntimeError(stderr.strip() or f"video encoder exited with {return_code}")
         temporary.replace(output)
+        succeeded = True
         return {
             "path": str(output),
             "format": output.suffix.lstrip("."),
@@ -392,57 +428,147 @@ def render_timeline_video(
             "duration": int(composition["duration"]),
             "bytes": output.stat().st_size,
         }
-    except Exception:
+    finally:
+        # Чистый выход для успеха, ошибки и отмены: сначала закрываем stdin
+        # (иначе ffmpeg ждёт кадры), затем дожидаемся процесса, чтобы не
+        # оставлять зомби; временный файл не переживает неудачный рендер.
         if process.poll() is None:
+            if process.stdin:
+                try:
+                    process.stdin.close()
+                except Exception:  # noqa: BLE001 — канал мог умереть вместе с процессом
+                    pass
             process.kill()
-        if temporary.exists():
-            temporary.unlink()
-        raise
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+        if not succeeded and temporary.exists():
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
 
 # --------------------------------------------------------------------------
 # Очередь задач рендера (исполняется в отдельном воркере, статусы — в API)
 # --------------------------------------------------------------------------
 
+TERMINAL_STATUSES = ("complete", "error", "cancelled")
+
+
+def _evict_expired_locked() -> None:
+    """Вытеснить завершённые задачи старше TTL (вместе с файлами на диске).
+
+    Вызывается под JOBS_LOCK на входе/статусе — очередь и каталог renders
+    остаются ограниченными без отдельного фонового сборщика.
+    """
+    now = _clock()
+    expired = [
+        render_id for render_id, job in JOBS.items()
+        if job.get("status") in TERMINAL_STATUSES
+        and now - float(job.get("updatedAt") or job.get("createdAt") or now) > JOB_TTL_SECONDS
+    ]
+    for render_id in expired:
+        job = JOBS.pop(render_id, None)
+        if not job:
+            continue
+        output = job.get("output")
+        if output:
+            try:
+                Path(output).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def active_render_count_locked() -> int:
+    return sum(1 for job in JOBS.values() if job.get("status") in ("queued", "running"))
+
+
+def register_job(render_id: str, total_frames: int, output_format: str, output: Path) -> dict | None:
+    """Зарегистрировать задачу. ``None`` — очередь полна (зовущий вернёт 429)."""
+    with JOBS_LOCK:
+        _evict_expired_locked()
+        if active_render_count_locked() >= MAX_ACTIVE_RENDERS:
+            return None
+        now = _clock()
+        job = {
+            "id": render_id,
+            "status": "queued",
+            "progress": 0.0,
+            "framesDone": 0,
+            "framesTotal": total_frames,
+            "format": output_format,
+            "filename": f"designdna-timeline-{render_id[:8]}.{output_format}",
+            "output": output,
+            "createdAt": now,
+            "updatedAt": now,
+            "cancelRequested": False,
+        }
+        JOBS[render_id] = job
+        return job
+
+
+def request_cancel(render_id: str) -> str | None:
+    """Запросить отмену. Возвращает новый статус или причину отказа."""
+    with JOBS_LOCK:
+        job = JOBS.get(render_id)
+        if job is None:
+            return None
+        status = job.get("status")
+        if status in TERMINAL_STATUSES:
+            return f"conflict:{status}"
+        if status == "queued":
+            job.update({"status": "cancelled", "cancelRequested": True, "updatedAt": _clock()})
+            return "cancelled"
+        job["cancelRequested"] = True
+        job["updatedAt"] = _clock()
+        return "cancelling"
+
+
+def evict_expired_jobs() -> None:
+    with JOBS_LOCK:
+        _evict_expired_locked()
+
+
 def submit_render(render_id: str, timeline: dict, design_ir: dict, output: Path) -> None:
     def runner() -> None:
         with JOBS_LOCK:
             job = JOBS.get(render_id)
-            if job is not None:
-                job["status"] = "running"
+            if job is None or job.get("status") == "cancelled":
+                return  # отменено до старта воркера
+            job.update({"status": "running", "updatedAt": _clock()})
+
+        def should_cancel() -> bool:
+            with JOBS_LOCK:
+                current = JOBS.get(render_id)
+                return bool(current and current.get("cancelRequested"))
+
+        def progress(done: int, total: int) -> None:
+            with JOBS_LOCK:
+                current = JOBS.get(render_id)
+                if current is not None:
+                    current["framesDone"] = done
+                    current["framesTotal"] = total
+                    current["progress"] = round(done / max(1, total), 3)
+
         try:
-            def progress(done: int, total: int) -> None:
-                with JOBS_LOCK:
-                    current = JOBS.get(render_id)
-                    if current is not None:
-                        current["framesDone"] = done
-                        current["framesTotal"] = total
-                        current["progress"] = round(done / max(1, total), 3)
-            result = render_timeline_video(timeline, design_ir, output, on_progress=progress)
+            result = render_timeline_video(
+                timeline, design_ir, output, on_progress=progress, should_cancel=should_cancel)
             with JOBS_LOCK:
                 job = JOBS.get(render_id)
                 if job is not None:
-                    job.update({"status": "complete", "progress": 1.0, "result": result})
+                    job.update({"status": "complete", "progress": 1.0, "result": result,
+                                "updatedAt": _clock()})
+        except RenderCancelled as exc:
+            with JOBS_LOCK:
+                job = JOBS.get(render_id)
+                if job is not None:
+                    job.update({"status": "cancelled", "error": str(exc), "updatedAt": _clock()})
         except Exception as exc:  # noqa: BLE001 — статус задачи важнее типа ошибки
             with JOBS_LOCK:
                 job = JOBS.get(render_id)
                 if job is not None:
-                    job.update({"status": "error", "error": str(exc)})
+                    job.update({"status": "error", "error": str(exc), "updatedAt": _clock()})
 
     RENDER_EXECUTOR.submit(runner)
-
-
-def register_job(render_id: str, total_frames: int, output_format: str, output: Path) -> dict:
-    job = {
-        "id": render_id,
-        "status": "queued",
-        "progress": 0.0,
-        "framesDone": 0,
-        "framesTotal": total_frames,
-        "format": output_format,
-        "filename": f"designdna-timeline-{render_id[:8]}.{output_format}",
-        "output": output,
-    }
-    with JOBS_LOCK:
-        JOBS[render_id] = job
-    return job

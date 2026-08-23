@@ -18,10 +18,15 @@ import re
 
 import llm_client as llm
 from ir.timeline import (
+    MAX_PROMPT_CHARS,
     PRESET_NAMES,
     build_change_set,
     preset_operations,
 )
+
+# Один шаг плана анимирует не больше этого числа слоёв: каскад по сотням
+# слоёв раздувает change-set за границы сложности контракта.
+MAX_LAYERS_PER_STEP = 32
 
 SYSTEM_PROMPT = (
     "Ты — режиссёр монтажа продуктового ролика. По промпту пользователя составь план "
@@ -98,6 +103,7 @@ def _step_operations(timeline: dict, step: dict) -> list[dict]:
         layer_ids = _match_layers(timeline, str(raw_layers or "*"))
     if not layer_ids:
         raise ValueError("план не ссылается ни на один слой")
+    layer_ids = layer_ids[:MAX_LAYERS_PER_STEP]
     start = max(0.0, min(1.0, float(step.get("start") or 0)))
     share = max(0.02, min(1.0, float(step.get("duration") or 0.2)))
     params = {
@@ -170,26 +176,42 @@ def plan_from_llm(timeline: dict, prompt: str) -> list[dict]:
     return [step for step in steps[:6] if isinstance(step, dict)]
 
 
-def direct(timeline: dict, prompt: str, allow_llm: bool | None = None) -> tuple[dict, dict]:
-    """Промпт -> применённый таймлайн + change-set (атомарно, обратимо)."""
+def direct(timeline: dict, prompt: str, allow_llm: bool | None = None) -> tuple[dict, dict, dict]:
+    """Промпт -> применённый таймлайн + change-set + мета (атомарно, обратимо).
+
+    Мета возвращает ``planSource`` ("llm" | "deterministic") и ``warning`` —
+    его видно в UI, когда LLM-провайдер недоступен и сработал фолбэк на
+    детерминированный разбор промпта.
+    """
     from config import FEATURE_FLAGS
-    if not str(prompt or "").strip():
+    text = str(prompt or "")
+    if not text.strip():
         raise ValueError("пустой промпт")
+    if len(text) > MAX_PROMPT_CHARS:
+        raise ValueError(
+            f"промпт длиннее {MAX_PROMPT_CHARS} символов — сократите запрос до ключевых приёмов монтажа")
     use_llm = FEATURE_FLAGS.is_enabled("aiDirector") if allow_llm is None else allow_llm
     steps: list[dict] | None = None
+    plan_source = "deterministic"
+    warning: str | None = None
     if use_llm:
         try:
-            steps = plan_from_llm(timeline, prompt)
-        except Exception:
+            steps = plan_from_llm(timeline, text)
+            plan_source = "llm"
+        except Exception as exc:  # noqa: BLE001 — фолбэк не должен терять функцию
             steps = None  # деградация на детерминированный разбор без потери функции
+            warning = (
+                "LLM-провайдер недоступен (" + (str(exc) or "нет ответа")[:200]
+                + ") — использован детерминированный план по ключевым словам")
     if not steps:
-        steps = plan_from_prompt(timeline, prompt)
+        steps = plan_from_prompt(timeline, text)
     operations: list[dict] = []
     for step in steps:
         operations.extend(_step_operations(timeline, step))
     if not operations:
         raise ValueError("не удалось собрать ни одной операции по промпту")
-    change_set = build_change_set(timeline, str(prompt)[:500], operations, actor="timeline-director")
+    change_set = build_change_set(timeline, text[:500], operations, actor="timeline-director")
     from ir.timeline import apply_change_set
     applied = apply_change_set(timeline, change_set)
-    return applied, change_set
+    meta = {"planSource": plan_source, "warning": warning, "steps": len(steps)}
+    return applied, change_set, meta

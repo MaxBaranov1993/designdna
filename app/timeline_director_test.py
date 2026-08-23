@@ -50,7 +50,8 @@ def test_keyword_plan_maps_to_presets() -> None:
 
 def test_direct_applies_and_reverts_atomically() -> None:
     timeline = _timeline()
-    applied, change_set = direct(timeline, "интро снизу, пульс на кнопке", allow_llm=False)
+    applied, change_set, meta = direct(timeline, "интро снизу, пульс на кнопке", allow_llm=False)
+    assert meta["planSource"] == "deterministic" and meta["warning"] is None
     assert validate(applied) == []
     hero = next(layer for layer in applied["layers"] if layer["id"] == "layer-hero-1")
     assert "opacity" in hero["transform"]["properties"], "интро добавляет прозрачность"

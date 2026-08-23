@@ -25,6 +25,7 @@ TESTS = [
     "ui_fill_drag_test.py",
     "ui_renderer_frame_test.py",
     "ui_storage_compaction_test.py",
+    "ui_timeline_workspace_test.py",
 ]
 
 
