@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://designai.dev/timeline-change-set/1.0",
+  "title": "TimelineChangeSet",
+  "description": "Atomic, previewable and reversible edit contract for Timeline IR. AI directors and deterministic tools mutate the timeline only through this contract (same rule as SemanticChangeSet for Design IR).",
+  "type": "object",
+  "required": [
+    "version",
+    "id",
+    "baseTimelineHash",
+    "intent",
+    "scope",
+    "operations",
+    "inverseOperations",
+    "atomic",
+    "createdAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "timeline-change-set/1.0" },
+    "id": { "$ref": "#/$defs/identifier" },
+    "baseTimelineHash": { "type": "string", "minLength": 16, "maxLength": 256 },
+    "intent": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "scope": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "preconditions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/precondition" }
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/operation" }
+    },
+    "inverseOperations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/operation" }
+    },
+    "validations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/validation" }
+    },
+    "atomic": { "const": true },
+    "status": { "enum": ["draft", "validated", "applied", "rejected"] },
+    "actor": { "type": "string", "maxLength": 120 },
+    "createdAt": { "type": "string" },
+    "explanation": { "type": "string", "maxLength": 4000 }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._:-]{0,127}$"
+    },
+    "precondition": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["timeline-hash-match", "layer-exists", "layer-property-equals"] },
+        "target": { "type": "string", "maxLength": 500 },
+        "path": { "type": "string", "pattern": "^/" },
+        "expected": {}
+      }
+    },
+    "operation": {
+      "type": "object",
+      "required": ["id", "kind", "target"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "inverseOf": {
+          "$ref": "#/$defs/identifier",
+          "description": "Required by runtime validation for inverseOperations; references a forward operation id."
+        },
+        "kind": {
+          "enum": [
+            "set-composition",
+            "add-layer",
+            "remove-layer",
+            "set-layer-property",
+            "set-keyframes",
+            "set-anchor",
+            "apply-preset",
+            "reorder-layer"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Layer id, group id, or the literal 'composition'/'timeline'."
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "JSON-pointer-ish path inside the target, e.g. /transform/properties/x."
+        },
+        "value": {},
+        "payload": { "type": "object" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": ["kind", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["schema", "references", "timing", "bounds", "quality"] },
+        "status": { "enum": ["pending", "passed", "failed", "warning"] },
+        "message": { "type": "string", "maxLength": 1000 }
+      }
+    }
+  }
+}
