@@ -157,12 +157,28 @@
                       textDecoration:safeEnum(deco,['none','underline','line-through','overline'],'none'),
                       whiteSpace:safeEnum(cs.whiteSpace,['normal','nowrap','pre','pre-wrap','pre-line','break-spaces'],'normal'),
                       overflow:safeEnum(cs.overflow,['visible','hidden','clip','scroll','auto'],'visible'),
+                      // flex-shrink:0 — единственное нетривиальное значение (дефолт 1):
+                      // карточки горизонтальных scroll-shelf не должны сжиматься в рендере
+                      flexShrink:String(cs.flexShrink)==='0'?0:null,
                       textTransform:safeEnum(cs.textTransform,['none','uppercase','lowercase','capitalize'],'none'),
                       fontStyle:cs.fontStyle==='italic'||cs.fontStyle==='oblique'?cs.fontStyle:null,
                       fontVariantNumeric:String(cs.fontVariantNumeric||'').includes('tabular-nums')?'tabular-nums':null,
                       textAlign:SAFE_ALIGNS.includes(cs.textAlign)?cs.textAlign:null,
                       opacity:Math.min(1,Math.max(0,num(cs.opacity))),
-                      objectFit:safeEnum(cs.objectFit,['contain','cover','fill','none','scale-down'],'fill')
+                      objectFit:safeEnum(cs.objectFit,['contain','cover','fill','none','scale-down'],'fill'),
+                      // фильтры/блендинг: безопасный charset как у boxShadow; url()-фильтры
+                      // уходят в raster fallback (внешний ресурс не сериализуется)
+                      filter:(cs.filter&&cs.filter!=='none'&&!/url\s*\(/.test(cs.filter))?cs.filter.slice(0,300):null,
+                      backdropFilter:(cs.backdropFilter&&cs.backdropFilter!=='none'&&!/url\s*\(/.test(cs.backdropFilter))?cs.backdropFilter.slice(0,300):null,
+                      mixBlendMode:safeEnum(cs.mixBlendMode,['normal','multiply','screen','overlay','darken','lighten','color-dodge','color-burn','hard-light','soft-light','difference','exclusion','hue','saturation','color','luminosity'],'normal')==='normal'?null:cs.mixBlendMode,
+                      // object-position: выравнивание картинки внутри кадра (crop);
+                      // дефолтное 50% 50% не пишем — только явные смещения
+                      objectPosition:(()=>{const v=String(cs.objectPosition||'').trim();return v&&v!=='50% 50%'&&/^-?[\d.]+(px|%)?\s+-?[\d.]+(px|%)?$|^(left|center|right|top|bottom)(\s+(left|center|right|top|bottom))?$/.test(v)?v:null;})(),
+                      // направление письма: rtl (арабский/иврит) и вертикальный текст (CJK)
+                      direction:safeEnum(cs.direction,['ltr','rtl'],'ltr')==='rtl'?'rtl':null,
+                      writingMode:safeEnum(cs.writingMode,['horizontal-tb','vertical-rl','vertical-lr','sideways-rl','sideways-lr'],'horizontal-tb')==='horizontal-tb'?null:cs.writingMode,
+                      outline:(num(cs.outlineWidth)>0&&cs.outlineStyle!=='none')?Math.min(64,num(cs.outlineWidth)):null,
+                      outlineColor:hex(cs.outlineColor)
                     };
                     // masks/clipping — честные визуальные каналы: gradient-mask и
                     // clip-path сериализуем в style (renderer применяет обратно);
@@ -291,8 +307,18 @@
                     const match=raw.match(/^matrix\(\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*\)$/);
                     if(match){
                       const values=match.slice(1).map(Number);
-                      if(values.every(Number.isFinite) && Math.abs(values[0]-1)<1e-6 && Math.abs(values[1])<1e-6 &&
-                        Math.abs(values[2])<1e-6 && Math.abs(values[3]-1)<1e-6) return 'translate';
+                      if(values.every(Number.isFinite)){
+                        // Карусели сжимают неактивные слайды (scale .97–1.02):
+                        // это декоративный микро-масштаб, дети уже измерены в
+                        // post-transform координатах — bbox точен без matrix.
+                        // Растровый fallback из-за 3% масштаба превращал целые
+                        // слайды (фото+текст+кнопки) в нередактируемую картинку.
+                        // Настоящий поворот (|b|,|c| заметны) остаётся complex.
+                        const nearIdentityScale=
+                          Math.abs(values[0]-1)<=0.08 && Math.abs(values[3]-1)<=0.08 &&
+                          Math.abs(values[1])<0.05 && Math.abs(values[2])<0.05;
+                        if(nearIdentityScale) return 'translate';
+                      }
                     }
                     return 'complex';
                   };
@@ -370,8 +396,23 @@
                     const dropped=[];
                     const extras=[];
                     const rasterRequests=[];
+                    const assetRequests=[];
                     const paintRects=[];
                     const leafBoxes=[];
+                    const isSvgData=(u)=>/^data:image\/svg\+xml/i.test(String(u||''));
+                    const recordAsset=(node, apply, selector, w, h)=>{
+                      const url=String(node&&node.src||'');
+                      if(!url || isSvgData(url)) return;
+                      assetRequests.push({
+                        sourceKey:String(node.sourceKey||''),
+                        url,
+                        width:Math.max(1,Math.round(w||1)),
+                        height:Math.max(1,Math.round(h||1)),
+                        objectFit:(node.style&&node.style.objectFit)||'fill',
+                        objectPosition:(node.style&&node.style.objectPosition)||'50% 50%',
+                        apply, selector:String(selector||'')
+                      });
+                    };
                     const recordDropped=(sourceKey,reason,visual=false)=>{
                       dropped.push({sourceKey,reason,visual:!!visual});
                     };
@@ -474,13 +515,49 @@
                       // paint молча — честный selectable raster fallback вместо этого.
                       const maskValue=cs.maskImage||cs.webkitMaskImage||'';
                       const hasUrlMask=!!maskValue && maskValue!=='none' && /url\s*\(/.test(maskValue);
+                      const filterValue=cs.filter||'';
+                      const hasUrlFilter=!!filterValue && filterValue!=='none' && /url\s*\(/.test(filterValue);
                       const complexTransform=transformKind(cs.transform)==='complex';
                       // open shadow root: shadow-дерево доступно, но обход пока
                       // небезопасен (slots/изоляция стилей) — тот же raster fallback,
                       // видимое содержимое не исчезает молча.
                       const openShadow=!!el.shadowRoot &&
                         (el.shadowRoot.children.length>0 || String(el.shadowRoot.textContent||'').trim().length>0);
-                      if(['CANVAS','VIDEO','IFRAME'].includes(tag) || closedShadowSuspect || openShadow || hasUrlMask || complexTransform){
+                      // Inline SVG: сериализация примитивов (path/rect/circle/…)
+                      // поэлементно невозможна, а drop детей как non-container-child
+                      // терял иконки молча. Клонируем markup в standalone data:URL
+                      // (currentColor резолвится вычисленным color) — точный векторный
+                      // слой без element-screenshot. <use>-спрайты и oversized svg —
+                      // через element-screenshot raster fallback.
+                      if(tag==='SVG'){
+                        let svgSrc='';
+                        const usesSprite=!!el.querySelector('use');
+                        let rawSvg='';
+                        try{ rawSvg=el.outerHTML; }catch(_){ rawSvg=''; }
+                        if(!usesSprite && rawSvg && !/<script/i.test(rawSvg) && rawSvg.length<=32768){
+                          try{
+                            const clone=el.cloneNode(true);
+                            clone.setAttribute('width',String(Math.max(1,Math.round(r.width))));
+                            clone.setAttribute('height',String(Math.max(1,Math.round(r.height))));
+                            const fillComputed=String(getComputedStyle(el).fill||'').trim();
+                            if(fillComputed && fillComputed!=='none' && !clone.getAttribute('fill'))
+                              clone.setAttribute('fill',fillComputed);
+                            let text=clone.outerHTML.replace(/currentColor/g,
+                              String(getComputedStyle(el).color||'#000').trim()||'#000');
+                            if(!/xmlns\s*=/.test(text)) text=text.replace(/^<svg/i,'<svg xmlns="http://www.w3.org/2000/svg"');
+                            svgSrc='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(text);
+                          }catch(_){ svgSrc=''; }
+                        }
+                        const svgReason='inline svg: векторный snapshot разметки — примитивы не редактируются поэлементно';
+                        const frame=frameFor(r,parentRect,cs,parentAuto,false,{layout:'free',direction:'column',wrap:false,explicit:false,measuredGap:0});
+                        const node={type:'image',src:svgSrc,alt:el.getAttribute('aria-label')||'svg icon',
+                          sourceKey:key,sourceMeta:{kind:'svg',reason:svgReason},editable:false,lockedReason:svgReason,
+                          style:{objectFit:'fill'},frame};
+                        if(!svgSrc) rasterRequests.push({sourceKey:key,selector:selectorOf(key)});
+                        emitted++; pushRootRect(r,key);
+                        return node;
+                      }
+                      if(['CANVAS','VIDEO','IFRAME'].includes(tag) || closedShadowSuspect || openShadow || hasUrlMask || hasUrlFilter || complexTransform){
                         let kind='shadow-dom', reason='closed shadow root: содержимое недоступно для сериализации', src='';
                         if(tag==='CANVAS'){
                           let gl=false;
@@ -507,6 +584,9 @@
                         } else if(hasUrlMask){
                           kind='url-mask';
                           reason='url() mask: внешний маскирующий ресурс не сериализуется — растровый snapshot';
+                        } else if(hasUrlFilter){
+                          kind='url-mask';
+                          reason='url() filter: внешний SVG-фильтр не сериализуется — растровый snapshot';
                         } else if(complexTransform){
                           kind='complex-transform';
                           reason='rotate/scale/skew transform: element screenshot avoids applying measured geometry twice';
@@ -562,9 +642,12 @@
                           for(let i=bgL.length-1;i>=0;i--){
                             const bg=bgL[i];
                             const lkey=bgL.length>1 ? skey+'-bg'+i : skey;
-                            if(bg.kind==='url') out.push({type:'image',src:bg.url,alt:'',sourceKey:lkey,
-                              sourceMeta:{kind,url:bg.url,layer:i},style:{objectFit:fit},frame});
-                            else out.push({type:'rect',fill:'#00000000',radius:Math.min(1000,Math.max(0,num(pcs.borderTopLeftRadius))),
+                            if(bg.kind==='url'){
+                              const layer={type:'image',src:bg.url,alt:'',sourceKey:lkey,
+                                sourceMeta:{kind,url:bg.url,layer:i},style:{objectFit:fit},frame};
+                              recordAsset(layer,'background',selectorOf(key),w,h);
+                              out.push(layer);
+                            } else out.push({type:'rect',fill:'#00000000',radius:Math.min(1000,Math.max(0,num(pcs.borderTopLeftRadius))),
                               sourceKey:lkey,sourceMeta:{kind,reason:'gradient',layer:i},style:{backgroundImage:bg.css},frame});
                           }
                           return out;
@@ -588,9 +671,13 @@
                       const bgLayerFor=(bg,i)=>{
                         const fit=cs.backgroundSize==='cover'?'cover':cs.backgroundSize==='contain'?'contain':'fill';
                         const lkey=bgLayers.length>1 ? key+'::bg'+i : key+'::bg';
-                        if(bg.kind==='url') return {type:'image',src:bg.url,alt:'',sourceKey:lkey,
-                          sourceMeta:{kind:'background-image',url:bg.url,layer:i},
-                          style:{objectFit:fit},frame:{absolute:true,x:0,y:0,width:elW,height:elH}};
+                        if(bg.kind==='url'){
+                          const layer={type:'image',src:bg.url,alt:'',sourceKey:lkey,
+                            sourceMeta:{kind:'background-image',url:bg.url,layer:i},
+                            style:{objectFit:fit},frame:{absolute:true,x:0,y:0,width:elW,height:elH}};
+                          recordAsset(layer,'background',selectorOf(key),elW,elH);
+                          return layer;
+                        }
                         return {type:'rect',fill:'#00000000',radius:Math.min(1000,Math.max(0,num(cs.borderTopLeftRadius))),
                           sourceKey:lkey,sourceMeta:{kind:'background-image',reason:'gradient',layer:i},
                           style:{backgroundImage:bg.css},frame:{absolute:true,x:0,y:0,width:elW,height:elH}};
@@ -608,8 +695,11 @@
                       const INLINE_TAGS=new Set(['strong','em','b','i','a','span','mark','code','small','br','sub','sup']);
                       const inlineOnly=visibleChildEls.length>0 &&
                         visibleChildEls.every(c=>INLINE_TAGS.has(String(c.tagName||'').toLowerCase()));
-                      const childBreaksTextMerging=visibleChildEls.some(c=>{
-                        return [c,...c.querySelectorAll('*')].some(candidate=>{
+                      // inline-ребёнок «ломает» слияние с текстом родителя:
+                      // собственная краска (bg/border/shadow/pseudo) или другая
+                      // типографика — тогда он обязан стать отдельным text-слоем
+                      const inlineBreaksMerging=(cand)=>{
+                        return [cand,...cand.querySelectorAll('*')].some(candidate=>{
                         const ccs=getComputedStyle(candidate);
                         const ownPaint=!!hex(ccs.backgroundColor) || parseBackground(ccs.backgroundImage).length>0 ||
                           [ccs.borderTopWidth,ccs.borderRightWidth,ccs.borderBottomWidth,ccs.borderLeftWidth].some(v=>num(v)>0) ||
@@ -630,7 +720,8 @@
                           ccs.letterSpacing!==cs.letterSpacing || ccs.textTransform!==cs.textTransform;
                         return ownPaint || pseudoPaint || typographyDiff;
                         });
-                      });
+                      };
+                      const childBreaksTextMerging=visibleChildEls.some(c=>inlineBreaksMerging(c));
                       const textOnly=isContainerType && directText && neutralTextTag &&
                         (!hasElementChildren || (inlineOnly && !childBreaksTextMerging)) &&
                         !bgLayers.length && !beforeLayers.length && !afterLayers.length &&
@@ -643,9 +734,14 @@
                       // синтетические слои выше, canvas/iframe/shadow — в raster
                       // fallback — они больше не lost channels)
                       const rawChildren=[];
+                      // split-inline: у text/heading-родителя появились отдельные
+                      // text-слои с собственной типографикой — поглощённый текст
+                      // родителя надо ограничить прямыми текст-нодами (иначе дубль)
+                      let splitInlineKids=false, directOnlyText='';
                       [...el.childNodes].forEach((child,idx)=>{
                         if(child.nodeType===Node.TEXT_NODE){
                           const text=(child.textContent||'').replace(/\s+/g,' ').trim();
+                          if(text) directOnlyText=(directOnlyText+' '+text).trim();
                           if(!text || !isContainer) return;
                           const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect();
                           if(tr.width<1||tr.height<1) return;
@@ -666,11 +762,51 @@
                           const ccr=child.getBoundingClientRect(), ccs=getComputedStyle(child);
                           if(!visible(child,ccr,ccs)) return;
                           if(!isContainer){
+                            const ctag=String(child.tagName||'').toLowerCase();
+                            const ctext=(child.textContent||'').replace(/\s+/g,' ').trim();
+                            if(INLINE_TAGS.has(ctag) && ctext && !inlineBreaksMerging(child)){
+                              // однотипографический inline-ребёнок: текст уже
+                              // поглощён node.text родителя — это НЕ потеря
+                              recordDropped(pathOf(child,rootEl),'merged-into-text',false);
+                              return;
+                            }
+                            if(INLINE_TAGS.has(ctag) && ctext){
+                              // собственная краска/типографика (цветная ссылка
+                              // в заголовке, bold-акцент): отдельный text-слой с
+                              // точным rect и СВОИМ стилем, а не drop
+                              const cframe={width:round2(ccr.width),height:round2(ccr.height),
+                                x:round2(ccr.left-r.left),y:round2(ccr.top-r.top),absolute:true};
+                              const cstyle=cleanTextStyle(styleOf(ccs,warnings));
+                              const calign={start:'left',end:'right',left:'left',center:'center',right:'right',justify:'justify'}[cstyle.textAlign]||null;
+                              delete cstyle.textAlign;
+                              rawChildren.push({type:'text',text:ctext.slice(0,1000),
+                                sourceKey:pathOf(child,rootEl),align:calign,style:cstyle,frame:cframe});
+                              emitted++;
+                              pushRootRect({left:r.left+cframe.x,top:r.top+cframe.y,width:cframe.width,height:cframe.height},pathOf(child,rootEl));
+                              splitInlineKids=true;
+                              return;
+                            }
                             recordDropped(pathOf(child,rootEl),'non-container-child',true);
                             return;
                           }
                           const compiled=compile(child,r,childParentAuto,rootEl);
-                          if(compiled) rawChildren.push(compiled);
+                          if(compiled){
+                            // CSS order у flex-детей: визуальный порядок может
+                            // отличаться от DOM; сортим позже по __flexOrder
+                            const o=Number(getComputedStyle(child).order)||0;
+                            if(o) compiled.__flexOrder=o;
+                            // margin:0 auto центрирует блок в auto-layout:
+                            // computed style резолвит 'auto' в пиксели, поэтому
+                            // детект — симметричные ненулевые боковые маргины.
+                            // Flow-раскладка рендера это не воспроизводит —
+                            // пинним по измеренным координатам.
+                            const cml=num(ccs.marginLeft), cmr=num(ccs.marginRight);
+                            if(childParentAuto && ccs.display!=='inline' &&
+                               cml>0.5 && Math.abs(cml-cmr)<1){
+                              compiled.frame.absolute=true;
+                            }
+                            rawChildren.push(compiled);
+                          }
                         }
                       });
                       if(type==='button' && childParentAuto && directText && rawChildren.length){
@@ -700,6 +836,23 @@
                         }
                       }
                       const node={type,sourceKey:key,style,frame:frameFor(r,parentRect,cs,parentAuto,isContainer,layout)};
+                      // Flex может визуально переупорядочить детей: column/row-REVERSE
+                      // и CSS order. IR хранит детей в визуальном порядке (renderer
+                      // Flow-агностичен) — иначе рендер раскладывает по DOM-порядку
+                      // и блоки меняются местами (цена под заголовком и т.п.).
+                      if(layout.explicit && rawChildren.length>1){
+                        if(String(cs.flexDirection||'').endsWith('-reverse')){
+                          // все flex-элементы (включая потоковые text-узлы)
+                          // участвуют в reverse-потоке
+                          rawChildren.reverse();
+                        }
+                        let hasOrder=false;
+                        for(const c of rawChildren){ if(c&&c.__flexOrder){hasOrder=true;break;} }
+                        if(hasOrder){
+                          rawChildren.sort((a,b)=>((a&&a.__flexOrder)||0)-((b&&b.__flexOrder)||0));
+                        }
+                        for(const c of rawChildren){ if(c) delete c.__flexOrder; }
+                      }
                       // text-align элемента-текста (<p>, <h1>) — в IR-поле align
                       // (enum уже́е CSS: start/end сводим к физическим сторонам)
                       if(type==='text'||type==='heading'){
@@ -709,8 +862,8 @@
                       }
                       const componentMeta=componentMetaOf(el);
                       if(componentMeta) node.sourceMeta=componentMeta;
-                      if(type==='heading'){ node.level=Number(tag.slice(1)); node.text=directText.slice(0,1000); }
-                      if(type==='text') node.text=directText.slice(0,1000);
+                      if(type==='heading'){ node.level=Number(tag.slice(1)); node.text=(splitInlineKids?directOnlyText:directText).slice(0,1000); }
+                      if(type==='text') node.text=(splitInlineKids?directOnlyText:directText).slice(0,1000);
                       if(type==='button') node.text=String(el.innerText||'').replace(/\s+/g,' ').trim().slice(0,1000);
                       if(type==='input'){
                         node.placeholder=(el.value||el.placeholder||el.options?.[el.selectedIndex]?.text||'').slice(0,1000);
@@ -737,7 +890,15 @@
                       }
                       if(type==='image'){
                         // CANVAS/VIDEO/IFRAME/shadow уже ушли в raster fallback выше.
-                        if(tag==='IMG') node.src=el.currentSrc||el.src||'';
+                        if(tag==='IMG'){
+                          node.src=el.currentSrc||el.src||'';
+                          if(node.src){
+                            // sourceMeta обязан нести kind (IR schema: required):
+                            // обычный <img> без componentBoundary получает kind:'dom'
+                            node.sourceMeta=Object.assign({},node.sourceMeta||{kind:'dom'},{url:node.src});
+                            recordAsset(node,'img',selectorOf(key),elW,elH);
+                          }
+                        }
                         else if(tag==='SVG') node.src=svgDataUri(el);
                         else { node.src=el.poster||''; warnings.add('video poster fallback'); }
                         node.alt=el.alt||el.getAttribute('aria-label')||'';
@@ -767,7 +928,9 @@
                         beforeLayers.forEach(l=>recordExtra(l.sourceKey,'pseudo',r,true));
                         afterLayers.forEach(l=>recordExtra(l.sourceKey,'pseudo',r,true));
                       }
-                      if(isContainer && allChildren.length) node.children=allChildren;
+                      // split-inline дети у text/heading — иначе цветные ссылки
+                      // в заголовках терялись (node.text без детей не рендерится)
+                      if((isContainer || splitInlineKids) && allChildren.length) node.children=allChildren;
                       // Renderer uses a dedicated source-control/source-input wrapper.
                       // Keeping their measured children in auto flow discards captured
                       // x/y (notably button text padding). Pin inner parts so the
@@ -868,11 +1031,14 @@
                       const fit=rcs.backgroundSize==='cover'?'cover':rcs.backgroundSize==='contain'?'contain':'fill';
                       const rootBgFor=(bg,i)=>{
                         const lkey=rootBgLayers.length>1 ? 'root::bg'+i : 'root::bg';
-                        return bg.kind==='url'
-                          ? {type:'image',src:bg.url,alt:'',sourceKey:lkey,
+                        if(bg.kind==='url'){
+                          const layer={type:'image',src:bg.url,alt:'',sourceKey:lkey,
                              sourceMeta:{kind:'background-image',url:bg.url,layer:i},
-                             style:{objectFit:fit},frame:{absolute:true,x:0,y:0,width:rw,height:rh}}
-                          : {type:'rect',fill:'#00000000',radius:Math.min(1000,Math.max(0,num(rcs.borderTopLeftRadius))),
+                             style:{objectFit:fit},frame:{absolute:true,x:0,y:0,width:rw,height:rh}};
+                          recordAsset(layer,'background','',rw,rh);
+                          return layer;
+                        }
+                        return {type:'rect',fill:'#00000000',radius:Math.min(1000,Math.max(0,num(rcs.borderTopLeftRadius))),
                              sourceKey:lkey,sourceMeta:{kind:'background-image',reason:'gradient',layer:i},
                              style:{backgroundImage:bg.css},frame:{absolute:true,x:0,y:0,width:rw,height:rh}};
                       };
@@ -906,7 +1072,7 @@
                       nodes:rootChildren,layout:rootLayout.layout,direction:rootLayout.direction,
                       gap:Math.round(rootLayout.explicit?(rootLayout.direction==='row'?num(rcs.columnGap):num(rcs.rowGap)):(rootLayout.measuredGap||0)),
                       padding:paddingOf(rcs),justify:safeEnum(justify(rcs.justifyContent),['start','center','end','space-between','space-around'],'start'),
-                      align:rootAlign,visited,emitted,dropped,extras,rasterRequests,paintRects,leafBoxes,paintCoverage,coverage,componentBoundaries,
+                      align:rootAlign,visited,emitted,dropped,extras,rasterRequests,assetRequests,paintRects,leafBoxes,paintCoverage,coverage,componentBoundaries,
                       warnings:[...warnings],fontFaces:collectFontFaces()};
                   };
                   return blocks.map(compileBlock);

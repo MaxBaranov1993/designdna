@@ -1,7 +1,7 @@
 <script lang="ts">
   import IrPreview from "../components/IrPreview.svelte";
   import { api, apiGet } from "../flow/api";
-  import { flow } from "../flow/state";
+  import { flow, flowBusy } from "../flow/state";
   import { bodyPortal } from "../lib/bodyPortal";
   import type { MotionNodeData, MotionRenderJob, MotionSceneSettings } from "../flow/types";
   import { durationOf, previewFor, scenesOf } from "./motion-utils";
@@ -17,7 +17,7 @@
 
   let { nodeId, data, onClose }: { nodeId: number; data: MotionNodeData; onClose: () => void } = $props();
 
-  let busy = $derived(Boolean($flow.busy[nodeId]));
+  let busy = $derived(Boolean($flowBusy[nodeId]));
   let scenes = $derived(scenesOf(data));
   let total = $derived(durationOf(data));
   let playing = $state(false);

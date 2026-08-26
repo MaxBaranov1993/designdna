@@ -372,18 +372,24 @@ def test_desktop_worker_configures_provider_keys_without_echoing_secrets(monkeyp
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("KIMI_API_KEY", raising=False)
     configured = asyncio.run(desktop_worker.dispatch(
-        "runtime.configure", {"openaiApiKey": "test-openai-secret", "kimiApiKey": "test-kimi-secret", "glmApiKey": "test-glm-secret"},
+        "runtime.configure", {"openaiApiKey": "test-openai-secret", "kimiApiKey": "test-kimi-secret", "glmApiKey": "test-glm-secret", "zaiApiKey": "test-zai-secret", "grokApiKey": "test-grok-secret"},
     ))
-    assert configured == {"ok": True, "openaiConfigured": True, "kimiConfigured": True, "glmConfigured": True}
+    assert configured == {"ok": True, "openaiConfigured": True, "kimiConfigured": True, "glmConfigured": True, "zaiConfigured": True, "grokConfigured": True}
     assert "test-glm-secret" not in str(configured)
     assert "test-openai-secret" not in str(configured)
     assert "test-kimi-secret" not in str(configured)
+    assert "test-zai-secret" not in str(configured)
+    assert "test-grok-secret" not in str(configured)
     assert os.environ["OPENAI_API_KEY"] == "test-openai-secret"
     assert os.environ["KIMI_API_KEY"] == "test-kimi-secret"
+    assert os.environ["ZAI_API_KEY"] == "test-zai-secret"
+    assert os.environ["XAI_API_KEY"] == "test-grok-secret"
 
     cleared = asyncio.run(desktop_worker.dispatch(
         "runtime.configure", {"openaiApiKey": "", "kimiApiKey": ""},
     ))
-    assert cleared == {"ok": True, "openaiConfigured": False, "kimiConfigured": False, "glmConfigured": False}
+    assert cleared == {"ok": True, "openaiConfigured": False, "kimiConfigured": False, "glmConfigured": False, "zaiConfigured": False, "grokConfigured": False}
     assert "OPENAI_API_KEY" not in os.environ
     assert "KIMI_API_KEY" not in os.environ
+    assert "ZAI_API_KEY" not in os.environ
+    assert "XAI_API_KEY" not in os.environ

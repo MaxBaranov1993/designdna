@@ -1,4 +1,4 @@
-"""Project persistence must omit Source screenshots from every store (localStorage and SQLite)."""
+"""Project persistence omits inline Source screenshots but keeps immutable blob evidence."""
 from __future__ import annotations
 
 import json
@@ -35,6 +35,7 @@ def main() -> None:
 
         result = page.evaluate("""() => {
           const heavy = 'data:image/jpeg;base64,' + 'A'.repeat(1800000);
+          const evidenceRef = 'ddna://blobs/' + 'a'.repeat(64) + '.png';
           const editableSrc = 'data:image/svg+xml;base64,PHN2Zy8+';
           const ir = {
             version:'1.0', sourcePreview:heavy,
@@ -49,32 +50,34 @@ def main() -> None:
           };
           const source=window.GraphDev.add('sourceimport',80,60);
           window.GraphDev.patchData(source.id,{blocks:[{name:'header',lit:true,ir,preview:heavy,
-            previews:{desktop:heavy,tablet:heavy,mobile:heavy}}]});
+            previews:{desktop:heavy,tablet:evidenceRef,mobile:heavy}}]});
           const edit=window.GraphDev.add('edit',440,60);
           window.GraphDev.setIR(edit.id,ir);
-          return {source:source.id,edit:edit.id,editableSrc};
+          return {source:source.id,edit:edit.id,editableSrc,evidenceRef};
         }""")
         page.wait_for_timeout(2200)
 
-        stored = page.evaluate("""() => {
+        stored = page.evaluate("""(evidenceRef) => {
           const raw=localStorage.getItem('designai-flow-pages-v1')||'';
           const payload=raw ? JSON.parse(raw) : null;
           const text=JSON.stringify(payload);
           return {
             bytes:raw.length,
             hasDataScreenshot:text.includes('data:image/jpeg;base64,'),
+            hasEvidenceRef:text.includes(evidenceRef),
             hasEditableSrc:text.includes('data:image/svg+xml;base64,PHN2Zy8+'),
             legacy:localStorage.getItem('designai-flow-v1')||'',
             quotaToast:[...document.querySelectorAll('*')].some(el => /localStorage.*переполнен/i.test(el.textContent||'')),
           };
-        }""")
+        }""", result["evidenceRef"])
         check("project save stays compact", stored["bytes"] < 100_000, json.dumps(stored))
         check("source screenshot references are not persisted", not stored["hasDataScreenshot"], json.dumps(stored))
+        check("content-addressed Source evidence survives autosave", stored["hasEvidenceRef"], json.dumps(stored))
         check("editable image src is preserved", stored["hasEditableSrc"], json.dumps(stored))
         check("legacy graph key is no longer written", len(stored["legacy"]) == 0, json.dumps(stored))
         check("quota warning is not shown", not stored["quotaToast"], json.dumps(stored))
 
-        db_saved = page.evaluate("""async () => {
+        db_saved = page.evaluate("""async (evidenceRef) => {
           const resp = await fetch('/api/project/load', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
@@ -84,17 +87,21 @@ def main() -> None:
           const text = JSON.stringify(data.project || {});
           return {
             hasDataScreenshot:text.includes('data:image/jpeg;base64,'),
+            hasEvidenceRef:text.includes(evidenceRef),
             hasEditableSrc:text.includes('data:image/svg+xml;base64,PHN2Zy8+'),
           };
-        }""")
+        }""", result["evidenceRef"])
         check("sqlite project is compact too (screenshots are evidence, not state)",
               not db_saved["hasDataScreenshot"], json.dumps(db_saved))
+        check("sqlite keeps compact Source evidence handles", db_saved["hasEvidenceRef"], json.dumps(db_saved))
         check("sqlite project keeps editable IR", db_saved["hasEditableSrc"], json.dumps(db_saved))
 
         page.reload()
         page.wait_for_function("window.GraphDev")
         restored = page.evaluate("(id) => window.GraphDev.node(id)?.data?.ir?.tree?.[0]?.children?.[0]?.src", result["edit"])
         check("compact project restores editable IR", restored == result["editableSrc"], str(restored))
+        restored_evidence = page.evaluate("(id) => window.GraphDev.node(id)?.data?.blocks?.[0]?.previews?.tablet", result["source"])
+        check("compact project restores Source comparison evidence", restored_evidence == result["evidenceRef"], str(restored_evidence))
         browser.close()
 
     if FAILS:

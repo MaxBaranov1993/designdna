@@ -41,7 +41,7 @@
         <div class="fe-harmonize-note">Предпросмотр не изменил IR. После Apply доступен обычный Undo.</div>
       {/if}
       <div class="fe-harmonize-actions">
-        <button class="fe-btn" disabled={proposal.status === "loading"} onclick={() => ctl.dismissHarmonizerProposal()}>Отмена</button>
+        <button class="fe-btn" data-act="dismiss-harmonizer" onclick={() => ctl.dismissHarmonizerProposal()}>Отмена</button>
         {#if proposal.status === "ready"}
           <button class="fe-btn primary" data-act="apply-harmonizer" onclick={() => ctl.applyHarmonizerProposal(proposal)}>Применить Style DNA</button>
         {/if}

@@ -148,9 +148,24 @@ async def dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
             os.environ["GLM_API_KEY"] = glm_key
         else:
             os.environ.pop("GLM_API_KEY", None)
-        return {"ok": True, "openaiConfigured": bool(openai_key), "kimiConfigured": bool(kimi_key), "glmConfigured": bool(glm_key)}
+        zai_key = str(params.get("zaiApiKey") or "").strip()
+        if zai_key:
+            os.environ["ZAI_API_KEY"] = zai_key
+        else:
+            os.environ.pop("ZAI_API_KEY", None)
+        grok_key = str(params.get("grokApiKey") or "").strip()
+        if grok_key:
+            os.environ["XAI_API_KEY"] = grok_key
+        else:
+            os.environ.pop("XAI_API_KEY", None)
+        return {"ok": True, "openaiConfigured": bool(openai_key), "kimiConfigured": bool(kimi_key), "glmConfigured": bool(glm_key), "zaiConfigured": bool(zai_key), "grokConfigured": bool(grok_key)}
     if method == "http.request":
         return await asgi_request(params)
+    if method == "debug.sleep":
+        # Только для регрессионного теста конкурентности (worker_protocol private
+        # surface): рендерер не имеет доступа к stdio-методам воркера.
+        await asyncio.sleep(max(0.0, min(30.0, float(params.get("seconds", 1.0)))))
+        return {"ok": True}
     if method == "shutdown":
         return {"ok": True, "shutdown": True}
     raise ValueError(f"Unknown method: {method}")
@@ -187,26 +202,96 @@ def write_frame(frame: dict[str, Any]) -> None:
 
 def main() -> int:
     stdin = sys.stdin.buffer
-    while True:
-        line = stdin.readline()
-        if not line:
-            return 0
-        message: dict[str, Any] | None = None
+    # http.request обрабатывается ограниченным пулом потоков: Source Import
+    # занимает минуты (Chromium × viewports, LLM), а серийная обработка
+    # замораживала ВЕСЬ UI — даже /api/design-system/list ждал окончания
+    # импорта. FastAPI-эндпоинты синхронные (anyio threadpool), хранилища
+    # ходят в SQLite per-call соединениями под локами — конкурентные вызовы
+    # безопасны. Служебные методы (runtime.configure/shutdown) остаются
+    # инлайн: env-мутации не должны гоняться с запросами.
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    write_lock = threading.Lock()
+
+    def process(message: dict[str, Any]) -> None:
+        method = str(message.get("method", ""))
+        params = message.get("params") or {}
         try:
-            message = json.loads(line)
+            result = asyncio.run(dispatch(method, params))
+            with write_lock:
+                write_frame({"id": message.get("id"), "result": result})
+            if result.get("shutdown"):
+                os._exit(0)
+        except Exception as error:  # protocol boundary: structured failure
+            with write_lock:
+                write_frame({
+                    "id": message.get("id"),
+                    "error": {"code": type(error).__name__, "message": str(error)},
+                })
+
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="asgi") as pool:
+        pending = 0
+        drained = threading.Condition()
+
+        def process_counted(message: dict[str, Any]) -> None:
+            nonlocal pending
+            try:
+                process(message)
+            finally:
+                with drained:
+                    pending -= 1
+                    drained.notify_all()
+
+        while True:
+            line = stdin.readline()
+            if not line:
+                pool.shutdown(wait=True)
+                return 0
+            try:
+                message = json.loads(line)
+            except Exception as error:
+                with write_lock:
+                    write_frame({"id": None, "error": {"code": type(error).__name__, "message": str(error)}})
+                continue
             params = message.get("params") or {}
             body_len = params.pop("bodyLen", 0)
             if isinstance(body_len, int) and body_len > 0:
-                params["bodyBytes"] = _read_exact(stdin, body_len)
-            result = asyncio.run(dispatch(str(message.get("method", "")), params))
-            write_frame({"id": message.get("id"), "result": result})
-            if result.get("shutdown"):
-                return 0
-        except Exception as error:  # protocol boundary: always return a structured failure
-            write_frame({
-                "id": message.get("id") if message else None,
-                "error": {"code": type(error).__name__, "message": str(error)},
-            })
+                try:
+                    params["bodyBytes"] = _read_exact(stdin, body_len)
+                except EOFError as error:
+                    with write_lock:
+                        write_frame({"id": message.get("id"),
+                                     "error": {"code": type(error).__name__, "message": str(error)}})
+                    pool.shutdown(wait=True)
+                    return 0
+            if str(message.get("method", "")) in ("runtime.configure", "shutdown"):
+                # env-мутации не гоняются с запросами: ждём, пока активные
+                # и уже поставленные в очередь задачи пула завершатся
+                # (http.request читает credentials из os.environ по ходу
+                # выполнения). Ответы пула продолжают уходить; stdin не
+                # читается только пока идёт редкий configure.
+                with drained:
+                    while pending:
+                        drained.wait()
+                process(message)
+            else:
+                # Резервируем pending ДО submit: новый worker thread может
+                # стартовать позже следующего stdin frame, и configure не
+                # должен проскочить в этом окне или перед queued job.
+                with drained:
+                    pending += 1
+                try:
+                    pool.submit(process_counted, message)
+                except Exception as error:
+                    with drained:
+                        pending -= 1
+                        drained.notify_all()
+                    with write_lock:
+                        write_frame({
+                            "id": message.get("id"),
+                            "error": {"code": type(error).__name__, "message": str(error)},
+                        })
 
 
 if __name__ == "__main__":

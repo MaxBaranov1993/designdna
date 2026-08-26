@@ -39,12 +39,20 @@ def check(name: str, condition: bool, extra=""):
 
 
 def select_find_button(page):
+    page.wait_for_function("""() => {
+      return document.querySelector('.fe-canvas-inner [data-ir-path="root/button:1"]')
+        || document.querySelector('.fe-canvas-inner [data-ir-path="children.2"]')
+        || document.querySelector('.fe-canvas-inner [data-ir-path="children.2.children.0"]');
+    }""")
     point = page.evaluate("""() => {
-      const el = document.querySelector('.fe-canvas-inner [data-ir-path="children.2.children.0"]');
+      const el = document.querySelector('.fe-canvas-inner [data-ir-path="root/button:1"]')
+        || document.querySelector('.fe-canvas-inner [data-ir-path="children.2"]')
+        || document.querySelector('.fe-canvas-inner [data-ir-path="children.2.children.0"]');
       const rect = el.getBoundingClientRect();
       return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
     }""")
     page.mouse.click(point["x"], point["y"])
+    page.wait_for_timeout(200)
 
 
 def main():
@@ -85,28 +93,28 @@ def main():
         check("inspector identifies mobile override", "mobile" in status and "frame mobile" in status, status)
 
         page.click('[data-responsive-act="reset"]')
-        mobile_override = page.evaluate("id => window.GraphDev.node(id).data.ir.tree[0].children[2].responsive?.mobile || null", node_id)
+        mobile_override = page.evaluate("id => { const d=window.GraphDev.node(id).data; const ir=d._editorDraft?.ir||d.ir; return ir.tree[0].children[2].responsive?.mobile || null; }", node_id)
         check("Reset override removes current device patch", mobile_override is None, str(mobile_override))
 
         select_find_button(page)
         page.click('.fe-shared-insp [data-act="stretch-width"]')
-        widths = page.evaluate("""id => ({
-          shared: window.GraphDev.node(id).data.ir.tree[0].children[2].frame.width,
-          mobile: window.GraphDev.node(id).data.ir.tree[0].children[2].responsive?.mobile?.frame?.width,
-        })""", node_id)
+        widths = page.evaluate("""id => {
+          const d=window.GraphDev.node(id).data; const ir=d._editorDraft?.ir||d.ir; const node=ir.tree[0].children[2];
+          return { shared: node.frame.width, mobile: node.responsive?.mobile?.frame?.width };
+        }""", node_id)
         check("Stretch writes a mobile-only fluid width", widths["shared"] == 100 and widths["mobile"] == "fill", str(widths))
 
         text_input = page.locator('[data-el-prop="text"]')
         text_input.fill("Buy now")
         text_input.press("Tab")
-        edited_text = page.evaluate("id => window.GraphDev.node(id).data.ir.tree[0].children[2].text", node_id)
+        edited_text = page.evaluate("id => { const d=window.GraphDev.node(id).data; return (d._editorDraft?.ir||d.ir).tree[0].children[2].text; }", node_id)
         check("Mobile inspector text edit persists in canonical content", edited_text == "Buy now", str(edited_text))
 
         page.click('[data-responsive-act="reset"]')
 
         select_find_button(page)
         page.click('[data-responsive-copy="tablet"]')
-        tablet_frame = page.evaluate("id => window.GraphDev.node(id).data.ir.tree[0].children[2].responsive?.tablet?.frame || null", node_id)
+        tablet_frame = page.evaluate("id => { const d=window.GraphDev.node(id).data; return (d._editorDraft?.ir||d.ir).tree[0].children[2].responsive?.tablet?.frame || null; }", node_id)
         check("Copy to breakpoint writes explicit tablet frame", isinstance(tablet_frame, dict) and tablet_frame.get("width") == 100, str(tablet_frame))
 
         page.click('.dna-editor [data-act="close"]')

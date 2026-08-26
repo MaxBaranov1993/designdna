@@ -24,7 +24,8 @@ import cache_store
 import fidelity_harness
 import ir
 from ir import ensure_current as ensure_current_ir
-from scraper import fetch_html, detect_blocks, rendered_html, capture_block_irs
+from scraper import (blob_ref, capture_block_irs, detect_blocks, fetch_html,
+                     put_png_blob, rendered_html)
 from ir.style_dna import enrich_ir, extract_from_signals
 from ir.parser_contract import build_parser_envelope
 
@@ -41,7 +42,7 @@ _SEMANTIC_ROLES = {
     "gallery", "navigation", "status", "toolbar", "profile", "panel", "section",
 }
 
-SOURCE_COMPILER_VERSION = "dom-v28"
+SOURCE_COMPILER_VERSION = "dom-v34"
 
 # Hidden blocks (display:none / zero box / no visual content) are not import
 # errors; they are omitted from Source Import outputs. Both English compiler
@@ -104,7 +105,10 @@ def _refine_ambiguous_blocks(html: str, blocks: list[dict], provider: str) -> li
     """Use a small semantic LLM pass only when DOM/tag/class heuristics are unsure.
 
     Selectors and geometry remain deterministic. The model can label a candidate,
-    but cannot invent, resize, merge or reorder source blocks.
+    but cannot invent, resize, merge or reorder source blocks. The call wears a
+    hard 20s budget: semantic labels are optional sugar over deterministic DOM
+    detection, and a stalling provider must not stretch an import into minutes
+    (the desktop queues every API call behind this single worker).
     """
     ambiguous = [(i, b) for i, b in enumerate(blocks) if b.get("kind") == "section"]
     if not ambiguous:
@@ -134,7 +138,7 @@ def _refine_ambiguous_blocks(html: str, blocks: list[dict], provider: str) -> li
         raw = llm.chat(provider, [
             {"role": "system", "content": "You label existing DOM sections. You never design or alter layout."},
             {"role": "user", "content": prompt},
-        ], 0.1, role="source_semantics")
+        ], 0.1, timeout=20, role="source_semantics")
         answer = json.loads(llm.extract_json(raw))
     except Exception:
         return blocks
@@ -156,10 +160,120 @@ def _refine_ambiguous_blocks(html: str, blocks: list[dict], provider: str) -> li
     return refined
 
 
+def _compact_preview(uri: str | None, max_width: int = 720, quality: int = 82) -> str | None:
+    """Reference-превью для клиента: PNG-скриншот → JPEG ≤720px.
+
+    Полное разрешение остаётся у fidelity-harness (свои копии); клиенту превью
+    нужны только как <img> в списке блоков. 14 блоков × 3 viewport'а PNG
+    весили ~5 МБ на импорт и раздували node data и автосейвы проекта.
+    """
+    if not isinstance(uri, str) or not uri.startswith("data:image"):
+        return uri or None
+    try:
+        import base64
+        import io
+
+        from PIL import Image
+
+        header, _, b64 = uri.partition(",")
+        raw = base64.b64decode(b64)
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+        if img.mode in ("RGBA", "P", "LA"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode != "P":
+                background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+            else:
+                background.paste(img.convert("RGB"))
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        if img.width > max_width:
+            img = img.resize((max_width, round(img.height * max_width / img.width)), Image.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=quality, optimize=True)
+        compact = "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode("ascii")
+        return compact if len(compact) < len(uri) else uri
+    except Exception:
+        return uri
+
+
+def _full_resolution_preview(uri: str | None) -> str | None:
+    """Persist a lossless Source screenshot as a content-addressed PNG ref."""
+    if not isinstance(uri, str) or not uri.startswith("data:image"):
+        return uri or None
+    try:
+        import base64
+        import io
+
+        from PIL import Image
+
+        _header, _, encoded = uri.partition(",")
+        raw = base64.b64decode(encoded)
+        if raw[:8] != b"\x89PNG\r\n\x1a\n":
+            with Image.open(io.BytesIO(raw)) as image:
+                converted = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+                output = io.BytesIO()
+                converted.save(output, format="PNG")
+                raw = output.getvalue()
+        return blob_ref(put_png_blob(raw))
+    except Exception:
+        return _compact_preview(uri)
+
+
+def _public_fidelity_report(report: dict | None) -> dict:
+    """Return serialisable fidelity evidence without local artifact paths."""
+    if not isinstance(report, dict):
+        return {}
+    # The harness report also contains diagnostic heatmaps and repeats the full
+    # capture provenance on every component. Those fields are useful in a local
+    # artifact bundle, but they made a real 14-block project exceed the 8 MiB
+    # live-session limit. The UI Kit builder consumes only scalar metrics, gate
+    # results and semantic identity, so publish exactly that durable contract.
+    metric_keys = {
+        "pixel_similarity", "bbox_mean", "bbox_p95", "bbox_max",
+        "grid_origin_error", "paint_coverage", "visual_losses",
+        "unexplained_losses", "reference_size", "render_size", "size_match",
+        "gate", "harness_error",
+    }
+
+    def public_metrics(value) -> dict:
+        return {key: copy.deepcopy(item) for key, item in (value or {}).items()
+                if key in metric_keys}
+
+    public = {
+        key: copy.deepcopy(value)
+        for key, value in report.items()
+        if key not in {"viewports", "components"}
+    }
+    public["viewports"] = {
+        str(name): public_metrics(metrics)
+        for name, metrics in (report.get("viewports") or {}).items()
+        if isinstance(metrics, dict)
+    }
+    public["components"] = {}
+    for source_key, component in (report.get("components") or {}).items():
+        if not isinstance(component, dict):
+            continue
+        compact_component = {
+            key: copy.deepcopy(component.get(key))
+            for key in ("sourceKey", "label", "role", "repeatGroup", "raster_fallback", "gate")
+            if key in component
+        }
+        compact_component["viewports"] = {
+            str(name): public_metrics(metrics)
+            for name, metrics in (component.get("viewports") or {}).items()
+            if isinstance(metrics, dict)
+        }
+        public["components"][str(source_key)] = compact_component
+    return public
+
+
 def parse_blocks(url: str, blocks: list | None = None,
                  provider: str = DEFAULT_PROVIDER,
                  viewports: list[dict] | None = None,
-                 auth_cookies: list[dict] | None = None) -> dict:
+                 auth_cookies: list[dict] | None = None,
+                 full_resolution_evidence: bool = False) -> dict:
     """BlockParse: список блоков-IR + design-токены по URL.
 
     blocks — опциональный список {name, selector}: клонировать только их
@@ -183,7 +297,10 @@ def parse_blocks(url: str, blocks: list | None = None,
 
     # кэш полного разбора — только когда берём все блоки (выборочный список не кэшируем)
     # Не читаем результаты v1: там лежат LLM-аппроксимации, а не DOM-слои.
-    viewport_key = json.dumps(viewports or "default", sort_keys=True, separators=(",", ":"))
+    viewport_key = json.dumps({
+        "viewports": viewports or "default",
+        "fullResolutionEvidence": bool(full_resolution_evidence),
+    }, sort_keys=True, separators=(",", ":"))
     full_key = cache_store.key_url(SOURCE_COMPILER_VERSION + "|" + viewport_key + "|" + url)
     if wanted is None and cache_enabled:
         hit = cache_store.get("blockparse_url", full_key)
@@ -278,11 +395,14 @@ def parse_blocks(url: str, blocks: list | None = None,
                 b["selector"],
             ))
         final_items[b["selector"]] = {**item, "ir": ir}
+        preview_mapper = _full_resolution_preview if full_resolution_evidence else _compact_preview
         results.append({**head, "ir": ir, "cached": False, "source": "dom",
                         "parserContract": parser_contract,
                         "layers": item.get("layer_count", 0), "size": {
                             "width": item.get("width"), "height": item.get("height")},
-                        "preview": item.get("preview"), "previews": item.get("previews", {}),
+                        "preview": preview_mapper(item.get("preview")),
+                        "previews": {name: preview_mapper(pv)
+                                     for name, pv in (item.get("previews") or {}).items()},
                         "sizes": item.get("sizes", {}),
                         "layersByViewport": item.get("layers_by_viewport", {}),
                         "editableLayersByViewport": item.get("editable_layers_by_viewport", {}),
@@ -314,6 +434,12 @@ def parse_blocks(url: str, blocks: list | None = None,
         except Exception:
             traceback.print_exc()
             fidelity_reports = {}
+    for block in results:
+        if not isinstance(block, dict):
+            continue
+        report = fidelity_reports.get(block.get("selector"))
+        if isinstance(report, dict):
+            block["fidelityReport"] = _public_fidelity_report(report)
     for cache_key, cache_payload, selector in pending_block_writes:
         cache_store.put_gated("clone_block", cache_key, cache_payload,
                               fidelity_reports.get(selector))

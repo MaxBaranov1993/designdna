@@ -31,6 +31,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from interaction_capture import capture_live_flow
 from motion_render import render_video, validate_render_input
+from ir.motion_v2 import migrate_motion_v1_to_v2, validate_motion_v2
+from quality_certification_adapter import certify_from_reports
 
 APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
 ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or APP_ROOT.parent)
@@ -55,6 +57,7 @@ import ir
 from ir import apply_tokens as apply_ir_tokens
 from ir import bind_element_styles as bind_ir_element_styles
 from ir import ensure_current as ensure_current_ir
+from ir import sanitize_generated_ir
 from config import FEATURE_FLAGS
 
 EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
@@ -217,6 +220,7 @@ class BlockParseReq(BaseModel):
     viewports: list[dict] | None = None
     authCookies: list[dict] | None = None
     authSessionFallback: bool = False
+    fullResolutionEvidence: bool = False
 
 
 class ReskinReq(BaseModel):
@@ -224,9 +228,10 @@ class ReskinReq(BaseModel):
     prompt: str = ""
     tokens: dict | None = None  # источник нового стиля (design-токены)
     mask: dict = {}             # чекбоксы: colors/fonts/radii/shadows/texts/images
-    provider: str = "auto"      # фильтр цепочки ROUTING: auto | openai | kimi
+    provider: str = "auto"      # фильтр цепочки ROUTING: auto | openai | kimi | glm | zai | grok | zcode
     prepareOnly: bool = False     # desktop: вернуть промпты вместо LLM-вызова
     rawOutput: str | None = None  # desktop: ответ подключённого аккаунта
+    designSystem: dict | None = None
 
 
 class QualityGateReq(BaseModel):
@@ -315,6 +320,12 @@ class MotionValidateReq(BaseModel):
     interaction: dict | None = None
 
 
+class MotionMigrateV2Req(BaseModel):
+    motion: dict
+    project_revision: str
+    source_mapping: dict = Field(default_factory=dict)
+
+
 class MotionRenderReq(BaseModel):
     base_ir: dict
     interaction: dict
@@ -335,11 +346,21 @@ class ReproduceReq(BaseModel):
 
 class ProjectSaveReq(BaseModel):
     project: dict
+    # CAS-режим: SHA-256 ревизии с прошлого load/save (get.revision).
+    # Без поля — прежнее поведение last-write-wins (совместимость, beacon).
+    expectedRevision: str | None = None
     user_id: str = project_store.DEFAULT_USER_ID
     project_id: str = project_store.DEFAULT_PROJECT_ID
 
 
 class ProjectLoadReq(BaseModel):
+    user_id: str = project_store.DEFAULT_USER_ID
+    project_id: str = project_store.DEFAULT_PROJECT_ID
+
+
+class TasteOutcomeReq(BaseModel):
+    kind: str
+    payload: dict = Field(default_factory=dict)
     user_id: str = project_store.DEFAULT_USER_ID
     project_id: str = project_store.DEFAULT_PROJECT_ID
 
@@ -350,7 +371,7 @@ class ProjectLoadReq(BaseModel):
 def generate(req: GenerateReq):
     # Browser mode may explicitly select a direct API account. Codex is a
     # desktop-only transport, so unknown/desktop values fall back to ROUTING.
-    provider = req.provider if req.provider in ("openai", "kimi", "glm", "zcode") else "auto"
+    provider = req.provider if req.provider in ("openai", "kimi", "glm", "zai", "grok", "zcode") else "auto"
     brief = req.brief.strip()
     if not brief:
         return err(422, "Пустой бриф: опишите, что нужно сгенерировать.")
@@ -378,14 +399,24 @@ def generate(req: GenerateReq):
     # компактный контекст один раз; в промпт уходит prompt-block, не весь документ
     ds_context = None
     ds_prompt_block = ""
+    ds_compiled = None
+    ds_usage_mode = ""
     if isinstance(req.designSystem, dict) and req.designSystem.get("systemId"):
         from design_system import resolver as ds_resolver, store as ds_store
         ds_doc, ds_error = ds_store.resolve_ref(req.designSystem)
         if ds_error:
             return err(422, f"Design System: {ds_error}")
-        usage_mode = str(req.designSystem.get("usageMode") or "strict")
-        ds_context = ds_resolver.resolve_context(ds_doc, brief, usage_mode=usage_mode)
-        ds_prompt_block = ds_resolver.compact_prompt_block(ds_context)
+        ds_usage_mode = str(req.designSystem.get("usageMode") or "strict")
+        ds_context = ds_resolver.resolve_context(ds_doc, brief, usage_mode=ds_usage_mode)
+        provider_budget = 4000 if ds_usage_mode == "strict" else (1000 if provider in ("glm", "zai", "zcode") else 1200)
+        ds_compiled = ds_resolver.compiled_context(
+            ds_context, brief=brief,
+            archetype_id=str(req.designSystem.get("archetypeId") or ""),
+            token_budget=int(req.designSystem.get("tokenBudget") or provider_budget),
+        )
+        if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
+            return err(422, "Design System Strict: exact master не помещается в выбранный context budget")
+        ds_prompt_block = ds_compiled["promptBlock"]
 
 
     def gen_one(n: int):
@@ -450,6 +481,7 @@ def generate(req: GenerateReq):
             ir, error = call_llm_ir(provider, user, 0.8 if mode == "generate" else 0.3, mode)
         qa = None
         if ir is not None:
+            ir = sanitize_generated_ir(ir)
             if dna:
                 # Give QA the locked palette first; inline styles are applied
                 # after autofix so QA cannot silently overwrite the DNA lock.
@@ -476,6 +508,9 @@ def generate(req: GenerateReq):
             qa = {"index": n, "fixed": len(fixlog),
                   "violations": [v["rule"] for v in qualitygate.check(ir)]}
             ir = ensure_current_ir(ir, source="generate")
+            schema_errors = validate_ir(ir)
+            if schema_errors:
+                return None, "Generated IR does not pass schema: " + "; ".join(schema_errors[:5]), qa
         return ir, error, qa
 
     if req.prepareOnly:
@@ -489,6 +524,8 @@ def generate(req: GenerateReq):
                 for i in range(count)
             ],
             "design": {"type": ptype, "label": pinfo["label"]},
+            **({"designSystem": {"ref": ds_context.get("systemRef"), **ds_compiled}}
+               if ds_context is not None and ds_compiled else {}),
         }
 
     futures = [EXECUTOR.submit(gen_one, i + 1) for i in range(count)]
@@ -506,17 +543,76 @@ def generate(req: GenerateReq):
     if ds_context is not None:
         from design_system import resolver as ds_resolver
         design_system_report = {"errors": [], "warnings": []}
-        for variant in variants:
+        accepted_variants = []
+        saw_component_ref = False
+        for variant_index, variant in enumerate(variants, start=1):
             check = ds_resolver.validate_generation(variant, ds_context)
+            saw_component_ref = saw_component_ref or bool(check.get("componentRefs"))
             if check["errors"] or check["warnings"]:
                 variant.setdefault("meta", {})
                 if check["errors"]:
                     variant["meta"]["designSystemErrors"] = check["errors"]
                 if check["warnings"]:
                     variant["meta"]["designSystemWarnings"] = check["warnings"]
+            if ds_compiled:
+                variant.setdefault("meta", {})
+                variant["meta"].update({
+                    "designSystemRef": ds_context.get("systemRef"),
+                    "compiledContextHash": ds_compiled.get("compiledContextHash"),
+                    "archetypeId": ds_compiled.get("archetypeId"),
+                    "identityScore": (check.get("identity") or {}).get("score"),
+                    "identityReport": check.get("identity"),
+                })
             design_system_report["errors"].extend(check["errors"])
             design_system_report["warnings"].extend(check["warnings"])
+            if ds_usage_mode == "strict" and check["errors"]:
+                errors.append({
+                    "index": variant_index,
+                    "error": "Design System Strict: " + "; ".join(item["message"] for item in check["errors"][:4]),
+                })
+            else:
+                accepted_variants.append(variant)
         design_system_report["ref"] = ds_context.get("systemRef")
+        if ds_compiled:
+            design_system_report.update({
+                "compiledContextHash": ds_compiled.get("compiledContextHash"),
+                "includedRuleIds": ds_compiled.get("includedRuleIds"),
+                "omittedRuleIds": ds_compiled.get("omittedRuleIds"),
+                "estimatedTokens": ds_compiled.get("estimatedTokens"),
+                "archetypeId": ds_compiled.get("archetypeId"),
+            })
+        if ds_usage_mode == "strict":
+            variants = accepted_variants
+            if not variants:
+                # A large observed master (for example a responsive service card
+                # with lossless image evidence) may not fit the provider prompt
+                # budget. The provider still interprets the brief, while the
+                # application owns exact-master materialisation and verification.
+                primary = ds_resolver.primary_component_for_brief(ds_context, brief) if saw_component_ref else None
+                if primary is not None:
+                    from design_system import compiler as ds_compiler, document as ds_document
+                    recovered = ds_document.preview_ir_for_master(copy.deepcopy(primary["masterIr"]))
+                    recovered_root = recovered["tree"][0]["children"][0]
+                    recovered_root.setdefault("sourceMeta", {})["componentRef"] = ds_compiler.component_handle(
+                        primary, ds_context.get("systemRef") or {})
+                    recovered.setdefault("meta", {}).update({
+                        "designSystemRef": ds_context.get("systemRef"),
+                        "compiledContextHash": ds_compiled.get("compiledContextHash") if ds_compiled else None,
+                        "strictRecovery": "exact-master-materialized",
+                        "requestedComponentKey": primary.get("componentKey"),
+                    })
+                    recovered_check = ds_resolver.validate_generation(recovered, ds_context)
+                    if not recovered_check["errors"]:
+                        variants = [recovered]
+                        qa.append({"index": 1, "fixed": 1, "violations": [],
+                                   "recovery": "exact-master-materialized"})
+                        design_system_report["recovered"] = {
+                            "componentKey": primary.get("componentKey"),
+                            "reason": "provider-output-failed-strict-exact-master-validation",
+                        }
+                if not variants:
+                    first = design_system_report["errors"][0]["message"] if design_system_report["errors"] else "strict validation failed"
+                    return err(422, f"Design System Strict отклонил все варианты: {first}")
     return {"variants": variants, "errors": errors, "qa": qa,
             "design": {"type": ptype, "label": pinfo["label"]},
             **({"designSystem": design_system_report} if design_system_report else {})}
@@ -669,6 +765,7 @@ def block_parse(req: BlockParseReq):
             blocks=req.blocks,
             viewports=req.viewports,
             auth_cookies=req.authCookies,
+            full_resolution_evidence=req.fullResolutionEvidence,
         )
         if req.authSessionFallback:
             result["authWarning"] = "В сессии нет cookie для этого URL — выполнен публичный импорт"
@@ -713,8 +810,28 @@ def reskin(req: ReskinReq):
     if req.prompt.strip():
         user += f"\n\n## Пожелания по новому стилю\n{req.prompt.strip()}"
 
-    # выбор пользователя в ноде (openai/kimi) — фильтр цепочки ROUTING, auto = вся цепочка
-    provider = req.provider if req.provider in ("openai", "kimi", "glm", "zcode") else "auto"
+    ds_context = None
+    ds_compiled = None
+    ds_usage_mode = ""
+    if isinstance(req.designSystem, dict) and req.designSystem.get("systemId"):
+        from design_system import resolver as ds_resolver, store as ds_store
+        ds_doc, ds_error = ds_store.resolve_ref(req.designSystem)
+        if ds_error:
+            return err(422, f"Design System: {ds_error}")
+        ds_usage_mode = str(req.designSystem.get("usageMode") or "strict")
+        ds_context = ds_resolver.resolve_context(
+            ds_doc, req.prompt, usage_mode=ds_usage_mode)
+        ds_compiled = ds_resolver.compiled_context(
+            ds_context, brief=req.prompt,
+            archetype_id=str(req.designSystem.get("archetypeId") or ""),
+            token_budget=int(req.designSystem.get("tokenBudget") or (4000 if ds_usage_mode == "strict" else 1000)),
+        )
+        if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
+            return err(422, "Design System Strict: exact master не помещается в выбранный context budget")
+        user += "\n\n" + ds_compiled["promptBlock"]
+
+    # выбор пользователя в ноде — фильтр цепочки ROUTING, auto = вся цепочка
+    provider = req.provider if req.provider in ("openai", "kimi", "glm", "zai", "grok", "zcode") else "auto"
     reskin_messages = [
         {"role": "system", "content": llm.build_system_prompt("edit")},
         {"role": "user", "content": user},
@@ -755,10 +872,38 @@ def reskin(req: ReskinReq):
             pass
     if errors:
         return err(502, "reskin не прошёл валидацию после repair: " + "; ".join(errors[:5]))
-    return {"ir": ensure_current_ir(merged, source="reskin"), "log": journal}
+    current = ensure_current_ir(merged, source="reskin")
+    design_system_report = None
+    if ds_context is not None:
+        from design_system import resolver as ds_resolver
+        design_system_report = ds_resolver.validate_generation(current, ds_context)
+        if ds_usage_mode == "strict" and design_system_report["errors"]:
+            return err(
+                422,
+                "Design System Strict отклонил reskin: "
+                + "; ".join(item["message"] for item in design_system_report["errors"][:4]),
+            )
+        current.setdefault("meta", {}).update({
+            "designSystemRef": ds_context.get("systemRef"),
+            "compiledContextHash": (ds_compiled or {}).get("compiledContextHash"),
+            "archetypeId": (ds_compiled or {}).get("archetypeId"),
+            "identityScore": (design_system_report.get("identity") or {}).get("score"),
+            "identityReport": design_system_report.get("identity"),
+        })
+    return {"ir": current, "log": journal,
+            **({"designSystem": design_system_report} if design_system_report else {})}
 
 
 # ---------- Quality Gate / Constraints (решение владельца 12.2, бэклог §8) ----------
+
+@app.post("/api/quality/certify")
+def quality_certify(request: dict):
+    """Create an auditable, fail-closed certificate from completed QA reports."""
+    try:
+        return certify_from_reports(request)
+    except (TypeError, ValueError) as exc:
+        return err(422, str(exc))
+
 
 @app.post("/api/quality-gate")
 def quality_gate(req: QualityGateReq):
@@ -1176,20 +1321,46 @@ def cache_stats():
 
 @app.post("/api/project/save")
 def project_save(req: ProjectSaveReq):
+    if req.expectedRevision:
+        result = project_store.commit_project(
+            req.project,
+            req.expectedRevision,
+            user_id=req.user_id,
+            project_id=req.project_id,
+        )
+        if result.get("stale"):
+            return JSONResponse(result, status_code=409)
+        return result
     return project_store.save_project(req.project, req.user_id, req.project_id)
 
 
 @app.post("/api/project/load")
 def project_load(req: ProjectLoadReq):
-    saved = project_store.load_project(req.user_id, req.project_id)
-    if not saved:
-        return {"project": None, "updated_at": None}
-    return {"project": saved["payload"], "updated_at": saved["updated_at"]}
+    record = project_store.inspect_project(req.user_id, req.project_id)
+    if record.get("status") == "corrupt":
+        return {"project": None, "updated_at": None, "revision": None}
+    if record.get("status") != "ok":
+        # пустой проект — валидная CAS-цель: commit с EMPTY_REVISION создаст строку
+        return {"project": None, "updated_at": None, "revision": project_store.EMPTY_REVISION}
+    return {
+        "project": record["payload"],
+        "updated_at": record["updated_at"],
+        "revision": record["revision"],
+    }
 
 
 @app.get("/api/project/taste")
 def project_taste():
     return project_store.load_taste_profile()
+
+
+@app.post("/api/project/taste/outcome")
+def project_taste_outcome(req: TasteOutcomeReq):
+    try:
+        return project_store.record_taste_outcome(
+            req.kind, req.payload, user_id=req.user_id, project_id=req.project_id)
+    except ValueError as exc:
+        return err(422, str(exc))
 
 
 @app.get("/api/config")
@@ -1346,8 +1517,19 @@ def motion_build(req: MotionBuildReq):
 
 @app.post("/api/motion/validate")
 def motion_validate(req: MotionValidateReq):
-    errors = ir.validate_motion(req.motion, req.interaction)
-    return {"valid": not errors, "errors": errors}
+    version = str(req.motion.get("version") or "")
+    errors = validate_motion_v2(req.motion) if version == "2.0" else ir.validate_motion(req.motion, req.interaction)
+    return {"valid": not errors, "version": version or "1.0", "errors": errors}
+
+
+@app.post("/api/motion/migrate-v2")
+def motion_migrate_v2(req: MotionMigrateV2Req):
+    """Explicit, fail-closed migration; source linkage may never be inferred."""
+    try:
+        motion = migrate_motion_v1_to_v2(req.motion, req.project_revision, req.source_mapping)
+    except ValueError as exc:
+        return err(422, str(exc))
+    return {"motion": motion, "errors": []}
 
 
 def _materialize_motion_scenes(base_ir: dict, interaction: dict, motion: dict) -> list[dict]:

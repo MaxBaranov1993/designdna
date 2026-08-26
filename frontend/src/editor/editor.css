@@ -42,6 +42,9 @@
 .fe-tbtn:hover { background:hsl(var(--accent)); }
 .fe-tbtn.active { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); }
 .fe-tbtn:disabled { opacity:.35; cursor:default; }
+.fe-tbtn:focus-visible, .fe-btn:focus-visible, .fe-abtn:focus-visible, .fe-rail-btn:focus-visible,
+.fe-lbtn:focus-visible, .ai-run:focus-visible, .align-grid button:focus-visible, .merge-row button:focus-visible {
+  outline:2px solid hsl(var(--ring)); outline-offset:2px; }
 .fe-sep { width:1px; height:20px; background:hsl(var(--border)); margin:0 4px; }
 .fe-zoom { font-size:11px; color:hsl(var(--muted-foreground)); width:44px; text-align:center; font-variant-numeric:tabular-nums; }
 .fe-viewports { display:inline-flex; gap:2px; padding:2px; border:1px solid hsl(var(--border)); border-radius:6px; }
@@ -71,6 +74,7 @@
 .fe-btn.primary:hover { background:color-mix(in srgb, hsl(var(--primary)) 88%, transparent); }
 .fe-btn.danger { border-color:hsl(var(--destructive)); color:var(--fe-err); background:transparent; }
 .fe-btn.danger:hover { background:hsl(var(--destructive) / .22); }
+.fe-btn:disabled { opacity:.45; cursor:default; }
 
 /* основная раскладка */
 .fe-body { display:flex; flex:1; overflow:hidden; }
@@ -326,6 +330,7 @@
 .ai-run:disabled,.ai-quick-row button:disabled,.merge-row button:disabled { opacity:.42; cursor:not-allowed; }
 .ai-run:disabled:has(+ .ai-progress) { opacity:.82; }
 .ai-progress { display:flex; align-items:flex-start; gap:9px; margin-top:8px; padding:9px; border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border)); border-radius:8px; background:color-mix(in srgb,var(--accent) 6%,var(--fe-panel)); }
+.ai-progress-cancel { margin-left:auto; flex:0 0 auto; border:1px solid var(--border); border-radius:7px; background:var(--fe-panel); color:var(--text); font-size:10px; padding:4px 8px; cursor:pointer; }
 .ai-progress-spinner { flex:0 0 auto; width:14px; height:14px; margin-top:1px; border:2px solid color-mix(in srgb,var(--accent) 25%,transparent); border-top-color:var(--accent); border-radius:50%; animation:ai-progress-spin .8s linear infinite; }
 .ai-progress > div { min-width:0; display:flex; flex-direction:column; gap:2px; }
 .ai-progress strong { color:var(--text); font-size:10.5px; line-height:1.35; }

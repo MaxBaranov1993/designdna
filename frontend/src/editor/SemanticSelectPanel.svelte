@@ -30,6 +30,7 @@
           oninput={(event) => { query = event.currentTarget.value; count = null; }}
           onkeydown={(event) => { if (event.key === "Enter") run(); }}
           placeholder="Например: все CTA из Header"
+          aria-label="Запрос умного выделения"
         />
         <button class="fe-btn primary" data-act="run-semantic-select" disabled={!query.trim()} onclick={run}>Выделить</button>
       </div>
@@ -42,7 +43,7 @@
         <div class={"fe-semantic-result " + (count ? "found" : "empty")}>{count ? `Выделено элементов: ${count}` : "Совпадений нет — уточните тип или название источника"}</div>
       {/if}
       <p>Запрос комбинирует семантику элемента и provenance. Например, «кнопки из Imported header» не затронет CTA из других источников.</p>
-      <div class="fe-semantic-actions"><button class="fe-btn" onclick={() => ctl.closeSemanticSelect()}>Готово</button></div>
+      <div class="fe-semantic-actions"><button class="fe-btn" data-act="dismiss-semantic-select" onclick={() => ctl.closeSemanticSelect()}>Готово</button></div>
     </div>
   </div>
 {/if}

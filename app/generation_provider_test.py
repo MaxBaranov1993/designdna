@@ -33,6 +33,24 @@ def test_generate_finalizes_external_provider_outputs_without_server_llm(monkeyp
     assert server.validate_ir(response["variants"][0]) == []
 
 
+def test_generate_sanitizes_provider_meta_and_typography_aliases(monkeypatch) -> None:
+    fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
+    fixture["meta"] = {"name": "Provider result", "pageType": "invented-runtime-field"}
+    fixture["tree"][0]["children"][0]["children"][3]["size"] = "h1"
+
+    monkeypatch.setattr(server.llm, "chat", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("server-side LLM must not be called for external provider outputs")
+    ))
+    response = server.generate(server.GenerateReq(
+        brief="marketplace page", count=1, provider="codex", rawOutputs=[json.dumps(fixture)],
+    ))
+
+    result = response["variants"][0]
+    assert result["meta"] == {"name": "Provider result"}
+    assert result["tree"][0]["children"][0]["children"][3]["size"] == "display"
+    assert server.validate_ir(result) == []
+
+
 def test_browser_generate_honors_direct_api_provider_and_maps_codex_to_auto(monkeypatch) -> None:
     fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
     seen: list[str] = []
@@ -46,6 +64,8 @@ def test_browser_generate_honors_direct_api_provider_and_maps_codex_to_auto(monk
         ("kimi", "kimi"),
         ("openai", "openai"),
         ("glm", "glm"),
+        ("zai", "zai"),
+        ("grok", "grok"),
         ("codex", "auto"),
         ("openrouter", "auto"),
         ("auto", "auto"),
@@ -94,3 +114,16 @@ def test_generate_applies_locked_dna_to_model_inline_styles(monkeypatch) -> None
     assert styled_button["style"]["borderRadius"] == 1000
     assert styled_button["styleBindings"]["background"]["token"] == "semantic.primary"
     assert server.validate_ir(result) == []
+
+
+def test_direct_providers_reject_reserved_provider_option_overrides() -> None:
+    import llm_client as llm
+    for provider in ("kimi", "zai", "grok"):
+        request = llm.ChatRequest(
+            messages=[{"role": "user", "content": "hi"}],
+            provider=provider,
+            provider_options={provider: {"model": "hijack", "temperature": 0}},
+        )
+        issues = " ".join(request.validate())
+        assert "reserved canonical wire field" in issues, provider
+        assert "model" in issues and "temperature" in issues, provider

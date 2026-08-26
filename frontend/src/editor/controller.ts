@@ -8,6 +8,7 @@ import { IRHistory } from "../engine/irhistory";
 import { DesignAIFontCatalog } from "../engine/fontCatalog";
 import { findByKey, isSourceKeyPath, locateByKey, parentKeyByKey } from "../engine/sourcepath";
 import type { AssistPreview, AssistRequest } from "./aiTypes";
+import { EDITOR_ACTION_GROUPS } from "./actionInventory";
 
 /* ---------- DOM-refs: регистрируются React-компонентами ---------- */
 
@@ -131,6 +132,8 @@ let dnaPanelState: {
 let aiAssistState: AssistPreview | null = null;
 let aiAssistBaseFingerprint: string | null = null;
 let aiAssistScopeModeTouched = false;
+let aiAssistAbort: AbortController | null = null;
+let overlayCancelGen = 0;
 let aiAssistFormState: AssistRequest = {
   prompt: "",
   action: "custom",
@@ -170,7 +173,7 @@ export function getAiAssistFormState(): AssistRequest {
 }
 
 export function setAiAssistFormState(next: Partial<AssistRequest>) {
-  if (next.provider !== undefined && !["auto", "codex", "kimi", "openai", "glm", "zcode"].includes(String(next.provider))) next.provider = "auto";
+  if (next.provider !== undefined && !["auto", "codex", "kimi", "openai", "glm", "zai", "grok", "zcode"].includes(String(next.provider))) next.provider = "auto";
   aiAssistFormState = {
     ...aiAssistFormState,
     ...next,
@@ -529,7 +532,9 @@ function activateViewport(viewport: string, width: number) {
     persistDraft();
   }
   dom.viewports?.querySelectorAll("[data-viewport]").forEach((b) => {
-    b.classList.toggle("active", (b as HTMLElement).dataset.viewport === viewport);
+    const on = (b as HTMLElement).dataset.viewport === viewport;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
   });
   if (dom.viewportWidth) dom.viewportWidth.value = String(width);
   state.sel = [];
@@ -572,6 +577,8 @@ export function handleAct(act: string) {
   else if (act === "backward") state.geo && state.geo.sendBackward();
   else if (act === "group") state.geo && state.geo.groupSelection();
   else if (act === "ungroup") state.geo && state.geo.ungroupSelection();
+  else if (act === "stretch-width") state.geo && state.geo.stretchWidth();
+  else if (act === "reset-frame") state.geo && state.geo.resetFrame();
 }
 
 function stableRevisionId(): string {
@@ -685,6 +692,7 @@ export function planSmartAxis() {
 }
 
 export function dismissSmartAxisProposal() {
+  overlayCancelGen += 1;
   ui.setSmartAxisProposal(null);
 }
 
@@ -705,6 +713,7 @@ export function applySmartAxisProposal(proposal: SmartAxisProposal) {
 
 export async function planQualityGate() {
   if (!state) return;
+  const cancelGen = ++overlayCancelGen;
   const baseDraftRevision = state.draftRevision;
   const baseSessionId = state.sessionId;
   const baseIr = deepClone(state.ir);
@@ -717,6 +726,7 @@ export async function planQualityGate() {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    if (cancelGen !== overlayCancelGen) return;
     if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
       if (state?.sessionId === baseSessionId) ui.setQualityProposal({ status: "error", passed: false, violations: [], journal: [], fixedIr: null, baseDraftRevision, baseSessionId, error: "Макет изменился во время проверки. Запустите проверку ещё раз." });
       return;
@@ -731,11 +741,13 @@ export async function planQualityGate() {
       baseSessionId,
     });
   } catch (error) {
+    if (cancelGen !== overlayCancelGen) return;
     if (state?.sessionId === baseSessionId) ui.setQualityProposal({ status: "error", passed: false, violations: [], journal: [], fixedIr: null, baseDraftRevision, baseSessionId, error: (error as Error).message });
   }
 }
 
 export function dismissQualityProposal() {
+  overlayCancelGen += 1;
   ui.setQualityProposal(null);
 }
 
@@ -751,6 +763,7 @@ export function applyQualityProposal(proposal: EditorQualityProposal) {
 
 export async function planHarmonizer() {
   if (!state) return;
+  const cancelGen = ++overlayCancelGen;
   const baseDraftRevision = state.draftRevision;
   const baseSessionId = state.sessionId;
   const baseIr = deepClone(state.ir);
@@ -765,6 +778,7 @@ export async function planHarmonizer() {
     });
     const extracted = await extractResponse.json();
     if (!extractResponse.ok) throw new Error(extracted.detail || `HTTP ${extractResponse.status}`);
+    if (cancelGen !== overlayCancelGen) return;
     if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
       if (state?.sessionId === baseSessionId) ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId, error: "Макет изменился во время анализа. Запустите Harmonizer ещё раз." });
       return;
@@ -776,6 +790,7 @@ export async function planHarmonizer() {
     });
     const applied = await applyResponse.json();
     if (!applyResponse.ok) throw new Error(applied.detail || `HTTP ${applyResponse.status}`);
+    if (cancelGen !== overlayCancelGen) return;
     if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
       if (state?.sessionId === baseSessionId) ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId, error: "Макет изменился во время применения Style DNA. Запустите Harmonizer ещё раз." });
       return;
@@ -783,11 +798,13 @@ export async function planHarmonizer() {
     const harmonizedIr = applied.ir ? preserveLockedFacets(baseIr, deepClone(applied.ir)) : null;
     ui.setHarmonizerProposal({ status: "ready", sourceCount, tokens: extracted.tokens || {}, harmonizedIr, baseDraftRevision, baseSessionId });
   } catch (error) {
+    if (cancelGen !== overlayCancelGen) return;
     if (state?.sessionId === baseSessionId) ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId, error: (error as Error).message });
   }
 }
 
 export function dismissHarmonizerProposal() {
+  overlayCancelGen += 1;
   ui.setHarmonizerProposal(null);
 }
 
@@ -810,6 +827,7 @@ function responsiveOverride(node: any, viewport: "tablet" | "mobile") {
 
 export async function planResponsiveAutopilot() {
   if (!state) return;
+  const cancelGen = ++overlayCancelGen;
   const baseDraftRevision = state.draftRevision;
   const baseSessionId = state.sessionId;
   const baseIr = deepClone(state.ir);
@@ -896,6 +914,7 @@ export async function planResponsiveAutopilot() {
     });
     const quality = await response.json();
     if (!response.ok) throw new Error(quality.detail || `HTTP ${response.status}`);
+    if (cancelGen !== overlayCancelGen) return;
     if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
       if (state?.sessionId === baseSessionId) ui.setResponsiveProposal({ status: "error", candidateIr: null, decisions: [], warnings: [], baseDraftRevision, baseSessionId, error: "Макет изменился во время адаптации. Запустите Autopilot ещё раз." });
       return;
@@ -909,11 +928,13 @@ export async function planResponsiveAutopilot() {
     ].filter((item) => item.count > 0);
     ui.setResponsiveProposal({ status: "ready", candidateIr: candidate, decisions, warnings: Array.isArray(quality.violations) ? quality.violations : [], baseDraftRevision, baseSessionId });
   } catch (error) {
+    if (cancelGen !== overlayCancelGen) return;
     if (state?.sessionId === baseSessionId) ui.setResponsiveProposal({ status: "error", candidateIr: null, decisions: [], warnings: [], baseDraftRevision, baseSessionId, error: (error as Error).message });
   }
 }
 
 export function dismissResponsiveProposal() {
+  overlayCancelGen += 1;
   ui.setResponsiveProposal(null);
 }
 
@@ -937,7 +958,9 @@ export function syncToolbarState() {
   if (dom.viewports) dom.viewports.hidden = !responsive;
   if (dom.responsiveSep) dom.responsiveSep.hidden = !responsive;
   dom.viewports?.querySelectorAll("[data-viewport]").forEach((button) => {
-    button.classList.toggle("active", (button as HTMLElement).dataset.viewport === state?.viewport);
+    const on = (button as HTMLElement).dataset.viewport === state?.viewport;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-pressed", String(on));
   });
   if (dom.viewportWidth) dom.viewportWidth.value = String(state.previewWidth);
 }
@@ -1008,6 +1031,7 @@ export function open(
  *  (zoomFit/линейки требуют реальной раскладки). */
 export function finishOpen() {
   if (!state) return;
+  if (typeof window !== "undefined") window.__editorActions = EDITOR_ACTION_GROUPS;
   renderCanvas();
   renderLayers();
   renderInspector();
@@ -1133,6 +1157,7 @@ function upgradeSourceNesting(ir: any) {
 export function openStyleDnaInspector() {
   if (!state || !dom.dnaPanel || !dom.dnaBody) return;
   dom.dnaPanel.classList.add("open");
+  setDnaActionsEnabled(false);
   dom.dnaBody.innerHTML = '<div class="fe-dna-empty">Загрузка токенов…</div>';
   const existing = state.ir && state.ir.tokens;
   if (existing && existing.semantic && existing.primitives) {
@@ -1143,9 +1168,16 @@ export function openStyleDnaInspector() {
   }
 }
 
+function setDnaActionsEnabled(enabled: boolean) {
+  dom.overlay?.querySelectorAll<HTMLButtonElement>('[data-act="reset-style-dna"], [data-act="apply-style-dna"]').forEach((btn) => {
+    btn.disabled = !enabled;
+  });
+}
+
 export function closeStyleDnaInspector() {
   dom.dnaPanel?.classList.remove("open");
   dnaPanelState = null;
+  setDnaActionsEnabled(false);
 }
 
 export function resetStyleDnaInspector() {
@@ -1168,6 +1200,7 @@ async function extractStyleDnaFromServer() {
     dnaPanelState = { tokens: deepClone(tokens), originalTokens: deepClone(tokens) };
     renderStyleDnaPanel();
   } catch (e) {
+    setDnaActionsEnabled(false);
     if (dom.dnaBody) {
       dom.dnaBody.innerHTML = `<div class="fe-dna-empty fe-dna-err">Ошибка загрузки: ${esc((e as Error).message)}</div>`;
     }
@@ -1181,6 +1214,7 @@ async function applyStyleDnaFromInspector() {
   const baseIr = deepClone(state.ir);
   const foot = dom.dnaFoot;
   if (foot) foot.textContent = "Применение…";
+  setDnaActionsEnabled(false);
   try {
     const resp = await fetch("/api/style-dna/apply", {
       method: "POST",
@@ -1196,8 +1230,10 @@ async function applyStyleDnaFromInspector() {
     dnaPanelState.originalTokens = deepClone(dnaPanelState.tokens);
     rerenderEditorCanvas();
     if (foot) foot.textContent = "Токены применены";
+    setDnaActionsEnabled(true);
     setTimeout(() => { if (foot) foot.textContent = ""; }, 2000);
   } catch (e) {
+    setDnaActionsEnabled(true);
     if (foot) foot.textContent = "Ошибка: " + (e as Error).message;
   }
 }
@@ -1293,6 +1329,7 @@ function renderStyleDnaPanel() {
 
   body.innerHTML = html;
   if (foot) foot.textContent = `${bindings.length} bindings · ${Object.keys(counts).length} tokens`;
+  setDnaActionsEnabled(true);
   wireStyleDnaEvents(body, bindings);
 }
 
@@ -1658,11 +1695,16 @@ function friendlyAiError(detail: string) {
   return "Не удалось подготовить результат. Попробуйте уточнить запрос.";
 }
 
-async function postAiAssist(payload: Record<string, unknown>) {
+function isAbortError(error: unknown) {
+  return !!error && typeof error === "object" && ((error as Error).name === "AbortError" || (error as DOMException).name === "AbortError");
+}
+
+async function postAiAssist(payload: Record<string, unknown>, signal?: AbortSignal) {
   const response = await fetch("/api/editor/assist", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
@@ -1674,6 +1716,9 @@ export async function requestAiAssist(request: AssistRequest) {
   if (!state || (request.scopeMode !== "document" && !state.sel.length)) return;
   const prompt = request.prompt.trim();
   if (!prompt) { ui.setAiError("Опишите, что нужно изменить"); return; }
+  aiAssistAbort?.abort();
+  aiAssistAbort = new AbortController();
+  const { signal } = aiAssistAbort;
   ui.setAiBusy(true);
   ui.setAiError("");
   const startedAt = Date.now();
@@ -1682,6 +1727,7 @@ export async function requestAiAssist(request: AssistRequest) {
   aiAssistBaseFingerprint = null;
   ui.setAiPreview(null);
   setAiAssistFormState(request);
+  updateUndoBtn();
   const baseSessionId = state.sessionId;
   const baseFingerprint = JSON.stringify(sanitizeIrForPost(state.ir));
   const requestScopeKeys = selectedSourceKeys(request.scopeMode);
@@ -1713,19 +1759,23 @@ export async function requestAiAssist(request: AssistRequest) {
   try {
     let data: any;
     if (window.designDNA?.providers && request.action !== "adapt") {
-      const prepared = await postAiAssist({ ...payload, prepareOnly: true });
+      const prepared = await postAiAssist({ ...payload, prepareOnly: true }, signal);
+      if (signal.aborted) return;
       if (Array.isArray(prepared.messages)) {
         ui.setAiProgress({ stage: "provider", label: "AI анализирует объект и готовит правки", startedAt });
-        const assistProvider = ["auto", "codex", "kimi", "openai", "glm", "zcode"].includes(String(request.provider)) ? request.provider as "auto" | "codex" | "kimi" | "openai" | "glm" | "zcode" : "auto";
+        const assistProvider = ["auto", "codex", "kimi", "openai", "glm", "zai", "grok", "zcode"].includes(String(request.provider)) ? request.provider as "auto" | "codex" | "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode" : "auto";
         const answer = await window.designDNA.providers.chat(assistProvider, prepared.messages, 0.2);
+        if (signal.aborted) return;
         ui.setAiProgress({ stage: "validate", label: "Проверяю ответ и строю предпросмотр", startedAt });
-        data = await postAiAssist({ ...payload, rawOutput: answer.content });
+        data = await postAiAssist({ ...payload, rawOutput: answer.content }, signal);
       } else data = prepared;
     } else {
       if (request.action !== "adapt") ui.setAiProgress({ stage: "provider", label: "AI анализирует объект и готовит правки", startedAt });
-      data = await postAiAssist(payload);
+      data = await postAiAssist(payload, signal);
+      if (signal.aborted) return;
       ui.setAiProgress({ stage: "validate", label: "Проверяю ответ и строю предпросмотр", startedAt });
     }
+    if (signal.aborted) return;
     if (!data?.previewIr || !Array.isArray(data.ops)) throw new Error("AI вернул неполный preview");
     const currentScopeKeys = state ? selectedSourceKeys(request.scopeMode) : [];
     if (!state || state.sessionId !== baseSessionId
@@ -1739,24 +1789,35 @@ export async function requestAiAssist(request: AssistRequest) {
     dom.overlay?.classList.add("ai-previewing");
     rerenderEditorCanvas();
   } catch (error) {
+    if (isAbortError(error) || signal.aborted) return;
     ui.setAiError(friendlyAiError(error instanceof Error ? error.message : String(error)));
   } finally {
-    ui.setAiBusy(false);
-    ui.setAiProgress(null);
+    if (aiAssistAbort?.signal === signal) {
+      ui.setAiBusy(false);
+      ui.setAiProgress(null);
+      updateUndoBtn();
+    }
   }
 }
 
 export function cancelAiAssist() {
   const hadPreview = !!aiAssistState;
+  const hadInFlight = !!aiAssistAbort;
+  aiAssistAbort?.abort();
+  aiAssistAbort = null;
   aiAssistState = null;
   aiAssistBaseFingerprint = null;
   dom.overlay?.classList.remove("ai-previewing");
+  ui.setAiBusy(false);
+  ui.setAiProgress(null);
   ui.setAiPreview(null);
   ui.setAiError("");
-  if (hadPreview) rerenderEditorCanvas();
+  updateUndoBtn();
+  if (hadPreview || hadInFlight) rerenderEditorCanvas();
 }
 
 export function applyAiAssist() {
+  if (aiAssistAbort) { aiAssistAbort.abort(); aiAssistAbort = null; }
   if (!state || !aiAssistState?.previewIr || aiAssistState.validation?.schema === false) return false;
   if (!aiAssistBaseFingerprint || JSON.stringify(sanitizeIrForPost(state.ir)) !== aiAssistBaseFingerprint) {
     aiAssistState = null;
@@ -1765,6 +1826,7 @@ export function applyAiAssist() {
     ui.setAiPreview(null);
     ui.setAiError("Макет изменился после предпросмотра. AI-правка отменена, ручные изменения сохранены.");
     rerenderEditorCanvas();
+    updateUndoBtn();
     return false;
   }
   pushHistory();
@@ -1776,6 +1838,7 @@ export function applyAiAssist() {
   ui.setAiPreview(null);
   persistDraft();
   rerenderEditorCanvas();
+  updateUndoBtn();
   return true;
 }
 
@@ -1793,8 +1856,13 @@ export function close(saved?: boolean) {
   if (state && state.geo) { state.geo.destroy(); state.geo = null; }
   state = null;
   dnaPanelState = null;
+  aiAssistAbort?.abort();
+  aiAssistAbort = null;
+  overlayCancelGen += 1;
   aiAssistState = null;
   aiAssistBaseFingerprint = null;
+  if (typeof window !== "undefined") delete window.__editorActions;
+  setDnaActionsEnabled(false);
   dom.overlay?.classList.remove("ai-previewing");
   dom.dnaPanel?.classList.remove("open");
   if (dom.overlay) dom.overlay.style.display = "none";
@@ -1857,8 +1925,9 @@ function redo() {
 
 export function updateUndoBtn() {
   if (!state) return;
-  if (dom.undoBtn) dom.undoBtn.disabled = !state.history.canUndo();
-  if (dom.redoBtn) dom.redoBtn.disabled = !state.history.canRedo();
+  const blocked = !!aiAssistState || !!aiAssistAbort;
+  if (dom.undoBtn) dom.undoBtn.disabled = blocked || !state.history.canUndo();
+  if (dom.redoBtn) dom.redoBtn.disabled = blocked || !state.history.canRedo();
 }
 
 function updateAlignVisibility() {
@@ -2470,8 +2539,8 @@ function addLayerItem(
   }
   div.innerHTML = (source ? `<span class="fe-source-dot" title="${esc(source.label)}"></span>` : "") +
     `<span class="fe-li">${icon}</span><span class="fe-ln">${esc(label)}</span>` +
-    `<button class="fe-lbtn" data-flag="hidden" title="Скрыть/показать слой">${fl.hidden ? "🚫" : "👁"}</button>` +
-    `<button class="fe-lbtn" data-flag="locked" title="Залочить/разлочить">${fl.locked ? "🔒" : "🔓"}</button>`;
+    `<button class="fe-lbtn" data-flag="hidden" title="Скрыть/показать слой" aria-label="${fl.hidden ? "Показать слой" : "Скрыть слой"}" aria-pressed="${fl.hidden ? "true" : "false"}">${fl.hidden ? "🚫" : "👁"}</button>` +
+    `<button class="fe-lbtn" data-flag="locked" title="Залочить/разлочить" aria-label="${fl.locked ? "Разлочить слой" : "Залочить слой"}" aria-pressed="${fl.locked ? "true" : "false"}">${fl.locked ? "🔒" : "🔓"}</button>`;
   const selectLayer = (e: Pick<MouseEvent | KeyboardEvent, "target" | "shiftKey" | "ctrlKey" | "metaKey">) => {
     if (!state) return;
     const btn = (e.target as HTMLElement).closest("[data-flag]") as HTMLElement | null;
@@ -2537,6 +2606,7 @@ function activeSelectionNode(sel: GeoSel) {
 
 function finishResponsiveMutation() {
   if (!state) return;
+  persistDraft();
   state.sel = [];
   renderCanvas();
   renderLayers();
@@ -2600,7 +2670,8 @@ export function rerenderEditorCanvas() {
   if (!state || !dom.canvasInner) return;
   // Legacy token controls mutate their object before requesting a redraw.
   // Fingerprint-gated persistence converts that into a new Zustand identity.
-  persistDraft();
+  // AI preview must never write previewIr into the canonical draft.
+  if (!aiAssistState) persistDraft();
   const inner = dom.canvasInner;
   let canvasIr = buildActiveIR();
   if (aiAssistState?.previewIr) {
@@ -2659,10 +2730,40 @@ export function commitActiveIrEdits() {
 
 /* ---------- клавиатура ---------- */
 
+function dismissOpenOverlays(): boolean {
+  if (aiAssistAbort || aiAssistState) {
+    cancelAiAssist();
+    return true;
+  }
+  if (dom.dnaPanel?.classList.contains("open")) {
+    closeStyleDnaInspector();
+    return true;
+  }
+  const overlay = document.querySelector(
+    ".fe-smart-axis-card, .fe-quality-card, .fe-harmonize-card, .fe-responsive-card, .fe-locks-card, .fe-semantic-card",
+  );
+  if (!overlay) return false;
+  if (overlay.classList.contains("fe-smart-axis-card")) dismissSmartAxisProposal();
+  else if (overlay.classList.contains("fe-quality-card")) dismissQualityProposal();
+  else if (overlay.classList.contains("fe-harmonize-card")) dismissHarmonizerProposal();
+  else if (overlay.classList.contains("fe-responsive-card")) dismissResponsiveProposal();
+  else if (overlay.classList.contains("fe-locks-card")) closeIntentLocks();
+  else if (overlay.classList.contains("fe-semantic-card")) closeSemanticSelect();
+  return true;
+}
+
 export function onKeydown(e: KeyboardEvent) {
   if (!state) return;
   const ae = document.activeElement as HTMLElement | null;
-  if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return;
+  const typing = !!(ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)));
+  if (e.key === "Escape") {
+    e.preventDefault();
+    if (dismissOpenOverlays()) return;
+    if (state.geo && state.geo.consumeEscape()) return;
+    close();
+    return;
+  }
+  if (typing) return;
   if (e.key === "v" || e.key === "V" || e.key === "м" || e.key === "М") setTool("select");
   if (e.key === "h" || e.key === "H" || e.key === "р" || e.key === "Р") setTool("hand");
   if (e.key === "r" || e.key === "R" || e.key === "к" || e.key === "К") setTool("rect");
@@ -2671,6 +2772,12 @@ export function onKeydown(e: KeyboardEvent) {
   if (e.key === "o" || e.key === "O" || e.key === "щ" || e.key === "Щ") setTool("ellipse");
   if (e.key === "l" || e.key === "L" || e.key === "д" || e.key === "Д") setTool("line");
   if (e.key === "i" || e.key === "I" || e.key === "ш" || e.key === "Ш") setTool("image");
+  if (e.key === "]" || e.key === "ъ") { e.preventDefault(); handleAct("forward"); }
+  if (e.key === "[" || e.key === "х") { e.preventDefault(); handleAct("backward"); }
+  if ((e.key === "s" || e.key === "S" || e.key === "ы") && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    save();
+  }
   if ((e.key === "z" || e.key === "Z" || e.key === "я" || e.key === "Я") && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     if (e.shiftKey) redo(); else undo();
@@ -2678,12 +2785,6 @@ export function onKeydown(e: KeyboardEvent) {
   if ((e.key === "y" || e.key === "Y" || e.key === "н" || e.key === "Н") && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     redo();
-  }
-  // Esc: сначала отдаём GeoEdit (выход из контейнера / снятие выделения);
-  // закрываем редактор, только если geoedit событие не поглотил
-  if (e.key === "Escape") {
-    if (state.geo && state.geo.consumeEscape()) return;
-    close();
   }
 }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
-  import { flow } from "../flow/state";
+  import { flow, flowBusy } from "../flow/state";
   import type { DeriveFlowNode } from "../flow/types";
   import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
 import NodeShell from "./NodeShell.svelte";
@@ -11,7 +11,7 @@ import NodeShell from "./NodeShell.svelte";
 
   let { id, data, selected }: NodeProps<DeriveFlowNode> = $props();
 
-  let busy = $derived(!!$flow.busy[Number(id)]);
+  let busy = $derived(!!$flowBusy[Number(id)]);
   let activeIr = $derived(data.variants.length ? data.variants[data.active] || null : null);
 </script>
 
@@ -70,7 +70,7 @@ import NodeShell from "./NodeShell.svelte";
       → Editor
     </button>
   </div>
-  <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} onChange={(v) => $flow.setNodeData(Number(id), { designSystemSelection: v } as any)} />
+  <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} usageMode={(data as any).designSystemUsageMode || "strict"} fixtureProfile={(data as any).designSystemFixture || "typical"} onChange={(v, meta) => $flow.setNodeData(Number(id), { designSystemSelection: v, designSystemUsageMode: meta?.usageMode, designSystemFixture: meta?.fixtureProfile } as any)} />
   <NodeStatus {id} />
   <OutPorts type="derive" />
 </NodeShell>

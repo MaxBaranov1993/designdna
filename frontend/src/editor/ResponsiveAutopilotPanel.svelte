@@ -35,7 +35,7 @@
         <p>Импортированные pixel-faithful блоки не перестраиваются автоматически. Все решения применяются одной операцией и доступны через Undo.</p>
       {/if}
       <div class="fe-responsive-actions">
-        <button class="fe-btn" disabled={proposal.status === "loading"} onclick={() => ctl.dismissResponsiveProposal()}>Отмена</button>
+        <button class="fe-btn" data-act="dismiss-responsive-autopilot" onclick={() => ctl.dismissResponsiveProposal()}>Отмена</button>
         {#if proposal.status === "ready"}
           <button class="fe-btn primary" data-act="apply-responsive-autopilot" onclick={() => ctl.applyResponsiveProposal(proposal)}>Применить адаптив</button>
         {/if}

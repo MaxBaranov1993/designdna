@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
-  import { flow } from "../flow/state";
+  import { flow, flowBusy } from "../flow/state";
   import type {
     InteractionDraftEvent,
     InteractionDraftScene,
@@ -91,7 +91,7 @@
   let { id, data, selected }: NodeProps<RecorderFlowNode> = $props();
 
   let nodeId = $derived(Number(id));
-  let busy = $derived(Boolean($flow.busy[nodeId]));
+  let busy = $derived(Boolean($flowBusy[nodeId]));
   let typedValue = $state("");
   let scrollY = $state("640");
   let liveActions = $state<InteractionLiveAction[]>([]);

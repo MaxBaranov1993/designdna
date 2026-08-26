@@ -126,18 +126,27 @@ def main():
         pg.wait_for_timeout(200)
 
         # применяем
+        pg.wait_for_function("() => { const b = document.querySelector('[data-act=\"apply-style-dna\"]'); return b && !b.disabled; }")
         pg.click('[data-act="apply-style-dna"]')
         pg.wait_for_timeout(800)
 
         # проверяем что IR обновился
         bg = pg.evaluate(
-            "window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir.tree[0].children[1].style.background"
+            """() => {
+              const d = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data;
+              const ir = d._editorDraft?.ir || d.ir;
+              return ir.tree[0].children[1].style.background;
+            }"""
         )
         check("применение Style DNA меняет button background", bg == "#00aa00", str(bg))
 
         # проверяем что binding появился
         token = pg.evaluate(
-            "window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir.tree[0].children[1].styleBindings.background.token"
+            """() => {
+              const d = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data;
+              const ir = d._editorDraft?.ir || d.ir;
+              return ir.tree[0].children[1].styleBindings.background.token;
+            }"""
         )
         check("styleBinding указывает на semantic.primary", token == "semantic.primary", str(token))
 

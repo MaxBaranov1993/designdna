@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+body{margin:0;font-family:Arial;background:#fff}
+#probe{display:flex;gap:20px;padding:20px}
+.blur{filter:blur(2px)}
+.blended{mix-blend-mode:multiply;background:#ffdd00;width:80px;height:80px}
+.glass{backdrop-filter:blur(4px);background:rgba(255,255,255,.5);width:80px;height:80px}
+.crop{object-fit:cover;object-position:left top;width:80px;height:80px}
+.rtl{direction:rtl;width:120px}
+</style></head>
+<body><div id="probe">
+  <div class="blur"><b>blur text</b></div>
+  <div class="blended"></div>
+  <div class="glass"></div>
+  <img class="crop" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+  <div class="rtl"><span>مرحبا بالعالم</span></div>
+</div></body></html>

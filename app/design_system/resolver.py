@@ -4,6 +4,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .compiler import compile_profile, component_master_hash, component_shape_hash
+from .identity import ensure_identity, evaluate_identity
+
 MAX_COMPONENTS_IN_CONTEXT = 12
 
 _RELEVANT_WORDS = {
@@ -18,29 +21,99 @@ _RELEVANT_WORDS = {
     "feedback": ("уведомлен", "статус", "сообщен", "алерт", "toast"),
 }
 
+_COMPONENT_INTENT_WORDS = {
+    "service-card": ("service card", "service-card", "карточк", "услуг", "listing card"),
+    "button": ("button", "кнопк", "cta", "действи"),
+    "category-tile": ("category tile", "category-tile", "категор"),
+    "listing-section-header": ("listing header", "заголовок списка", "заголовок секции"),
+    "section-header": ("section header", "заголовок раздела"),
+    "trust-card": ("trust card", "довер", "безопасн"),
+    "process-step": ("process step", "шаг", "этап"),
+    "footer-navigation": ("footer", "футер", "подвал"),
+    "mobile-navigation-item": ("mobile navigation", "мобильн", "нижняя навигац"),
+    "header-actions": ("header actions", "действия шапки", "шапк"),
+}
+
+
+def component_relevance(component: dict, brief: str) -> int:
+    """Rank observed masters by explicit intent before compact prompt packing."""
+    brief_l = str(brief or "").lower()
+    category = str(component.get("category") or "")
+    name_l = str(component.get("name") or "").lower()
+    key_l = str(component.get("componentKey") or "").lower()
+    score = 0
+    for phrase in _COMPONENT_INTENT_WORDS.get(key_l, ()):
+        if phrase in brief_l:
+            score += 6
+    for word in _RELEVANT_WORDS.get(category, ()):
+        if word in brief_l:
+            score += 2
+    for token in re.findall(r"[a-zа-яё]{4,}", brief_l):
+        if token in name_l or token in key_l:
+            score += 3
+    if component.get("origin") == "observed":
+        score += 1
+    return score
+
+
+def primary_component_for_brief(context: dict, brief: str) -> dict | None:
+    """Return an unambiguous exact-master target for strict generation recovery."""
+    ranked = sorted(
+        [item for item in context.get("components") or [] if isinstance(item, dict)],
+        key=lambda item: component_relevance(item, brief),
+        reverse=True,
+    )
+    if not ranked or component_relevance(ranked[0], brief) < 6:
+        return None
+    top_score = component_relevance(ranked[0], brief)
+    second_score = component_relevance(ranked[1], brief) if len(ranked) > 1 else -1
+    return ranked[0] if top_score > second_score else None
+
+
+def _release_component(component: dict) -> bool:
+    origin = str(component.get("origin") or "")
+    master = component.get("masterIr")
+    if not isinstance(master, dict) or component.get("confirmed") is not True:
+        return False
+    if origin == "observed":
+        return component.get("status") == "verified"
+    return origin == "user"
+
+
+def fixture_for_component(document: dict, component: dict | None, profile: str) -> dict:
+    selected_profile = str(profile or "source")
+    if selected_profile == "source":
+        return {"id": "source", "schemaId": "", "profile": "source", "data": {}}
+    fixtures = ((document.get("mockData") or {}).get("fixtures") or {})
+    if isinstance(component, dict):
+        for binding in component.get("mockBindings") or []:
+            if not isinstance(binding, dict) or not binding.get("schemaId"):
+                continue
+            fixture = fixtures.get(f"{binding['schemaId']}:{selected_profile}")
+            if isinstance(fixture, dict):
+                return fixture
+    for fixture in fixtures.values():
+        if isinstance(fixture, dict) and fixture.get("profile") == selected_profile:
+            return fixture
+    return {"id": f"preview:{selected_profile}", "schemaId": "", "profile": selected_profile, "data": {}}
+
 
 def resolve_context(document: dict, brief: str, *, usage_mode: str = "strict",
-                    fixture_profile: str = "typical") -> dict:
+                    fixture_profile: str = "typical", component_key: str = "") -> dict:
     """Компактный resolved context (§20): без сериализации полного registry в промпт."""
-    components = [c for c in (document.get("components") or {}).values() if isinstance(c, dict)]
-    brief_l = str(brief or "").lower()
-
-    def relevance(comp: dict) -> int:
-        category = str(comp.get("category") or "")
-        name_l = str(comp.get("name") or "").lower()
-        key_l = str(comp.get("componentKey") or "").lower()
-        score = 0
-        for word in _RELEVANT_WORDS.get(category, ()):
-            if word in brief_l:
-                score += 2
-        for token in re.findall(r"[a-zа-яё]{4,}", brief_l):
-            if token in name_l or token in key_l:
-                score += 3
-        if comp.get("origin") == "observed":
-            score += 1
-        return score
-
-    ranked = sorted(components, key=relevance, reverse=True)[:MAX_COMPONENTS_IN_CONTEXT]
+    ensure_identity(document)
+    components = [
+        c for c in (document.get("components") or {}).values()
+        if isinstance(c, dict) and _release_component(c)
+    ]
+    ranked = sorted(
+        components,
+        key=lambda comp: (
+            str(comp.get("componentKey") or "") == component_key,
+            component_relevance(comp, brief),
+        ),
+        reverse=True,
+    )[:MAX_COMPONENTS_IN_CONTEXT]
     selected_keys = {c.get("componentKey") or "" for c in ranked}
 
     # замыкание зависимостей
@@ -53,54 +126,30 @@ def resolve_context(document: dict, brief: str, *, usage_mode: str = "strict",
                 seen.add(dep)
                 closure.append(by_key[dep])
 
-    fixture = None
-    for fix in ((document.get("mockData") or {}).get("fixtures") or {}).values():
-        if isinstance(fix, dict) and fix.get("profile") == fixture_profile:
-            fixture = fix
-            break
+    fixture = fixture_for_component(document, ranked[0] if ranked else None, fixture_profile)
 
     return {
         "systemRef": {"systemId": document.get("id"), "revision": document.get("revision"), "contentHash": document.get("contentHash")},
         "foundations": document.get("foundations") or {},
         "components": closure,
         "patterns": list((document.get("patterns") or {}).keys()),
+        "identity": document.get("identity") or {},
+        "identityTests": document.get("identityTests") or [],
+        "reconstruction": document.get("reconstruction") or {},
         "fixture": fixture,
         "constraints": {"usageMode": usage_mode},
     }
 
 
-def compact_prompt_block(context: dict) -> str:
-    """Компактное текстовое представление для системного промпта (не весь документ)."""
-    foundations = context.get("foundations") or {}
-    colors = (foundations.get("colors") or {}).get("semantic") or {}
-    typo = foundations.get("typography") or {}
-    spacing = foundations.get("spacing") or {}
-    radii = foundations.get("radii") or []
-    mode = (context.get("constraints") or {}).get("usageMode") or "strict"
+def compiled_context(context: dict, *, brief: str = "", archetype_id: str = "",
+                     token_budget: int = 1200) -> dict:
+    return compile_profile(context, brief=brief, archetype_id=archetype_id,
+                           token_budget=token_budget)
 
-    lines = [
-        "DESIGN SYSTEM CONTEXT (use it as the source of truth):",
-        f"- Semantic colors: {json_compact(colors)}",
-        f"- Font families: {', '.join(typo.get('families') or []) or 'as in tokens'}; weights {typo.get('weights')}",
-        f"- Spacing scale: {json_compact(spacing)}; radii: {radii}",
-        f"- Usage mode: {mode}",
-    ]
-    comps = context.get("components") or []
-    if comps:
-        lines.append(f"- Registered components ({len(comps)}):")
-        for comp in comps[:MAX_COMPONENTS_IN_CONTEXT]:
-            props = ", ".join((comp.get("propsSchema") or {}).keys()) or "-"
-            lines.append(f"  * {comp.get('componentKey')} [{comp.get('category')}] props: {props}")
-    if mode == "strict":
-        lines.append("- STRICT: compose ONLY from the registered components above; new colors/fonts/radii are FORBIDDEN; adapt content through props.")
-    elif mode == "extend":
-        lines.append("- EXTEND: prefer registered components; a missing one may be created locally (mark it provisional); new tokens need a reason.")
-    else:
-        lines.append("- STYLE ONLY: follow foundations (colors/type/spacing/radii); component registry is optional.")
-    fixture = context.get("fixture")
-    if fixture:
-        lines.append(f"- Mock fixture ({fixture.get('profile')}): {json_compact(fixture.get('data'))[:600]}")
-    return "\n".join(lines)
+
+def compact_prompt_block(context: dict) -> str:
+    """Compatibility wrapper around the deterministic budgeted compiler."""
+    return compiled_context(context)["promptBlock"]
 
 
 def json_compact(value: Any) -> str:
@@ -120,7 +169,12 @@ def validate_generation(ir: dict, context: dict) -> dict:
     allowed_colors = {str(v).lower() for v in {**semantic, **primitives}.values() if isinstance(v, str)}
     families = {f.lower() for f in (foundations.get("typography") or {}).get("families") or []}
     radii = {round(float(r)) for r in (foundations.get("radii") or [])}
-    registered = {str(c.get("componentKey")) for c in context.get("components") or []}
+    registered = {
+        str(c.get("componentKey")): c
+        for c in context.get("components") or []
+        if isinstance(c, dict) and c.get("componentKey")
+    }
+    system_ref = context.get("systemRef") or {}
 
     def walk(node: dict, section: str):
         style = node.get("style") or {}
@@ -155,10 +209,74 @@ def validate_generation(ir: dict, context: dict) -> dict:
             ref = ((node.get("sourceMeta") or {}).get("componentRef")) if isinstance(node.get("sourceMeta"), dict) else None
             if ref:
                 refs.append(ref)
-                if mode == "strict" and str(ref.get("componentKey")) not in registered:
-                    errors.append({"code": "unregistered-component", "message": f"Компонент {ref.get('componentKey')} не зарегистрирован в системе (Strict)"})
+                if mode == "strict":
+                    key = str(ref.get("componentKey") or "") if isinstance(ref, dict) else ""
+                    component = registered.get(key)
+                    if component is None:
+                        errors.append({"code": "unregistered-component", "message": f"Компонент {key or 'без ключа'} не зарегистрирован в системе (Strict)"})
+                    else:
+                        expected = {
+                            "systemId": str(system_ref.get("systemId") or ""),
+                            "revision": int(system_ref.get("revision") or 0),
+                            "masterHash": component_master_hash(component),
+                        }
+                        try:
+                            actual_revision = int(ref.get("revision") or 0) if isinstance(ref, dict) else 0
+                        except (TypeError, ValueError):
+                            actual_revision = -1
+                        if (str(ref.get("systemId") or "") != expected["systemId"]
+                                or actual_revision != expected["revision"]
+                                or str(ref.get("masterHash") or "") != expected["masterHash"]):
+                            errors.append({
+                                "code": "stale-component-ref",
+                                "message": f"Компонент {key}: componentRef не совпадает с закреплённым exact master",
+                            })
+                        else:
+                            master_tree = ((component.get("masterIr") or {}).get("tree") or [])
+                            master_root = master_tree[0] if master_tree and isinstance(master_tree[0], dict) else {}
+                            if component_shape_hash(node) != component_shape_hash(master_root):
+                                errors.append({
+                                    "code": "mutated-exact-master",
+                                    "message": f"Компонент {key}: изменены geometry/styles/hierarchy exact master",
+                                })
             stack.extend(node.get("children") or [])
 
     if mode == "strict" and not refs and (context.get("components") or []):
-        warnings.append({"code": "no-component-refs", "message": "Результат не ссылается на компоненты системы — композиция не из registry"})
-    return {"errors": errors[:20], "warnings": warnings[:20], "componentRefs": refs}
+        errors.append({"code": "no-component-refs", "message": "Strict-результат не ссылается на exact masters системы"})
+    if mode == "strict" and (context.get("components") or []):
+        def validate_coverage(node: dict, *, top_level: bool = False) -> None:
+            if not isinstance(node, dict):
+                return
+            source_meta = node.get("sourceMeta") if isinstance(node.get("sourceMeta"), dict) else {}
+            if source_meta.get("componentRef"):
+                # The referenced subtree is checked against its exact master
+                # above, so every descendant is covered by the same instance.
+                return
+            children = node.get("children") if isinstance(node.get("children"), list) else []
+            neutral_wrapper = (
+                top_level
+                and node.get("type") == "source-block"
+                and node.get("variant") == "component-master"
+                and not (node.get("props") or {})
+                and not (node.get("style") or {})
+                and bool(children)
+            )
+            if neutral_wrapper:
+                for child in children:
+                    validate_coverage(child)
+                return
+            errors.append({
+                "code": "unregistered-visual-node",
+                "message": f"Strict: узел {node.get('type') or 'unknown'} не покрыт exact master",
+            })
+
+        for section in ir.get("tree") or []:
+            validate_coverage(section, top_level=True)
+    identity_report = evaluate_identity(
+        ir, context.get("identity") or {}, context.get("identityTests") or [], foundations)
+    for failure in identity_report["hardFailures"]:
+        errors.append({"code": failure["id"], "message": failure["message"]})
+    for failure in identity_report["softFailures"]:
+        warnings.append({"code": failure["id"], "message": failure["message"]})
+    return {"errors": errors[:20], "warnings": warnings[:20], "componentRefs": refs,
+            "identity": identity_report}

@@ -2,7 +2,7 @@
   import { Handle, Position } from "@xyflow/svelte";
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
-  import { flow } from "../flow/state";
+  import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { MixFlowNode } from "../flow/types";
   import { cn } from "../lib/utils";
@@ -16,7 +16,7 @@
    * POST /api/mix с нормированными весами (payload — зеркало runMix, nodes.js:815-836). */
   let { id, data, selected }: NodeProps<MixFlowNode> = $props();
 
-  let busy = $derived(!!$flow.busy[Number(id)]);
+  let busy = $derived(!!$flowBusy[Number(id)]);
 </script>
 
 <NodeShell {id} type="mix" {selected}>

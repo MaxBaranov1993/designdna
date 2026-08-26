@@ -40,7 +40,7 @@
         <p>AI показывает результат до изменения. Автоисправление не меняет контент и откатывается через Undo.</p>
       {/if}
       <div class="fe-quality-actions">
-        <button class="fe-btn" disabled={proposal.status === "loading"} onclick={() => ctl.dismissQualityProposal()}>Закрыть</button>
+        <button class="fe-btn" data-act="dismiss-quality-gate" onclick={() => ctl.dismissQualityProposal()}>Закрыть</button>
         {#if proposal.status === "ready" && fixCount > 0}
           <button class="fe-btn primary" data-act="apply-quality-fixes" onclick={() => ctl.applyQualityProposal(proposal)}>Исправить {fixCount}</button>
         {/if}

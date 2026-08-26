@@ -196,7 +196,7 @@ def main():
 
         pg.click(".svelte-flow__pane", button="right", position={"x": 520, "y": 100})
         pg.wait_for_selector("#ctx-menu")
-        check("menu has 14 current node types", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
+        check("menu has 15 current node types", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 15"))
         check("old nodes are removed from menu", pg.locator("#ctx-menu .ctx-item[data-type='clone']").count() == 0
               and pg.locator("#ctx-menu .ctx-item[data-type='reproduce']").count() == 0
               and pg.locator("#ctx-menu .ctx-item[data-type='blockparse']").count() == 0)
@@ -219,7 +219,7 @@ def main():
               pg.locator(".n-generator .f-provider-select option:checked").inner_text().strip() == "Auto · server routing")
         check("Browser Generator offers only portable routes",
               pg.locator(".n-generator .f-provider-select option").evaluate_all(
-                  "els => els.map(e => e.value)") == ["auto", "kimi", "openai", "glm"])
+                  "els => els.map(e => e.value)") == ["auto", "kimi", "openai", "glm", "zai", "grok", "zcode"])
         check("New browser Generator stores auto",
               pg.evaluate("""(() => {
                   const n = window.GraphDev.state().nodes.find(x => x.type === 'generator');

@@ -45,7 +45,7 @@
         {/each}
       </div>
       <div class="fe-locks-actions">
-        <button class="fe-btn" onclick={() => ctl.closeIntentLocks()}>Отмена</button>
+        <button class="fe-btn" data-act="dismiss-intent-locks" onclick={() => ctl.closeIntentLocks()}>Отмена</button>
         <button class="fe-btn primary" data-act="apply-intent-locks" onclick={() => ctl.setIntentLocks(locks)}>Сохранить блокировки</button>
       </div>
     </div>

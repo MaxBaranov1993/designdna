@@ -11,7 +11,7 @@
   import { onMount, tick } from "svelte";
 
   import { CTX_ITEMS, NODE_DEFS, portsOfNode } from "./flow/ports";
-  import { flow } from "./flow/state";
+  import { flow, flowActivePageId, flowEdges, flowNodes } from "./flow/state";
   import { useFlowStore } from "./flow/store";
   import { setReactFlowInstance } from "./flow/graphdev";
   import { reachable } from "./flow/dataflow";
@@ -78,14 +78,16 @@ import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
     return () => setReactFlowInstance(null);
   });
 
-  // zustand → канвас (bind:nodes/edges зеркалят стор)
+  // zustand → канвас (bind:nodes/edges зеркалят стор). Подписка срезами:
+  // runtime-обновления busy/statuses чужих нод не будят этот эффект.
   $effect(() => {
     // During a drag the bound Svelte Flow array is the presentation state.
     // Pulling the older persisted array back here would pin the node in place.
     if (nodeDragActive) return;
-    const s = $flow;
-    if (nodes !== s.nodes) nodes = s.nodes;
-    if (edges !== s.edges) edges = s.edges;
+    const nextNodes = $flowNodes;
+    const nextEdges = $flowEdges;
+    if (nodes !== nextNodes) nodes = nextNodes;
+    if (edges !== nextEdges) edges = nextEdges;
   });
 
   // канвас → zustand (drag/select/remove применены библиотекой к массивам)
@@ -155,7 +157,7 @@ import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
   // иначе setViewport → onmoveend → setView зациклит эффект)
   let lastPageId: string | null = null;
   $effect(() => {
-    const pid = $flow.activePageId;
+    const pid = $flowActivePageId;
     if (pid === lastPageId) return;
     lastPageId = pid;
     void rf.setViewport(useFlowStore.getState().view);

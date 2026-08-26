@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
-  import { flow } from "../flow/state";
+  import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { QualityPassFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
@@ -13,7 +13,7 @@
    * необходимости выполняет адресный repair и повторно оценивает IR. */
   let { id, data, selected }: NodeProps<QualityPassFlowNode> = $props();
 
-  let busy = $derived(!!$flow.busy[Number(id)]);
+  let busy = $derived(!!$flowBusy[Number(id)]);
   let result = $derived(
     data.result as {
       passed?: boolean;

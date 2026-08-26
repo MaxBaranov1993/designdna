@@ -90,7 +90,7 @@ import ColorPicker from "./ColorPicker.svelte";
   const textColor = hex(style.color, "#111111");
   const savedAiForm = ctl.getAiAssistFormState();
   let scopeMode = $state<AssistScopeMode>(sels.length > 1 ? (ctl.hasExplicitAiAssistScopeMode() ? savedAiForm.scopeMode : "selection") : "single");
-  let provider = $state<string>(["auto", "codex", "kimi", "openai", "glm", "zcode"].includes(String(savedAiForm.provider)) ? String(savedAiForm.provider) : "auto");
+  let provider = $state<string>(["auto", "codex", "kimi", "openai", "glm", "zai", "grok", "zcode"].includes(String(savedAiForm.provider)) ? String(savedAiForm.provider) : "auto");
   let dsSelection = $state<string>((savedAiForm as any).designSystemSelection || "inherit");
   const desktopAssist = typeof window !== "undefined" && !!window.designDNA?.providers;
   let prompt = $state(savedAiForm.prompt);
@@ -129,7 +129,7 @@ import ColorPicker from "./ColorPicker.svelte";
         <button aria-pressed={scopeMode === "single"} class:active={scopeMode === "single"} onclick={() => { scopeMode = "single"; ctl.setAiAssistScopeMode(scopeMode); }}>Один</button>
         <button aria-pressed={scopeMode === "selection"} class:active={scopeMode === "selection"} onclick={() => { scopeMode = "selection"; ctl.setAiAssistScopeMode(scopeMode); }}>Группа</button>
       {/if}
-      <button aria-pressed={scopeMode === "document"} class:active={scopeMode === "document"} title="AI изменит все секции артборда в одном согласованном проходе" onclick={() => { scopeMode = scopeMode === "document" ? (sels.length > 1 ? "selection" : "single") : "document"; }}>Вся страница</button>
+      <button aria-pressed={scopeMode === "document"} class:active={scopeMode === "document"} title="AI изменит все секции артборда в одном согласованном проходе" onclick={() => { scopeMode = scopeMode === "document" ? (sels.length > 1 ? "selection" : "single") : "document"; ctl.setAiAssistScopeMode(scopeMode); }}>Вся страница</button>
     </div>
   </section>
   <div class="ai-provider-row" aria-label="Модель">
@@ -139,8 +139,10 @@ import ColorPicker from "./ColorPicker.svelte";
       {#if desktopAssist}<option value="codex">GPT Codex · ChatGPT</option>{/if}
       <option value="kimi">Kimi K3</option>
       <option value="openai">GPT-5.6-sol</option>
-      <option value="glm">GLM-5.3</option>
-      <option value="zcode">GLM · ZCode (без ключа)</option>
+      <option value="glm">GLM-5.3 · Zhipu</option>
+      <option value="zai">GLM-5.3 · Z.AI</option>
+      <option value="grok">Grok 4.6 · xAI</option>
+      <option value="zcode">GLM · ZCode (явный ZCODE_CLI)</option>
     </select>
   </div>
   <div class="ai-scope-list" aria-label="Элементы для AI">
@@ -153,7 +155,7 @@ import ColorPicker from "./ColorPicker.svelte";
     <div class="ai-scope-warning">Контейнер «{scope.excluded.map((item) => item.label).join(", ")}» исключён: выбрана вложенная часть.</div>
   {/if}
 
-  <div class="ai-ds-row"><DesignSystemPicker selection={dsSelection} onChange={(v) => { dsSelection = v; ctl.setAiAssistFormState({ designSystemSelection: v } as any); }} /></div>
+  <div class="ai-ds-row"><DesignSystemPicker selection={dsSelection} usageMode={((savedAiForm as any).designSystemUsageMode || "strict")} onChange={(v, meta) => { dsSelection = v; ctl.setAiAssistFormState({ designSystemSelection: v, designSystemUsageMode: meta?.usageMode } as any); }} /></div>
   <section class="ai-command-card">
     <div class="ai-command-title"><span class="ai-spark">✦</span><div><strong>Что изменить?</strong><small>Сначала покажу результат. Вы решаете, применять ли его.</small></div></div>
     <textarea bind:value={prompt} oninput={() => ctl.setAiAssistFormState({ prompt })} disabled={busy || !!preview} placeholder="Например: сделай карточку компактнее и легче" aria-label="Задача для AI"></textarea>
@@ -165,11 +167,12 @@ import ColorPicker from "./ColorPicker.svelte";
       <label><input type="checkbox" bind:checked={allowColor} disabled={isScalarProp} onchange={() => ctl.setAiAssistFormState({ constraints: { allowColor } as any })} /> Цвета</label>
     </fieldset>
     {#if isScalarProp}<small>Для этого текстового свойства AI меняет только текст.</small>{:else}<div class="ai-quick-row">{#each QUICK as item (item.action)}<button disabled={busy || !!preview || (scopeMode !== "document" && !scope.items.length)} onclick={() => run(item.action, item.prompt)}>{item.label}</button>{/each}</div>{/if}
-    <button class="ai-run" disabled={busy || !!preview || !prompt.trim() || (scopeMode !== "document" && !scope.items.length)} onclick={() => run("custom", prompt)}>{busy ? `AI работает · ${elapsedLabel(elapsedSeconds)}` : "Показать результат"}</button>
+    <button class="ai-run" data-ai-run aria-busy={busy} disabled={busy || !!preview || !prompt.trim() || (scopeMode !== "document" && !scope.items.length)} onclick={() => run("custom", prompt)}>{busy ? `AI работает · ${elapsedLabel(elapsedSeconds)}` : "Показать результат"}</button>
     {#if busy && progress}
       <div class="ai-progress" data-ai-progress={progress.stage} role="status" aria-live="polite">
         <span class="ai-progress-spinner" aria-hidden="true"></span>
         <div><strong>{progress.label}</strong><small>{elapsedSeconds >= 90 ? "Ответ занимает дольше обычного, но запрос ещё активен" : "Запрос активен · обычно 20–120 секунд"}</small></div>
+        <button type="button" class="ai-progress-cancel" data-ai-cancel aria-label="Отменить запрос AI" onclick={ctl.cancelAiAssist}>Отменить</button>
       </div>
     {/if}
     {#if error}<div class="ai-error" role="alert">{error}</div>{/if}
@@ -187,7 +190,7 @@ import ColorPicker from "./ColorPicker.svelte";
         {#if highImpact}
           <div class="ai-impact" role="alert"><strong>Много изменений</strong><span>Проверьте подсвеченные объекты и список перед применением.</span><label><input type="checkbox" bind:checked={confirmed} /> Я проверил изменения</label></div>
         {/if}
-        <div class="ai-preview-actions"><button data-ai-cancel onclick={ctl.cancelAiAssist}>Отменить</button><button class="primary" data-ai-apply disabled={!preview.ops.length || (highImpact && !confirmed)} onclick={ctl.applyAiAssist}>Применить</button></div>
+        <div class="ai-preview-actions"><button data-ai-cancel aria-label="Отменить предпросмотр AI" onclick={ctl.cancelAiAssist}>Отменить</button><button class="primary" data-ai-apply aria-label="Применить правки AI" disabled={!preview.ops.length || (highImpact && !confirmed)} onclick={ctl.applyAiAssist}>Применить</button></div>
       </div>
     {/if}
   </section>
@@ -199,16 +202,16 @@ import ColorPicker from "./ColorPicker.svelte";
         {#if isFormField}<div class="manual-group field-content"><span class="manual-label">Группа поля</span><p>Выберите вложенную подпись или поле ввода на холсте либо в слоях.</p></div>{/if}
         <div class="manual-group"><span class="manual-label">Position</span>
           <div class="pi-row">
-            <div class="pi-field"><label title="Тяни горизонтально — scrub; можно выражения: 100*2">X</label><input type="text" inputMode="decimal" data-pi="x" value={frame.x ?? ""} disabled={isRootSel} /></div>
-            <div class="pi-field"><label title="Тяни горизонтально — scrub; можно выражения: 100*2">Y</label><input type="text" inputMode="decimal" data-pi="y" value={frame.y ?? ""} disabled={isRootSel} /></div>
+            <div class="pi-field"><label for="pi-frame-x" title="Тяни горизонтально — scrub; можно выражения: 100*2">X</label><input id="pi-frame-x" type="text" inputMode="decimal" data-pi="x" value={frame.x ?? ""} disabled={isRootSel} /></div>
+            <div class="pi-field"><label for="pi-frame-y" title="Тяни горизонтально — scrub; можно выражения: 100*2">Y</label><input id="pi-frame-y" type="text" inputMode="decimal" data-pi="y" value={frame.y ?? ""} disabled={isRootSel} /></div>
           </div>
           <div class="pi-row">
-            <div class="pi-field"><label title="Можно выражения: 960/3">W</label><input type="text" inputMode="decimal" data-pi="width" value={frame.width ?? ""} /></div>
-            <div class="pi-field"><label title="Можно выражения: 960/3">H</label><input type="text" inputMode="decimal" data-pi="height" value={frame.height ?? ""} /></div>
+            <div class="pi-field"><label for="pi-frame-width" title="Можно выражения: 960/3">W</label><input id="pi-frame-width" type="text" inputMode="decimal" data-pi="width" value={frame.width ?? ""} /></div>
+            <div class="pi-field"><label for="pi-frame-height" title="Можно выражения: 960/3">H</label><input id="pi-frame-height" type="text" inputMode="decimal" data-pi="height" value={frame.height ?? ""} /></div>
           </div>
           <div class="pi-row">
-            <div class="pi-field"><label>R</label><input type="text" inputMode="decimal" data-pi="rotation" value={frame.rotation ?? ""} disabled={isRootSel} /></div>
-            <div class="pi-field"><label>Gap</label><input type="text" inputMode="decimal" data-pi="gap" value={typeof frame.gap === "number" ? frame.gap : ""} /></div>
+            <div class="pi-field"><label for="pi-frame-rotation">R</label><input id="pi-frame-rotation" type="text" inputMode="decimal" data-pi="rotation" value={frame.rotation ?? ""} disabled={isRootSel} /></div>
+            <div class="pi-field"><label for="pi-frame-gap">Gap</label><input id="pi-frame-gap" type="text" inputMode="decimal" data-pi="gap" value={typeof frame.gap === "number" ? frame.gap : ""} /></div>
           </div>
           {#if !isRootSel}
             <div class="pi-row"><label class="pi-check"><input type="checkbox" data-pi="absolute" checked={!!frame.absolute} /> Absolute</label></div>
@@ -236,11 +239,11 @@ import ColorPicker from "./ColorPicker.svelte";
         {#if isFormControl}<div class="manual-group field-content"><span class="manual-label">Поле ввода</span><label><span>Подсказка</span><input data-el-prop="placeholder" value={node.placeholder ?? formField.placeholder ?? ""} /></label></div>{/if}
         {#if isFormSubmit}<div class="manual-group field-content"><span class="manual-label">Кнопка формы</span><label><span>Текст</span><input data-el-prop="text" value={node.text ?? sess?.ir?.tree?.[first.ref.secIdx!]?.props?.submitText ?? "Отправить"} /></label></div>{/if}
         <div class="manual-group"><span class="manual-label">Align</span><div class="align-grid">
-          <button data-act="align-left" title="По левому краю">⇤</button><button data-act="align-center-h" title="По центру горизонтали">↔</button><button data-act="align-right" title="По правому краю">⇥</button>
-          <button data-act="align-top" title="По верхнему краю">↥</button><button data-act="align-center-v" title="По центру вертикали">↕</button><button data-act="align-bottom" title="По нижнему краю">↧</button>
-          <button data-act="distribute-h" title="Распределить по горизонтали" disabled={sels.length < 3}>↹</button><button data-act="distribute-v" title="Распределить по вертикали" disabled={sels.length < 3}>⇕</button>
+          <button data-act="align-left" title="По левому краю" aria-label="По левому краю">⇤</button><button data-act="align-center-h" title="По центру горизонтали" aria-label="По центру горизонтали">↔</button><button data-act="align-right" title="По правому краю" aria-label="По правому краю">⇥</button>
+          <button data-act="align-top" title="По верхнему краю" aria-label="По верхнему краю">↥</button><button data-act="align-center-v" title="По центру вертикали" aria-label="По центру вертикали">↕</button><button data-act="align-bottom" title="По нижнему краю" aria-label="По нижнему краю">↧</button>
+          <button data-act="distribute-h" title="Распределить по горизонтали" aria-label="Распределить по горизонтали" disabled={sels.length < 3}>↹</button><button data-act="distribute-v" title="Распределить по вертикали" aria-label="Распределить по вертикали" disabled={sels.length < 3}>⇕</button>
         </div></div>
-        <div class="manual-group"><span class="manual-label">Merge</span><div class="merge-row"><button data-act="group" disabled={sels.length < 2}>Объединить</button><button data-act="ungroup" disabled={!canUngroup}>Разъединить</button></div></div>
+        <div class="manual-group"><span class="manual-label">Merge</span><div class="merge-row"><button data-act="group" disabled={sels.length < 2} aria-label="Объединить">Объединить</button><button data-act="ungroup" disabled={!canUngroup} aria-label="Разъединить">Разъединить</button></div></div>
         <div class="manual-group"><span class="manual-label">Padding</span><div class="padding-grid">{#each ["T", "R", "B", "L"] as label, index}<label><span>{label}</span><input data-padding={label.toLowerCase()} type="number" min="0" value={padding[index]} onchange={(event) => setPadding(index, event)} /></label>{/each}</div></div>
         <div class="manual-group"><span class="manual-label">Цвета</span><div class="manual-color"><ColorPicker styleKey="background" label="Заливка" hex={fill} raw={style.background || node.fill || ""} transparent={!style.background && !node.fill} /></div><div class="manual-color"><ColorPicker styleKey="color" label="Текст" hex={textColor} raw={style.color || ""} transparent={!style.color} /></div></div>
         <div class="manual-group"><span class="manual-label">Шрифт</span><label class="font-family"><span>Семейство</span><select data-style-select="fontFamily" value={style.fontFamily || ""}><FontOptions autoLabel="Как в теме" /></select></label><div class="font-pair"><label><span>Размер</span><input type="number" min="1" data-style-num="fontSize" value={typeof style.fontSize === "number" ? style.fontSize : ""} placeholder="auto" /></label><label><span>Вес</span><input type="number" min="100" max="900" step="100" data-style-num="fontWeight" value={typeof style.fontWeight === "number" ? style.fontWeight : ""} placeholder="auto" /></label></div></div>

@@ -87,6 +87,104 @@ def test_project_save_load_and_taste(tmp_path: Path) -> None:
         project_store.DB_PATH = old_db
 
 
+def test_http_save_supports_cas_and_load_returns_revision(tmp_path: Path) -> None:
+    old_db = project_store.DB_PATH
+    project_store.DB_PATH = tmp_path / "projects.db"
+    payload = {
+        "version": "designai-pages-v1",
+        "activePageId": "page-1",
+        "pages": [
+            {"id": "page-1", "name": "Home", "graph": {"nodes": [], "edges": [], "view": {"x": 0, "y": 0, "zoom": 1}, "nextId": 1}}
+        ],
+        "channels": {},
+    }
+    try:
+        # load пустого проекта отдаёт ревизию-заглушку
+        empty = server.project_load(server.ProjectLoadReq())
+        check("empty load has revision", empty["revision"] is project_store.EMPTY_REVISION, str(empty))
+        # сохранение без expectedRevision — прежнее поведение
+        plain = server.project_save(server.ProjectSaveReq(project=payload))
+        check("plain save ok", plain["ok"] is True and plain.get("revision"), json.dumps(plain))
+
+        loaded = server.project_load(server.ProjectLoadReq())
+        revision = loaded["revision"]
+        check("load returns stored revision", isinstance(revision, str) and revision != project_store.EMPTY_REVISION)
+
+        # CAS по актуальной ревизии проходит
+        payload["pages"][0]["name"] = "Landing"
+        cas = server.project_save(server.ProjectSaveReq(project=payload, expectedRevision=revision))
+        check("cas save ok", cas["ok"] is True and cas.get("stale") is False, json.dumps(cas))
+
+        # CAS по устаревшей ревизии — 409 stale с текущей ревизией в теле
+        stale = server.project_save(server.ProjectSaveReq(project=payload, expectedRevision=revision))
+        check("stale save returns 409", getattr(stale, "status_code", None) == 409, str(stale))
+        stale_body = json.loads(stale.body)
+        check("stale body carries current revision", stale_body.get("stale") is True and stale_body.get("revision"))
+    finally:
+        project_store.DB_PATH = old_db
+
+
+def test_prompt_events_keep_hashes_and_deduplicate(tmp_path: Path) -> None:
+    old_db = project_store.DB_PATH
+    project_store.DB_PATH = tmp_path / "projects.db"
+    payload = {
+        "version": "designai-pages-v1",
+        "activePageId": "page-1",
+        "pages": [
+            {
+                "id": "page-1",
+                "name": "Home",
+                "graph": {
+                    "nodes": [
+                        {"id": 1, "type": "prompt", "data": {"text": "same prompt", "brief": "brief one"}},
+                        {"id": 2, "type": "prompt", "data": {"text": "same prompt"}},
+                        {"id": 3, "type": "edit", "data": {"prompt": "second prompt"}},
+                    ],
+                    "edges": [],
+                    "view": {"x": 0, "y": 0, "zoom": 1},
+                    "nextId": 4,
+                },
+            }
+        ],
+        "channels": {},
+    }
+    expected_bodies = [
+        {"nodeType": "prompt", "field": "text", "text": "same prompt"},
+        {"nodeType": "prompt", "field": "brief", "text": "brief one"},
+        {"nodeType": "edit", "field": "prompt", "text": "second prompt"},
+    ]
+    expected = {
+        project_store.revision_of_raw(json.dumps(body, ensure_ascii=False, sort_keys=True)): body
+        for body in expected_bodies
+    }
+    try:
+        first = project_store.save_project(payload)
+        with project_store._db() as con:
+            first_rows = con.execute(
+                "SELECT event_hash, payload, created_at FROM taste_events "
+                "WHERE user_id=? AND project_id=? ORDER BY event_hash",
+                (project_store.DEFAULT_USER_ID, project_store.DEFAULT_PROJECT_ID),
+            ).fetchall()
+
+        check("prompt events save unique hashes", first["ok"] is True and len(first_rows) == len(expected))
+        check(
+            "prompt event bodies preserve hash contract",
+            all(json.loads(body) == expected[event_hash] for event_hash, body, _ in first_rows),
+        )
+
+        payload["pages"][0]["name"] = "Renamed"
+        second = project_store.save_project(payload)
+        with project_store._db() as con:
+            second_rows = con.execute(
+                "SELECT event_hash, payload, created_at FROM taste_events "
+                "WHERE user_id=? AND project_id=? ORDER BY event_hash",
+                (project_store.DEFAULT_USER_ID, project_store.DEFAULT_PROJECT_ID),
+            ).fetchall()
+        check("repeated prompt events stay deduplicated", second["ok"] is True and second_rows == first_rows)
+    finally:
+        project_store.DB_PATH = old_db
+
+
 def test_generate_receives_taste_memory(tmp_path: Path) -> None:
     old_db = project_store.DB_PATH
     old_chat = server.llm.chat

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
-  import { flow } from "../flow/state";
+  import { flow, flowBusy } from "../flow/state";
   import type { MotionFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -12,7 +12,7 @@
   let { id, data, selected }: NodeProps<MotionFlowNode> = $props();
 
   let nodeId = $derived(Number(id));
-  let busy = $derived(Boolean($flow.busy[nodeId]));
+  let busy = $derived(Boolean($flowBusy[nodeId]));
   let open = $state(false);
   let MotionWorkspace = $state<any>(null);
   let scenes = $derived(scenesOf(data));

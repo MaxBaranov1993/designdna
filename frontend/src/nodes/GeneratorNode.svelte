@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
-  import { flow } from "../flow/state";
+  import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
 import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   import type { GeneratorFlowNode } from "../flow/types";
@@ -24,13 +24,13 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
 
   let { id, data, selected }: NodeProps<GeneratorFlowNode> = $props();
 
-  let busy = $derived(!!$flow.busy[Number(id)]);
+  let busy = $derived(!!$flowBusy[Number(id)]);
   let activeIr = $derived(data.variants.length ? data.variants[data.active] || null : null);
   const desktop = typeof window !== "undefined" && !!window.designDNA;
   let provider = $derived(
     desktop
-      ? ["auto", "codex", "kimi", "openai", "glm"].includes(data.provider) ? data.provider : "codex"
-      : ["kimi", "openai", "glm"].includes(data.provider) ? data.provider : "auto",
+      ? ["auto", "codex", "kimi", "openai", "glm", "zai", "grok"].includes(data.provider) ? data.provider : "codex"
+      : ["kimi", "openai", "glm", "zai", "grok"].includes(data.provider) ? data.provider : "auto",
   );
   let count = $derived(Math.max(1, Math.min(2, Number(data.count) || 1)));
 </script>
@@ -63,7 +63,9 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
       <option value="kimi">Kimi K3 · аккаунт</option>
       <option value="openai">GPT-5.6-sol · OpenAI API</option>
       <option value="glm">GLM-5.3 · Zhipu API</option>
-      <option value="zcode">GLM · ZCode (без ключа)</option>
+      <option value="zai">GLM-5.3 · Z.AI API</option>
+      <option value="grok">Grok 4.6 · xAI API</option>
+      <option value="zcode">GLM · ZCode (явный ZCODE_CLI)</option>
     </select>
   </div>
   <div class="ctl-row">
@@ -122,13 +124,22 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
     </div>
   {/if}
   <IrPreview class="f-preview" ir={activeIr} height={180} empty="Варианты появятся после запуска" />
-  <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} onChange={(v) => $flow.setNodeData(Number(id), { designSystemSelection: v } as any)} />
+  <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} usageMode={(data as any).designSystemUsageMode || "strict"} fixtureProfile={(data as any).designSystemFixture || "typical"} onChange={(v, meta) => $flow.setNodeData(Number(id), { designSystemSelection: v, designSystemUsageMode: meta?.usageMode, designSystemFixture: meta?.fixtureProfile } as any)} />
   <div class="gen-actions">
     <button class="btn-node small f-to-editor nodrag" onclick={() => $flow.sendToNode(Number(id), "edit")}>
       → Editor
     </button>
     <button class="btn-node small f-to-reference nodrag" onclick={() => $flow.sendToNode(Number(id), "reference")}>
       → Reference
+    </button>
+    <button class="btn-node small nodrag" disabled={busy || !activeIr} onclick={() => void $flow.recordVariantTaste(Number(id), "accepted")}>
+      ✓ Принять
+    </button>
+    <button class="btn-node small nodrag" disabled={busy || !activeIr} onclick={() => void $flow.recordVariantTaste(Number(id), "rejected")}>
+      × Отклонить
+    </button>
+    <button class="btn-node small primary nodrag" disabled={busy || !activeIr} onclick={() => void $flow.promoteVariantToDesignSystem(Number(id))}>
+      ◈ Закрепить как стиль
     </button>
   </div>
   <NodeStatus {id} />

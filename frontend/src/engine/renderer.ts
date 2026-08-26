@@ -119,9 +119,21 @@ import { isLockedNode } from "./locked";
     if (["none", "underline", "line-through", "overline"].includes(style.textDecoration)) s.push(`text-decoration:${style.textDecoration}`);
     if (["normal", "nowrap", "pre", "pre-wrap", "pre-line", "break-spaces"].includes(style.whiteSpace)) s.push(`white-space:${style.whiteSpace}`);
     if (["visible", "hidden", "clip", "scroll", "auto"].includes(style.overflow)) s.push(`overflow:${style.overflow}`);
+    // Source Import: flex-shrink:0 у карточек горизонтальных scroll-shelf —
+    // без этого переполненная строка сжимается в ширину контейнера
+    if (Number(style.flexShrink) === 0) s.push("flex-shrink:0");
     if (["none", "uppercase", "lowercase", "capitalize"].includes(style.textTransform)) s.push(`text-transform:${style.textTransform}`);
     const op = Number(style.opacity); if (Number.isFinite(op) && op >= 0 && op <= 1) s.push(`opacity:${op}`);
     if (["contain", "cover", "fill", "none", "scale-down"].includes(style.objectFit)) s.push(`object-fit:${style.objectFit}`);
+    // Source Import: точный crop картинок и фильтры/блендинг (безопасный charset
+    // как у boxShadow — url()-фильтры компилятор отправляет в raster fallback)
+    if (typeof style.objectPosition === "string" && style.objectPosition.length <= 40 && /^[\d.%\s-]|^(left|center|right|top|bottom)/.test(style.objectPosition)) s.push(`object-position:${style.objectPosition}`);
+    if (typeof style.filter === "string" && style.filter.length <= 300 && !/[;{}<>"'\\\r\n]/.test(style.filter) && !/url\s*\(/i.test(style.filter)) s.push(`filter:${style.filter}`);
+    if (typeof style.backdropFilter === "string" && style.backdropFilter.length <= 300 && !/[;{}<>"'\\\r\n]/.test(style.backdropFilter) && !/url\s*\(/i.test(style.backdropFilter)) s.push(`backdrop-filter:${style.backdropFilter}`);
+    if (typeof style.mixBlendMode === "string" && /^[a-z-]+$/.test(style.mixBlendMode)) s.push(`mix-blend-mode:${style.mixBlendMode}`);
+    if (style.direction === "rtl") s.push("direction:rtl");
+    if (typeof style.writingMode === "string" && /^(vertical|sideways)-/.test(style.writingMode)) s.push(`writing-mode:${style.writingMode}`);
+    const ow = Number(style.outline); if (Number.isFinite(ow) && ow > 0 && ow <= 64) s.push(`outline:${ow}px solid ${safeColor(style.outlineColor) || "#808080"}`);
     // Source Import visual channels: gradient background/mask и clip-path.
     // Только безопасный charset (как boxShadow), url() запрещён — внешние
     // ресурсы переносятся через image-слои, а не через CSS.
@@ -432,7 +444,7 @@ import { isLockedNode } from "./locked";
         return `<span class="icon-dot">${esc((el.icon || "✦").slice(0, 2))}</span>`;
       case "image":
         if (el.src) {
-          return `<img src="${esc(el.src)}" alt="${esc(el.alt || "")}"${styleAttr(el.style, "display:block;width:100%;height:100%;object-fit:contain")} loading="lazy">`;
+          return `<img src="${esc(el.src)}" alt="${esc(el.alt || "")}"${styleAttr(el.style, "display:block;width:100%;height:100%;object-fit:contain")} decoding="sync">`;
         }
         return `<div class="img-ph">${esc(el.alt || el.imagePrompt || "изображение")}</div>`;
       case "divider":
@@ -594,7 +606,11 @@ import { isLockedNode } from "./locked";
       const sub = p.subheading ? `<p class="muted" data-ir-path="props.subheading" style="font-size:calc(17px*var(--fs));margin-bottom:28px;max-width:560px">${esc(p.subheading)}</p>` : "";
       const btns = `<div style="display:flex;gap:12px;flex-wrap:wrap">${btnHtml(p.ctaPrimary, "primary", "props.ctaPrimary.text")}${btnHtml(p.ctaSecondary, "outline", "props.ctaSecondary.text")}</div>`;
       if (v === "split" || v === "split-reverse") {
-        const media = p.media ? `<div class="img-ph" style="min-height:320px">${esc(p.media.alt || p.media.imagePrompt || "")}</div>` : `<div class="img-ph" style="min-height:320px">медиа</div>`;
+        const media = p.media
+          ? p.media.src
+            ? `<div class="img-ph" style="min-height:320px;overflow:hidden;padding:0"><img src="${esc(p.media.src)}" alt="${esc(p.media.alt || "")}" style="display:block;width:100%;height:320px;object-fit:cover" decoding="sync"></div>`
+            : `<div class="img-ph" style="min-height:320px">${esc(p.media.alt || p.media.imagePrompt || "")}</div>`
+          : `<div class="img-ph" style="min-height:320px">медиа</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center">${badge}${head}${sub}${btns}</div>`;
         return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:48px;align-items:center">
           ${v === "split" ? txt + media : media + txt}</div></section>`;
@@ -798,7 +814,12 @@ import { isLockedNode } from "./locked";
   function materializeResponsiveIR(source, viewport) {
     if (!source || !source.responsive || !source.responsive.viewports) return source;
     (source.tree || []).forEach(sec => annotatePaths(sec, "", false));
-    const ir = JSON.parse(JSON.stringify(source));
+    return materializeResponsiveInPlace(JSON.parse(JSON.stringify(source)), viewport);
+  }
+
+  /* Вариант для IR, уже принадлежащего рендереру (клон из renderIR):
+   * viewport-мутации применяются на месте, без повторного глубокого клона. */
+  function materializeResponsiveInPlace(ir, viewport) {
     const meta = ir.responsive.viewports[viewport] || ir.responsive.viewports.desktop;
     if (meta) {
       // Page compositions use height:"hug" so the common artboard follows all
@@ -835,7 +856,13 @@ import { isLockedNode } from "./locked";
     // передаёт state.ir напрямую)
     if (ir) ir = JSON.parse(JSON.stringify(ir));
     const responsiveSource = !!(ir && ir.responsive && ir.responsive.viewports);
-    ir = materializeResponsiveIR(ir, options && options.viewport ? options.viewport : "desktop");
+    // приватная копия принадлежит рендереру: annotate + viewport-мутации на месте,
+    // второй deep clone не нужен (внешние клиенты materializeResponsiveIR
+    // по-прежнему получают защитный клон)
+    if (responsiveSource) {
+      (ir.tree || []).forEach((sec) => annotatePaths(sec, "", false));
+      ir = materializeResponsiveInPlace(ir, options && options.viewport ? options.viewport : "desktop");
+    }
     const uid = ++uidCounter;
     const tokens = (ir.tokens = mergeDefaults(ir.tokens));
     const tree = ir.tree || [];

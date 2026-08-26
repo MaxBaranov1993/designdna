@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
-  import { flow } from "../flow/state";
+  import { flow, flowBusy } from "../flow/state";
   import type { StyleDnaFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -9,7 +9,7 @@
 
   let { id, data, selected }: NodeProps<StyleDnaFlowNode> = $props();
 
-  let busy = $derived(!!$flow.busy[Number(id)]);
+  let busy = $derived(!!$flowBusy[Number(id)]);
   let tokensText = $derived(data.tokens ? JSON.stringify(data.tokens, null, 2) : "");
 </script>
 

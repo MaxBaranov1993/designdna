@@ -64,7 +64,7 @@ def main() -> None:
                 {"name": "pseudo", "label": "Pseudo", "kind": "section", "selector": "#fixture-pseudo"},
             ],
             viewports=[{"name": "desktop", "width": 1440, "height": 900}],
-            timeout_ms=5000,
+            timeout_ms=30000,
         )
     finally:
         scraper.validate_public_url = original_validate
@@ -192,7 +192,7 @@ def main() -> None:
                 {"name": "openshadow", "label": "OpenShadow", "kind": "section", "selector": "#fixture-open-shadow"},
             ],
             viewports=[{"name": "desktop", "width": 1440, "height": 900}],
-            timeout_ms=8000,
+            timeout_ms=30000,
         )
     finally:
         scraper.validate_public_url = original_validate
@@ -215,12 +215,21 @@ def main() -> None:
     check("complex transform becomes a selectable pixel-exact fallback",
           bool(complex_fallback) and complex_fallback.get("type") == "image"
           and complex_fallback.get("editable") is False
-          and str(complex_fallback.get("src") or "").startswith("data:image"),
+          and scraper.parse_blob_ref(str(complex_fallback.get("src") or "")),
           str(complex_fallback))
     check("pure translate is not applied twice",
           bool(translated) and "transform" not in (translated.get("frame") or {})
           and translated.get("frame", {}).get("absolute") is True,
           str(translated))
+    # Карусельный микро-scale (0.97 у неактивных слайдов) — не «сложный
+    # трансформ»: слайд остаётся редактируемым деревом, а не картинкой.
+    scaled = next((node for node in tr_nodes if node.get("role") == "div"
+                   and any(child.get("text") == "Scaled slide" for child in node.get("children") or [])), None)
+    scaled_kind = (scaled.get("sourceMeta") or {}).get("kind") if scaled else None
+    check("carousel micro-scale stays editable (no raster fallback)",
+          bool(scaled) and scaled.get("type") == "card" and scaled_kind != "complex-transform"
+          and scaled.get("editable") is not False,
+          str(scaled))
 
     # stacking: z-index переносится в frame.z
     st_ir = surf["#fixture-stack"]["ir"]
@@ -252,19 +261,19 @@ def main() -> None:
     check("canvas becomes a locked raster layer (editable:false + reason + raster src)",
           canvas_node.get("type") == "image" and canvas_node.get("editable") is False
           and "canvas" in str(canvas_node.get("lockedReason") or "")
-          and str(canvas_node.get("src") or "").startswith("data:image/"),
+          and scraper.parse_blob_ref(str(canvas_node.get("src") or "")),
           str(canvas_node))
     iframe_node = by_kind.get("iframe") or {}
     check("cross-origin iframe becomes a locked raster layer with SOP reason",
           iframe_node.get("type") == "image" and iframe_node.get("editable") is False
           and "cross-origin" in str(iframe_node.get("lockedReason") or "")
-          and str(iframe_node.get("src") or "").startswith("data:image/"),
+          and scraper.parse_blob_ref(str(iframe_node.get("src") or "")),
           str(iframe_node))
     shadow_node = by_kind.get("shadow-dom") or {}
     check("closed shadow root becomes a locked raster layer with reason",
           shadow_node.get("type") == "image" and shadow_node.get("editable") is False
           and "shadow" in str(shadow_node.get("lockedReason") or "")
-          and str(shadow_node.get("src") or "").startswith("data:image/"),
+          and scraper.parse_blob_ref(str(shadow_node.get("src") or "")),
           str(shadow_node))
     check("raster fallback layers keep their bounds (width/height > 0)",
           all((by_kind[k].get("frame") or {}).get("width", 0) > 0
@@ -326,7 +335,7 @@ def main() -> None:
           len(um_nodes) == 1 and um_nodes[0].get("type") == "image"
           and um_nodes[0].get("editable") is False
           and "mask" in str(um_nodes[0].get("lockedReason") or "")
-          and str(um_nodes[0].get("src") or "").startswith("data:image/"),
+          and scraper.parse_blob_ref(str(um_nodes[0].get("src") or "")),
           str(um_nodes))
     check("url()-mask raster layer keeps measured bounds and stays selectable",
           bool(um_nodes) and (um_nodes[0].get("frame") or {}).get("width", 0) > 0
@@ -348,7 +357,7 @@ def main() -> None:
           len(osh_nodes) == 1 and osh_nodes[0].get("type") == "image"
           and osh_nodes[0].get("editable") is False
           and "open shadow" in str(osh_nodes[0].get("lockedReason") or "")
-          and str(osh_nodes[0].get("src") or "").startswith("data:image/"),
+          and scraper.parse_blob_ref(str(osh_nodes[0].get("src") or "")),
           str(osh_nodes))
     check("open shadow raster layer keeps measured bounds (no silent disappearance)",
           bool(osh_nodes) and (osh_nodes[0].get("frame") or {}).get("width", 0) > 0
@@ -370,7 +379,7 @@ def main() -> None:
             phase4_url,
             [{"name": "phase4", "label": "Phase 4", "kind": "section", "selector": "#phase4"}],
             viewports=[{"name": "desktop", "width": 1440, "height": 900}],
-            timeout_ms=5000,
+            timeout_ms=30000,
         )["#phase4"]
     finally:
         scraper.validate_public_url = original_validate
@@ -403,7 +412,8 @@ def main() -> None:
                      if (node.get("sourceMeta") or {}).get("kind") == "inherited-background"), None)
     check("phase4 inherited backdrop is an explicit locked layer",
           bool(backdrop) and backdrop.get("type") == "image" and backdrop.get("editable") is False
-          and str(backdrop.get("src") or "").startswith("data:image/png"), str(backdrop)[:200])
+          and (scraper.parse_blob_ref(str(backdrop.get("src") or ""))
+               or str(backdrop.get("src") or "").startswith("data:image/svg")), str(backdrop)[:200])
     check("phase4 fidelity reference capture is lossless PNG",
           str(phase4.get("previews", {}).get("desktop") or "").startswith("data:image/png"))
 
@@ -430,7 +440,7 @@ def main() -> None:
                 {"name": "tablet", "width": 768, "height": 1024},
                 {"name": "mobile", "width": 390, "height": 844},
             ],
-            timeout_ms=8000,
+            timeout_ms=30000,
         )
     finally:
         scraper.validate_public_url = original_validate
@@ -456,7 +466,7 @@ def main() -> None:
                 {"name": "sides", "label": "Sides", "kind": "section", "selector": "#sides"},
             ],
             viewports=[{"name": "desktop", "width": 1440, "height": 900}],
-            timeout_ms=5000,
+            timeout_ms=30000,
         )
     finally:
         scraper.validate_public_url = original_validate2

@@ -23,7 +23,7 @@ function fakeChild({ code = 0, stdout = "", stderr = "" } = {}) {
 test("chatWithZcode renders messages into TASK.md and returns CLI stdout", async () => {
   const spawned = [];
   const environment = { ZCODE_CLI: "C:/fake/zcode.cjs", ZCODE_NODE: "node" };
-  const content = await chatWithZcode({
+  const result = await chatWithZcode({
     messages: [
       { role: "system", content: "SYSTEM RULES" },
       { role: "user", content: "Сгенерируй лендинг" },
@@ -35,7 +35,8 @@ test("chatWithZcode renders messages into TASK.md and returns CLI stdout", async
       return fakeChild({ stdout: '{"ok":true}' });
     },
   });
-  assert.equal(content, '{"ok":true}');
+  assert.equal(result.content, '{"ok":true}');
+  assert.equal(result.transport.provider, "zcode");
   assert.equal(spawned.length, 1);
   assert.equal(spawned[0].node, "node");
   assert.equal(spawned[0].args[0], "C:/fake/zcode.cjs");
@@ -66,6 +67,33 @@ test("chatWithZcode surfaces CLI failures instead of empty content", async () =>
 
 test("zcodeCliPath honours the ZCODE_CLI override and rejects missing files", () => {
   assert.equal(zcodeCliPath({ ZCODE_CLI: "C:/definitely/missing.cjs" }), null);
+});
+
+test("zcodeCliPath never auto-discovers the installed app's private entry point", async () => {
+  // Even when resources/glm/zcode.cjs exists under LOCALAPPDATA, transport
+  // stays disabled without an explicit ZCODE_CLI opt-in.
+  const root = await mkdtemp(path.join(os.tmpdir(), "zcode-no-discovery-"));
+  try {
+    const installed = path.join(root, "Programs", "ZCode", "resources", "glm");
+    await mkdir(installed, { recursive: true });
+    await writeFile(path.join(installed, "zcode.cjs"), "// private entry", "utf-8");
+    assert.equal(zcodeCliPath({ LOCALAPPDATA: root }), null);
+    // explicit opt-in to that same file still works
+    assert.equal(zcodeCliPath({ LOCALAPPDATA: root, ZCODE_CLI: path.join(installed, "zcode.cjs") }), path.join(installed, "zcode.cjs"));
+  } finally {
+    await rm(root, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("chatWithZcode fails loudly when the ZCODE_CLI opt-in is not configured", async () => {
+  await assert.rejects(
+    chatWithZcode({
+      messages: [{ role: "user", content: "x" }],
+      environment: {},
+      ensureConfig: () => null,
+    }),
+    /ZCODE_CLI/,
+  );
 });
 
 test("zcodeEnsureConfig bootstraps cli config from v2 with the coding-plan model", async () => {

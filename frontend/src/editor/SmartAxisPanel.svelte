@@ -31,7 +31,7 @@
       </div>
       <div class="fe-smart-axis-note">Изменение атомарное. После применения его можно отменить обычным Undo.</div>
       <div class="fe-smart-axis-actions">
-        <button class="fe-btn" onclick={() => ctl.dismissSmartAxisProposal()}>Отмена</button>
+        <button class="fe-btn" data-act="dismiss-smart-axis" onclick={() => ctl.dismissSmartAxisProposal()}>Отмена</button>
         <button class="fe-btn primary" data-act="apply-smart-axis" onclick={() => ctl.applySmartAxisProposal(proposal)}>Применить</button>
       </div>
     </div>

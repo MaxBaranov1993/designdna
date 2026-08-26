@@ -269,6 +269,16 @@ def main():
         page.locator(".ai-command-card textarea").fill("Сделай группу спокойнее")
         page.locator(".ai-run").click()
         page.wait_for_selector('[data-ai-preview="ready"]')
+        escape_before = page.evaluate("(id) => JSON.stringify((window.GraphDev.node(id).data._editorDraft?.ir || window.GraphDev.node(id).data.ir))", edit_id)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(150)
+        assert page.locator('[data-ai-preview="ready"]').count() == 0
+        assert page.evaluate("document.querySelector('.dna-editor').style.display") == "flex"
+        escape_after = page.evaluate("(id) => JSON.stringify((window.GraphDev.node(id).data._editorDraft?.ir || window.GraphDev.node(id).data.ir))", edit_id)
+        assert escape_after == escape_before
+        page.locator(".ai-command-card textarea").fill("Сделай группу спокойнее")
+        page.locator(".ai-run").click()
+        page.wait_for_selector('[data-ai-preview="ready"]')
         page.locator("[data-ai-apply]").click()
         page.wait_for_timeout(250)
         applied = page.evaluate("(id) => { const d=window.GraphDev.node(id).data; return d._editorDraft?.ir || d.ir; }", edit_id)

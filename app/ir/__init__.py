@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .schema import CURRENT_SCHEMA_VERSION, LATEST_SCHEMA_VERSION, load_aux_schema, load_schema
-from .migrate import migrate_ir, ensure_current, migrate_project_payload
+from .migrate import migrate_ir, ensure_current, migrate_project_payload, sanitize_generated_ir
 from .validate import (
     validate_change_set,
     validate_ir,
@@ -72,6 +72,7 @@ __all__ = [
     "migrate_ir",
     "ensure_current",
     "migrate_project_payload",
+    "sanitize_generated_ir",
     "validate_ir",
     "validate_change_set",
     "validate_parser_envelope",

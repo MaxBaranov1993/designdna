@@ -46,6 +46,7 @@ CHANNEL_TOLERANCE = 24          # per-channel допуск пиксельног�
 REGION_GRID = 8                 # сетка регионов для region_diffs
 REGION_MISMATCH_PCT = 10.0      # регион «расходится», если mismatch больше
 UNMATCHED_BOX_PENALTY = 100.0   # штраф за лист без совпадения в рендере
+PAINT_BARRIER_TIMEOUT_MS = 20000  # hard deadline ожидания картинок/шрифтов в рендере
 
 GATE_THRESHOLDS = {
     "max_origin_error_px": 2.0,
@@ -180,6 +181,37 @@ def viewport_gate(metrics: dict | None) -> dict:
     return {"passed": not reasons, "reasons": reasons}
 
 
+def provenance_reasons(provenance) -> list[str]:
+    """Fail-closed: browser/viewport/font/asset/compiler identity must be present
+    and its fingerprint must match the canonical hash of those fields."""
+    if not isinstance(provenance, dict):
+        return ["missing capture provenance"]
+    reasons = []
+    for key in ("captureVersion", "compilerSha256", "browser", "deviceScaleFactor",
+                "viewports", "fonts", "assets", "fingerprint"):
+        if key not in provenance:
+            reasons.append(f"missing provenance.{key}")
+    browser = provenance.get("browser")
+    if not isinstance(browser, dict) or not str(browser.get("name") or ""):
+        reasons.append("missing provenance.browser.name")
+    if provenance.get("deviceScaleFactor") is None:
+        reasons.append("missing provenance.deviceScaleFactor")
+    if not isinstance(provenance.get("viewports"), list):
+        reasons.append("missing provenance.viewports")
+    if not isinstance(provenance.get("fonts"), list):
+        reasons.append("missing provenance.fonts")
+    if not isinstance(provenance.get("assets"), list):
+        reasons.append("missing provenance.assets")
+    try:
+        import scraper
+        expected = scraper.provenance_fingerprint(provenance)
+    except Exception as e:
+        return reasons + [f"provenance fingerprint unavailable: {e}"]
+    if str(provenance.get("fingerprint") or "") != expected:
+        reasons.append("provenance fingerprint mismatch")
+    return reasons
+
+
 def evaluate_gate(report: dict | None) -> dict:
     """Gate блока (viewports) или агрегата (blocks). Fail-closed по умолчанию."""
     if not isinstance(report, dict):
@@ -200,6 +232,7 @@ def evaluate_gate(report: dict | None) -> dict:
     if not viewports:
         return {"passed": False, "reasons": ["no viewport metrics"]}
     reasons = []
+    reasons.extend(provenance_reasons(report.get("provenance")))
     for name, metrics in viewports.items():
         reasons.extend(f"[{name}] {r}" for r in viewport_gate(metrics)["reasons"])
     return {"passed": not reasons, "reasons": reasons}
@@ -260,13 +293,17 @@ def _render_block_png(page, ir: dict, viewport_name: str, width: int, height: in
     page.set_viewport_size({"width": max(240, int(width)), "height": max(320, int(height))})
     page.set_content(f'<div id="preview" style="width:{int(width)}px"></div>')
     page.add_script_tag(path=str(RENDERER_JS))
+    # Захваченные шрифты инлайним ДО рендера: document.fonts.ready —
+    # одноразовый promise, он резолвится по фейсам движка (/fonts/ в about:blank
+    # падают мгновенно), и шрифты, добавленные после renderIR, грузятся уже
+    # после барьера — скриншот ловил fallback-глифы.
+    inline_fonts = _inline_font_face_css(ir)
+    if inline_fonts:
+        page.add_style_tag(content=inline_fonts)
     page.evaluate(
         "(args) => window.IRRenderer.renderIR(document.querySelector('#preview'), args.ir,"
         " {viewport: args.viewport})",
         {"ir": ir, "viewport": viewport_name})
-    inline_fonts = _inline_font_face_css(ir)
-    if inline_fonts:
-        page.add_style_tag(content=inline_fonts)
     page.wait_for_selector('[data-ir-sec="0"]', timeout=5000)
     # fitPreview выставляет высоту контейнера в requestAnimationFrame
     page.wait_for_function("() => document.querySelector('#preview').style.height !== ''",
@@ -274,17 +311,37 @@ def _render_block_png(page, ir: dict, viewport_name: str, width: int, height: in
     # The renderer returns before remote images and webfonts necessarily finish.
     # A screenshot taken at that point measures network timing, not IR fidelity.
     # Wait for the same deterministic paint barrier used during source capture.
-    page.evaluate("""() => Promise.all([
-      (document.fonts && document.fonts.ready) ? document.fonts.ready.catch(() => {}) : Promise.resolve(),
-      Promise.all(Array.from(document.images || []).map(img =>
-        img.complete && img.naturalWidth > 0
-          ? Promise.resolve()
-          : (img.decode ? img.decode() : new Promise(resolve => {
-              img.addEventListener('load', resolve, {once:true});
-              img.addEventListener('error', resolve, {once:true});
-            })).catch(() => {})))
-    ]).then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))""")
-    return page.locator("#preview").screenshot(type="png")
+    # page.evaluate has no built-in timeout, so a single hanging image request
+    # (throttled CDN, analytics pixel) would block the whole harness forever —
+    # race the barrier against a hard deadline.
+    page.evaluate("""(deadlineMs) => Promise.race([
+      Promise.all([
+        (document.fonts && document.fonts.ready) ? document.fonts.ready.catch(() => {}) : Promise.resolve(),
+        // faces могут стартовать ПОСЛЕ fonts.ready (поздний layout/swap) —
+        // опрашиваем статусы, пока что-то грузится
+        new Promise(resolve => {
+          const settle = () => {
+            document.fonts.ready.then(() => {
+              if (Array.from(document.fonts).some(f => f.status === 'loading')) setTimeout(settle, 50);
+              else resolve();
+            }).catch(resolve);
+          };
+          settle();
+        }),
+        Promise.all(Array.from(document.images || []).map(img =>
+          img.complete && img.naturalWidth > 0
+            ? Promise.resolve()
+            : Promise.race([
+                (img.decode ? img.decode() : new Promise(resolve => {
+                    img.addEventListener('load', resolve, {once:true});
+                    img.addEventListener('error', resolve, {once:true});
+                  })).catch(() => {}),
+                new Promise(resolve => setTimeout(resolve, 8000))
+              ])))
+      ]).then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))),
+      new Promise(resolve => setTimeout(resolve, deadlineMs))
+    ])""", PAINT_BARRIER_TIMEOUT_MS)
+    return page.locator("#preview").screenshot(type="png", timeout=15000)
 
 
 def _image_metrics(reference_png: bytes, render_png: bytes) -> dict:
@@ -329,6 +386,161 @@ def _image_metrics(reference_png: bytes, render_png: bytes) -> dict:
     Image.fromarray(amplified).save(buf, format="PNG")
     result["diff_png"] = buf.getvalue()
     return result
+
+
+def _component_boundaries(ir: dict | None) -> dict[str, dict]:
+    boundaries: dict[str, dict] = {}
+
+    def visit(node, ancestors: tuple[dict, ...] = ()) -> None:
+        if not isinstance(node, dict):
+            return
+        meta = node.get("sourceMeta") if isinstance(node.get("sourceMeta"), dict) else {}
+        source_key = str(node.get("sourceKey") or "")
+        if meta.get("componentBoundary") and source_key:
+            # Captured node frames are local to their parent. Component crops and
+            # rendered DOM boxes are measured relative to the block root, so keep
+            # the ancestry needed to reconstruct that absolute frame. Storing it
+            # on a shallow harness-only copy avoids leaking private data into IR.
+            boundaries[source_key] = {**node, "_componentAncestors": ancestors}
+        for child in node.get("children") or []:
+            visit(child, (*ancestors, node))
+
+    for root in (ir or {}).get("tree") or []:
+        visit(root)
+    return boundaries
+
+
+def _viewport_component_frame(node: dict, viewport: str) -> dict | None:
+    absolute_x = 0.0
+    absolute_y = 0.0
+    parts = [*(node.get("_componentAncestors") or ()), node]
+    frame: dict = {}
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        base = part.get("frame") if isinstance(part.get("frame"), dict) else {}
+        override = ((part.get("responsive") or {}).get(viewport) or {})
+        if isinstance(override, dict) and override.get("visible") is False:
+            return None
+        override_frame = (override.get("frame")
+                          if isinstance(override, dict) and isinstance(override.get("frame"), dict)
+                          else {})
+        current = {**base, **override_frame}
+        absolute_x += float(current.get("x") or 0)
+        absolute_y += float(current.get("y") or 0)
+        if part is node:
+            frame = current
+    if any(not isinstance(frame.get(key), (int, float)) for key in ("width", "height")):
+        return None
+    return {**frame, "x": absolute_x, "y": absolute_y}
+
+
+def _crop_png(png: bytes, frame: dict, block_size: dict) -> bytes:
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    block_width = float(block_size.get("width") or image.width)
+    block_height = float(block_size.get("height") or image.height)
+    scale_x = image.width / max(1.0, block_width)
+    scale_y = image.height / max(1.0, block_height)
+    left = max(0, int(round(float(frame.get("x") or 0) * scale_x)))
+    top = max(0, int(round(float(frame.get("y") or 0) * scale_y)))
+    right = min(image.width, int(round((float(frame.get("x") or 0) + float(frame["width"])) * scale_x)))
+    bottom = min(image.height, int(round((float(frame.get("y") or 0) + float(frame["height"])) * scale_y)))
+    if right <= left or bottom <= top:
+        raise ValueError("component crop is outside the block screenshot")
+    cropped = image.crop((left, top, right, bottom))
+    output = io.BytesIO()
+    cropped.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _rendered_source_box(page, source_key: str) -> dict | None:
+    try:
+        return page.evaluate("""(sourceKey) => {
+          const preview = document.querySelector('#preview');
+          const section = document.querySelector('[data-ir-sec="0"]');
+          if (!preview || !section) return null;
+          const element = Array.from(section.querySelectorAll('[data-ir-path]'))
+            .find(candidate => candidate.getAttribute('data-ir-path') === sourceKey);
+          if (!element) return null;
+          const base = section.getBoundingClientRect();
+          const rect = element.getBoundingClientRect();
+          return {x: rect.left - base.left, y: rect.top - base.top,
+                  width: rect.width, height: rect.height};
+        }""", source_key)
+    except Exception:
+        return None
+
+
+def _component_viewport_metrics(item: dict, page, node: dict, viewport: str,
+                                reference_png: bytes, render_png: bytes,
+                                block_size: dict) -> dict:
+    source_key = str(node.get("sourceKey") or "")
+    frame = _viewport_component_frame(node, viewport)
+    metrics: dict = {key: None for key in REQUIRED_METRICS}
+    metrics["visual_losses"] = []
+    metrics["unexplained_losses"] = 0
+    metrics["artifacts"] = {}
+    if not frame:
+        metrics["gate"] = viewport_gate(metrics)
+        return metrics
+
+    reference_crop = _crop_png(reference_png, frame, block_size)
+    render_crop = _crop_png(render_png, frame, block_size)
+    images = _image_metrics(reference_crop, render_crop)
+    metrics.update({
+        "pixel_similarity": images.get("pixel_similarity"),
+        "region_diffs": images.get("region_diffs"),
+        "reference_size": images.get("reference_size"),
+        "render_size": images.get("render_size"),
+        "size_match": images.get("size_match"),
+    })
+
+    all_leaf_boxes = (item.get("leaf_boxes_by_viewport") or {}).get(viewport) or []
+    leaf_boxes = [
+        box for box in all_leaf_boxes if isinstance(box, dict)
+        and (str(box.get("sourceKey") or "") == source_key
+             or str(box.get("sourceKey") or "").startswith(source_key + "/")
+             or str(box.get("sourceKey") or "").startswith(source_key + "::"))
+    ]
+    bbox = _bbox_metrics(page, leaf_boxes) or {}
+    rendered_box = _rendered_source_box(page, source_key)
+    boundary_error = None
+    if rendered_box:
+        boundary_error = max(
+            abs(float(frame.get("x") or 0) - float(rendered_box.get("x") or 0)),
+            abs(float(frame.get("y") or 0) - float(rendered_box.get("y") or 0)),
+            abs(float(frame.get("width") or 0) - float(rendered_box.get("width") or 0)),
+            abs(float(frame.get("height") or 0) - float(rendered_box.get("height") or 0)),
+        )
+        metrics["grid_origin_error"] = round(max(
+            abs(float(frame.get("x") or 0) - float(rendered_box.get("x") or 0)),
+            abs(float(frame.get("y") or 0) - float(rendered_box.get("y") or 0)),
+        ), 2)
+    for key in ("bbox_mean", "bbox_p95", "bbox_max"):
+        measured = bbox.get(key)
+        if measured is None:
+            measured = boundary_error
+        elif boundary_error is not None and key != "bbox_mean":
+            measured = max(float(measured), float(boundary_error))
+        metrics[key] = round(float(measured), 2) if measured is not None else None
+    metrics["bbox_matched"] = bbox.get("bbox_matched", 0)
+    metrics["bbox_unmatched"] = bbox.get("bbox_unmatched", 0)
+    metrics["bbox_total"] = bbox.get("bbox_total", 0)
+
+    paint = (item.get("paint_coverage") or {}).get(viewport)
+    metrics["paint_coverage"] = float(paint) if paint is not None else None
+    losses = [
+        loss for loss in visual_losses(item, viewport)
+        if str(loss.get("sourceKey") or "") == source_key
+        or str(loss.get("sourceKey") or "").startswith(source_key + "/")
+        or str(loss.get("sourceKey") or "").startswith(source_key + "::")
+    ]
+    metrics["visual_losses"] = losses
+    metrics["unexplained_losses"] = sum(1 for loss in losses if not loss.get("explained"))
+    metrics["gate"] = viewport_gate(metrics)
+    return metrics
 
 
 def _bbox_metrics(page, leaf_boxes: list[dict]) -> dict | None:
@@ -392,7 +604,26 @@ def evaluate_capture_item(item: dict, page, artifacts_dir: Path | None = None,
     """Метрики и артефакты для одной записи capture_block_irs по всем viewport."""
     ir = item.get("ir") if isinstance(item.get("ir"), dict) else None
     raster = is_raster_fallback(ir)
-    report: dict = {"raster_fallback": raster, "viewports": {}}
+    boundaries = _component_boundaries(ir)
+    report: dict = {
+        "raster_fallback": raster,
+        "viewports": {},
+        "components": {
+            source_key: {
+                "sourceKey": source_key,
+                "label": str(((node.get("sourceMeta") or {}).get("componentLabel") or "")),
+                "role": str(((node.get("sourceMeta") or {}).get("componentRole") or "")),
+                "repeatGroup": str(((node.get("sourceMeta") or {}).get("repeatGroup") or "")),
+                "raster_fallback": False,
+                "viewports": {},
+            }
+            for source_key, node in boundaries.items()
+        },
+    }
+    if isinstance(item.get("provenance"), dict):
+        report["provenance"] = item["provenance"]
+        for component in report["components"].values():
+            component["provenance"] = item["provenance"]
     previews = item.get("previews") or {}
     sizes = item.get("sizes") or {}
     for name in sorted(previews):
@@ -409,8 +640,13 @@ def evaluate_capture_item(item: dict, page, artifacts_dir: Path | None = None,
         if (ir is not None and not raster and preview.startswith("data:image")
                 and size.get("width") and size.get("height")):
             try:
-                shot = _render_block_png(page, ir, name, int(size["width"]), int(size["height"]))
-                images = _image_metrics(_decode_data_url(preview), shot)
+                import scraper
+                resolved, blob_errors = scraper.resolve_ir_blobs(ir)
+                if blob_errors:
+                    raise RuntimeError("blob resolve failed: " + "; ".join(blob_errors[:6]))
+                shot = _render_block_png(page, resolved, name, int(size["width"]), int(size["height"]))
+                reference_png = _decode_data_url(preview)
+                images = _image_metrics(reference_png, shot)
                 metrics["pixel_similarity"] = images["pixel_similarity"]
                 metrics["region_diffs"] = images["region_diffs"]
                 metrics["reference_size"] = images["reference_size"]
@@ -419,6 +655,20 @@ def evaluate_capture_item(item: dict, page, artifacts_dir: Path | None = None,
                 bbox = _bbox_metrics(page, leaf_boxes)
                 if bbox:
                     metrics.update(bbox)
+                for source_key, node in boundaries.items():
+                    if _viewport_component_frame(node, name) is None:
+                        continue
+                    try:
+                        component_metrics = _component_viewport_metrics(
+                            item, page, node, name, reference_png, shot, size)
+                    except Exception as component_error:
+                        component_metrics = {key: None for key in REQUIRED_METRICS}
+                        component_metrics.update({
+                            "visual_losses": [], "unexplained_losses": 0,
+                            "harness_error": str(component_error),
+                        })
+                        component_metrics["gate"] = viewport_gate(component_metrics)
+                    report["components"][source_key]["viewports"][name] = component_metrics
                 if artifacts_dir is not None:
                     artifacts_dir.mkdir(parents=True, exist_ok=True)
                     stem = f"{artifact_prefix}-{name}"
@@ -435,6 +685,8 @@ def evaluate_capture_item(item: dict, page, artifacts_dir: Path | None = None,
                 metrics["harness_error"] = str(e)
         metrics["gate"] = viewport_gate(metrics)
         report["viewports"][name] = metrics
+    for component in report["components"].values():
+        component["gate"] = evaluate_gate(component)
     report["gate"] = evaluate_gate(report)
     return report
 
@@ -452,11 +704,25 @@ def evaluate_captures(captured: dict, artifacts_dir: Path | None = None) -> dict
     reports: dict = {}
     if not jobs:
         return reports
+    import scraper
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = scraper.launch_chromium(p)
         try:
-            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page = browser.new_page(viewport={"width": 1440, "height": 900},
+                                    device_scale_factor=1)
+            # Движок подтягивает Google Fonts CSS по сети — это гонка со
+            # скриншотом: faces регистрируются после document.fonts.ready и
+            # текст снимается в fallback-шрифте. Захваченные /fonts файлы уже
+            # инлайнятся как data:URL — блокируем сетевой источник.
+            # ВАЖНО: только точечные маршруты — catch-all "**/*" гоняет КАЖДЫЙ
+            # запрос рендера через Python-interception и на медленных машинах
+            # ломает загрузку картинок (каждый round-trip стоит секунды).
+            def _block_google_fonts(route):
+                route.abort("blockedbyclient")
+
+            page.route("https://fonts.googleapis.com/**", _block_google_fonts)
+            page.route("https://fonts.gstatic.com/**", _block_google_fonts)
             for selector, item in jobs.items():
                 prefix = re.sub(r"[^A-Za-z0-9_-]+", "-", selector.strip("#.")) or "block"
                 try:
@@ -492,6 +758,7 @@ def run(url: str, blocks: list[dict] | None = None, viewports: list[dict] | None
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "thresholds": GATE_THRESHOLDS,
         "required_metrics": list(REQUIRED_METRICS),
+        "captureVersion": scraper.SOURCE_CAPTURE_VERSION,
         "blocks": [
             {"name": names.get(selector, selector), "selector": selector, **reports[selector]}
             for selector in reports

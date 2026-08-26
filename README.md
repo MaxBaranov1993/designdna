@@ -4,8 +4,13 @@ A local-first AI web-design studio. A node-graph pipeline generates, imports, ed
 animates web designs around a canonical, schema-validated **Design IR** — the LLM never
 owns the truth, the schema does.
 
-Runs fully on `127.0.0.1:8420`. No external services except the OpenAI / Kimi APIs for
-generation roles.
+The production product is the Electron desktop app and opens no local HTTP
+port. `127.0.0.1:8420` is retained only for browser development and compatibility.
+External AI calls occur only through the provider or harness explicitly selected
+by the user.
+
+The evidence-backed product wording and current limitations live in
+[Current capabilities](docs/CURRENT-CAPABILITIES.md).
 
 ## Desktop runtime
 
@@ -26,21 +31,38 @@ development/compatibility. See [desktop runtime architecture](docs/architecture/
 
 ## What it does
 
-- **Flow graph UI** (Svelte Flow): prompt → generate → edit → reskin → quality-pass →
-  motion → video-render nodes wired on a canvas; projects persist in SQLite.
+- **Flow graph UI** (Svelte Flow): prompt → generator → edit → reskin →
+  quality-pass → recorder → motion nodes wired on a canvas; projects persist in
+  SQLite and Motion Workspace owns preview/render/export.
 - **Design IR** (`schema/`): versioned JSON schema for semantic web documents.
   Runtime version is 1.1; the opt-in 2.0 contract adds multi-source composition
   (`docs/DESIGN-IR-V2.md`). Every AI output is validated, repaired and merged back
   through deterministic code.
-- **LLM generation** directly via the OpenAI and Kimi APIs with role-based model routing
-  (fallback chains, env-overridable) and a token-saving cache (`/api/cache/stats`).
-- **ZCode provider (no API key)**: if no API account is connected, generation
-  automatically runs through the locally installed, logged-in ZCode CLI
-  (Z.AI coding plan) — `provider: "zcode"` is also selectable explicitly in the
-  node pickers. Text roles only; vision roles stay on direct APIs. First call
+- **LLM generation** directly via the OpenAI, Kimi, Zhipu GLM (`glm`,
+  bigmodel.cn), direct Z.AI GLM (`zai`, api.z.ai — GLM-5.3, separate credential;
+  coding-plan endpoint only via explicit `ZAI_ENDPOINT=coding` /
+  `DESIGNDNA_ZAI_ENDPOINT=coding` opt-in) and xAI Grok (`grok`) APIs with
+  role-based model routing (fallback chains, env-overridable) and a token-saving
+  cache (`/api/cache/stats`). A provider key is only ever sent to its own host.
+- **ZCode provider (explicit opt-in, no API key)**: the local ZCode CLI
+  transport (Z.AI coding plan, GLM-5.3) runs only when `ZCODE_CLI` points at a
+  `zcode.cjs` entry file explicitly — automatic discovery of the installed
+  ZCode app was removed because `resources/glm/zcode.cjs` is a private internal
+  entry point without a stable CLI contract. `provider: "zcode"` is selectable
+  in the node pickers and fails loudly when the opt-in is not configured.
+  Text roles only; vision roles stay on direct APIs. First call
   bootstraps `~/.zcode/cli/config.json` from the ZCode app config.
 - **Quality pipeline**: deterministic Quality Gate (autofix without an LLM) plus an
-  LLM judge pass with a repair/re-judge loop.
+  LLM judge pass with a repair/re-judge loop. `POST /api/quality/certify` can also
+  create a hash-bound, fail-closed Quality Certificate from explicit QA evidence;
+  mandatory enforcement on every Apply/export path is still pending. See
+  [Quality Certificate architecture](docs/architecture/quality-certification.md).
+- **First-party MCP and live editor commands**: the bundled stdio server exposes
+  CAS-safe saved-project tools and a capability-gated bridge to the running
+  Electron editor. Current live mutations are node create/delete/move,
+  source-key style patch and undo. This is a bounded command surface, not yet
+  remote control of every editor action; see
+  [MCP architecture](docs/architecture/designdna-mcp.md).
 - **Source Import** (pixel-faithful DOM capture of real sites):
   - one page load per URL; viewports are re-captured by resize with deterministic
     settle (fonts/images/rAF), CSS Grid becomes measured free layout with pinned
@@ -73,7 +95,10 @@ development/compatibility. See [desktop runtime architecture](docs/architecture/
   Autopilot, Intent Locks, semantic selection, selection-scoped AI edits
   (`docs/AI-EDITOR-ROADMAP.md`).
 - **Motion**: live interaction capture on a source site → Interaction IR →
-  deterministic Motion IR → local video render (hash-linked integrity between IRs).
+  editable Motion IR 1.0 walkthrough → deterministic local MP4/H.264 or WebM/VP9
+  render with hash-linked source integrity. Motion IR 2.0 validation and explicit
+  fail-closed migration are implemented, but the visual timeline and render
+  endpoint still consume 1.0.
 
 ## Repository layout
 
@@ -171,7 +196,8 @@ Use the root Repo Canvas CLI commands for diagnostics and maintenance. See
 
 ## Security notes
 
-- Binds to localhost only; scrape endpoints and font downloads are behind an SSRF
+- Production desktop opens no HTTP listener; the optional browser-development
+  server binds to localhost only. Scrape endpoints and font downloads are behind an SSRF
   guard (`urlguard.validate_public_url`); live interaction capture requires an
   explicit "this is my site / I have permission" confirmation in the UI.
 - Source Login cookies live in an isolated Electron session partition, are

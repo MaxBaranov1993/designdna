@@ -145,6 +145,62 @@ def _scope_paths(doc: dict, keys: list[str]) -> list[str]:
     return _normalized_scope(doc, keys)[0]
 
 
+_PRUNED_META_FIELDS = {"preview", "sourcePreview", "fontFaces"}
+
+
+def _pruned_stub(node: dict) -> dict:
+    """Заглушка невыделенной ветки: тип + sourceKey + первый текст.
+    Даёт модели контекст соседства без пересылки полного поддерева."""
+    stub: dict = {"type": str(node.get("type") or ""), "__pruned": True}
+    if node.get("sourceKey"):
+        stub["sourceKey"] = node["sourceKey"]
+    props = node.get("props")
+    if isinstance(props, dict):
+        for field in ("heading", "subheading", "text", "title", "label", "logoText", "copyright"):
+            value = props.get(field)
+            if isinstance(value, str) and value.strip():
+                stub["text"] = value[:60]
+                break
+    if "text" not in stub and isinstance(node.get("text"), str):
+        stub["text"] = node["text"][:60]
+    return stub
+
+
+def _scoped_ir_for_prompt(base: dict, kept_paths: list[str]) -> dict:
+    """IR для промпта: выделенные ветки — целиком, путь до них — вершинами,
+    остальное — заглушками __pruned. Правки применяются по sourceKey против
+    полного IR (_commands_to_ops работает с base), поэтому усечение контекста
+    не влияет ни на адресацию, ни на валидацию."""
+    kept = set(kept_paths)
+
+    def is_ancestor(path: str) -> bool:
+        return any(k != path and k.startswith(path + "/") for k in kept)
+
+    def escape(part: str) -> str:
+        return part.replace("~", "~0").replace("/", "~1")
+
+    def prune(value, path: str):
+        if path in kept:
+            return value
+        if not is_ancestor(path):
+            return _pruned_stub(value) if isinstance(value, dict) else value
+        if isinstance(value, list):
+            return [prune(item, f"{path}/{index}") for index, item in enumerate(value)]
+        if isinstance(value, dict):
+            return {
+                key: (prune(child, f"{path}/{escape(key)}") if isinstance(child, (dict, list)) else child)
+                for key, child in value.items()
+            }
+        return value
+
+    scoped = {key: value for key, value in base.items() if key not in ("tree", "sourcePreview")}
+    meta = scoped.get("meta")
+    if isinstance(meta, dict):
+        scoped["meta"] = {key: value for key, value in meta.items() if key not in _PRUNED_META_FIELDS}
+    scoped["tree"] = prune(base.get("tree") or [], "/tree")
+    return scoped
+
+
 def _inside(path: str, prefixes: list[str]) -> bool:
     return bool(prefixes) and any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
 
@@ -437,12 +493,13 @@ def _design_lint(ir: dict) -> list[dict]:
 
 
 def _messages(base: dict, req: AssistRequest) -> list[dict]:
-    _, safe_keys, _ = _normalized_scope(base, req.scope.sourceKeys)
+    kept_paths, safe_keys, _ = _normalized_scope(base, req.scope.sourceKeys)
     system = (
         "You are an AI visual editor. Return JSON only: {summary, commands}. Each command is "
         "{command:'update', targetSourceKey, viewport:'shared|tablet|mobile', changes, reason}. "
         "changes may contain frame, style, styleBindings, props, text, title, placeholder, value, label, name, alt, ariaLabel. "
         "Use only selected sourceKeys. Never change hierarchy, ids, types, sourceKeys, children, or array order. "
+        "Sections and nodes marked __pruned are abbreviated context (type + first text only): never target them, use them just to keep page rhythm. "
         'Preserve the current design and make the smallest coherent change. Obey the supplied constraints exactly.\nDESIGN QUALITY RULES (how top studios edit, no AI slop):\n- Consistency beats novelty: reuse the palette, radii, shadows and type scale already present in the IR tokens and neighbouring sections. Never introduce a new font family or a color outside tokens.\n- Spacing rhythm: paddings and gaps snap to the 4/8 scale used nearby (8/16/24/32/48/64); align edges to the same rails as siblings.\n- Typography: one display size per level, tighter tracking on large headlines, body 15-17px line-height 1.4-1.6; do not add more than 2 distinct font sizes in one edit.\n- Copy like a real product: concrete, in the page language, no filler, no emoji as icons.\n- Banned: purple-blue gradients, glow blobs, glassmorphism, everything centered, everything in cards, icon-in-circle x3 filler rows, decorative 01/02/03 without a real sequence.\n- Whole-page scope: keep changes globally coherent, same section rhythm, same CTA styling, primary CTA uses the brand token.\n- Prefer restraint: fewer, well-grounded edits. Every command needs a human-plausible reason.'
     )
     ds_block = ""
@@ -453,11 +510,19 @@ def _messages(base: dict, req: AssistRequest) -> list[dict]:
             raise ValueError(f"Design System: {ds_error}")
         ds_ctx = ds_resolver.resolve_context(ds_doc, req.prompt,
             usage_mode=str(req.designSystem.get("usageMode") or "strict"))
-        ds_block = chr(10) + chr(10) + ds_resolver.compact_prompt_block(ds_ctx)
+        compiled = ds_resolver.compiled_context(
+            ds_ctx, brief=req.prompt,
+            archetype_id=str(req.designSystem.get("archetypeId") or ""),
+            token_budget=int(req.designSystem.get("tokenBudget") or 4000),
+        )
+        if str(req.designSystem.get("usageMode") or "strict") == "strict" and not compiled.get("strictReady"):
+            raise ValueError("Design System Strict: exact master не помещается в выбранный context budget")
+        ds_block = chr(10) + chr(10) + compiled["promptBlock"]
     scope = req.scope.model_dump() if hasattr(req.scope, "model_dump") else req.scope.dict()
     scope["sourceKeys"] = safe_keys
     constraints = req.constraints.model_dump() if hasattr(req.constraints, "model_dump") else req.constraints.dict()
-    return [{"role": "system", "content": system + ds_block}, {"role": "user", "content": json.dumps({"action": req.action, "prompt": req.prompt, "scope": scope, "constraints": constraints, "ir": base}, ensure_ascii=False)}]
+    scoped_ir = _scoped_ir_for_prompt(base, kept_paths)
+    return [{"role": "system", "content": system + ds_block}, {"role": "user", "content": json.dumps({"action": req.action, "prompt": req.prompt, "scope": scope, "constraints": constraints, "ir": scoped_ir}, ensure_ascii=False)}]
 
 
 def _parse_result(raw: str, base: dict, req: AssistRequest):
@@ -483,7 +548,7 @@ def editor_assist(req: AssistRequest):
         else:
             messages = _messages(req.ir, req)
             if req.prepareOnly: return {"messages": messages}
-            fallback_provider = req.provider if req.provider in ("openai", "kimi", "glm") else "auto"
+            fallback_provider = req.provider if req.provider in ("openai", "kimi", "glm", "zai", "grok", "zcode") else "auto"
             raw = req.rawOutput if req.rawOutput is not None else llm.chat(fallback_provider, messages, 0.2, role="edit")
             candidate, ops, summary = _parse_result(raw, req.ir, req)
         ops = [op for op in ops if not (op.get("op") == "add" and op.get("after") == {})]
@@ -493,10 +558,17 @@ def editor_assist(req: AssistRequest):
             ds_doc, ds_error = ds_store.resolve_ref(req.designSystem)
             if ds_error:
                 return _error(422, f"Design System: {ds_error}")
+            usage_mode = str(req.designSystem.get("usageMode") or "strict")
             ds_ctx = ds_resolver.resolve_context(ds_doc, req.prompt,
-                usage_mode=str(req.designSystem.get("usageMode") or "strict"))
+                usage_mode=usage_mode)
             check = ds_resolver.validate_generation(candidate, ds_ctx)
-            warnings.extend(check["errors"] or check["warnings"])
+            if usage_mode == "strict" and check["errors"]:
+                return _error(
+                    422,
+                    "Design System Strict отклонил AI edit: "
+                    + "; ".join(item["message"] for item in check["errors"][:4]),
+                )
+            warnings.extend(check["errors"] + check["warnings"])
         if dropped_scope:
             warnings.append({"code": "nested_scope_normalized", "message": "Родительский контейнер исключён: AI изменяет выбранные вложенные элементы."})
         if len(ops) > 8 or any(_is_high_impact_op(op) for op in ops):

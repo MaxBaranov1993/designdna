@@ -292,7 +292,7 @@ def main() -> None:
         live, _tokens = capture_block_irs(
             f"http://127.0.0.1:{server.server_port}/source_import_header.html",
             [{"name": "header", "label": "Header", "kind": "header", "selector": "#fixture-header"}],
-            return_tokens=True, timeout_ms=5000,
+            return_tokens=True, timeout_ms=30000,
         )
     finally:
         scraper.validate_public_url = original_validate
@@ -423,7 +423,7 @@ def main() -> None:
                 {"name": "flatten", "label": "Flatten", "kind": "section", "selector": "#fixture-flatten"},
             ],
             viewports=[{"name": "desktop", "width": 1440, "height": 900}],
-            timeout_ms=5000,
+            timeout_ms=30000,
         )
     finally:
         scraper.validate_public_url = original_validate

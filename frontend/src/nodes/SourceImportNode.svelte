@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
-  import { flow } from "../flow/state";
+  import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import { useFlowStore } from "../flow/store";
   import type { SourceImportFlowNode, SourceViewport } from "../flow/types";
@@ -14,7 +14,7 @@
   const VIEWPORTS: SourceViewport[] = ["desktop", "tablet", "mobile"];
   const PREVIEW_MODES = ["reference", "ir", "compare"] as const;
 
-  let busy = $derived(!!$flow.busy[Number(id)]);
+  let busy = $derived(!!$flowBusy[Number(id)]);
   let previewMode = $derived(data.previewMode || "reference");
   let desktopAuth = $derived(typeof window !== "undefined" ? window.designDNA?.sourceAuth : undefined);
   let expandedBlock = $state<string | null>(null);

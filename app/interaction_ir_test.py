@@ -23,6 +23,7 @@ def main():
     button = snapshot["tree"][0]["children"][0]
     button["text"] = "Registered user@example.com"
     button["value"] = "+7 999 123-45-67"
+    button["styleBindings"] = {"background": {"token": "semantic.primary", "fallback": "#7018e6"}}
 
     document = ir.build_interaction(
         base,
@@ -47,6 +48,7 @@ def main():
     replayed = ir.replay_interaction(base, document, "success")
     replayed_button = replayed["tree"][0]["children"][0]
     check("scene replay applies sanitized snapshot patch", replayed_button["text"] == "Registered [EMAIL]" and replayed_button["value"] == "[PHONE]", str(replayed_button))
+    check("Design IR semantic token references survive sanitization", replayed_button["styleBindings"]["background"]["token"] == "semantic.primary")
     check("base IR remains unchanged", base["tree"][0]["children"][0]["text"] == "Continue")
 
     rejected = False

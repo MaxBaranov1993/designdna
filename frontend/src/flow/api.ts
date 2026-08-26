@@ -36,6 +36,7 @@ export type GenerateResp = {
   qa?: { index: number; fixed: number; violations: string[] }[];
   design?: { type: string; label: string };
   prompts?: Array<{ messages: Array<{ role: string; content: string }> }>;
+  designSystem?: Record<string, unknown>;
 };
 export type MixResp = { ir?: IRObject | null };
 export type ReproduceResp = {
@@ -84,7 +85,7 @@ export type BlockParseResp = {
   authenticated?: boolean;
   authWarning?: string;
 };
-export type ReskinResp = { ir?: IRObject | null; log?: string[] };
+export type ReskinResp = { ir?: IRObject | null; log?: string[]; designSystem?: Record<string, unknown> };
 export type QualityPassResp = {
   ir?: IRObject | null;
   passed?: boolean;
@@ -99,8 +100,8 @@ export type QualityPassResp = {
     messages: Array<{ role: string; content: string }>;
   };
 };
-export type ProjectLoadResp = { project?: unknown | null; updated_at?: string | null };
-export type ProjectSaveResp = { ok?: boolean; bytes?: number; updated_at?: string; taste?: Record<string, unknown> };
+export type ProjectLoadResp = { project?: unknown | null; updated_at?: string | null; revision?: string | null };
+export type ProjectSaveResp = { ok?: boolean; bytes?: number; updated_at?: string; revision?: string; taste?: Record<string, unknown> };
 export type ConfigResp = {
   schemaVersion?: string;
   flags?: Record<string, boolean>;

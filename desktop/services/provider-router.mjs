@@ -1,4 +1,9 @@
-import { chatWithGlm, chatWithKimi, chatWithOpenAI, chatWithZcode, zcodeEnsureConfig } from "./provider-chat.mjs";
+import { chatWithGlm, chatWithGrok, chatWithKimi, chatWithOpenAI, chatWithZai, chatWithZcode, zcodeEnsureConfig } from "./provider-chat.mjs";
+import { adaptEnvelopeForProvider, assertEnvelopeSupported, createEnvelope } from "./provider-envelope.mjs";
+
+const PROVIDER_ORDER = ["kimi", "zai", "glm", "openai", "grok"];
+const CODEX_DEFAULT_TIMEOUT_MS = 180_000;
+const CODEX_GENERATOR_TIMEOUT_MS = 300_000;
 
 async function autoProvider({ codex, credentials, exclude = new Set(), zcodeAvailable = zcodeEnsureConfig }) {
   if (!exclude.has("codex")) {
@@ -9,27 +14,53 @@ async function autoProvider({ codex, credentials, exclude = new Set(), zcodeAvai
       // Codex is optional; fall through to explicitly connected API accounts.
     }
   }
-  if (!exclude.has("kimi") && credentials.has("kimi")) return "kimi";
-  if (!exclude.has("glm") && credentials.has("glm")) return "glm";
-  if (!exclude.has("openai") && credentials.has("openai")) return "openai";
-  // Локальный ZCode CLI не требует ключей: login Z.AI уже работает как аккаунт.
+  for (const provider of PROVIDER_ORDER) {
+    if (!exclude.has(provider) && credentials.has(provider)) return provider;
+  }
+  // Локальный ZCode CLI — только явный opt-in через ZCODE_CLI (см.
+  // provider-chat.zcodeCliPath); автоматического discovery нет.
   if (!exclude.has("zcode") && zcodeAvailable()) return "zcode";
-  throw new Error("Нет подключённого AI-аккаунта. Откройте Agents → Connections или войдите в ZCode.");
+  throw new Error("Нет подключённого AI-аккаунта. Откройте Agents → Connections или включите ZCode через ZCODE_CLI.");
 }
 
 async function resolveProvider({ provider, codex, credentials, zcodeAvailable = zcodeEnsureConfig }) {
-  if (provider === "auto") return autoProvider({ codex, credentials, zcodeAvailable });
+  if (provider === "auto") {
+    const selected = await autoProvider({ codex, credentials, zcodeAvailable });
+    return { provider: selected, fallback: selected };
+  }
+  if (provider === "codex") {
+    let status;
+    try { status = await codex.account(); } catch (error) {
+      throw new Error(`Codex account unavailable: ${error.message}`);
+    }
+    if (!status?.account) throw new Error("Codex не подключён. Войдите через Agents → Connections.");
+    return { provider, fallback: null };
+  }
   if (provider === "zcode") {
-    if (!zcodeAvailable()) throw new Error("ZCode CLI не найден или не авторизован: войдите в приложение ZCode");
-    return provider;
+    if (!zcodeAvailable()) throw new Error("ZCode CLI не найден или не включён: автоматический поиск установленного приложения удалён — задайте ZCODE_CLI с полным путём к zcode.cjs и выполните login Z.AI");
+    return { provider, fallback: null };
   }
-  if ((provider === "kimi" || provider === "openai" || provider === "glm") && !credentials.has(provider)) {
-    // Saved graphs may point at an account that is no longer connected. Keep
-    // generation working through another authenticated account instead of
-    // surfacing an IPC/API-key error inside the node.
-    return autoProvider({ codex, credentials, exclude: new Set([provider]), zcodeAvailable });
+  if (PROVIDER_ORDER.includes(provider)) {
+    if (!credentials.has(provider)) {
+      throw new Error(`Провайдер ${provider} не подключён. Добавьте ключ в Agents → Connections.`);
+    }
+    return { provider, fallback: null };
   }
-  return provider;
+  throw new Error(`Unsupported generator provider: ${provider}`);
+}
+
+/** Envelope → codex chat messages (текстовые; мультимодальные части — текст). */
+function codexMessages(envelope) {
+  const messages = [];
+  if (envelope.system) messages.push({ role: "system", content: envelope.system });
+  for (const message of envelope.messages) {
+    const text = (message.content || [])
+      .map((part) => (part.type === "text" ? part.text : part.type === "image_url" ? "[image attached]" : ""))
+      .filter(Boolean)
+      .join("\n");
+    if (text.trim()) messages.push({ role: message.role, content: text });
+  }
+  return messages;
 }
 
 export async function chatWithProvider({
@@ -37,40 +68,62 @@ export async function chatWithProvider({
   messages,
   temperature,
   profile,
+  envelope: envelopeInput = null,
+  signal = null,
   codex,
   credentials,
   tools = null,
   kimiChat = chatWithKimi,
   openaiChat = chatWithOpenAI,
   glmChat = chatWithGlm,
+  zaiChat = chatWithZai,
+  grokChat = chatWithGrok,
   zcodeChat = chatWithZcode,
   zcodeAvailable = zcodeEnsureConfig,
 }) {
-  const selected = await resolveProvider({ provider, codex, credentials, zcodeAvailable });
+  // Одна точка валидации: и явный envelope, и legacy-поля проходят через
+  // типизированный конверт — параметры далее не теряются молча.
+  const envelope = envelopeInput || createEnvelope({
+    id: `chat-${Date.now().toString(36)}`,
+    provider,
+    messages,
+    temperature,
+    tools,
+  });
+  const { provider: selected, fallback } = await resolveProvider({ provider: envelope.provider, codex, credentials, zcodeAvailable });
+
+  const withTransport = (result) => ({
+    ...result,
+    provider: selected,
+    transport: { ...result.transport, requestId: envelope.id, fallback },
+  });
+
   if (selected === "codex") {
-    return {
-      provider: selected,
-      content: await codex.chat(messages, { timeoutMs: 180_000, profile: profile || "generator" }),
-    };
+    assertEnvelopeSupported(envelope, "codex");
+    const { envelope: adapted, dropped } = adaptEnvelopeForProvider(envelope, "codex");
+    const content = await codex.chat(codexMessages(adapted), {
+      timeoutMs: adapted.timeoutMs || (profile === "generator" ? CODEX_GENERATOR_TIMEOUT_MS : CODEX_DEFAULT_TIMEOUT_MS),
+      profile: profile || "generator",
+    });
+    return withTransport({ content, toolCalls: null, transport: { provider: "codex", model: null, dropped } });
   }
   if (selected === "zcode") {
-    // Локальный ZCode CLI: temperature/response_format не управляются —
-    // отдаём финальный текст агента как content.
-    return { provider: selected, content: await zcodeChat({ messages }) };
+    return withTransport(await zcodeChat({ envelope, signal }));
   }
   if (selected === "kimi") {
-    return { provider: selected, content: await kimiChat({ credentials, messages, temperature }) };
+    return withTransport(await kimiChat({ credentials, envelope, signal }));
   }
   if (selected === "openai") {
-    return { provider: selected, content: await openaiChat({ credentials, messages, temperature }) };
+    return withTransport(await openaiChat({ credentials, envelope, signal }));
   }
   if (selected === "glm") {
-    // tool-calling режим прокидываем только явному glm-вызову (Agent Workspace);
-    // нодам нужен чистый текст/JSON — там tools не передаётся
-    const result = await glmChat({ credentials, messages, temperature, tools, returnToolCalls: !!tools });
-    return result.toolCalls
-      ? { provider: selected, content: result.content, toolCalls: result.toolCalls }
-      : { provider: selected, content: typeof result === "string" ? result : result.content };
+    return withTransport(await glmChat({ credentials, envelope, signal }));
+  }
+  if (selected === "zai") {
+    return withTransport(await zaiChat({ credentials, envelope, signal }));
+  }
+  if (selected === "grok") {
+    return withTransport(await grokChat({ credentials, envelope, signal }));
   }
   throw new Error(`Unsupported generator provider: ${selected}`);
 }

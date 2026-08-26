@@ -26,6 +26,7 @@ import {
   scheduleProjectSave,
 } from "./serialize";
 import { toast } from "./toast";
+import { offloadSourceEvidenceInPlace } from "../desktop/blobStore";
 import type {
   AnyNodeData,
   FlowPage,
@@ -60,6 +61,32 @@ function friendlyProviderError(error: unknown) {
   return detail || "AI не ответил. Повторите запуск.";
 }
 
+const DESIGN_SYSTEM_SECTION_TYPES = new Set([
+  "navbar", "hero", "logo-cloud", "feature-grid", "feature-alternating", "stats", "steps",
+  "gallery", "testimonials", "pricing", "comparison", "team", "blog-grid", "faq", "cta",
+  "contact-form", "newsletter", "banner", "footer", "source-block",
+]);
+
+function renderableDesignSystemMaster(component: { templateIr?: IRObject; masterIr?: IRObject }): IRObject | null {
+  if (component.templateIr) return deepClone(component.templateIr);
+  const master = component.masterIr;
+  const tree = Array.isArray(master?.tree) ? master.tree : [];
+  const root = tree[0] as Record<string, any> | undefined;
+  if (!master || !root) return null;
+  if (DESIGN_SYSTEM_SECTION_TYPES.has(String(root.type || ""))) return deepClone(master);
+  const frame = root.frame && typeof root.frame === "object"
+    ? Object.fromEntries(["width", "height"].filter((key) => root.frame[key] != null).map((key) => [key, deepClone(root.frame[key])]))
+    : {};
+  return {
+    version: master.version,
+    tokens: deepClone(master.tokens),
+    tree: [{
+      id: "ds-master-preview", type: "source-block", variant: "component-master", props: {},
+      ...(Object.keys(frame).length ? { frame } : {}), children: [deepClone(root)],
+    }],
+  } as IRObject;
+}
+
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
 export type NodeStatus = { text: string; kind?: "ok" | "err" };
 
@@ -79,6 +106,7 @@ export interface FlowStoreState {
   activePageId: string;
   channels: Record<string, IRObject | null>;
   designSystems: DesignSystemsRegistry;
+  designSystemPicker: DesignSystemPickerConfig;
   statuses: Record<number, NodeStatus>;
   /* run-based ноды в полёте запроса (спиннер на ноде); runtime-поле, в сейв не попадает */
   busy: Record<number, boolean>;
@@ -135,6 +163,16 @@ export interface FlowStoreState {
   loadPersistedProject: () => Promise<void>;
   refreshDesignSystems: () => Promise<void>;
   createDesignSystemFromSource: (sourceId: number, options?: { name?: string }) => Promise<number | null>;
+  promoteVariantToDesignSystem: (generatorId: number) => Promise<number | null>;
+  recordVariantTaste: (generatorId: number, kind: "accepted" | "rejected") => Promise<boolean>;
+  setDesignSystemPicker: (patch: Partial<DesignSystemPickerConfig>) => void;
+  publishDesignSystem: (nodeId: number) => Promise<boolean>;
+  setDefaultDesignSystem: (nodeId: number) => Promise<boolean>;
+  rebuildDesignSystemFromSource: (nodeId: number) => Promise<boolean>;
+  saveDesignSystemDocument: (nodeId: number, document: Record<string, unknown>) => Promise<boolean>;
+  restorePublishedDesignSystem: (nodeId: number, ref?: { systemId?: string; revision?: number }) => Promise<boolean>;
+  applyDesignSystemToEditor: (nodeId: number, componentKey: string) => { editNodeId: number; previousIr: IRObject | null } | null;
+  restoreDesignSystemEditorApply: (editNodeId: number, previousIr: IRObject | null) => void;
 }
 
 /* Стартовое состояние — из сейва designai-flow-v1 (битый сейв → пустой граф) */
@@ -168,7 +206,43 @@ const initialDesignSystems: DesignSystemsRegistry =
 
 export interface DesignSystemsRegistry {
   systems: Array<Record<string, unknown> & { systemId: string; name: string; status: string; revision: number; contentHash?: string }>;
-  defaultSystemRef: { systemId: string; revision: number } | null;
+  defaultSystemRef: { systemId: string; revision: number; contentHash?: string } | null;
+}
+
+export interface DesignSystemPickerConfig {
+  selection: "inherit" | "none" | string;
+  usageMode: "strict" | "extend" | "style-only";
+  fixtureProfile: string;
+}
+
+const emptyPicker: DesignSystemPickerConfig = {
+  selection: "inherit",
+  usageMode: "strict",
+  fixtureProfile: "typical",
+};
+
+function pinnedDesignSystemRef(
+  data: Record<string, unknown>,
+  registry: DesignSystemsRegistry,
+  picker?: DesignSystemPickerConfig,
+): Record<string, unknown> | null {
+  const dsSelection = String(data.designSystemSelection || picker?.selection || "inherit");
+  if (dsSelection === "none") return null;
+  const usageMode = String(data.designSystemUsageMode || picker?.usageMode || "strict");
+  const fixture = String(data.designSystemFixture || picker?.fixtureProfile || "typical");
+  const target = dsSelection === "inherit" ? registry.defaultSystemRef?.systemId : dsSelection;
+  const system = registry.systems?.find((sys) => sys.systemId === target && sys.status === "published");
+  if (!system) return null;
+  const inheritRef = registry.defaultSystemRef;
+  const revision = dsSelection === "inherit" ? (inheritRef?.revision ?? system.revision) : system.revision;
+  const contentHash = (dsSelection === "inherit" ? inheritRef?.contentHash : undefined) || system.contentHash || "";
+  return {
+    systemId: system.systemId,
+    revision,
+    contentHash,
+    usageMode,
+    mockFixtureProfile: fixture,
+  };
 }
 
 async function fetchDesignSystemsList(): Promise<DesignSystemsRegistry> {
@@ -284,6 +358,7 @@ let localDirtySinceInit = false;
 
 export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   designSystems: initialDesignSystems,
+  designSystemPicker: emptyPicker,
   nodes: hydratePageBridgeNodes(initialActiveGraph.nodes, initialChannels),
   edges: initialActiveGraph.edges,
   view: initialActiveGraph.view,
@@ -402,6 +477,16 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   /* Точечное обновление data ноды (аналог записи n.data.* в legacy + save()) */
   setNodeData: (id, patch) => {
     const sid = String(id);
+    const before = get().nodes.find((n) => n.id === sid);
+    if (!before) return;
+    // No-op патч не будит стор: каждый set пересоздаёт массив nodes и будит
+    // все подписки (автосейв-компаратор, канвас), а поля ввода шлют setNodeData
+    // на каждое нажатие. Запись ir всегда считается изменением (бампается
+    // _irRevision), равенство остальных ключей — по ссылке.
+    const beforeData = before.data as Record<string, unknown>;
+    const isNoop = !Object.prototype.hasOwnProperty.call(patch, "ir")
+      && Object.keys(patch).every((key) => beforeData[key] === (patch as Record<string, unknown>)[key]);
+    if (isNoop) return;
     set((state) => ({
       nodes: state.nodes.map((n) =>
         n.id === sid ? (() => {
@@ -575,8 +660,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const styleHint = styleRaw ? String(styleRaw) : undefined;
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
     const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as Record<string, unknown>) : undefined;
-    const selectedProvider: "auto" | "codex" | "kimi" | "openai" | "glm" | "zcode" = ["kimi", "openai", "glm", "zcode"].includes(data.provider)
-      ? (data.provider as "kimi" | "openai" | "glm" | "zcode")
+    const selectedProvider: "auto" | "codex" | "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode" = ["kimi", "openai", "glm", "zai", "grok", "zcode"].includes(data.provider)
+      ? (data.provider as "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode")
       : data.provider === "auto" ? "auto" : "codex";
     const desktop = window.designDNA;
     const provider = desktop
@@ -586,30 +671,19 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const providerLabel = provider === "kimi"
       ? "Kimi K3"
       : provider === "openai" ? "GPT-5.6-sol"
-      : provider === "glm" ? "GLM-5.3"
+      : provider === "glm" ? "GLM-5.3 · Zhipu"
+      : provider === "zai" ? "GLM-5.3 · Z.AI"
+      : provider === "grok" ? "Grok 4.6 · xAI"
       : provider === "zcode" ? "ZCode GLM"
       : provider === "auto" ? "Auto route" : "GPT Codex";
     get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
     get().setBusy(id, true);
     try {
-      // Design System: разрешение выбора в pinned ref на момент старта (ТЗ §16.2)
-      let designSystemRef: Record<string, unknown> | null = null;
-      const dsSelection = (data as unknown as { designSystemSelection?: string }).designSystemSelection || "inherit";
-      if (dsSelection !== "none") {
-        const reg = (get() as unknown as { designSystems?: DesignSystemsRegistry }).designSystems
-          || { systems: [], defaultSystemRef: null };
-        const target = dsSelection === "inherit" ? reg.defaultSystemRef?.systemId : dsSelection;
-        const system = reg.systems?.find((sys) => sys.systemId === target && sys.status === "published");
-        if (system) {
-          const revision = dsSelection === "inherit" ? (reg.defaultSystemRef?.revision ?? system.revision) : system.revision;
-          designSystemRef = {
-            systemId: system.systemId, revision,
-            contentHash: system.contentHash || "",
-            usageMode: (data as unknown as { designSystemUsageMode?: string }).designSystemUsageMode || "strict",
-            mockFixtureProfile: (data as unknown as { designSystemFixture?: string }).designSystemFixture || "typical",
-          };
-        }
-      }
+      const designSystemRef = pinnedDesignSystemRef(
+        data as unknown as Record<string, unknown>,
+        get().designSystems,
+        get().designSystemPicker,
+      );
       const request = {
         brief,
         count,
@@ -623,7 +697,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       if (!desktop) {
         res = await api<GenerateResp>("/api/generate", request);
       } else {
-        const desktopProvider: "auto" | "codex" | "kimi" | "openai" | "glm" | "zcode" = provider;
+        const desktopProvider: "auto" | "codex" | "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode" = provider;
         const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true });
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы генератора");
         const rawOutputs: string[] = [];
@@ -780,8 +854,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         }
         if (url !== data.url) get().setNodeData(id, { url });
         get().setStatus(id, `Импортирую ${url.slice(0, 30)}…`);
+        const desktop = window.designDNA;
         const res = await api<BlockParseResp>("/api/block-parse", {
           url,
+          fullResolutionEvidence: !!desktop,
           useAuthenticatedSession: !!data.authenticatedSession && !!window.designDNA?.sourceAuth,
           viewports: [
             { name: "desktop", width: 1440, height: 900 },
@@ -789,6 +865,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             { name: "mobile", width: 390, height: 844 },
           ],
         });
+        // Source screenshots are comparison evidence. Persist them before the
+        // large editable IR enters state; the generic autosave traversal is
+        // intentionally time-boxed and may otherwise reach these fields too
+        // late, leaving Compare empty after a restart.
+        await offloadSourceEvidenceInPlace(res.blocks || []);
         const litBefore = new Set(data.blocks.filter((b) => b.lit).map((b) => b.name));
         const blocks = (res.blocks || []).map((b) => ({
           ...b,
@@ -876,6 +957,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         provider: "auto",
         styleHint: styleHint || undefined,
         tokens: tokens && typeof tokens === "object" ? tokens : undefined,
+        designSystem: pinnedDesignSystemRef(
+          data as unknown as Record<string, unknown>,
+          get().designSystems,
+          get().designSystemPicker,
+        ),
       };
       let res: GenerateResp;
       const desktop = window.designDNA;
@@ -933,6 +1019,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         prompt: data.prompt || "",
         provider: data.provider || "auto",
         mask: data.mask,
+        designSystem: pinnedDesignSystemRef(
+          data as unknown as Record<string, unknown>,
+          get().designSystems,
+          get().designSystemPicker,
+        ),
       };
       if (tokensRaw && typeof tokensRaw === "object") payload.tokens = tokensRaw;
       let res: ReskinResp;
@@ -946,7 +1037,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           "/api/reskin", { ...payload, prepareOnly: true },
         );
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить промпт рестайла");
-        const reskinProvider = ["kimi", "openai", "glm", "zcode"].includes(String(data.provider)) ? data.provider as "kimi" | "openai" | "glm" | "zcode" : "auto";
+        const reskinProvider = ["kimi", "openai", "glm", "zai", "grok", "zcode"].includes(String(data.provider)) ? data.provider as "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode" : "auto";
         const answer = await desktop.providers.chat(reskinProvider, prepared.prompts[0].messages, 0.7);
         res = await api<ReskinResp>("/api/reskin", { ...payload, rawOutput: answer.content });
       }
@@ -1388,6 +1479,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           sourceNodeId: String(sourceId), sourceUrl: data.url || "",
           blocks: data.blocks, tokens: data.tokens || {},
           name: options?.name || `UI Kit · ${data.url || "Source"}`,
+          capturedAt: String((data as SourceImportNodeData & { capturedAt?: string }).capturedAt || ""),
         }),
       });
       const result = await resp.json();
@@ -1410,6 +1502,354 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     } finally {
       get().setBusy(dsId, false);
     }
+  },
+
+  promoteVariantToDesignSystem: async (generatorId) => {
+    const source = get().nodes.find((node) => Number(node.id) === Number(generatorId));
+    if (!source || source.type !== "generator") return null;
+    const data = source.data as GeneratorNodeData;
+    const active = data.variants?.[data.active];
+    if (!active) {
+      get().setStatus(generatorId, "Нет активного варианта для закрепления", "err");
+      return null;
+    }
+    get().setBusy(generatorId, true);
+    get().setStatus(generatorId, "Закрепляю identity как Design System…");
+    let createdId: number | null = null;
+    try {
+      const resp = await fetch("/api/design-system/identity/promote", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `Style · ${String(data.ownPrompt || "Generator").trim().slice(0, 48)}`,
+          sourceNodeId: String(generatorId), ir: active, visualReferences: [],
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || result.error || !result.document) throw new Error(result.error || `HTTP ${resp.status}`);
+      const node = get().addNode("designsystem", source.position.x + 380, source.position.y + 120);
+      createdId = Number(node.id);
+      get().setNodeData(createdId, {
+        systemId: result.document.id, name: result.document.name, status: "draft",
+        revision: 0, summary: result.summary, sourceNodeId: generatorId,
+        defaultSet: false, sourceUpdate: false, document: result.document,
+      } as unknown as Partial<DesignSystemNodeData>);
+      get().setStatus(createdId, `Identity закреплена · ${result.summary.identitySignatures || 0} signatures · ${result.summary.identityTests || 0} tests`, "ok");
+      const meta = (active as Record<string, any>).meta || {};
+      await fetch("/api/project/taste/outcome", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "promoted", payload: {
+          systemId: result.document.id,
+          compiledContextHash: meta.compiledContextHash || "",
+          archetypeId: meta.archetypeId || "",
+          ruleIds: (result.document.identity?.signatures || []).map((item: any) => item.id),
+        }}),
+      });
+      get().setStatus(generatorId, "Стиль закреплён в черновик Design System", "ok");
+      return createdId;
+    } catch (error) {
+      if (createdId != null) get().deleteNode(createdId);
+      const message = error instanceof Error ? error.message : String(error);
+      get().setStatus(generatorId, "Не удалось закрепить стиль: " + message, "err");
+      toast("Design Identity: " + message, "error");
+      return null;
+    } finally {
+      get().setBusy(generatorId, false);
+    }
+  },
+
+  recordVariantTaste: async (generatorId, kind) => {
+    const source = get().nodes.find((node) => Number(node.id) === Number(generatorId));
+    if (!source || source.type !== "generator") return false;
+    const data = source.data as GeneratorNodeData;
+    const active = data.variants?.[data.active] as Record<string, any> | undefined;
+    if (!active) return false;
+    const meta = active.meta || {};
+    try {
+      const resp = await fetch("/api/project/taste/outcome", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, payload: {
+          systemId: meta.designSystemRef?.systemId || "",
+          compiledContextHash: meta.compiledContextHash || "",
+          archetypeId: meta.archetypeId || "",
+          ruleIds: (meta.identityReport?.results || []).filter((item: any) => item.passed).map((item: any) => item.id),
+        }}),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      get().setStatus(generatorId, kind === "accepted" ? "Вариант принят в Taste Memory" : "Вариант отклонён в Taste Memory", "ok");
+      return true;
+    } catch (error) {
+      get().setStatus(generatorId, "Taste Memory: " + (error instanceof Error ? error.message : String(error)), "err");
+      return false;
+    }
+  },
+
+  setDesignSystemPicker: (patch) => {
+    set((state) => ({ designSystemPicker: { ...state.designSystemPicker, ...patch } }));
+  },
+
+  publishDesignSystem: async (nodeId) => {
+    const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
+    if (!n || n.type !== "designsystem") return false;
+    const data = n.data as DesignSystemNodeData;
+    get().setBusy(nodeId, true);
+    get().setNodeData(nodeId, { busyAction: "publish", lastError: "" });
+    get().setStatus(nodeId, "Публикация ревизии…");
+    try {
+      let document = (data.document || null) as Record<string, unknown> | null;
+      if (!document && data.systemId) {
+        const resp = await fetch("/api/design-system/get", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ systemId: data.systemId, revision: 0 }),
+        });
+        const got = await resp.json();
+        document = got.document || null;
+      }
+      if (!document) {
+        get().setStatus(nodeId, "Нет документа для публикации", "err");
+        get().setNodeData(nodeId, { lastError: "Нет документа для публикации" });
+        return false;
+      }
+      const pub = await fetch("/api/design-system/publish", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document }),
+      });
+      const result = await pub.json();
+      if (result.errors?.length || result.error) {
+        const message = result.errors?.[0]?.message || result.error || "публикация блокирована";
+        get().setStatus(nodeId, `Публикация блокирована: ${message}`, "err");
+        get().setNodeData(nodeId, { lastError: message });
+        return false;
+      }
+      get().setNodeData(nodeId, {
+        status: "published",
+        revision: result.document.revision,
+        summary: result.summary,
+        contentHash: result.document.contentHash || "",
+        // опубликованная копия не хранится в ноде: ревизия живёт на сервере
+        // (design_system_revisions), документ подтянется по ссылке
+        // systemId@revision при следующем открытии редактора — автосейв
+        // графа не таскает мегабайтные снимки
+        document: null,
+        lastError: "",
+      });
+      get().setStatus(nodeId, `Опубликовано v${result.document.revision}${result.duplicate ? " (без изменений)" : ""}`, "ok");
+      await get().refreshDesignSystems();
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      get().setStatus(nodeId, "Ошибка: " + message, "err");
+      get().setNodeData(nodeId, { lastError: message });
+      return false;
+    } finally {
+      get().setBusy(nodeId, false);
+      get().setNodeData(nodeId, { busyAction: "" });
+    }
+  },
+
+  setDefaultDesignSystem: async (nodeId) => {
+    const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
+    if (!n || n.type !== "designsystem") return false;
+    const data = n.data as DesignSystemNodeData;
+    if (!data.systemId) return false;
+    get().setBusy(nodeId, true);
+    get().setNodeData(nodeId, { busyAction: "default", lastError: "" });
+    get().setStatus(nodeId, "Назначаю системой проекта…");
+    try {
+      const resp = await fetch("/api/design-system/default", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ systemId: data.systemId }),
+      });
+      const result = await resp.json();
+      if (result.error) {
+        get().setStatus(nodeId, "Ошибка: " + result.error, "err");
+        get().setNodeData(nodeId, { lastError: result.error });
+        return false;
+      }
+      const selectedId = Number(nodeId);
+      set((state) => ({
+        nodes: state.nodes.map((node) => {
+          if (node.type !== "designsystem") return node;
+          const isSelected = Number(node.id) === selectedId;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              defaultSet: isSelected,
+              ...(isSelected ? { lastError: "" } : {}),
+            },
+          } as FlowNode;
+        }),
+      }));
+      await get().refreshDesignSystems();
+      get().setStatus(nodeId, "Назначена системой проекта по умолчанию", "ok");
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      get().setStatus(nodeId, "Ошибка: " + message, "err");
+      get().setNodeData(nodeId, { lastError: message });
+      return false;
+    } finally {
+      get().setBusy(nodeId, false);
+      get().setNodeData(nodeId, { busyAction: "" });
+    }
+  },
+
+  rebuildDesignSystemFromSource: async (nodeId) => {
+    const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
+    if (!n || n.type !== "designsystem") return false;
+    const data = n.data as DesignSystemNodeData;
+    const sourceNode = get().nodes.find((x) => Number(x.id) === Number(data.sourceNodeId));
+    if (!sourceNode) {
+      get().setStatus(nodeId, "Source-нода не найдена", "err");
+      get().setNodeData(nodeId, { lastError: "Source-нода не найдена" });
+      return false;
+    }
+    get().setBusy(nodeId, true);
+    get().setNodeData(nodeId, { busyAction: "sync", lastError: "" });
+    get().setStatus(nodeId, "Синхронизация с Source…");
+    try {
+      const resp = await fetch("/api/design-system/build", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceNodeId: data.sourceNodeId, sourceUrl: (sourceNode.data as SourceImportNodeData).url || "",
+          blocks: (sourceNode.data as SourceImportNodeData).blocks || [],
+          tokens: (sourceNode.data as SourceImportNodeData).tokens || {},
+          name: data.name,
+          capturedAt: String((sourceNode.data as SourceImportNodeData & { capturedAt?: string }).capturedAt || ""),
+        }),
+      });
+      const result = await resp.json();
+      if (result.error) {
+        get().setStatus(nodeId, "Ошибка: " + result.error, "err");
+        get().setNodeData(nodeId, { lastError: result.error });
+        return false;
+      }
+      get().setNodeData(nodeId, {
+        systemId: result.document.id,
+        name: result.document.name,
+        status: "draft",
+        summary: result.summary,
+        sourceUpdate: false,
+        document: result.document,
+        lastError: "",
+      });
+      get().setStatus(nodeId, "Черновик пересобран из Source — проверьте и опубликуйте", "ok");
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      get().setStatus(nodeId, "Ошибка: " + message, "err");
+      get().setNodeData(nodeId, { lastError: message });
+      return false;
+    } finally {
+      get().setBusy(nodeId, false);
+      get().setNodeData(nodeId, { busyAction: "" });
+    }
+  },
+
+  saveDesignSystemDocument: async (nodeId, document) => {
+    const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
+    if (!n || n.type !== "designsystem") return false;
+    try {
+      const resp = await fetch("/api/design-system/save-draft", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document }),
+      });
+      const result = await resp.json();
+      if (result.error) {
+        get().setNodeData(nodeId, { lastError: result.error });
+        get().setStatus(nodeId, "Ошибка: " + result.error, "err");
+        return false;
+      }
+      get().setNodeData(nodeId, {
+        document: result.document || document,
+        summary: result.summary,
+        status: "draft",
+        lastError: "",
+      });
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      get().setNodeData(nodeId, { lastError: message });
+      get().setStatus(nodeId, "Ошибка: " + message, "err");
+      return false;
+    }
+  },
+
+  restorePublishedDesignSystem: async (nodeId, ref) => {
+    const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
+    if (!n || n.type !== "designsystem") return false;
+    const data = n.data as DesignSystemNodeData;
+    const systemId = String(ref?.systemId || data.systemId || "");
+    const revision = Number(ref?.revision || data.revision || 0);
+    if (!systemId) {
+      get().setNodeData(nodeId, { lastError: "Нет опубликованной ревизии для восстановления" });
+      return false;
+    }
+    try {
+      const resp = await fetch("/api/design-system/restore-published", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ systemId, revision }),
+      });
+      const result = await resp.json();
+      if (result.error || !result.document) {
+        get().setNodeData(nodeId, { lastError: result.error || "Не удалось восстановить опубликованную ревизию" });
+        get().setStatus(nodeId, "Ошибка: " + (result.error || "restore failed"), "err");
+        return false;
+      }
+      get().setNodeData(nodeId, {
+        document: null,
+        contentHash: result.document.contentHash || "",
+        summary: result.summary,
+        status: "published",
+        revision: result.document.revision,
+        lastError: "",
+      });
+      await get().refreshDesignSystems();
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      get().setNodeData(nodeId, { lastError: message });
+      get().setStatus(nodeId, "Ошибка: " + message, "err");
+      return false;
+    }
+  },
+
+  applyDesignSystemToEditor: (nodeId, componentKey) => {
+    const st = get();
+    const dsNode = st.nodes.find((x) => Number(x.id) === Number(nodeId));
+    if (!dsNode || dsNode.type !== "designsystem") return null;
+    const data = dsNode.data as DesignSystemNodeData;
+    const document = (data.document || {}) as { components?: Record<string, { templateIr?: IRObject; masterIr?: IRObject; componentKey?: string }> };
+    const comp = document.components?.[componentKey];
+    const templateIr = comp ? renderableDesignSystemMaster(comp) : null;
+    if (!templateIr) {
+      get().setStatus(nodeId, "Нет template IR у выбранного компонента", "err");
+      return null;
+    }
+    const existing = st.nodes.find((x) => {
+      if (x.type !== "edit") return false;
+      const master = (x.data as Record<string, unknown>)._dsMaster as { systemId?: string; componentKey?: string } | undefined;
+      return master?.systemId === data.systemId && master?.componentKey === componentKey;
+    });
+    const created = existing || get().addNode("edit", dsNode.position.x + 360, dsNode.position.y);
+    const editNodeId = Number(created.id);
+    const current = get().nodes.find((x) => Number(x.id) === editNodeId);
+    const previousIr = ((current?.data as { ir?: IRObject | null } | undefined)?.ir || null) as IRObject | null;
+    get().setNodeData(editNodeId, {
+      ir: deepClone(templateIr),
+      _dsMaster: { systemId: data.systemId, componentKey, nodeId },
+      _dsPreviousIr: previousIr,
+    });
+    window.dispatchEvent(new Event("designdna:ensure-editor"));
+    get().setStatus(nodeId, `Мастер «${componentKey}» открыт в DNA Editor`, "ok");
+    return { editNodeId, previousIr };
+  },
+
+  restoreDesignSystemEditorApply: (editNodeId, previousIr) => {
+    const n = get().nodes.find((x) => Number(x.id) === Number(editNodeId));
+    if (!n || n.type !== "edit") return;
+    if (previousIr) get().setNodeData(editNodeId, { ir: deepClone(previousIr) });
+    else get().setNodeData(editNodeId, { ir: null });
   },
 
   clearGraph: () => {

@@ -41,25 +41,31 @@
 
 <!-- svelte-ignore a11y_label_has_associated_control -->
 {#if sel && sess}
-  {#if !isRoot && hasResponsive}
+  {#if !isRoot}
     <div class="fe-responsive-status">
-      <div class="fe-responsive-status-head">
-        <span>{sess.viewport} · {sess.previewWidth} px</span>
-        <span><span class="fe-source-tag">frame {frameSource}</span> <span class="fe-source-tag">style {styleSource}</span></span>
-      </div>
+      {#if hasResponsive}
+        <div class="fe-responsive-status-head">
+          <span>{sess.viewport} · {sess.previewWidth} px</span>
+          <span><span class="fe-source-tag">frame {frameSource}</span> <span class="fe-source-tag">style {styleSource}</span></span>
+        </div>
+      {/if}
       <div class="fe-responsive-actions">
-        <button class="fe-btn" data-responsive-act="reset" disabled={sess.viewport === "desktop"}>Reset override</button>
-        <button class="fe-btn" data-responsive-act="all">Apply to all</button>
-        <button class="fe-btn" data-responsive-copy="mobile">Copy to M</button>
-        <button class="fe-btn" data-responsive-copy="tablet">Copy to T</button>
-        <button class="fe-btn" data-responsive-copy="desktop">Copy to D</button>
+        {#if hasResponsive}
+          <button class="fe-btn" data-responsive-act="reset" aria-label="Reset override" disabled={sess.viewport === "desktop"}>Reset override</button>
+          <button class="fe-btn" data-responsive-act="all" aria-label="Apply to all">Apply to all</button>
+          <button class="fe-btn" data-responsive-copy="mobile" aria-label="Copy to mobile">Copy to M</button>
+          <button class="fe-btn" data-responsive-copy="tablet" aria-label="Copy to tablet">Copy to T</button>
+          <button class="fe-btn" data-responsive-copy="desktop" aria-label="Copy to desktop">Copy to D</button>
+        {/if}
+        <button class="fe-btn" data-act="stretch-width" aria-label="Растянуть по ширине">Stretch width</button>
+        <button class="fe-btn" data-act="reset-frame" aria-label="Сбросить геометрию">Reset frame</button>
       </div>
     </div>
   {/if}
 
   {#if node.type === "heading" || node.type === "text"}
     <div class="fe-insp-group"><span class="fe-glabel">Текст</span>
-      <textarea data-textprop={node.text !== undefined ? "text" : "title"} value={node.text || node.title || ""}></textarea>
+      <textarea data-el-prop={node.text !== undefined ? "text" : "title"} value={node.text || node.title || ""}></textarea>
       <div class="fe-row" style="margin-top: 6px">
         <div class="fe-field"><label>Sz</label>
           <select data-el-prop="size" value={node.size || "md"}>

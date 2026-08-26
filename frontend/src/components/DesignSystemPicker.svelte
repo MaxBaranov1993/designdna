@@ -1,51 +1,87 @@
 <script lang="ts">
   /* Единый DesignSystemPicker (ТЗ §15): выбор системы + режим + mock для всех
    * AI-поверхностей. Badge интерфейса, не canvas-нода. */
-  import { flow } from "../flow/state";
+  import { flow, flowDesignSystems } from "../flow/state";
+  import type { DesignSystemPickerChange, DesignSystemUsageMode } from "../flow/types";
 
-  let { selection = "inherit", onChange, compact = false } = $props<{
+  let {
+    selection = "inherit",
+    usageMode = "strict",
+    fixtureProfile = "typical",
+    onChange,
+    compact = false,
+  } = $props<{
     selection?: "inherit" | "none" | string;
-    onChange?: (value: "inherit" | "none" | string) => void;
+    usageMode?: DesignSystemUsageMode;
+    fixtureProfile?: string;
+    onChange?: (value: "inherit" | "none" | string, meta?: DesignSystemPickerChange) => void;
     compact?: boolean;
   }>();
 
-  let usageMode = $state<"strict" | "extend" | "style-only">("strict");
-  let fixtureProfile = $state("typical");
-
-  const registry = $derived($flow.designSystems || { systems: [], defaultSystemRef: null });
+  const registry = $derived($flowDesignSystems || { systems: [], defaultSystemRef: null });
   const defaultSystem = $derived(
     registry.systems.find((s: any) => s.systemId === registry.defaultSystemRef?.systemId && s.status === "published"),
   );
+  const published = $derived((registry.systems || []).filter((s: any) => s.status === "published"));
+
+  const emit = (nextSelection = selection, nextMode = usageMode, nextFixture = fixtureProfile) => {
+    const meta: DesignSystemPickerChange = {
+      selection: nextSelection,
+      usageMode: nextMode,
+      fixtureProfile: nextFixture,
+    };
+    $flow.setDesignSystemPicker(meta);
+    onChange?.(nextSelection, meta);
+  };
 
   export function resolvedRef(): Record<string, unknown> | null {
     const st = $flow;
-    if (selection === "none") return null;
-    if (selection === "inherit") {
+    const picker = st.designSystemPicker;
+    const currentSelection = selection || picker?.selection || "inherit";
+    const currentMode = usageMode || picker?.usageMode || "strict";
+    const currentFixture = fixtureProfile || picker?.fixtureProfile || "typical";
+    if (currentSelection === "none") return null;
+    if (currentSelection === "inherit") {
       const ref = (st.designSystems as any)?.defaultSystemRef;
       if (!ref) return null;
       const system = ((st.designSystems as any).systems || []).find((s: any) => s.systemId === ref.systemId);
       if (!system || system.status !== "published") return null;
-      return { systemId: ref.systemId, revision: ref.revision ?? system.revision, contentHash: system.contentHash || "", usageMode, mockFixtureProfile: fixtureProfile };
+      return { systemId: ref.systemId, revision: ref.revision ?? system.revision, contentHash: system.contentHash || ref.contentHash || "", usageMode: currentMode, mockFixtureProfile: currentFixture };
     }
-    const system = ((st.designSystems as any).systems || []).find((s: any) => s.systemId === selection);
+    const system = ((st.designSystems as any).systems || []).find((s: any) => s.systemId === currentSelection);
     if (!system || system.status !== "published") return null;
-    return { systemId: selection, revision: system.revision, contentHash: system.contentHash || "", usageMode, mockFixtureProfile: fixtureProfile };
+    return { systemId: currentSelection, revision: system.revision, contentHash: system.contentHash || "", usageMode: currentMode, mockFixtureProfile: currentFixture };
   }
 
-  const set = (value: "inherit" | "none" | string) => { selection = value; onChange?.(value); };
+  const set = (value: "inherit" | "none" | string) => {
+    selection = value;
+    emit(value, usageMode, fixtureProfile);
+  };
 </script>
 
 {#if compact}
-  <span class="ds-badge" title="Дизайн-система">DS · {selection === "inherit" ? (defaultSystem ? `${defaultSystem.name} v${defaultSystem.revision}` : "нет") : selection === "none" ? "нет" : selection} · {usageMode}</span>
+  <span class="ds-badge" title="Дизайн-система" data-ds-picker="compact">
+    DS · {selection === "inherit" ? (defaultSystem ? `${defaultSystem.name} v${defaultSystem.revision}` : "нет") : selection === "none" ? "нет" : "reference"} · {usageMode}
+  </span>
 {:else}
-  <div class="ds-picker">
+  <div class="ds-picker" data-ds-picker>
     <label class="ds-field">
       <span>Design System</span>
-      <select value={selection} onchange={(e) => set(e.currentTarget.value as any)} disabled={!registry.systems?.length}>
+      <select
+        data-ds-field="selection"
+        aria-label="Выбор дизайн-системы: inherit, конкретная reference-система или none"
+        value={selection}
+        onchange={(e) => set(e.currentTarget.value as any)}
+      >
         <option value="inherit">Project default — {defaultSystem ? `${defaultSystem.name} · v${defaultSystem.revision}` : "не задана"}</option>
-        {#each registry.systems as system (system.systemId)}
-          <option value={system.systemId} disabled={system.status !== "published"}>
-            {system.name} · v{system.revision}{system.status !== "published" ? ` (${system.status})` : ""}
+        {#each published as system (system.systemId)}
+          <option value={system.systemId}>
+            {system.name} · v{system.revision} (reference)
+          </option>
+        {/each}
+        {#each (registry.systems || []).filter((s: any) => s.status !== "published") as system (system.systemId)}
+          <option value={system.systemId} disabled>
+            {system.name} · v{system.revision} ({system.status})
           </option>
         {/each}
         <option value="none">None</option>
@@ -54,7 +90,12 @@
     {#if selection !== "none" && (selection !== "inherit" || defaultSystem)}
       <label class="ds-field">
         <span>Режим</span>
-        <select bind:value={usageMode}>
+        <select
+          data-ds-field="usage"
+          aria-label="Режим использования: strict или свободнее"
+          value={usageMode}
+          onchange={(e) => emit(selection, e.currentTarget.value as DesignSystemUsageMode, fixtureProfile)}
+        >
           <option value="strict">Strict — только компоненты системы</option>
           <option value="extend">Extend — новые компоненты локально</option>
           <option value="style-only">Style only — только foundations</option>
@@ -62,7 +103,12 @@
       </label>
       <label class="ds-field">
         <span>Mock data</span>
-        <select bind:value={fixtureProfile}>
+        <select
+          data-ds-field="fixture"
+          aria-label="Профиль mock-данных"
+          value={fixtureProfile}
+          onchange={(e) => emit(selection, usageMode, e.currentTarget.value)}
+        >
           <option value="typical">typical</option>
           <option value="short">short</option>
           <option value="long">long</option>
@@ -73,7 +119,7 @@
         </select>
       </label>
     {/if}
-    {#if !registry.systems?.length}
+    {#if !published.length}
       <small class="ds-hint">Нет опубликованных систем — создайте из Source-ноды: «UI Kit & Design System»</small>
     {/if}
   </div>

@@ -94,7 +94,7 @@ class ZcodeChatTest(unittest.TestCase):
              mock.patch.object(llm_client, "_zcode_cli_path", return_value="C:/fake/zcode.cjs"), \
              mock.patch.object(llm_client, "_zcode_node_path", return_value="node"), \
              mock.patch.object(llm_client.subprocess, "run", side_effect=self._run_with_fakes(home, calls)):
-            for env_key in ("OPENAI_API_KEY", "KIMI_API_KEY", "GLM_API_KEY"):
+            for env_key in ("OPENAI_API_KEY", "KIMI_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "XAI_API_KEY"):
                 os.environ.pop(env_key, None)
             out = llm_client.chat("auto", messages, 0.7, timeout=30)
         self.assertEqual(json.loads(out), {"ok": True})
@@ -113,7 +113,7 @@ class ZcodeChatTest(unittest.TestCase):
         # модели coding-плана не принимают inline-изображения: vision только прямые API
         for role in ("vision", "vision_fast", "reproduce"):
             chain = llm_client.routing_models(role)
-            self.assertNotIn("zcode/GLM-5.2", chain, role)
+            self.assertNotIn("zcode/GLM-5.3", chain, role)
 
     def test_zcode_failure_falls_through_chain_with_message(self):
         home = _FakeHome()
@@ -123,22 +123,64 @@ class ZcodeChatTest(unittest.TestCase):
              mock.patch.object(llm_client, "_zcode_cli_path", return_value="C:/fake/zcode.cjs"), \
              mock.patch.object(llm_client, "_zcode_node_path", return_value="node"), \
              mock.patch.object(llm_client.subprocess, "run", side_effect=failing_run):
-            for env_key in ("OPENAI_API_KEY", "KIMI_API_KEY", "GLM_API_KEY"):
+            for env_key in ("OPENAI_API_KEY", "KIMI_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "XAI_API_KEY"):
                 os.environ.pop(env_key, None)
             with self.assertRaises(RuntimeError) as ctx:
                 llm_client.chat(None, [{"role": "user", "content": "x"}], 0.5, timeout=5)
-        self.assertIn("zcode/GLM-5.2", str(ctx.exception))
+        self.assertIn("zcode/GLM-5.3", str(ctx.exception))
+
+    def test_no_auto_discovery_of_installed_app(self):
+        # Без явного ZCODE_CLI транспорт отключён, даже если приватный
+        # resources/glm/zcode.cjs существует в LOCALAPPDATA.
+        fake_root = tempfile.mkdtemp(prefix="zcode-no-discovery-")
+        installed = pathlib.Path(fake_root) / "Programs" / "ZCode" / "resources" / "glm"
+        installed.mkdir(parents=True)
+        (installed / "zcode.cjs").write_text("// private entry", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"LOCALAPPDATA": fake_root}, clear=False):
+            os.environ.pop("ZCODE_CLI", None)
+            try:
+                self.assertIsNone(llm_client._zcode_cli_path())
+            finally:
+                import shutil as _shutil
+                _shutil.rmtree(fake_root, ignore_errors=True)
+
+    def test_unconfigured_zcode_skip_message_is_loud(self):
+        for env_key in ("OPENAI_API_KEY", "KIMI_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "XAI_API_KEY", "ZCODE_CLI"):
+            os.environ.pop(env_key, None)
+        with self.assertRaises(RuntimeError) as ctx:
+            llm_client.chat(None, [{"role": "user", "content": "x"}], 0.5, timeout=5)
+        self.assertIn("ZCODE_CLI", str(ctx.exception))
 
 
 class RoutingTest(unittest.TestCase):
     def test_zcode_is_last_in_text_chains(self):
         for role in ("generator", "repair", "quality_judge", "edit"):
             chain = llm_client.routing_models(role)
-            self.assertEqual(chain[-1], "zcode/GLM-5.2", role)
+            self.assertEqual(chain[-1], "zcode/GLM-5.3", role)
 
     def test_zcode_slug_resolves(self):
-        chain = llm_client._resolve_chain("generator", "zcode/GLM-5.2", None)
-        self.assertEqual(chain, [("zcode", "GLM-5.2", llm_client.PROVIDERS["zcode"])])
+        chain = llm_client._resolve_chain("generator", "zcode/GLM-5.3", None)
+        self.assertEqual(chain, [("zcode", "GLM-5.3", llm_client.PROVIDERS["zcode"])])
+
+    def test_text_chains_include_zai_and_grok(self):
+        chain = llm_client.routing_models("generator")
+        self.assertIn("zai/glm-5.3", chain)
+        self.assertIn("grok/grok-4.6", chain)
+        self.assertLess(chain.index("zai/glm-5.3"), chain.index("zcode/GLM-5.3"))
+        # прямой Z.AI предпочтительнее legacy Zhipu GLM при auto-маршрутизации
+        self.assertLess(chain.index("zai/glm-5.3"), chain.index("glm/glm-5.3"))
+
+    def test_zcode_rejects_hard_unsupported_envelope_fields(self):
+        request = llm_client.ChatRequest(
+            messages=[{"role": "user", "content": "x"}],
+            top_p=0.2,
+            provider_options={"zcode": {"foo": True}},
+        )
+        with self.assertRaises(ValueError) as ctx:
+            request.assert_supported("zcode")
+        message = str(ctx.exception)
+        self.assertIn("top_p", message)
+        self.assertIn("provider_options", message)
 
 
 if __name__ == "__main__":

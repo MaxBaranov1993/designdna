@@ -143,6 +143,20 @@ export type BlockParseBlock = {
   coverage?: Partial<Record<SourceViewport, number>>;
   paintCoverage?: Partial<Record<SourceViewport, number>>;
   fidelity?: Partial<Record<SourceViewport, number | null>>;
+  fidelityReport?: {
+    gate?: { passed?: boolean; reasons?: string[] };
+    viewports?: Partial<Record<SourceViewport, {
+      pixel_similarity?: number | null;
+      paint_coverage?: number | null;
+      bbox_p95?: number | null;
+      grid_origin_error?: number | null;
+      unexplained_losses?: number | null;
+      size_match?: boolean | null;
+      gate?: { passed?: boolean; reasons?: string[] };
+      [key: string]: unknown;
+    }>>;
+    [key: string]: unknown;
+  };
   p95LayoutError?: Partial<Record<SourceViewport, number | null>>;
   droppedByViewport?: Partial<Record<SourceViewport, DroppedRecord[]>>;
   extrasByViewport?: Partial<Record<SourceViewport, ExtraPaintRecord[]>>;
@@ -199,15 +213,28 @@ export type QualityPassNodeData = {
   ir: IRObject | null;
   result: Record<string, unknown> | null;
 };
+export type DesignSystemUsageMode = "strict" | "extend" | "style-only";
+export type DesignSystemPickerChange = {
+  selection: "inherit" | "none" | string;
+  usageMode: DesignSystemUsageMode;
+  fixtureProfile: string;
+};
 export type DesignSystemNodeData = {
   systemId: string | null;
   name: string;
   status: "draft" | "published" | "outdated" | "archived";
   revision: number;
+  contentHash?: string;
   summary: Record<string, unknown> | null;
   sourceNodeId: number | string | null;
   defaultSet: boolean;
   sourceUpdate: boolean;
+  /* Кэш редактирования: полный документ живёт на сервере (draft — revision 0),
+   * в ноде — только ссылка systemId@revision+contentHash; документ грузится
+   * по требованию при открытии панели. */
+  document?: Record<string, unknown> | null;
+  lastError?: string;
+  busyAction?: "publish" | "default" | "sync" | "validate" | "apply" | "";
 } & Record<string, unknown>;
 
 export type PageBridgeNodeData = {
@@ -327,7 +354,8 @@ export type FlowNode =
   | QualityPassFlowNode
   | RecorderFlowNode
   | MotionFlowNode
-  | PageBridgeFlowNode;
+  | PageBridgeFlowNode
+  | DesignSystemFlowNode;
 
 /* Ребро RF: id строится по формату из спеки — e<from.node>:<from.port>-<to.node>:<to.port> */
 export type FlowEdge = Edge;

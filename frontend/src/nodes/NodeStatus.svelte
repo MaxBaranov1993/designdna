@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { flow } from "../flow/state";
+  import { flowBusy, flowStatuses } from "../flow/state";
   import { cn } from "../lib/utils";
 
   /* Статусная строка ноды — зеркало .n-status (runtime, в сейв не попадает) */
   let { id }: { id: string } = $props();
-  let status = $derived($flow.statuses[Number(id)]);
-  let busy = $derived(!!$flow.busy[Number(id)]);
+  let status = $derived($flowStatuses[Number(id)]);
+  let busy = $derived(!!$flowBusy[Number(id)]);
   const canCancel = $derived(busy && typeof window !== "undefined" && !!window.designDNA?.api?.cancel);
 
   const cancelRun = () => {

@@ -3,7 +3,7 @@
   "private": true,
   "description": "Local-first AI web-design studio with an integrated semantic repository canvas",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "frontend:install": "npm --prefix frontend ci",

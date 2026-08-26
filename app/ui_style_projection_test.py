@@ -59,7 +59,7 @@ def main():
 
         page.click('[data-dna-action="apply-normalize"]')
         normalized = page.evaluate(
-            "id => window.GraphDev.node(id).data.ir.tree[0].children[1].style",
+            "id => { const d = window.GraphDev.node(id).data; return (d._editorDraft?.ir || d.ir).tree[0].children[1].style; }",
             node_id,
         )
         check("Normalize applies only after confirmation", normalized.get("fontSize") == 14 and normalized.get("borderRadius") == 6, str(normalized))

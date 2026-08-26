@@ -38,7 +38,12 @@ export function installDesktopFetchBridge(): void {
     // В LS блобы живут короткими ddna://-ссылками; серверный рендер (fidelity,
     // QA, reproduce) должен видеть настоящие data:-URL — разворачиваем во всех
     // исходящих телах, кроме persist-путей проекта (там ссылки и должны храниться)
-    if (requestText && !url.pathname.startsWith("/api/project/")) {
+    // Project and Design System documents persist compact ddna:// evidence
+    // handles. Expanding them would re-inflate Source screenshots into IPC JSON
+    // and immutable SQLite revisions. One-shot render/QA APIs still get pixels.
+    const keepsBlobRefs = url.pathname.startsWith("/api/project/")
+      || url.pathname.startsWith("/api/design-system/");
+    if (requestText && !keepsBlobRefs) {
       requestText = await expandBlobRefs(requestText);
     }
     const requestBody = requestText ? new TextEncoder().encode(requestText) : "";

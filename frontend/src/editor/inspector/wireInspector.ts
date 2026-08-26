@@ -320,14 +320,22 @@ function wireTypeGroups(root: HTMLElement) {
 function wireResponsive(root: HTMLElement) {
   const s = sess();
   if (!s || !s.sel.length) return;
-  const sel = s.sel[0];
+  const liveSel = () => sess()?.sel[0] || null;
   const reset = root.querySelector('[data-responsive-act="reset"]');
-  if (reset) reset.addEventListener("click", () => ctl.resetResponsiveOverride(sel));
+  if (reset) reset.addEventListener("click", () => {
+    const sel = liveSel();
+    if (sel) ctl.resetResponsiveOverride(sel);
+  });
   const all = root.querySelector('[data-responsive-act="all"]');
-  if (all) all.addEventListener("click", () => ctl.applyResponsiveToAll(sel));
+  if (all) all.addEventListener("click", () => {
+    const sel = liveSel();
+    if (sel) ctl.applyResponsiveToAll(sel);
+  });
   root.querySelectorAll("[data-responsive-copy]").forEach((button) => {
-    button.addEventListener("click", () =>
-      ctl.copyResponsiveTo(sel, (button as HTMLElement).dataset.responsiveCopy!));
+    button.addEventListener("click", () => {
+      const sel = liveSel();
+      if (sel) ctl.copyResponsiveTo(sel, (button as HTMLElement).dataset.responsiveCopy!);
+    });
   });
 }
 

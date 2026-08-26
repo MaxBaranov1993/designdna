@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import sys
 import threading
 from functools import partial
@@ -13,6 +15,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
@@ -44,8 +47,24 @@ def _full_metrics(**overrides):
     return metrics
 
 
+def _stub_provenance(**overrides):
+    payload = scraper.build_capture_provenance(
+        compiler_sha256="a" * 64,
+        browser={"name": "chromium", "version": "test"},
+        viewport={"name": "desktop", "width": 1440, "height": 900},
+        fonts=[],
+        assets=[],
+        device_scale_factor=1.0,
+    )
+    payload.update(overrides)
+    if "fingerprint" not in overrides:
+        payload["fingerprint"] = scraper.provenance_fingerprint(payload)
+    return payload
+
+
 def _report(**viewport_metrics):
     return {"raster_fallback": False,
+            "provenance": _stub_provenance(),
             "viewports": {name: _full_metrics(**kw) for name, kw in viewport_metrics.items()}}
 
 
@@ -60,6 +79,21 @@ def test_gate_fails_without_report():
     assert not fidelity_harness.evaluate_gate(None)["passed"]
     assert not fidelity_harness.evaluate_gate({})["passed"]
     assert not fidelity_harness.evaluate_gate({"viewports": {}})["passed"]
+
+
+def test_gate_fails_without_capture_provenance():
+    report = {"raster_fallback": False, "viewports": {"desktop": _full_metrics()}}
+    gate = fidelity_harness.evaluate_gate(report)
+    assert not gate["passed"]
+    assert any("provenance" in reason for reason in gate["reasons"])
+
+
+def test_gate_fails_on_provenance_fingerprint_mismatch():
+    report = _report(desktop={})
+    report["provenance"]["fingerprint"] = "0" * 64
+    gate = fidelity_harness.evaluate_gate(report)
+    assert not gate["passed"]
+    assert any("fingerprint" in reason for reason in gate["reasons"])
 
 
 def test_gate_fails_when_any_required_metric_missing():
@@ -90,6 +124,29 @@ def test_gate_boundary_values_pass():
     gate = fidelity_harness.evaluate_gate(_report(desktop={
         "grid_origin_error": 2.0, "paint_coverage": 95.0, "pixel_similarity": 85.0}))
     assert gate["passed"], gate["reasons"]
+
+
+def test_nested_component_frame_is_absolute_to_block_root():
+    ir = {"tree": [{
+        "frame": {"x": 0, "y": 0, "width": 1000, "height": 700},
+        "children": [{
+            "frame": {"x": 104, "y": 80, "width": 792, "height": 500},
+            "responsive": {"mobile": {"frame": {"x": 16, "y": 48, "width": 358}}},
+            "children": [{
+                "sourceKey": "grid/card:1",
+                "sourceMeta": {"componentBoundary": True},
+                "frame": {"x": 30, "y": 24, "width": 240, "height": 286},
+                "responsive": {"mobile": {"frame": {"x": 0, "y": 12, "width": 358, "height": 286}}},
+            }],
+        }],
+    }]}
+    boundary = fidelity_harness._component_boundaries(ir)["grid/card:1"]
+    assert fidelity_harness._viewport_component_frame(boundary, "desktop") == {
+        "x": 134.0, "y": 104.0, "width": 240, "height": 286,
+    }
+    assert fidelity_harness._viewport_component_frame(boundary, "mobile") == {
+        "x": 16.0, "y": 60.0, "width": 358, "height": 286,
+    }
 
 
 def test_explained_losses_do_not_fail_gate():
@@ -369,6 +426,13 @@ def test_put_gated_refuses_without_report(tmp_cache):
     assert tmp_cache.get("clone_block", "k-no-report") is None
 
 
+def test_put_gated_refuses_without_provenance(tmp_cache):
+    report = {"raster_fallback": False, "viewports": {"desktop": _full_metrics()}}
+    ok = tmp_cache.put_gated("clone_block", "k-noprov", {"ir": {"v": 1}}, report)
+    assert not ok
+    assert tmp_cache.get("clone_block", "k-noprov") is None
+
+
 def test_put_gated_refuses_on_failed_gate(tmp_cache):
     report = _report(desktop={"pixel_similarity": 10.0})
     ok = tmp_cache.put_gated("clone_block", "k-bad", {"ir": {"v": 1}}, report)
@@ -490,7 +554,7 @@ def test_chess_arena_golden(tmp_path, fixture_server, monkeypatch):
     размеру, все обязательные метрики есть, артефакты сохранены, gate пройден."""
     url = f"{fixture_server}/chess_arena.html"
     monkeypatch.setattr(scraper, "validate_public_url", lambda _url: None)
-    captured = scraper.capture_block_irs(url, ARENA_BLOCK, viewports=VIEWPORTS, timeout_ms=5000)
+    captured = scraper.capture_block_irs(url, ARENA_BLOCK, viewports=VIEWPORTS, timeout_ms=30000)
     item = captured["#arena"]
     assert not item.get("error"), item.get("error")
 
@@ -525,6 +589,9 @@ def test_parse_blocks_warms_cache_only_when_gate_passes(tmp_path, fixture_server
     parsed = blockparse.parse_blocks(url, blocks=ARENA_BLOCK)
     block = parsed["blocks"][0]
     assert block.get("ir"), block.get("error")  # импорт отдаёт IR
+    assert block.get("fidelityReport", {}).get("gate", {}).get("passed") is True
+    assert all("artifacts" not in metrics for metrics in block["fidelityReport"]["viewports"].values())
+    assert all("region_diffs" not in metrics for metrics in block["fidelityReport"]["viewports"].values())
     key = blockparse._block_cache_key(url, "arena", "#arena")
     assert cache_store.get("clone_block", key) is not None  # golden фикстура греет кэш
 
@@ -545,3 +612,307 @@ def test_parse_blocks_fail_closed_when_harness_has_no_metrics(tmp_path, fixture_
     key = blockparse._block_cache_key(url, "arena", "#arena")
     assert cache_store.get("clone_block", key) is None  # но кэш не прогрет
 
+
+# ---------- WebP card residual: shared lossless intermediate ----------
+
+def _webp_supported() -> bool:
+    buf = io.BytesIO()
+    try:
+        Image.new("RGB", (8, 8), (12, 34, 56)).save(buf, format="WEBP", quality=40)
+        return True
+    except Exception:
+        return False
+
+
+def _write_webp_card_fixture(root: Path) -> bytes:
+    """High-frequency WebP displayed smaller than intrinsic with cover crop.
+
+    Matches the live residual: CSS background-size/object-fit resample of a
+    lossy WebP disagrees with a second Chromium decode of the same bytes.
+    """
+    from PIL import Image as PILImage
+
+    width, height = 320, 180
+    img = PILImage.new("RGB", (width, height))
+    pixels = img.load()
+    for y in range(height):
+        for x in range(width):
+            pixels[x, y] = (
+                (x * 13 + y * 7) % 256,
+                (y * 17 + x * 5) % 256,
+                (x * y * 3) % 256,
+            )
+    for y in range(40, 140):
+        for x in range(80, 240):
+            pixels[x, y] = (28, 96, 210)
+    raw_path = root / "card.webp"
+    img.save(raw_path, format="WEBP", quality=35, method=6)
+    payload = raw_path.read_bytes()
+    (root / "cards.html").write_text(
+        """<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #101018; }
+  #cards { width: 390px; padding: 8px; box-sizing: border-box; }
+  .row { display: flex; gap: 8px; }
+  .card { width: 180px; height: 100px; border-radius: 12px; overflow: hidden; }
+  .card img { width: 100%; height: 100%; object-fit: cover; object-position: 20% 80%; display: block; }
+  .bg { background: url("card.webp") 20% 80% / cover no-repeat; }
+</style>
+</head>
+<body>
+<section id="cards">
+  <div class="row">
+    <div class="card"><img src="card.webp" alt="cover"></div>
+    <div class="card bg"></div>
+  </div>
+</section>
+</body></html>
+""",
+        encoding="utf-8",
+    )
+    return payload
+
+
+def _serve_dir(directory: Path):
+    server = ThreadingHTTPServer(("127.0.0.1", 0),
+                                 partial(SimpleHTTPRequestHandler, directory=str(directory)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
+
+
+@pytest.fixture()
+def blob_home(tmp_path, monkeypatch):
+    root = tmp_path / "data"
+    monkeypatch.setenv("DESIGNDNA_DATA_DIR", str(root))
+    return root
+
+
+def test_lossless_png_from_bytes_is_deterministic(tmp_path):
+    if not _webp_supported():
+        pytest.skip("Pillow WebP support is required")
+    raw = _write_webp_card_fixture(tmp_path)
+    first = scraper.lossless_png_from_bytes(raw, 180, 100, "cover", "20% 80%")
+    second = scraper.lossless_png_from_bytes(raw, 180, 100, "cover", "20% 80%")
+    assert first == second
+    assert first[:8] == b"\x89PNG\r\n\x1a\n"
+    assert scraper.image_dimensions(scraper.png_data_url(first)) == (180, 100)
+    assert hashlib.sha256(raw).hexdigest() != hashlib.sha256(first).hexdigest()
+
+
+def test_png_blob_object_bytes_hash_to_filename(blob_home):
+    buf = io.BytesIO()
+    Image.new("RGB", (16, 16), (12, 34, 56)).save(buf, format="PNG")
+    png = buf.getvalue()
+    digest = scraper.put_png_blob(png)
+    path = scraper.blobs_dir() / f"{digest}.png"
+    assert path.is_file()
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+    assert path.read_bytes() == png
+    assert scraper.put_png_blob(png) == digest
+    assert list(scraper.blobs_dir().glob("*.png")) == [path]
+
+
+def test_png_blob_refuses_corrupt_overwrite_and_read(blob_home):
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(buf, format="PNG")
+    png = buf.getvalue()
+    digest = scraper.put_png_blob(png)
+    path = scraper.blobs_dir() / f"{digest}.png"
+    garbage = b"not-a-png-object-at-this-path"
+    path.write_bytes(garbage)
+    with pytest.raises(ValueError, match="different bytes"):
+        scraper.put_png_blob(png)
+    assert path.read_bytes() == garbage
+    with pytest.raises(ValueError, match="corrupt"):
+        scraper.read_png_blob(digest)
+    missing = "0" * 64
+    with pytest.raises(FileNotFoundError):
+        scraper.read_png_blob(missing)
+
+
+def test_png_blob_concurrent_writers_reuse_one_object(blob_home):
+    from concurrent.futures import ThreadPoolExecutor
+
+    buf = io.BytesIO()
+    Image.new("RGB", (24, 24), (9, 10, 11)).save(buf, format="PNG")
+    png = buf.getvalue()
+
+    def write_once(_index: int) -> str:
+        return scraper.put_png_blob(png)
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        digests = list(pool.map(write_once, range(32)))
+    assert len(set(digests)) == 1
+    digest = digests[0]
+    files = sorted(scraper.blobs_dir().glob("*.png"))
+    assert [path.name for path in files] == [f"{digest}.png"]
+    assert files[0].read_bytes() == png
+    assert hashlib.sha256(files[0].read_bytes()).hexdigest() == digest
+    assert list(scraper.blobs_dir().glob("*.tmp")) == []
+
+
+def test_webp_cards_without_shared_lossless_intermediate_remain_nonportable(tmp_path, monkeypatch, blob_home):
+    """Without materialization the IR keeps a WebP/network reference.
+
+    Pixel similarity is intentionally not asserted below the gate: decoding and
+    resampling the same WebP can be above or below 85 across Chromium/GPU builds.
+    The deterministic positive test below proves the required ddna PNG replay.
+    """
+    if not _webp_supported():
+        pytest.skip("Pillow WebP support is required")
+    raw = _write_webp_card_fixture(tmp_path)
+    server = _serve_dir(tmp_path)
+    monkeypatch.setattr(scraper, "validate_public_url", lambda _url: None)
+    monkeypatch.setattr(scraper, "_materialize_capture_assets", lambda *args, **kwargs: [])
+    url = f"http://127.0.0.1:{server.server_port}/cards.html"
+    try:
+        captured = scraper.capture_block_irs(
+            url,
+            [{"name": "cards", "label": "Cards", "kind": "section", "selector": "#cards"}],
+            viewports=[{"name": "mobile", "width": 390, "height": 844}],
+            timeout_ms=30000,
+        )
+        item = captured["#cards"]
+        assert not item.get("error"), item.get("error")
+        srcs = [str(node.get("src") or "") for node, _p in scraper._walk_source_nodes(
+            (item.get("ir") or {}).get("tree") or [])]
+        assert any(src.endswith(".webp") or "card.webp" in src or src.startswith("data:image/webp")
+                   for src in srcs), srcs
+        reports = fidelity_harness.evaluate_captures(captured, artifacts_dir=tmp_path / "before")
+        metrics = reports["#cards"]["viewports"]["mobile"]
+        similarity = metrics.get("pixel_similarity")
+        assert similarity is not None, metrics
+        assert 0.0 <= similarity <= 100.0
+        assert any(not src.startswith("ddna://blobs/") and ("card.webp" in src or src.startswith("data:image/webp"))
+                   for src in srcs), srcs
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert raw[:4] == b"RIFF"
+
+
+def test_webp_cards_capture_replay_is_deterministic(tmp_path, monkeypatch, blob_home):
+    """Shared lossless PNG objects: gate passes and a second capture reuses refs."""
+    if not _webp_supported():
+        pytest.skip("Pillow WebP support is required")
+    raw = _write_webp_card_fixture(tmp_path)
+    server = _serve_dir(tmp_path)
+    monkeypatch.setattr(scraper, "validate_public_url", lambda _url: None)
+    url = f"http://127.0.0.1:{server.server_port}/cards.html"
+    block = [{"name": "cards", "label": "Cards", "kind": "section", "selector": "#cards"}]
+    viewports = [{"name": "mobile", "width": 390, "height": 844}]
+    try:
+        first = scraper.capture_block_irs(url, block, viewports=viewports, timeout_ms=30000)
+        second = scraper.capture_block_irs(url, block, viewports=viewports, timeout_ms=30000)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    item = first["#cards"]
+    assert not item.get("error"), item.get("error")
+    ir = item.get("ir") or {}
+    assert scraper.ir_raster_data_urls(ir) == [], scraper.ir_raster_data_urls(ir)
+    provenance = item.get("provenance") or {}
+    assert provenance.get("captureVersion") == scraper.SOURCE_CAPTURE_VERSION
+    assert len(str(provenance.get("compilerSha256") or "")) == 64
+    assert (provenance.get("browser") or {}).get("name") == "chromium"
+    assert (provenance.get("browser") or {}).get("version")
+    assert provenance.get("deviceScaleFactor") == 1.0
+    assert provenance.get("fingerprint") == scraper.provenance_fingerprint(provenance)
+    assert provenance.get("assets"), "content-addressed source bytes must be recorded"
+    source_hash = hashlib.sha256(raw).hexdigest()
+    assert {rec.get("sourceSha256") for rec in provenance["assets"]} == {source_hash}
+    for rec in provenance["assets"]:
+        object_hash = rec.get("objectSha256")
+        assert object_hash and object_hash != rec.get("sourceSha256")
+        assert rec.get("ref") == scraper.blob_ref(object_hash)
+        stored = scraper.read_png_blob(object_hash)
+        assert hashlib.sha256(stored).hexdigest() == object_hash
+        assert rec.get("width") == 180 and rec.get("height") == 100
+        assert rec.get("objectFit") == "cover"
+        assert rec.get("captureVersion") == scraper.SOURCE_CAPTURE_VERSION
+
+    hashed_nodes = []
+    for node, _parent in scraper._walk_source_nodes((ir.get("tree") or [])):
+        meta = node.get("sourceMeta") or {}
+        if node.get("type") == "image" and meta.get("objectSha256"):
+            hashed_nodes.append(node)
+            assert scraper.parse_blob_ref(str(node.get("src") or "")) == meta["objectSha256"]
+            assert not str(node.get("src") or "").startswith("data:")
+            assert (node.get("style") or {}).get("objectFit") == "fill"
+            assert meta.get("url")
+            assert meta.get("sourceSha256") == source_hash
+            assert meta.get("sourceSha256") != meta.get("objectSha256")
+    assert len(hashed_nodes) >= 2, "img + background-image cards must become hashed PNG layers"
+
+    first_hashed = [(n.get("sourceKey"), n.get("src"), n.get("sourceMeta", {}).get("objectSha256"))
+                    for n in hashed_nodes]
+    second_hashed = [(node.get("sourceKey"), node.get("src"),
+                      (node.get("sourceMeta") or {}).get("objectSha256"))
+                     for node, _p in scraper._walk_source_nodes(
+                         (second["#cards"].get("ir") or {}).get("tree") or [])
+                     if (node.get("sourceMeta") or {}).get("objectSha256")]
+    assert first_hashed == second_hashed
+    assert (first["#cards"]["provenance"]["fingerprint"]
+            == second["#cards"]["provenance"]["fingerprint"])
+
+    reports = fidelity_harness.evaluate_captures(first, artifacts_dir=tmp_path / "after-1")
+    report = reports["#cards"]
+    metrics = report["viewports"]["mobile"]
+    assert metrics["pixel_similarity"] is not None
+    assert metrics["pixel_similarity"] >= fidelity_harness.GATE_THRESHOLDS["min_pixel_similarity"]
+    assert metrics["size_match"]
+    gate = fidelity_harness.evaluate_gate(report)
+    assert gate["passed"], gate["reasons"]
+    assert scraper.ir_raster_data_urls(first["#cards"]["ir"]) == []
+
+    reports2 = fidelity_harness.evaluate_captures(second, artifacts_dir=tmp_path / "after-2")
+    render1 = Path(metrics["artifacts"]["render"]).read_bytes()
+    render2 = Path(reports2["#cards"]["viewports"]["mobile"]["artifacts"]["render"]).read_bytes()
+    assert render1 == render2
+    assert reports2["#cards"]["viewports"]["mobile"]["pixel_similarity"] == metrics["pixel_similarity"]
+
+
+def test_missing_or_corrupt_blob_fails_closed(tmp_path, monkeypatch, blob_home):
+    if not _webp_supported():
+        pytest.skip("Pillow WebP support is required")
+    _write_webp_card_fixture(tmp_path)
+    server = _serve_dir(tmp_path)
+    monkeypatch.setattr(scraper, "validate_public_url", lambda _url: None)
+    url = f"http://127.0.0.1:{server.server_port}/cards.html"
+    try:
+        captured = scraper.capture_block_irs(
+            url,
+            [{"name": "cards", "label": "Cards", "kind": "section", "selector": "#cards"}],
+            viewports=[{"name": "mobile", "width": 390, "height": 844}],
+            timeout_ms=30000,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    item = captured["#cards"]
+    assert not item.get("error"), item.get("error")
+    objects = sorted({rec.get("objectSha256") for rec in (item.get("provenance") or {}).get("assets") or []
+                      if rec.get("objectSha256")})
+    assert objects
+    original = json.dumps(item["ir"], sort_keys=True)
+    blob_files = list(scraper.blobs_dir().glob("*.png"))
+    assert blob_files
+    for path in blob_files:
+        path.unlink()
+    reports = fidelity_harness.evaluate_captures(captured, artifacts_dir=tmp_path / "missing")
+    metrics = reports["#cards"]["viewports"]["mobile"]
+    assert metrics.get("pixel_similarity") is None
+    assert not reports["#cards"]["gate"]["passed"]
+    assert json.dumps(item["ir"], sort_keys=True) == original
+
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (9, 9, 9)).save(buf, format="PNG")
+    (scraper.blobs_dir() / f"{objects[0]}.png").write_bytes(buf.getvalue())
+    reports_corrupt = fidelity_harness.evaluate_captures(captured, artifacts_dir=tmp_path / "corrupt")
+    assert reports_corrupt["#cards"]["viewports"]["mobile"].get("pixel_similarity") is None
+    assert not reports_corrupt["#cards"]["gate"]["passed"]
+    assert json.dumps(item["ir"], sort_keys=True) == original

@@ -4,14 +4,14 @@
   import CardContent from "./components/ui/CardContent.svelte";
   import CardHeader from "./components/ui/CardHeader.svelte";
   import CardTitle from "./components/ui/CardTitle.svelte";
-  import { flow } from "./flow/state";
+  import { flow, flowActivePageId, flowChannels, flowNodes, flowPages } from "./flow/state";
 
-  let pages = $derived($flow.pages);
-  let activePageId = $derived($flow.activePageId);
-  let channelNames = $derived(Object.keys($flow.channels).filter((key) => $flow.channels[key]));
+  let pages = $derived($flowPages);
+  let activePageId = $derived($flowActivePageId);
+  let channelNames = $derived(Object.keys($flowChannels).filter((key) => $flowChannels[key]));
 
   const countNodes = (pageId: string) => {
-    if (pageId === activePageId) return $flow.nodes.length;
+    if (pageId === activePageId) return $flowNodes.length;
     return pages.find((page) => page.id === pageId)?.nodes.length || 0;
   };
 </script>

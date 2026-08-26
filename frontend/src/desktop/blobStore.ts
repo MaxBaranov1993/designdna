@@ -13,13 +13,8 @@
 const OFFLOAD_MIN_LENGTH = 32_768; // data:-URL короче 32 КБ оставляем как есть
 const BLOB_PREFIX = "ddna://blobs/";
 
-const EXT_OF_MIME: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/gif": "gif",
-  "image/webp": "webp",
-  "image/svg+xml": "svg",
-};
+const SUPPORTED_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]);
+const CONTENT_ADDRESSED_NAME = /^[a-f0-9]{64}\.(?:png|jpg|gif|webp|svg)$/;
 
 export function blobBridgesAvailable(): boolean {
   return typeof window !== "undefined" && !!window.designDNA?.blobs;
@@ -29,51 +24,94 @@ export function isDesktopBlobUrl(value: string): boolean {
   return value.startsWith(BLOB_PREFIX);
 }
 
-/** Дешёвый устойчивый id: два 32-битных FNV-1a (голова+хвост) + длина.
- *  Полное хеширование 18 МБ не нужно — цель дедупликации, не криптография. */
-function blobId(dataUrl: string): string {
-  const fnv = (from: number, to: number) => {
-    let h = 0x811c9dc5;
-    for (let i = from; i < to; i++) {
-      h ^= dataUrl.charCodeAt(i);
-      h = Math.imul(h, 0x01000193) >>> 0;
-    }
-    return h.toString(36);
-  };
-  const head = fnv(0, Math.min(4096, dataUrl.length));
-  const tail = fnv(Math.max(0, dataUrl.length - 4096), dataUrl.length);
-  return `${head}${tail}${dataUrl.length.toString(36)}`;
-}
-
-export async function offloadDataUrl(dataUrl: string): Promise<string | null> {
-  if (!blobBridgesAvailable() || !dataUrl.startsWith("data:") || dataUrl.length < OFFLOAD_MIN_LENGTH) return null;
-  const mime = dataUrl.slice(5, dataUrl.indexOf(";"));
-  const ext = EXT_OF_MIME[mime];
-  if (!ext) return null;
-  const name = `${blobId(dataUrl)}.${ext}`;
-  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+export async function offloadDataUrl(dataUrl: string, minLength = OFFLOAD_MIN_LENGTH): Promise<string | null> {
+  if (!blobBridgesAvailable() || !dataUrl.startsWith("data:") || dataUrl.length < minLength) return null;
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) return null;
+  const header = dataUrl.slice(5, comma).split(";").map((part) => part.trim());
+  const mime = String(header.shift() || "").toLowerCase();
+  if (!SUPPORTED_MIME.has(mime) || header.at(-1)?.toLowerCase() !== "base64") return null;
+  const base64 = dataUrl.slice(comma + 1);
   try {
-    await window.designDNA!.blobs.put(name, base64);
-    return BLOB_PREFIX + name;
+    const stored = await window.designDNA!.blobs.put(mime, base64);
+    if (!CONTENT_ADDRESSED_NAME.test(stored.name) || stored.sha256 !== stored.name.slice(0, 64)) {
+      throw new Error("Desktop blob bridge returned a non-canonical object name");
+    }
+    return BLOB_PREFIX + stored.name;
   } catch {
     return null; // битый мост — данные остаются inline
   }
 }
 
 /** Заменяет все ddna://blobs/<name> в теле запроса на полные data:-URL. */
+type SourceEvidenceBlock = {
+  preview?: unknown;
+  previews?: Record<string, unknown> | null;
+};
+
+/**
+ * Persist Source Import screenshots before the generic project walk starts.
+ *
+ * A parsed page can contain tens of thousands of editable IR objects before the
+ * top-level `previews` field is reached. The generic autosave walk is
+ * deliberately time-boxed, so it may expire first and compactForStorage then
+ * drops the remaining inline data URLs. Compare would therefore lose its only
+ * raster evidence after restart.
+ *
+ * Source evidence is a small, explicit set (one screenshot per viewport and
+ * block). Resolve it eagerly, deduplicate identical screenshots, and mutate the
+ * response in place before it enters editor state.
+ */
+export async function offloadSourceEvidenceInPlace(blocks: SourceEvidenceBlock[]): Promise<number> {
+  if (!blobBridgesAvailable() || !Array.isArray(blocks)) return 0;
+
+  const slots: Array<{ owner: Record<string, unknown>; key: string; value: string }> = [];
+  for (const block of blocks) {
+    if (!block || typeof block !== "object") continue;
+    if (typeof block.preview === "string" && block.preview.startsWith("data:")) {
+      slots.push({ owner: block as Record<string, unknown>, key: "preview", value: block.preview });
+    }
+    if (block.previews && typeof block.previews === "object") {
+      for (const [key, value] of Object.entries(block.previews)) {
+        if (typeof value === "string" && value.startsWith("data:")) {
+          slots.push({ owner: block.previews, key, value });
+        }
+      }
+    }
+  }
+
+  // compactForStorage intentionally drops every inline reference image,
+  // including small screenshots. Source evidence therefore cannot use the
+  // generic 32 KiB optimisation threshold: every valid capture must become
+  // an immutable blob reference before project state is serialised. Blob puts
+  // are content-addressed and concurrency-safe, so independent screenshots do
+  // not need to pay a serial IPC round-trip.
+  const unique = Array.from(new Set(slots.map((slot) => slot.value)));
+  const stored = await Promise.all(unique.map(async (value) => [value, await offloadDataUrl(value, 0)] as const));
+  const refs = new Map<string, string | null>(stored);
+
+  let replaced = 0;
+  for (const slot of slots) {
+    const ref = refs.get(slot.value);
+    if (!ref) continue;
+    slot.owner[slot.key] = ref;
+    replaced++;
+  }
+  return replaced;
+}
+
 export async function expandBlobRefs(body: string): Promise<string> {
   if (!blobBridgesAvailable() || !body.includes(BLOB_PREFIX)) return body;
   const names = Array.from(new Set(body.match(/ddna:\/\/blobs\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/g) || []))
     .map((ref) => ref.slice(BLOB_PREFIX.length));
   if (!names.length) return body;
-  let map: Record<string, string>;
-  try {
-    map = await window.designDNA!.blobs.getMany(names);
-  } catch {
-    return body;
-  }
+  const map = await window.designDNA!.blobs.getMany(names);
   let expanded = body;
-  for (const [name, dataUrl] of Object.entries(map)) {
+  for (const name of names) {
+    const dataUrl = map[name];
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
+      throw new Error(`Desktop blob is missing or corrupt: ${name}`);
+    }
     expanded = expanded.split(BLOB_PREFIX + name).join(dataUrl);
   }
   return expanded;

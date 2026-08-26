@@ -1,0 +1,294 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://designai.dev/motion-ir/2.0",
+  "title": "Motion IR 2.0",
+  "type": "object",
+  "required": ["version", "source", "composition", "compositions", "markers", "captions", "assets", "renderSettings"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "2.0" },
+    "source": { "$ref": "#/definitions/source" },
+    "composition": { "$ref": "#/definitions/composition" },
+    "compositions": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/composition" }
+    },
+    "markers": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/marker" }
+    },
+    "captions": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/caption" }
+    },
+    "assets": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/asset" }
+    },
+    "renderSettings": { "$ref": "#/definitions/renderSettings" }
+  },
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{32,128}$"
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "source": {
+      "type": "object",
+      "required": ["interactionHash", "baseDesignIrHash", "baseDesignIrRevision"],
+      "additionalProperties": false,
+      "properties": {
+        "interactionHash": { "$ref": "#/definitions/hash" },
+        "baseDesignIrHash": { "$ref": "#/definitions/hash" },
+        "baseDesignIrRevision": { "$ref": "#/definitions/revision" }
+      }
+    },
+    "composition": {
+      "type": "object",
+      "required": ["id", "name", "width", "height", "fps", "duration", "background", "colorSpace", "layers"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/identifier" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "width": { "type": "integer", "minimum": 1, "maximum": 7680 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 4320 },
+        "fps": { "type": "number", "minimum": 1, "maximum": 120 },
+        "duration": { "type": "number", "exclusiveMinimum": 0, "maximum": 86400 },
+        "background": { "$ref": "#/definitions/color" },
+        "colorSpace": { "enum": ["srgb", "display-p3", "rec709"] },
+        "layers": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/layer" }
+        }
+      }
+    },
+    "layer": {
+      "type": "object",
+      "required": ["id", "type", "name", "parentId", "enabled", "locked", "clips", "properties", "masks"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/identifier" },
+        "type": { "enum": ["design", "scene", "cursor", "camera", "text", "shape", "image", "video", "overlay", "audio", "group"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "parentId": {
+          "anyOf": [
+            { "$ref": "#/definitions/identifier" },
+            { "type": "null" }
+          ]
+        },
+        "enabled": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "sourceKey": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "designIrRevision": { "$ref": "#/definitions/revision" },
+        "assetId": { "$ref": "#/definitions/identifier" },
+        "nestedCompositionId": { "$ref": "#/definitions/identifier" },
+        "text": { "type": "string", "maxLength": 100000 },
+        "clips": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/clip" }
+        },
+        "properties": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/propertyTrack" }
+        },
+        "masks": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/mask" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "enum": ["design", "scene"] } } },
+          "then": { "required": ["sourceKey", "designIrRevision"] }
+        },
+        {
+          "if": { "properties": { "type": { "enum": ["image", "video", "audio"] } } },
+          "then": { "required": ["assetId"] }
+        }
+      ]
+    },
+    "clip": {
+      "type": "object",
+      "required": ["id", "start", "duration", "in", "out"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/identifier" },
+        "start": { "type": "number", "minimum": 0 },
+        "duration": { "type": "number", "exclusiveMinimum": 0 },
+        "in": { "type": "number", "minimum": 0 },
+        "out": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "propertyTrack": {
+      "type": "object",
+      "required": ["id", "propertyPath", "valueType", "keyframes"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/identifier" },
+        "propertyPath": {
+          "enum": [
+            "transform.position", "transform.scale", "transform.rotation", "transform.anchorPoint",
+            "opacity", "crop", "blur", "mask.path", "mask.opacity"
+          ]
+        },
+        "valueType": { "enum": ["number", "vec2", "vec4", "color", "boolean", "string", "path"] },
+        "keyframes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/keyframe" }
+        }
+      }
+    },
+    "keyframe": {
+      "type": "object",
+      "required": ["time", "value", "interpolation"],
+      "additionalProperties": false,
+      "properties": {
+        "time": { "type": "number", "minimum": 0 },
+        "value": { "$ref": "#/definitions/jsonValue" },
+        "interpolation": { "enum": ["hold", "linear", "bezier", "spring"] },
+        "bezierHandles": { "$ref": "#/definitions/bezierHandles" },
+        "spring": { "$ref": "#/definitions/spring" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "interpolation": { "const": "bezier" } } },
+          "then": { "required": ["bezierHandles"] }
+        },
+        {
+          "if": { "properties": { "interpolation": { "const": "spring" } } },
+          "then": { "required": ["spring"] }
+        }
+      ]
+    },
+    "bezierHandles": {
+      "type": "object",
+      "required": ["in", "out"],
+      "additionalProperties": false,
+      "properties": {
+        "in": { "$ref": "#/definitions/unitPoint" },
+        "out": { "$ref": "#/definitions/unitPoint" }
+      }
+    },
+    "unitPoint": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    "spring": {
+      "type": "object",
+      "required": ["mass", "stiffness", "damping", "initialVelocity"],
+      "additionalProperties": false,
+      "properties": {
+        "mass": { "type": "number", "exclusiveMinimum": 0 },
+        "stiffness": { "type": "number", "exclusiveMinimum": 0 },
+        "damping": { "type": "number", "minimum": 0 },
+        "initialVelocity": { "type": "number" }
+      }
+    },
+    "mask": {
+      "type": "object",
+      "required": ["id", "mode", "inverted", "path", "opacity", "feather"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/identifier" },
+        "mode": { "enum": ["add", "subtract", "intersect"] },
+        "inverted": { "type": "boolean" },
+        "path": { "type": "string", "minLength": 1 },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "feather": { "type": "number", "minimum": 0 }
+      }
+    },
+    "marker": {
+      "type": "object",
+      "required": ["id", "time", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/identifier" },
+        "time": { "type": "number", "minimum": 0 },
+        "label": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "caption": {
+      "type": "object",
+      "required": ["id", "start", "duration", "text", "language"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/identifier" },
+        "start": { "type": "number", "minimum": 0 },
+        "duration": { "type": "number", "exclusiveMinimum": 0 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 10000 },
+        "language": { "type": "string", "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$" }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "required": ["id", "type", "hash", "mime", "uri"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/identifier" },
+        "type": { "enum": ["image", "video", "audio", "font"] },
+        "hash": { "$ref": "#/definitions/hash" },
+        "mime": { "type": "string", "pattern": "^[a-z0-9.+-]+/[a-z0-9.+-]+$" },
+        "uri": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "renderSettings": {
+      "type": "object",
+      "required": ["format", "codec", "quality", "resolution", "fps", "audio"],
+      "additionalProperties": false,
+      "properties": {
+        "format": { "enum": ["mp4", "webm"] },
+        "codec": { "enum": ["h264", "vp9"] },
+        "quality": { "enum": ["draft", "high", "lossless"] },
+        "resolution": {
+          "type": "object",
+          "required": ["width", "height"],
+          "additionalProperties": false,
+          "properties": {
+            "width": { "type": "integer", "minimum": 1, "maximum": 7680 },
+            "height": { "type": "integer", "minimum": 1, "maximum": 4320 }
+          }
+        },
+        "fps": { "type": "number", "minimum": 1, "maximum": 120 },
+        "audio": {
+          "type": "object",
+          "required": ["enabled", "sampleRate", "channels", "bitrateKbps"],
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "sampleRate": { "enum": [44100, 48000] },
+            "channels": { "enum": [1, 2] },
+            "bitrateKbps": { "type": "integer", "minimum": 64, "maximum": 512 }
+          }
+        }
+      }
+    },
+    "color": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"
+    },
+    "jsonValue": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "boolean" },
+        { "type": "number" },
+        { "type": "string" },
+        { "type": "array", "items": { "$ref": "#/definitions/jsonValue" } },
+        { "type": "object", "additionalProperties": { "$ref": "#/definitions/jsonValue" } }
+      ]
+    }
+  }
+}

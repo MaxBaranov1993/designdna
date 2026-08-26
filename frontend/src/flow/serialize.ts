@@ -1,6 +1,6 @@
 import { defaultData } from "./ports";
 import { edgeKindOf, WIRE_COLORS } from "./dataflow";
-import { offloadBlobsInPlace } from "../desktop/blobStore";
+import { isDesktopBlobUrl, offloadBlobsInPlace } from "../desktop/blobStore";
 import { toast } from "./toast";
 import type { ProjectLoadResp } from "./api";
 import type {
@@ -60,18 +60,39 @@ export function stripHeavy(v: unknown): unknown {
 
 const STORAGE_REFERENCE_KEYS = new Set(["sourcePreview", "preview", "previews"]);
 
+function compactReferenceEvidence(value: unknown): unknown {
+  if (typeof value === "string") return isDesktopBlobUrl(value) ? value : undefined;
+  if (Array.isArray(value)) {
+    const compacted = value.map(compactReferenceEvidence).filter((item) => item !== undefined);
+    return compacted.length ? compacted : undefined;
+  }
+  if (value && typeof value === "object") {
+    const compacted: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const kept = compactReferenceEvidence(child);
+      if (kept !== undefined) compacted[key] = kept;
+    }
+    return Object.keys(compacted).length ? compacted : undefined;
+  }
+  return undefined;
+}
+
 /**
- * Browser screenshots are comparison evidence, not project state. Source Import
- * repeats them in block metadata, responsive viewport metadata and connected IR,
- * so persisting them can multiply one capture into many megabytes. Keep editable
- * image `src` values and all structure/layout data intact.
+ * Browser screenshots are comparison evidence, not inline project state. Source
+ * Import repeats them in several places, so raw data URLs are omitted. Desktop
+ * content-addressed blob references are tiny, immutable evidence handles and must
+ * survive restart; otherwise Design System Compare loses its Source crop.
  */
 export function compactForStorage(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(compactForStorage);
   if (v && typeof v === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(v as Record<string, unknown>)) {
-      if (STORAGE_REFERENCE_KEYS.has(key)) continue;
+      if (STORAGE_REFERENCE_KEYS.has(key)) {
+        const evidence = compactReferenceEvidence(value);
+        if (evidence !== undefined) out[key] = evidence;
+        continue;
+      }
       out[key] = compactForStorage(value);
     }
     return out;
@@ -97,6 +118,9 @@ let idleWriteHandle: number | null = null;
 let dbSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let lastDbProjectText: string | null = null;
 let lsPagesDisabled = false;
+/* Ревизия проекта (SHA-256 строки payload) с последнего load/save —
+ * заголовок CAS для /api/project/save. */
+let lastKnownRevision: string | null = null;
 
 function scheduleIdleWrite(): void {
   if (idleWriteHandle != null) return; // отложенный write возьмёт свежий provider при исполнении
@@ -177,13 +201,38 @@ async function flushDbProject(): Promise<void> {
   if (!text) return;
   lastDbProjectText = null;
   try {
-    const resp = await fetch("/api/project/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // text — уже валидный JSON; склейка экономит повторный stringify мегабайтного payload
-      body: `{"project":${text}}`,
-    });
-    if (!resp.ok && lastDbProjectText === null) lastDbProjectText = text;
+    // CAS по ревизии с последнего известного load/save. Конфликт (409 stale)
+    // разрешаем одним ретраем с серверной ревизией — живое состояние редактора
+    // важнее; повторный конфликт пишет безусловно, как раньше.
+    const send = async (expectedRevision: string | null) =>
+      fetch("/api/project/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // text — уже валидный JSON; склейка экономит повторный stringify мегабайтного payload
+        body: `{"project":${text}${expectedRevision ? `,"expectedRevision":${JSON.stringify(expectedRevision)}` : ""}}`,
+      });
+    const resp = await send(lastKnownRevision);
+    if (resp.status === 409) {
+      const conflict = (await resp.clone().json().catch(() => ({}))) as { revision?: string; error?: string };
+      // Fail closed: adopting the server revision and retrying would overwrite
+      // changes made by another editor. Keep the local compact snapshot for
+      // recovery and let the UI offer an explicit reload/merge decision.
+      if (lastDbProjectText === null) lastDbProjectText = text;
+      window.dispatchEvent(new CustomEvent("designdna:project-conflict", {
+        detail: {
+          expectedRevision: lastKnownRevision,
+          currentRevision: typeof conflict.revision === "string" ? conflict.revision : null,
+          error: conflict.error || "stale_revision",
+        },
+      }));
+      return;
+    }
+    if (resp.ok) {
+      const saved = (await resp.json().catch(() => null)) as { revision?: string } | null;
+      if (saved?.revision) lastKnownRevision = saved.revision;
+    } else if (lastDbProjectText === null) {
+      lastDbProjectText = text;
+    }
   } catch {
     // localStorage уже содержит актуальный compact; повторит следующий сейв или unload-beacon
     if (lastDbProjectText === null) lastDbProjectText = text;
@@ -215,9 +264,12 @@ window.addEventListener("beforeunload", () => {
     dbSaveTimer = null;
   }
   if (lastDbProjectText && navigator.sendBeacon) {
+    const expected = lastKnownRevision
+      ? `,"expectedRevision":${JSON.stringify(lastKnownRevision)}`
+      : "";
     navigator.sendBeacon(
       "/api/project/save",
-      new Blob([`{"project":${lastDbProjectText}}`], { type: "application/json" }),
+      new Blob([`{"project":${lastDbProjectText}${expected}}`], { type: "application/json" }),
     );
     lastDbProjectText = null;
   }
@@ -389,7 +441,7 @@ export function parseLegacyPayload(input: unknown): LegacyGraphPayload {
     // графов возвращаем к переносимому auto-маршруту.
     if (r.type === "generator") {
       const saved = String((data as { provider?: unknown }).provider || "");
-      const provider = new Set(["auto", "codex", "kimi", "openai", "glm", "zcode"]).has(saved) ? saved : "auto";
+      const provider = new Set(["auto", "codex", "kimi", "openai", "glm", "zai", "grok", "zcode"]).has(saved) ? saved : "auto";
       data = { ...data, provider } as AnyNodeData;
     }
     data = dataForRuntime(r.type as NodeType, data);
@@ -517,6 +569,7 @@ export async function loadPagesProjectFromDb(): Promise<{
     });
     if (!resp.ok) return null;
     const data = (await resp.json()) as ProjectLoadResp;
+    if (typeof data.revision === "string" && data.revision) lastKnownRevision = data.revision;
     if (!data.project) return null;
     return parsePagesPayload(data.project);
   } catch {

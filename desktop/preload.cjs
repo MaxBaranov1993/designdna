@@ -2,12 +2,33 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("designDNA", Object.freeze({
   app: Object.freeze({ info: () => ipcRenderer.invoke("app:info") }),
+  commands: Object.freeze({
+    list: () => ipcRenderer.invoke("live-command:list"),
+    execute: (request) => ipcRenderer.invoke("live-command:execute", request),
+    getPreview: (previewId) => ipcRenderer.invoke("live-command:preview-get", { previewId }),
+    onEvent: (listener) => {
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on("live-command:event", wrapped);
+      return () => ipcRenderer.removeListener("live-command:event", wrapped);
+    },
+    onProjectEvent: (listener) => {
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on("live-project:event", wrapped);
+      return () => ipcRenderer.removeListener("live-project:event", wrapped);
+    },
+    onRequest: (listener) => {
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on("live-command:request", wrapped);
+      return () => ipcRenderer.removeListener("live-command:request", wrapped);
+    },
+    respond: (requestId, response) => ipcRenderer.invoke("live-command:response", { requestId, ...response }),
+  }),
   api: Object.freeze({
     request: (request) => ipcRenderer.invoke("api:request", request),
     cancel: () => ipcRenderer.invoke("api:cancel"),
   }),
   blobs: Object.freeze({
-    put: (name, base64) => ipcRenderer.invoke("blobs:put", { name, base64 }),
+    put: (mime, base64) => ipcRenderer.invoke("blobs:put", { mime, base64 }),
     getMany: (names) => ipcRenderer.invoke("blobs:getMany", { names }),
   }),
   files: Object.freeze({
@@ -30,6 +51,10 @@ contextBridge.exposeInMainWorld("designDNA", Object.freeze({
     importKimiCli: () => ipcRenderer.invoke("providers:import-kimi-cli"),
     chat: (provider, messages, temperature = 0.8, profile = "generator", tools = null) =>
       ipcRenderer.invoke("providers:chat", { provider, messages, temperature, profile, tools }),
+    // Типизированный envelope (provider-envelope.mjs): полный контракт параметров
+    // + requestId, transport.dropped и структурные ошибки валидации/возможностей.
+    chatRequest: (request) => ipcRenderer.invoke("providers:chat-request", request),
+    cancel: (requestId) => ipcRenderer.invoke("providers:cancel", { requestId }),
   }),
   codex: Object.freeze({
     account: () => ipcRenderer.invoke("codex:account"),
@@ -49,7 +74,13 @@ contextBridge.exposeInMainWorld("designDNA", Object.freeze({
     save: (servers) => ipcRenderer.invoke("mcp:save", servers),
     refresh: () => ipcRenderer.invoke("mcp:refresh"),
     tools: () => ipcRenderer.invoke("mcp:tools"),
-    call: (name, args = {}) => ipcRenderer.invoke("mcp:call", { name, arguments: args }),
+    call: (name, args = {}, options = {}) => ipcRenderer.invoke("mcp:call", {
+      name,
+      arguments: args,
+      timeoutMs: options.timeoutMs ?? null,
+      correlationId: options.correlationId ?? null,
+    }),
+    cancel: (correlationId) => ipcRenderer.invoke("mcp:cancel", { correlationId }),
     respondToApproval: (id, accepted) => ipcRenderer.invoke("mcp:approval-response", { id, accepted }),
     onApproval: (listener) => { const wrapped = (_event, payload) => listener(payload); ipcRenderer.on("mcp:approval-requested", wrapped); return () => ipcRenderer.removeListener("mcp:approval-requested", wrapped); },
   }),

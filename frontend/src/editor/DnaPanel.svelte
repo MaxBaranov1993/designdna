@@ -21,14 +21,14 @@
   <div class="fe-dna-head">
     <h3>🧬 Style DNA</h3>
     <span class="fe-dna-tag" id="feDnaMode" bind:this={dnaMode}>light</span>
-    <button class="fe-tbtn" data-act="close-style-dna" title="Закрыть" onclick={() => ctl.handleAct("close-style-dna")}>✕</button>
+    <button class="fe-tbtn" data-act="close-style-dna" title="Закрыть" aria-label="Закрыть Style DNA" onclick={() => ctl.handleAct("close-style-dna")}>✕</button>
   </div>
   <div class="fe-dna-body" id="feDnaBody" bind:this={dnaBody}>
     <div class="fe-dna-empty">Загрузка токенов…</div>
   </div>
   <div class="fe-dna-foot" id="feDnaFoot" bind:this={dnaFoot}></div>
   <div class="fe-dna-actions">
-    <button class="fe-btn" data-act="reset-style-dna" onclick={() => ctl.handleAct("reset-style-dna")}>Сбросить</button>
-    <button class="fe-btn primary" data-act="apply-style-dna" onclick={() => ctl.handleAct("apply-style-dna")}>Применить</button>
+    <button class="fe-btn" data-act="reset-style-dna" aria-label="Сбросить Style DNA" disabled onclick={() => ctl.handleAct("reset-style-dna")}>Сбросить</button>
+    <button class="fe-btn primary" data-act="apply-style-dna" aria-label="Применить Style DNA" disabled onclick={() => ctl.handleAct("apply-style-dna")}>Применить</button>
   </div>
 </div>

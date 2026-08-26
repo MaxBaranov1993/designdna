@@ -568,6 +568,9 @@
           "type": "string",
           "maxLength": 500
         },
+        "sourceMeta": {
+          "$ref": "#/$defs/sourceLayerMeta"
+        },
         "responsive": {
           "$ref": "#/$defs/responsiveOverrides"
         },
@@ -1385,6 +1388,53 @@
             "scale-down"
           ]
         },
+        "objectPosition": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Выравнивание картинки внутри кадра (Source Import crop)"
+        },
+        "filter": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "CSS filter источника без url() (Source Import)"
+        },
+        "backdropFilter": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "CSS backdrop-filter источника без url() (Source Import)"
+        },
+        "mixBlendMode": {
+          "type": "string",
+          "pattern": "^[a-z-]+$",
+          "maxLength": 20,
+          "description": "mix-blend-mode источника (Source Import)"
+        },
+        "direction": {
+          "enum": [
+            "rtl"
+          ]
+        },
+        "writingMode": {
+          "enum": [
+            "vertical-rl",
+            "vertical-lr",
+            "sideways-rl",
+            "sideways-lr"
+          ]
+        },
+        "outline": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "outlineColor": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "flexShrink": {
+          "type": "number",
+          "description": "0 — flex-ребёнок не сжимается (карточки горизонтальных scroll-shelf)"
+        },
         "backgroundImage": {
           "type": "string",
           "maxLength": 800,
@@ -1449,6 +1499,23 @@
         }
       }
     },
+    "componentRef": {
+      "type": "object",
+      "description": "Pinned reference to an exact Design System master used by Strict generation.",
+      "required": [
+        "systemId",
+        "revision",
+        "componentKey",
+        "masterHash"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "systemId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "componentKey": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "masterHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
     "sourceLayerMeta": {
       "type": "object",
       "description": "Provenance of a synthetic Source Import layer (background-image, pseudo-element, raster fallback).",
@@ -1497,6 +1564,9 @@
           "type": "string",
           "maxLength": 100
         },
+        "componentRef": {
+          "$ref": "#/$defs/componentRef"
+        },
         "repeatGroup": {
           "type": "string",
           "maxLength": 500
@@ -1514,6 +1584,45 @@
           "type": "string",
           "maxLength": 500,
           "description": "Editor lineage: captured sourceKey this duplicate/paste subtree was rekeyed from."
+        },
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Content-hash исходных байтов растрового ассета (Source Import honest bytes)"
+        },
+        "objectSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Content-hash декодированного lossless-PNG, на который ссылается src (blob ref)"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Измеренная CSS-ширина бокса ассета"
+        },
+        "height": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Измеренная CSS-высота бокса ассета"
+        },
+        "objectFit": {
+          "enum": [
+            "fill",
+            "contain",
+            "cover",
+            "fit",
+            "none",
+            "scale-down"
+          ]
+        },
+        "objectPosition": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "captureVersion": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Версия capture-пайплайна, зафиксировавшего ассет"
         }
       }
     },

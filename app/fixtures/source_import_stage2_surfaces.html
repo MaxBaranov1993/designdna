@@ -15,6 +15,11 @@
       width: 180px; height: 54px; padding: 8px; margin-top: 20px; background: #bfdbfe;
       transform: translate(-24px, 9px);
     }
+    /* Карусели сжимают неактивные слайды: микро-scale НЕ растровый fallback. */
+    #fixture-transform .slide-scaled {
+      width: 220px; height: 90px; padding: 8px; margin-top: 20px; background: #bbf7d0; color: #14532d;
+      transform: scale(0.97);
+    }
     /* Этап 2: stacking/z-index переносится в frame.z. */
     #fixture-stack { width: 640px; padding: 16px; background: #ffffff; position: relative; height: 180px; }
     #fixture-stack .under, #fixture-stack .over { position: absolute; width: 120px; height: 120px; padding: 8px; }
@@ -63,7 +68,7 @@
   </style>
 </head>
 <body>
-  <section id="fixture-transform"><div class="tilted">Tilted</div><div class="translated">Translated</div></section>
+  <section id="fixture-transform"><div class="tilted">Tilted</div><div class="translated">Translated</div><div class="slide-scaled">Scaled slide</div></section>
   <section id="fixture-stack"><div class="under">U</div><div class="over">O</div></section>
   <section id="fixture-clip"><div class="clipped">Clip</div><div class="masked">Mask</div></section>
   <section id="fixture-raster">

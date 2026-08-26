@@ -1,0 +1,27 @@
+{
+  "id": "chatcmpl-zai-fixture-1",
+  "request_id": "req-zai-fixture-1",
+  "created": 1760000000,
+  "model": "glm-5.3",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_zai_obj_1",
+            "type": "function",
+            "function": {
+              "name": "mcp_fixture__echo",
+              "arguments": { "value": 7, "options": { "verbose": true, "depth": 2 }, "path": "./src" }
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": { "prompt_tokens": 12, "completion_tokens": 6, "total_tokens": 18 }
+}

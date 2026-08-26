@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
-  import { flow } from "../flow/state";
+  import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
 import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   import type { ReskinFlowNode, ReskinMask } from "../flow/types";
@@ -27,7 +27,7 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
    * Результат: превью IR + свёрнутый журнал merge-back со счётчиком записей. */
   let { id, data, selected }: NodeProps<ReskinFlowNode> = $props();
 
-  let busy = $derived(!!$flow.busy[Number(id)]);
+  let busy = $derived(!!$flowBusy[Number(id)]);
   let maskAny = $derived(MASK_FIELDS.some((f) => data.mask[f.key]));
 </script>
 
@@ -58,7 +58,7 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
       </label>
     {/each}
   </div>
-  <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} onChange={(v) => $flow.setNodeData(Number(id), { designSystemSelection: v } as any)} />
+  <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} usageMode={(data as any).designSystemUsageMode || "strict"} fixtureProfile={(data as any).designSystemFixture || "typical"} onChange={(v, meta) => $flow.setNodeData(Number(id), { designSystemSelection: v, designSystemUsageMode: meta?.usageMode, designSystemFixture: meta?.fixtureProfile } as any)} />
   <div class="ctl-row">
     <select
       class="f-provider-select nodrag"
@@ -69,8 +69,10 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
       <option value="auto">Auto · аккаунт</option>
       <option value="kimi">Kimi K3</option>
       <option value="openai">GPT-5.6-sol</option>
-      <option value="glm">GLM-5.3</option>
-      <option value="zcode">GLM · ZCode (без ключа)</option>
+      <option value="glm">GLM-5.3 · Zhipu</option>
+      <option value="zai">GLM-5.3 · Z.AI</option>
+      <option value="grok">Grok 4.6 · xAI</option>
+      <option value="zcode">GLM · ZCode (явный ZCODE_CLI)</option>
     </select>
     <button
       class="btn-node primary small f-run nodrag"

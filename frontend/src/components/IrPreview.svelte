@@ -69,9 +69,21 @@
   onMount(() => {
     const el = outer;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(syncPreviewSize);
+    // ResizeObserver callbacks run inside the browser's layout-delivery loop.
+    // fitPreview/fitHeight write dimensions, so doing that synchronously can
+    // recursively invalidate the observed outer box and flood Electron with
+    // "ResizeObserver loop ... undelivered notifications". Coalesce the write
+    // into the next frame, outside the observer delivery phase.
+    let resizeFrame = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(syncPreviewSize);
+    });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(resizeFrame);
+    };
   });
 </script>
 

@@ -2,7 +2,7 @@ import copy
 import json
 from pathlib import Path
 
-from editor_assist import AssistRequest, editor_assist
+from editor_assist import AssistRequest, _messages, _scoped_ir_for_prompt, editor_assist
 from ui_contact_form_fields_test import IR as CONTACT_FORM_IR
 
 
@@ -43,6 +43,29 @@ def _request(document, scope, commands, constraints=None):
         constraints=constraints or {},
         rawOutput=json.dumps({"summary": "Готово", "commands": commands}),
     ))
+
+
+def test_scoped_prompt_ir_keeps_selection_verbatim_and_prunes_the_rest():
+    base = _base()
+    nodes = _nodes(base)
+    target = nodes[3]
+    req = AssistRequest(ir=base, prompt="тест", action="custom",
+                        scope={"sourceKeys": [target["sourceKey"]], "viewport": "desktop"})
+    messages = _messages(base, req)
+    payload = json.loads(messages[1]["content"])
+    scoped = payload["ir"]
+
+    # выделенная ветка — целиком, без __pruned внутри
+    serialized = json.dumps(scoped, ensure_ascii=False)
+    assert '"__pruned": true' in serialized
+    assert '"sourceKey": "%s"' % target["sourceKey"] in serialized
+    # полный IR в промпт больше не уходит: обрезанная версия строго меньше
+    assert len(serialized) < len(json.dumps(base, ensure_ascii=False))
+    # токены остаются целиком — модель обязана держаться палитры
+    assert scoped.get("tokens") == base.get("tokens")
+    # повторная обрезка того же выделения детерминирована
+    again = _scoped_ir_for_prompt(base, [f"/tree/0"])
+    assert json.dumps(again, sort_keys=True) == json.dumps(_scoped_ir_for_prompt(base, [f"/tree/0"]), sort_keys=True)
 
 
 def test_single_scope_works_for_every_element_type_and_isolates_siblings():
@@ -329,6 +352,37 @@ def test_browser_assist_calls_the_supported_llm_interface(monkeypatch):
     assert isinstance(result, dict), getattr(result, "body", result)
     assert seen["provider"] == "auto" and seen["role"] == "edit"
     assert result["ops"][0]["after"] == 0.85
+
+
+def test_browser_assist_passes_through_every_supported_provider(monkeypatch):
+    """zai/grok/zcode — явные серверные маршруты наряду с openai/kimi/glm;
+    неизвестные/desktop-значения отображаются в auto."""
+    base = _base()
+    target = _nodes(base)[2]
+    seen: list[str] = []
+
+    def fake_chat(provider, messages, temperature, role):
+        seen.append(provider)
+        return json.dumps({
+            "summary": "Готово",
+            "commands": [{
+                "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
+                "changes": {"style": {"opacity": 0.85}}, "reason": "route",
+            }],
+        })
+
+    monkeypatch.setattr("editor_assist.llm.chat", fake_chat)
+    for requested, expected in (
+        ("zai", "zai"), ("grok", "grok"), ("zcode", "zcode"),
+        ("glm", "glm"), ("codex", "auto"), ("mystery", "auto"),
+    ):
+        result = editor_assist(AssistRequest(
+            ir=base, prompt="Сделай немного прозрачнее", action="custom",
+            scope={"sourceKeys": [target["sourceKey"]], "viewport": "desktop"}, constraints={},
+            provider=requested,
+        ))
+        assert isinstance(result, dict), getattr(result, "body", result)
+        assert seen.pop() == expected
 
 
 def test_locked_raster_layers_refuse_ai_mutations_but_stay_inspectable():

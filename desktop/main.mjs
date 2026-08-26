@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
@@ -10,11 +11,18 @@ import { CredentialStore } from "./services/credential-store.mjs";
 import { SettingsStore } from "./services/settings-store.mjs";
 import { getProviderStatus } from "./services/provider-status.mjs";
 import { chatWithProvider } from "./services/provider-router.mjs";
+import { createEnvelope, EnvelopeValidationError, redactForLog, UnsupportedCapabilityError } from "./services/provider-envelope.mjs";
 import { getValidToken, importFromCli, kimiAccountStatus } from "./services/kimi-account.mjs";
 import { CodexAppServer } from "./services/codex-app-server.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
 import { canonicalMcpSpec, createMcpActivationApprover } from "./services/mcp-activation-approval.mjs";
 import { attachSourceAuthCookies, sourceAuthIntent, validateSourceAuthUrl } from "./services/source-auth.mjs";
+import { putContentAddressedBlob, readBlobBatch, readBlobObject, safeBlobName } from "./services/blob-store.mjs";
+import { LiveCommandRegistry } from "./services/live-command-registry.mjs";
+import { LiveProjectApiSync } from "./services/live-project-api-sync.mjs";
+import { assertBaseRevision, classifyActionAccess } from "./services/live-command-contract.mjs";
+import { RendererCommandBridge } from "./services/renderer-command-bridge.mjs";
+import { LiveCommandPipeServer } from "./services/live-command-pipe-server.mjs";
 
 const desktopDirectory = path.dirname(fileURLToPath(import.meta.url));
 const sourceRoot = path.resolve(desktopDirectory, "..");
@@ -34,12 +42,20 @@ let credentials;
 let settings;
 let mcp;
 let mcpActivation;
+let liveCommands;
+let liveProjects;
+let rendererCommands;
+let liveCommandPipe;
 let approvalSequence = 0;
 const mcpApprovals = new Map();
 const codexRequests = new Map();
+/* Активные provider-чаты по requestId: отмена (providers:cancel) гасит
+ * HTTP-запрос и CLI-процессы через AbortController. */
+const providerChats = new Map();
 const pythonApiQueue = new SerialRequestQueue();
 const pythonInteractiveQueue = new SerialRequestQueue();
 const repoCanvasQueue = new SerialRequestQueue();
+const liveMutationQueue = new SerialRequestQueue();
 let prewarmed = false;
 
 /* Прогрев: холодный старт Python-воркера (импорт FastAPI-стека) стоит ~1.5 с;
@@ -61,10 +77,64 @@ let quitting = false;
 /* Кэш runtime.configure: одинаковые credentials не гоняем лишним JSONL-раундтрипом
  * перед каждым API-вызовом; spawnCount отличает перезапущенный воркер. */
 const configureFingerprints = new Map();
+const LIVE_COMMAND_TOOL_NAME = "designdna_live_command";
+const LIVE_COMMAND_TOOL = Object.freeze({
+  serverId: "designdna-live",
+  serverName: "DesignDNA Live",
+  name: LIVE_COMMAND_TOOL_NAME,
+  qualifiedName: LIVE_COMMAND_TOOL_NAME,
+  description: "Read or change the open DesignDNA project through the revision-safe Live Command Bus.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["commandId", "idempotencyKey", "projectId", "intent", "scope", "action", "arguments", "mode", "correlationId", "timeoutMs"],
+    properties: {
+      commandId: { type: "string" }, idempotencyKey: { type: "string" }, projectId: { type: "string" },
+      pageId: { type: ["string", "null"] }, baseRevision: { type: "string" }, intent: { type: "string" },
+      scope: { type: "object" }, action: { type: "string" }, arguments: { type: "object" },
+      mode: { type: "string", enum: ["preview", "apply"] }, correlationId: { type: "string" }, timeoutMs: { type: "integer" },
+    },
+  },
+  annotations: { readOnlyHint: false },
+});
+
+function liveCommandDynamicTool() {
+  return { name: LIVE_COMMAND_TOOL.qualifiedName, description: LIVE_COMMAND_TOOL.description, inputSchema: LIVE_COMMAND_TOOL.inputSchema };
+}
+
+async function executeLiveCommandRequest(request, { source = "agent" } = {}) {
+  const access = classifyActionAccess(request?.action);
+  const session = liveProjects?.get("local-user", request?.projectId);
+  if (access === "mutation") {
+    if (!session) throw new Error(`Live project ${String(request?.projectId || "")} is not loaded`);
+    return request.mode === "preview"
+      ? session.beginPreview(request, { approvalContext: { source } })
+      : liveCommands.execute(request, { currentRevision: session.currentRevision(), approvalContext: { source } });
+  }
+  return liveCommands.execute(request, { approvalContext: { source } });
+}
+
+async function callLiveCommandTool(arguments_, { source = "agent" } = {}) {
+  const request = arguments_ || {};
+  const result = await executeLiveCommandRequest(request, { source });
+  return {
+    content: [{ type: "text", text: JSON.stringify(result) }],
+    structuredContent: result,
+    isError: false,
+  };
+}
 
 /* Быстрые routes уходят на интерактивный воркер: они обязаны отвечать за десятки
  * миллисекунд даже когда длинный воркер минутами держит Source Import / reproduce.
  * project/* целиком на интерактивном — projects.db остаётся single-writer. */
+/* Тяжёлые capture-конвейеры: минутные Playwright/LLM-прогоны. Идут в
+ * эксклюзивную полосу — не параллелятся друг с другом (Chromium×viewports
+ * дорого), но больше не блокируют лёгкие запросы UI (воркер многопоточный). */
+const EXCLUSIVE_API_PATHS = new Set([
+  "/api/block-parse",
+]);
+const pythonConfigureMutex = new SerialRequestQueue();
+
 const INTERACTIVE_API_PATHS = new Set([
   "/api/editor/assist",
   "/api/project/save",
@@ -84,7 +154,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const FONT_MIME = { ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf" };
-const BLOB_MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".mp4": "video/mp4", ".webm": "video/webm" };
+const MAX_BLOB_BATCH_BYTES = 256 * 1024 * 1024;
 
 /* Блобы (inline data:image в node.data) исторически раздували localStorage до
  * десятков МБ: каждый бут парсит блоб целиком, каждый автосейв сериализует.
@@ -94,11 +164,6 @@ function blobsDir() {
   return path.join(app.getPath("userData"), "data", "blobs");
 }
 
-function safeBlobName(raw) {
-  const name = path.basename(String(raw || ""));
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name) ? name : null;
-}
-
 function registerFontsProtocol() {
   const fontsDir = path.join(app.getPath("userData"), "data", "fonts");
   protocol.handle("ddna", async (request) => {
@@ -106,13 +171,14 @@ function registerFontsProtocol() {
     if (url.host !== "fonts" && url.host !== "blobs") return new Response("not found", { status: 404 });
     const name = safeBlobName(decodeURIComponent(url.pathname.replace(/^\/+/, "")));
     if (!name) return new Response("bad name", { status: 400 });
-    const dir = url.host === "fonts" ? fontsDir : blobsDir();
     const ext = path.extname(name).toLowerCase();
     try {
-      const data = await readFile(path.join(dir, name));
-      return new Response(data, {
+      const object = url.host === "fonts"
+        ? { data: await readFile(path.join(fontsDir, name)), mime: FONT_MIME[ext] || "application/octet-stream" }
+        : await readBlobObject(blobsDir(), name);
+      return new Response(object.data, {
         headers: {
-          "Content-Type": (url.host === "fonts" ? FONT_MIME : BLOB_MIME)[ext] || "application/octet-stream",
+          "Content-Type": object.mime,
           "Access-Control-Allow-Origin": "*",
           "Cache-Control": "immutable",
         },
@@ -160,6 +226,117 @@ function requestMcpApproval(payload) {
   });
 }
 
+async function requestLiveCommandApproval({ request, context }) {
+  const action = String(request?.action || "unknown");
+  const intent = String(request?.intent || "").slice(0, 500);
+  const source = String(context?.source || "agent");
+  const window = BrowserWindow.getAllWindows()[0];
+  const options = {
+    type: "question",
+    buttons: ["Apply", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    title: "DesignDNA Live Command",
+    message: `Allow ${source} to run ${action}?`,
+    detail: intent || "This command will change the open project.",
+  };
+  const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+  return result.response === 0;
+}
+
+function waitForPersistedRevision(session, baseRevision, timeoutMs) {
+  let settled = false;
+  let unsubscribe = () => {};
+  let timer;
+  const promise = new Promise((resolve, reject) => {
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      unsubscribe();
+      callback(value);
+    };
+    unsubscribe = session.subscribe((event) => {
+      if (event.type === "session.persisted" && event.baseRevision === baseRevision) finish(resolve, event);
+    });
+    timer = setTimeout(() => finish(reject, Object.assign(new Error("The renderer changed state but persistence acknowledgement timed out"), { code: "PERSIST_TIMEOUT" })), Math.min(Number(timeoutMs) || 30_000, 120_000));
+  });
+  return { promise, cancel: () => { if (!settled) { settled = true; clearTimeout(timer); unsubscribe(); } } };
+}
+
+async function executeRendererMutation(request) {
+  const session = liveProjects?.get("local-user", request.projectId);
+  if (!session) throw new Error(`Live project ${String(request.projectId || "")} is not loaded`);
+  assertBaseRevision(request, session.currentRevision());
+  if (request.mode === "preview") return rendererCommands.request(request, request.timeoutMs);
+  const persisted = waitForPersistedRevision(session, request.baseRevision, request.timeoutMs);
+  try {
+    const acknowledgement = await rendererCommands.request(request, request.timeoutMs);
+    const event = await persisted.promise;
+    return {
+      newRevision: event.newRevision,
+      inverseCommand: acknowledgement.inverseCommand,
+      undoEntry: acknowledgement.undoEntry,
+      affectedObjects: acknowledgement.affectedObjects,
+      qualityReport: acknowledgement.qualityReport,
+    };
+  } catch (error) {
+    persisted.cancel();
+    throw error;
+  }
+}
+
+function createLiveCommandRegistry() {
+  const registry = new LiveCommandRegistry({ approve: requestLiveCommandApproval });
+  registry.register("session.get", async () => {
+    const [window] = BrowserWindow.getAllWindows();
+    return {
+      appVersion: app.getVersion(),
+      packaged: app.isPackaged,
+      rendererReady: Boolean(window && !window.isDestroyed() && !window.webContents.isLoading()),
+      windowVisible: Boolean(window && !window.isDestroyed() && window.isVisible()),
+      activeProject: liveProjects?.getSnapshot() || null,
+    };
+  });
+  registry.register("command.list", async () => ({ actions: registry.actionInventory() }));
+  registry.register("project.get", async (request) => ({
+    available: Boolean(liveProjects?.getSnapshot("local-user", request.projectId)),
+    snapshot: liveProjects?.getSnapshot("local-user", request.projectId) || null,
+  }));
+  registry.register("pages.list", async (request) => {
+    const snapshot = liveProjects?.getSnapshot("local-user", request.projectId);
+    const pages = Array.isArray(snapshot?.project?.pages) ? snapshot.project.pages : [];
+    return {
+      revision: snapshot?.revision || null,
+      pages: pages.map((page) => ({ id: page?.id || null, title: page?.title || page?.name || "" })),
+    };
+  });
+  registry.register("graph.get", async (request) => {
+    const snapshot = liveProjects?.getSnapshot("local-user", request.projectId);
+    const pages = Array.isArray(snapshot?.project?.pages) ? snapshot.project.pages : [];
+    const page = pages.find((candidate) => candidate?.id === request.pageId) || null;
+    return {
+      revision: snapshot?.revision || null,
+      pageId: request.pageId,
+      nodes: Array.isArray(page?.nodes) ? page.nodes : [],
+      edges: Array.isArray(page?.edges) ? page.edges : [],
+    };
+  });
+  registry.register("changes.since", async (request) => {
+    const cursor = request.arguments?.cursor ?? 0;
+    return registry.changesSince(cursor);
+  });
+  const serializedRendererMutation = (request) => liveMutationQueue.run(() => executeRendererMutation(request));
+  registry.register("graph.node.create", serializedRendererMutation);
+  registry.register("graph.node.delete", serializedRendererMutation);
+  registry.register("graph.node.move", serializedRendererMutation);
+  registry.register("editor.style.patch", serializedRendererMutation);
+  registry.register("history.undo", serializedRendererMutation);
+  registry.subscribe((event) => broadcast("live-command:event", event));
+  return registry;
+}
+
 function createWorkers() {
   const python = pythonWorkerSpec({
     isPackaged: app.isPackaged,
@@ -200,7 +377,9 @@ function createWorkers() {
   codex.on("request", async (message) => {
     if (message.method === "item/tool/call") {
       try {
-        const toolResult = await mcp.callTool(message.params.tool, message.params.arguments, { source: "codex" });
+        const toolResult = message.params.tool === LIVE_COMMAND_TOOL_NAME
+          ? await callLiveCommandTool(message.params.arguments, { source: "codex" })
+          : await mcp.callTool(message.params.tool, message.params.arguments, { source: "codex" });
         codex.respond(message.id, { contentItems: toolResult.content || [], success: toolResult.isError !== true });
       } catch (error) {
         codex.respond(message.id, { contentItems: [{ type: "text", text: error.message }], success: false });
@@ -290,6 +469,13 @@ function registerIpc() {
     platform: process.platform,
     productionTransport: "ipc+stdio",
   }));
+  // Первый безопасный vertical slice Live Command Bus. Пока наружу открыты
+  // только зарегистрированные read-handlers. Mutations будут подключены после
+  // появления authoritative Live Project Session, а не с revision из renderer.
+  handleTrusted("live-command:list", () => liveCommands.actionInventory());
+  handleTrusted("live-command:execute", (_event, request) => executeLiveCommandRequest(request, { source: "renderer" }));
+  handleTrusted("live-command:preview-get", (_event, { previewId } = {}) => liveCommands.getPreview(String(previewId || "")));
+  handleTrusted("live-command:response", (event, payload) => rendererCommands.respond(String(event.sender.id), payload));
   handleTrusted("source-auth:open", (_event, { url }) => openSourceAuthWindow(url));
   handleTrusted("source-auth:clear", async () => {
     await sourceAuthSession().clearStorageData();
@@ -310,27 +496,14 @@ function registerIpc() {
   // только ddna://blobs/<name>. getMany возвращает ПОЛНЫЕ data:-URL обратно —
   // мост разворачивает их в исходящие /api-тела (кроме project/save), чтобы
   // серверный рендер (fidelity/QA) продолжал видеть картинки.
-  handleTrusted("blobs:put", async (_event, { name, base64 }) => {
-    const safe = safeBlobName(name);
-    if (!safe) throw new Error("Invalid blob name");
-    const { writeFile, mkdir } = await import("node:fs/promises");
-    await mkdir(blobsDir(), { recursive: true });
-    await writeFile(path.join(blobsDir(), safe), Buffer.from(String(base64 || ""), "base64"));
-    return { stored: true, name: safe };
+  handleTrusted("blobs:put", async (_event, { mime, base64 }) => {
+    return putContentAddressedBlob(blobsDir(), { mime, base64 });
   });
   handleTrusted("blobs:getMany", async (_event, { names }) => {
+    const batch = await readBlobBatch(blobsDir(), names, { maxItems: 500, maxTotalBytes: MAX_BLOB_BATCH_BYTES });
     const out = {};
-    for (const raw of Array.isArray(names) ? names.slice(0, 500) : []) {
-      const safe = safeBlobName(raw);
-      if (!safe) continue;
-      try {
-        const data = await readFile(path.join(blobsDir(), safe));
-        const ext = path.extname(safe).toLowerCase();
-        const mime = BLOB_MIME[ext] || "application/octet-stream";
-        out[safe] = `data:${mime};base64,${data.toString("base64")}`;
-      } catch {
-        // отсутствующий блоб не должен ронять весь запрос
-      }
+    for (const [name, object] of Object.entries(batch.objects)) {
+      out[name] = `data:${object.mime};base64,${object.data.toString("base64")}`;
     }
     return out;
   });
@@ -347,10 +520,32 @@ function registerIpc() {
   });
   handleTrusted("api:request", (_event, request) => {
     const validatedRequest = validateApiRequest(request);
+    let liveProjectContext = null;
+    try {
+      liveProjectContext = liveProjects.prepare(validatedRequest);
+    } catch (error) {
+      const stale = error?.code === "STALE_REVISION";
+      return {
+        status: stale ? 409 : 400,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ok: false,
+          stale,
+          error: error?.code || "PROJECT_REQUEST_INVALID",
+          revision: error?.currentRevision || null,
+        }),
+        encoding: "utf8",
+      };
+    }
     const interactive = INTERACTIVE_API_PATHS.has(validatedRequest.path.split("?", 1)[0]);
     const queue = interactive ? pythonInteractiveQueue : pythonApiQueue;
     const worker = interactive ? pythonInteractiveWorker : pythonWorker;
-    return queue.run(async () => {
+    const exclusive = EXCLUSIVE_API_PATHS.has(validatedRequest.path.split("?", 1)[0]);
+    // эксклюзивный путь — серийная полоса (как раньше); лёгкий запрос идёт
+    // мимо очереди под мьютексом конфигурации провайдеров и выполняется
+    // воркером параллельно с идущим импортом
+    const run = (operation) => (exclusive ? queue.run(operation) : pythonConfigureMutex.run(operation));
+    return run(async () => {
       let preparedRequest = validatedRequest;
       const authIntent = sourceAuthIntent(validatedRequest);
       if (authIntent) {
@@ -371,12 +566,18 @@ function registerIpc() {
           console.warn(`Kimi token unavailable for api:request: ${error.message}`);
         }
       }
-      const fingerprint = `${worker.spawnCount}:${kimiApiKey ? "kimi" : "-"}:${credentials.has("openai") ? "oa" : "-"}:${credentials.has("glm") ? "glm" : "-"}`;
+      // Fingerprint несёт ВЕРСИЮ ключа (короткий sha256), а не только наличие:
+      // ротация credentials без смены набора провайдеров обязана
+      // переконфигурировать воркер, иначе он останется со старым ключом.
+      const keyTag = (value) => (value ? createHash("sha256").update(String(value)).digest("hex").slice(0, 12) : "-");
+      const fingerprint = `${worker.spawnCount}:${keyTag(kimiApiKey)}:${keyTag(credentials.get("openai"))}:${keyTag(credentials.get("glm"))}:${keyTag(credentials.get("zai"))}:${keyTag(credentials.get("grok"))}`;
       if (configureFingerprints.get(worker) !== fingerprint) {
         await worker.request("runtime.configure", {
           openaiApiKey: credentials.get("openai") || "",
           kimiApiKey,
           glmApiKey: credentials.get("glm") || "",
+          zaiApiKey: credentials.get("zai") || "",
+          grokApiKey: credentials.get("grok") || "",
         });
         configureFingerprints.set(worker, fingerprint);
       }
@@ -392,6 +593,7 @@ function registerIpc() {
         delete requestParams.encoding;
       }
       const response = await worker.request("http.request", requestParams, interactive ? 120_000 : 600_000);
+      liveProjects.synchronize(liveProjectContext, response);
       if (response && response.bodyBytes instanceof Uint8Array) {
         return { ...response, body: response.bodyBytes, encoding: "raw" };
       }
@@ -418,22 +620,57 @@ function registerIpc() {
   handleTrusted("providers:delete-credential", (_event, { provider }) => credentials.delete(provider));
   // Import OAuth tokens from the Kimi CLI; returns account status only, never the tokens.
   handleTrusted("providers:import-kimi-cli", (_event) => importFromCli(credentials));
-  handleTrusted("providers:chat", async (_event, { provider, messages, temperature, profile, tools }) => {
-    // tools — MCP-описания для GLM-цикла Agent Workspace; валидируем схему,
-    // чтобы рендерер не мог протолкнуть произвольные поля в API-запрос
-    const safeTools = Array.isArray(tools)
-      ? tools.slice(0, 64).map((tool) => ({
-        type: "function",
-        function: {
-          name: String(tool?.function?.name || "").slice(0, 128),
-          description: String(tool?.function?.description || "").slice(0, 1024),
-          parameters: (tool?.function?.parameters && typeof tool.function.parameters === "object")
-            ? tool.function.parameters
-            : { type: "object", properties: {} },
-        },
-      })).filter((tool) => tool.function.name)
-      : null;
-    return chatWithProvider({ provider, messages, temperature, profile, tools: safeTools, codex, credentials });
+  // Provider chat: единый типизированный envelope (см. provider-envelope.mjs).
+  // Legacy-форма {provider, messages, temperature, profile, tools} продолжает
+  // работать: поля собираются в envelope с correlation id. Все отказы
+  // валидации/возможностей — структурные ошибки с кодом, dropped-параметры
+  // возвращаются в result.transport (явно, не молча).
+  const structuredProviderError = (error) => {
+    if (error instanceof EnvelopeValidationError || error instanceof UnsupportedCapabilityError) {
+      // Электрон сериализует только Error-инстансы: код и issues — полями
+      const structured = new Error(error.message);
+      structured.code = error.code;
+      structured.issues = error.issues;
+      console.warn(`[providers:chat] ${JSON.stringify(redactForLog({ code: error.code, issues: error.issues }))}`);
+      return structured;
+    }
+    return error;
+  };
+  const runProviderChat = async (payload) => {
+    const request = payload?.request && typeof payload.request === "object" ? payload.request : payload;
+    const envelope = createEnvelope({
+      ...request,
+      id: request?.id || `chat-${++approvalSequence}-${Date.now().toString(36)}`,
+    });
+    const abort = new AbortController();
+    providerChats.set(envelope.id, abort);
+    try {
+      const result = await chatWithProvider({
+        provider: envelope.provider,
+        envelope,
+        profile: payload?.profile,
+        signal: abort.signal,
+        codex,
+        credentials,
+      });
+      return { ...result, requestId: envelope.id };
+    } finally {
+      providerChats.delete(envelope.id);
+    }
+  };
+  handleTrusted("providers:chat", (_event, payload) => runProviderChat(payload).catch((error) => {
+    throw structuredProviderError(error);
+  }));
+  handleTrusted("providers:chat-request", (_event, request) => runProviderChat(request).catch((error) => {
+    throw structuredProviderError(error);
+  }));
+  handleTrusted("providers:cancel", (_event, { requestId } = {}) => {
+    const id = String(requestId || "");
+    const abort = providerChats.get(id);
+    if (!abort) return { cancelled: false };
+    abort.abort();
+    providerChats.delete(id);
+    return { cancelled: true, requestId: id };
   });
   handleTrusted("codex:account", () => codex.account());
   handleTrusted("codex:login", async (_event, { type }) => {
@@ -448,7 +685,7 @@ function registerIpc() {
   handleTrusted("codex:threads", (_event, params) => codex.listThreads(params || {}));
   handleTrusted("codex:start-thread", async (_event, params) => {
     await mcp.refresh();
-    return codex.startThread({ cwd: repositoryRoot, ...params, dynamicTools: mcp.dynamicTools() });
+    return codex.startThread({ cwd: repositoryRoot, ...params, dynamicTools: [...mcp.dynamicTools(), liveCommandDynamicTool()] });
   });
   handleTrusted("codex:resume-thread", (_event, { threadId }) => codex.resumeThread(String(threadId)));
   handleTrusted("codex:start-turn", (_event, params) => codex.startTurn(params));
@@ -481,8 +718,17 @@ function registerIpc() {
     return pending;
   });
   handleTrusted("mcp:refresh", () => mcp.refresh());
-  handleTrusted("mcp:tools", () => mcp.listTools());
-  handleTrusted("mcp:call", (_event, { name, arguments: args }) => mcp.callTool(String(name), args || {}, { source: "user" }));
+  handleTrusted("mcp:tools", async () => [...await mcp.listTools(), LIVE_COMMAND_TOOL]);
+  handleTrusted("mcp:call", (_event, { name, arguments: args, timeoutMs, correlationId }) => (
+    String(name) === LIVE_COMMAND_TOOL_NAME
+      ? callLiveCommandTool(args, { source: "user" })
+      : mcp.callTool(String(name), args || {}, {
+        source: "user",
+        timeoutMs: Number(timeoutMs) || null,
+        correlationId: correlationId ? String(correlationId).slice(0, 128) : null,
+      })
+  ));
+  handleTrusted("mcp:cancel", (_event, { correlationId } = {}) => ({ cancelled: mcp.cancelByCorrelation(String(correlationId || "")) }));
   handleTrusted("mcp:approval-response", (_event, { id, accepted }) => {
     const pending = mcpApprovals.get(String(id));
     if (!pending) return { ok: false };
@@ -507,6 +753,7 @@ function createWindow() {
       webSecurity: true,
     },
   });
+  const rendererId = String(window.webContents.id);
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (new Set(["https:", "http:"]).has(new URL(url).protocol)) void shell.openExternal(url);
     return { action: "deny" };
@@ -523,16 +770,18 @@ function createWindow() {
     prewarmWorkers();
   });
   window.webContents.on("render-process-gone", (_event, details) => {
+    rendererCommands?.detach(rendererId);
     console.error(`Renderer gone (${details.reason}): ${details.exitCode}`);
     // Белое окно без воркеров хуже перезагрузки страницы: перезагружаем
     if (!window.isDestroyed()) window.webContents.reload();
   });
   window.webContents.on("unresponsive", () => console.warn("Renderer unresponsive"));
+  window.on("closed", () => rendererCommands?.detach(rendererId));
   if (rendererDevUrl) void window.loadURL(rendererDevUrl);
   else void window.loadFile(rendererEntry);
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerFontsProtocol();
   credentials = new CredentialStore({ userDataPath: app.getPath("userData"), safeStorage });
   settings = new SettingsStore(app.getPath("userData"));
@@ -543,6 +792,23 @@ app.whenReady().then(() => {
     },
   });
   mcp = new McpManager({ settings, credentials, cwd: repositoryRoot, approve: requestMcpApproval, approveActivation: (spec) => mcpActivation.ensureApproved(spec) });
+  rendererCommands = new RendererCommandBridge({
+    getTarget: () => {
+      const [window] = BrowserWindow.getAllWindows();
+      if (!window || window.isDestroyed() || window.webContents.isLoading()) return null;
+      return { id: String(window.webContents.id), send: (channel, payload) => window.webContents.send(channel, payload) };
+    },
+  });
+  liveCommands = createLiveCommandRegistry();
+  liveProjects = new LiveProjectApiSync({
+    registry: liveCommands,
+    onEvent: (event) => broadcast("live-project:event", event),
+  });
+  liveCommandPipe = new LiveCommandPipeServer({
+    dataDirectory: path.join(app.getPath("userData"), "data"),
+    execute: (command) => executeLiveCommandRequest(command, { source: "external-mcp" }),
+  });
+  await liveCommandPipe.start().catch((error) => console.error(`Live command pipe unavailable: ${error.message}`));
   createWorkers();
   registerIpc();
   createWindow();
@@ -556,7 +822,8 @@ app.on("window-all-closed", () => {
 });
 
 // Второй запуск фокусирует существующее окно вместо второго набора воркеров
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+const allowDevelopmentMultiInstance = !app.isPackaged && process.env.DESIGNDNA_ALLOW_MULTI_INSTANCE === "1";
+const gotSingleInstanceLock = allowDevelopmentMultiInstance || app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
@@ -577,7 +844,11 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   codex?.stop();
   mcp?.stop();
+  liveCommands?.dispose();
+  liveProjects?.dispose();
+  rendererCommands?.dispose();
   const stops = Promise.allSettled([
+    liveCommandPipe?.stop(),
     pythonWorker?.stop(),
     pythonInteractiveWorker?.stop(),
     repoCanvasWorker?.stop(),

@@ -15,6 +15,7 @@
   import { installGraphDev } from "./flow/graphdev";
   import { useFlowStore } from "./flow/store";
   import { getConfig } from "./flow/api";
+  import { installRendererLiveCommands } from "./desktop/live-command-handler";
 
   type WorkspaceSurface = "design" | "map" | "agents";
   type LazyComponent = Component<Record<string, never>>;
@@ -63,6 +64,7 @@
     });
     window.addEventListener("designdna:ensure-editor", onEditorRequest);
     installGraphDev();
+    const uninstallLiveCommands = installRendererLiveCommands();
     void useFlowStore.getState().loadPersistedProject();
     // Load runtime config/feature flags once on boot. Failures are non-fatal.
     void getConfig().catch(() => ({ flags: {} }));
@@ -70,6 +72,7 @@
     const editorWarmup = window.setTimeout(ensureEditor, 500);
     return () => {
       window.clearTimeout(editorWarmup);
+      uninstallLiveCommands();
       window.removeEventListener("designdna:ensure-editor", onEditorRequest);
     };
   });

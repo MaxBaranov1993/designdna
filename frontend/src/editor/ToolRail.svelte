@@ -61,6 +61,25 @@
     flyOpen = false;
   }
 
+  function onLeaderClick(event: MouseEvent) {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest(".fe-fly-arrow")) {
+      flyOpen = !flyOpen;
+      return;
+    }
+    ctl.setTool(displayShape);
+  }
+
+  function onLeaderKey(event: KeyboardEvent) {
+    if (event.key === "ArrowDown" || event.key === "Enter" && event.altKey) {
+      event.preventDefault();
+      flyOpen = true;
+    } else if (event.key === "Escape" && flyOpen) {
+      event.preventDefault();
+      flyOpen = false;
+    }
+  }
+
   const displayShape = $derived(SHAPE_TOOLS.includes(tool) ? tool : lastShape);
   const displayDef = $derived(SHAPE_GROUP.find((t) => t.tool === displayShape) || SHAPE_GROUP[0]);
 </script>
@@ -92,6 +111,7 @@
       data-tool={t.tool}
       data-tip={t.title}
       aria-label={t.title}
+      aria-pressed={tool === t.tool}
       onclick={() => ctl.setTool(t.tool)}
     >
       {@render toolIcon(t.tool)}
@@ -110,7 +130,11 @@
       data-flyout="shapes"
       data-tip={`${displayDef.title} — удерживайте/наведите для выбора фигуры`}
       aria-label={displayDef.title}
-      onclick={() => ctl.setTool(displayShape)}
+      aria-haspopup="menu"
+      aria-expanded={flyOpen}
+      aria-pressed={SHAPE_TOOLS.includes(tool)}
+      onclick={onLeaderClick}
+      onkeydown={onLeaderKey}
     >
       {@render toolIcon(displayDef.tool)}
       <span class="fe-fly-arrow">▾</span>
@@ -119,6 +143,7 @@
       <div
         class="fe-rail-flyout"
         role="group"
+        aria-label="Фигуры"
         onmouseenter={() => {
           if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
         }}
@@ -131,6 +156,7 @@
             data-fly-item={t.tool}
             data-tip={t.title}
             aria-label={t.title}
+            aria-pressed={tool === t.tool}
             onclick={() => pickShape(t.tool)}
           >
             {@render toolIcon(t.tool)}
@@ -145,6 +171,7 @@
     data-tool="text"
     data-tip="Текст (T)"
     aria-label="Текст (T)"
+    aria-pressed={tool === "text"}
     onclick={() => ctl.setTool("text")}
   >
     {@render toolIcon("text")}

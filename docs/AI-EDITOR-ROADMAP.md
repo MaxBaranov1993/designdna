@@ -37,7 +37,8 @@ Current reference material:
 2. **Safe AI editing — shipped:** Smart Axis preview/apply/undo through a
    `SemanticChangeSet`.
 3. **Quality Copilot — shipped foundation:** editor-native deterministic gate;
-   visual/accessibility judges and export blocking follow.
+   visual/accessibility judges and a hash-bound Quality Certificate API exist;
+   mandatory Apply/export enforcement follows.
 4. **Harmonizer — shipped foundation:** source-aware Style DNA preview/apply/undo
    for colors, typography, radius and shadows; facet controls follow.
 5. **Responsive Autopilot — shipped foundation:** tablet/mobile constraints,
@@ -48,6 +49,15 @@ Current reference material:
    element role, content and source provenance.
 8. **Intent layer:** generated component states.
 9. **Production loop:** code contracts, taste memory and outcome branches.
+
+## Live harness status (2026-08-25)
+
+The shared Preview/Apply command foundation is live through the first-party MCP
+server for node create/delete/move, source-key style patch and undo. Read access
+covers session, project, pages, graph, inventory and bounded changes. Edge/page
+editing, selection, Source capture, generation, Design System lifecycle, motion
+and export remain roadmap inventory; see
+[Current capabilities](CURRENT-CAPABILITIES.md).
 
 ## Non-negotiable interaction rule
 

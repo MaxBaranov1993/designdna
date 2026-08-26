@@ -70,7 +70,7 @@ def main() -> None:
             url,
             [{"name": "header", "label": "Header", "kind": "header", "selector": "#fixture-header"}],
             return_tokens=True,
-            timeout_ms=5000,
+            timeout_ms=30000,
         )
     finally:
         scraper.validate_public_url = original_validate

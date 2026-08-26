@@ -56,16 +56,30 @@ def _redact_string(value: str) -> tuple[str, list[str]]:
     return redacted, kinds
 
 
-def sanitize_value(value: Any, path: str = "", report: list[dict] | None = None, key: str = "") -> Any:
+def sanitize_value(
+    value: Any,
+    path: str = "",
+    report: list[dict] | None = None,
+    key: str = "",
+    *,
+    design_ir: bool = False,
+) -> Any:
     """Return a deep sanitized copy and append only redaction metadata."""
     report = report if report is not None else []
-    if key and _SENSITIVE_KEY.search(key):
+    # Design IR style bindings deliberately use the field name ``token`` for
+    # semantic references such as ``semantic.primary``.  They are closed-schema
+    # presentation data, not credentials, and redacting them corrupts replay.
+    safe_design_key = design_ir and key in {"token", "tokens", "sourceTokenLock", "sourceTokenNodeId"}
+    if key and not safe_design_key and _SENSITIVE_KEY.search(key):
         report.append({"path": path, "kind": "secret-key"})
         return "[REDACTED]"
     if isinstance(value, dict):
-        return {str(k): sanitize_value(v, f"{path}/{k}", report, str(k)) for k, v in value.items()}
+        return {
+            str(k): sanitize_value(v, f"{path}/{k}", report, str(k), design_ir=design_ir)
+            for k, v in value.items()
+        }
     if isinstance(value, list):
-        return [sanitize_value(v, f"{path}/{i}", report) for i, v in enumerate(value)]
+        return [sanitize_value(v, f"{path}/{i}", report, design_ir=design_ir) for i, v in enumerate(value)]
     if isinstance(value, str):
         cleaned, kinds = _redact_string(value)
         for kind in kinds:
@@ -200,7 +214,7 @@ def build(base_ir: dict, source: dict | None, scenes: list[dict] | None, events:
         raw_patch = raw.get("patch")
         if isinstance(raw.get("snapshot"), dict):
             raw_patch = diff(base_ir, raw["snapshot"])
-        patch = sanitize_value(raw_patch or [], f"/scenes/{index}/patch", redactions)
+        patch = sanitize_value(raw_patch or [], f"/scenes/{index}/patch", redactions, design_ir=True)
         for item in patch:
             _validate_patch_path(item.get("path", ""))
         safe_scenes.append({

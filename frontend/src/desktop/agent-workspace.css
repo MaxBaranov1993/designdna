@@ -7,3 +7,90 @@
 .agent-backend button:disabled { opacity: .5; cursor: default; }
 .agent-tool-message { opacity: .8; font-size: 12px; }
 .agent-tool-message div { font-family: ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
+
+/* Keep every provider and connection control reachable in the packaged app.
+ * The sidebar is intentionally scrollable on the Y axis only: an X scrollbar
+ * hid Grok/ZCode and made credential rows overlap at the default window size. */
+.agent-shell {
+  grid-template-columns: 360px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.agent-sidebar {
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.agent-backend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.agent-backend button {
+  min-width: 0;
+  min-height: 48px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.agent-connections {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.agent-connections h2 {
+  margin: 8px 0 0;
+}
+
+.agent-connections label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+}
+
+.agent-connections input,
+.agent-config {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+}
+
+.agent-connections input {
+  min-width: 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--muted) / .35);
+  color: hsl(var(--foreground));
+  padding: 8px 10px;
+}
+
+.agent-sidebar > button,
+.agent-connections > button {
+  width: 100%;
+}
+
+.agent-connection-status {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+  .agent-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(260px, 45vh) minmax(0, 1fr);
+  }
+
+  .agent-sidebar {
+    display: flex;
+    border-right: 0;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+}
