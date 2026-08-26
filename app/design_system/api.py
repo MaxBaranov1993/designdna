@@ -186,9 +186,12 @@ def list_design_systems():
 
 @router.post("/api/design-system/get")
 def get_design_system(req: RefRequest):
-    document = store.get_revision(req.systemId, req.revision)
-    if not document:
-        return _err(404, f"Ревизия {req.systemId}@{req.revision} не найдена")
+    # resolve_ref, а не голый get_revision: легаси-pin «v0» на систему без
+    # rev0-снапшота должен резолвиться в последнюю опубликованную ревизию
+    # (иначе restore сохранённых графов падает «Ревизия …@0 не найдена»).
+    document, error = store.resolve_ref({"systemId": req.systemId, "revision": req.revision})
+    if error:
+        return _err(404, error)
     return {"document": document}
 
 

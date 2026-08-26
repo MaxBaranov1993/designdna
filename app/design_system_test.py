@@ -662,6 +662,47 @@ def main() -> None:
         pinned_restored is not None and pinned_restored["components"][dirty_key].get("description") != "cancel-me",
     )
 
+    # ---------- легаси-реестр: published + latest_revision=0 без rev0-снапшота ----------
+    legacy_id = "ds-legacy0pin"
+    legacy_doc = {
+        "id": legacy_id, "name": "Legacy UI", "status": "published", "revision": 1,
+        "components": {}, "suggestions": {}, "contentHash": "sha256:legacy-published",
+    }
+    with store._LOCK:
+        con = store._conn()
+        con.execute(
+            "INSERT OR REPLACE INTO design_systems (system_id, project_id, name, status, latest_revision, source_url, updated_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (legacy_id, "default", "Legacy UI", "published", 0, None, "2026-08-22T00:00:00+00:00"))
+        con.execute(
+            "INSERT OR REPLACE INTO design_system_revisions (system_id, revision, content_hash, document, created_at)"
+            " VALUES (?,?,?,?,?)",
+            (legacy_id, 1, legacy_doc["contentHash"], json.dumps(legacy_doc), "2026-08-22T00:00:00+00:00"))
+        con.commit()
+        con.close()
+    systems = {s["systemId"]: s for s in store.list_systems()}
+    check("legacy registry heals latest_revision to MAX(published)",
+          systems.get(legacy_id, {}).get("revision") == 1,
+          json.dumps(systems.get(legacy_id), ensure_ascii=False))
+    healed_doc, healed_err = store.resolve_ref({"systemId": legacy_id, "revision": 0, "contentHash": "sha256:stale"})
+    check("legacy pinned v0 resolves to latest published without hash failure",
+          healed_doc is not None and healed_doc.get("revision") == 1 and healed_err is None,
+          str(healed_err))
+    with store._LOCK:
+        con = store._conn()
+        con.execute("INSERT OR REPLACE INTO design_system_meta (project_id, default_system_id, default_revision) VALUES (?,?,?)",
+                    ("legacy-proj", legacy_id, 0))
+        con.commit()
+        con.close()
+    default_ref = store.get_default("legacy-proj")
+    check("legacy default meta v0 upgrades to published revision",
+          default_ref is not None and default_ref["revision"] == 1
+          and default_ref["contentHash"] == legacy_doc["contentHash"],
+          json.dumps(default_ref))
+    missing_doc, missing_err = store.resolve_ref({"systemId": "ds-does-not-exist", "revision": 0})
+    check("missing system still fails loudly",
+          missing_doc is None and "не найдена" in str(missing_err))
+
     if FAILS:
         print("FAILURES:", len(FAILS), "-", ", ".join(FAILS))
         sys.exit(1)

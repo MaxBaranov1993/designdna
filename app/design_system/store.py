@@ -36,7 +36,40 @@ def _conn() -> sqlite3.Connection:
     con.execute(
         "CREATE TABLE IF NOT EXISTS design_system_meta ("
         "project_id TEXT PRIMARY KEY, default_system_id TEXT, default_revision INTEGER)")
+    _heal_legacy_registry(con)
     return con
+
+
+def _heal_legacy_registry(con: sqlite3.Connection) -> None:
+    """Легаси-реестр (до появления rev0-снапшотов в publish): опубликованная
+    система с latest_revision=0 при существующих ревизиях >0. Такой записью
+    picker пинует «v0», которого нет в revisions → resolve_ref падает
+    «Ревизия …@0 не найдена» и роняет генерацию. Лечим на месте: latest
+    становится MAX(published revision). Идемпотентно — на здоровых данных
+    UPDATE не меняет ни одной строки."""
+    broken = con.execute(
+        "SELECT 1 FROM design_systems ds"
+        " WHERE ds.latest_revision = 0 AND ds.status = 'published'"
+        " AND EXISTS (SELECT 1 FROM design_system_revisions r"
+        "             WHERE r.system_id = ds.system_id AND r.revision > 0)"
+        " LIMIT 1").fetchone()
+    if not broken:
+        return
+    con.execute(
+        "UPDATE design_systems SET"
+        " latest_revision = (SELECT MAX(r.revision) FROM design_system_revisions r"
+        "   WHERE r.system_id = design_systems.system_id AND r.revision > 0)"
+        " WHERE latest_revision = 0 AND status = 'published'")
+    con.commit()
+
+
+def _latest_published_revision(system_id: str) -> int:
+    with _LOCK:
+        with _conn() as con:
+            row = con.execute(
+                "SELECT MAX(revision) FROM design_system_revisions WHERE system_id=? AND revision>0",
+                (system_id,)).fetchone()
+    return int(row[0] or 0) if row else 0
 
 
 def _now() -> str:
@@ -208,11 +241,20 @@ def resolve_ref(ref: dict) -> tuple[dict | None, str | None]:
     system_id = str(ref.get("systemId") or "")
     revision = int(ref.get("revision") or 0)
     document = get_revision(system_id, revision)
+    exact = document is not None
+    if not exact and revision <= 0:
+        # Легаси-pin «v0» на систему без rev0-снапшота (реестр до миграции):
+        # резолвим последнюю опубликованную ревизию, hash не сверяем — pin
+        # указывал на другую логическую ревизию, ронять генерацию незачем.
+        latest = _latest_published_revision(system_id)
+        if latest > 0:
+            document = get_revision(system_id, latest)
     if not document:
         return None, f"Ревизия {system_id}@{revision} не найдена"
-    expected = str(ref.get("contentHash") or "")
-    if expected and document.get("contentHash") and expected != document["contentHash"]:
-        return None, "contentHash закреплённой ревизии не совпадает"
+    if exact:
+        expected = str(ref.get("contentHash") or "")
+        if expected and document.get("contentHash") and expected != document["contentHash"]:
+            return None, "contentHash закреплённой ревизии не совпадает"
     return document, None
 
 
@@ -280,6 +322,10 @@ def get_default(project_id: str = "default") -> dict | None:
         return None
     system_id = str(row[0])
     revision = int(row[1] or 0)
+    if revision <= 0:
+        # Легаси-запись default-референса на «v0»: берём актуальную
+        # опубликованную ревизию (реестр уже подлечен _heal_legacy_registry).
+        revision = _latest_published_revision(system_id)
     document = get_revision(system_id, revision) if revision else None
     return {
         "systemId": system_id,
