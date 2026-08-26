@@ -8,13 +8,30 @@ const credentials = (configured = []) => ({
   get: (provider) => configured.includes(provider) ? `test-${provider}-credential` : null,
 });
 
-test("auto provider prefers an authenticated Codex account and keeps its profile", async () => {
+test("auto provider prefers a connected GLM key over an authenticated Codex account", async () => {
+  let codexCalled = false;
+  const result = await chatWithProvider({
+    provider: "auto",
+    messages,
+    credentials: credentials(["glm", "kimi", "openai"]),
+    codex: {
+      account: async () => ({ account: { email: "user@example.com" } }),
+      chat: async () => { codexCalled = true; return '{"unexpected":true}'; },
+    },
+    glmChat: async () => ({ content: '{"score":90}' }),
+  });
+  assert.equal(result.provider, "glm");
+  assert.equal(result.content, '{"score":90}');
+  assert.equal(codexCalled, false);
+});
+
+test("auto provider falls back to an authenticated Codex account when no API keys are configured and keeps its profile", async () => {
   let options;
   const result = await chatWithProvider({
     provider: "auto",
     messages,
     profile: "quality_judge",
-    credentials: credentials(["kimi", "openai"]),
+    credentials: credentials(),
     codex: {
       account: async () => ({ account: { email: "user@example.com" } }),
       chat: async (_messages, received) => { options = received; return '{"score":90}'; },
@@ -270,7 +287,7 @@ test("auto provider can select a configured Z.AI account", async () => {
   assert.equal(result.transport.fallback, "zai");
 });
 
-test("auto provider prefers direct Z.AI over legacy Zhipu GLM when both exist", async () => {
+test("auto provider prefers Zhipu GLM over direct Z.AI when both exist (GLM-5.3-first chain)", async () => {
   let used = null;
   const result = await chatWithProvider({
     provider: "auto",
@@ -280,8 +297,8 @@ test("auto provider prefers direct Z.AI over legacy Zhipu GLM when both exist", 
     glmChat: async () => { used = "glm"; return { content: "glm" }; },
     zaiChat: async () => { used = "zai"; return { content: "zai", transport: { provider: "zai", model: "glm-5.3", dropped: [] } }; },
   });
-  assert.equal(used, "zai");
-  assert.equal(result.provider, "zai");
+  assert.equal(used, "glm");
+  assert.equal(result.provider, "glm");
 });
 
 test("explicit Codex route without an account fails deterministically", async () => {

@@ -1,21 +1,25 @@
 import { chatWithGlm, chatWithGrok, chatWithKimi, chatWithOpenAI, chatWithZai, chatWithZcode, zcodeEnsureConfig } from "./provider-chat.mjs";
 import { adaptEnvelopeForProvider, assertEnvelopeSupported, createEnvelope } from "./provider-envelope.mjs";
 
-const PROVIDER_ORDER = ["kimi", "zai", "glm", "openai", "grok"];
+// GLM-5.3-first chain: Zhipu GLM — основной, прямой Z.AI GLM — запасной,
+// остальные подключённые аккаунты — graceful fallback в порядке надёжности.
+const PROVIDER_ORDER = ["glm", "zai", "kimi", "openai", "grok"];
 const CODEX_DEFAULT_TIMEOUT_MS = 180_000;
 const CODEX_GENERATOR_TIMEOUT_MS = 300_000;
 
 async function autoProvider({ codex, credentials, exclude = new Set(), zcodeAvailable = zcodeEnsureConfig }) {
+  for (const provider of PROVIDER_ORDER) {
+    if (!exclude.has(provider) && credentials.has(provider)) return provider;
+  }
+  // Codex — fallback после API-аккаунтов: цепочка по умолчанию идёт через
+  // GLM-5.3; Codex подхватывает генерацию, только если ни один ключ не задан.
   if (!exclude.has("codex")) {
     try {
       const status = await codex.account();
       if (status?.account) return "codex";
     } catch {
-      // Codex is optional; fall through to explicitly connected API accounts.
+      // Codex is optional; fall through to the local ZCode CLI.
     }
-  }
-  for (const provider of PROVIDER_ORDER) {
-    if (!exclude.has(provider) && credentials.has(provider)) return provider;
   }
   // Локальный ZCode CLI — только явный opt-in через ZCODE_CLI (см.
   // provider-chat.zcodeCliPath); автоматического discovery нет.

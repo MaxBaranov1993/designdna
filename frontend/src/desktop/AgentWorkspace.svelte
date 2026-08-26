@@ -35,7 +35,9 @@
   let grokKey = $state("");
   // Agent backend. "codex" keeps the native thread/turn flow; everything else
   // uses the typed chatRequest/cancel envelope + MCP tool loop.
-  let agentBackend = $state<"codex" | "openai" | "kimi" | "glm" | "zai" | "grok" | "zcode">("codex");
+  // GLM-5.3-first chain: по умолчанию агент идёт через GLM (Zhipu) с MCP-циклом;
+  // Codex — переключаемый вариант.
+  let agentBackend = $state<"codex" | "openai" | "kimi" | "glm" | "zai" | "grok" | "zcode">("glm");
   let agentHistory = $state<AgentMessage[]>([]);
   let agentRunning = $state(false);
   let activeCorrelationId = $state<string | null>(null);

@@ -29,7 +29,7 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   const desktop = typeof window !== "undefined" && !!window.designDNA;
   let provider = $derived(
     desktop
-      ? ["auto", "codex", "kimi", "openai", "glm", "zai", "grok"].includes(data.provider) ? data.provider : "codex"
+      ? ["auto", "codex", "kimi", "openai", "glm", "zai", "grok"].includes(data.provider) ? data.provider : "glm"
       : ["kimi", "openai", "glm", "zai", "grok"].includes(data.provider) ? data.provider : "auto",
   );
   let count = $derived(Math.max(1, Math.min(2, Number(data.count) || 1)));

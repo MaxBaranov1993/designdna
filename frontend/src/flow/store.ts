@@ -376,7 +376,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const ry = Math.round(y);
     const data = defaultData(type);
     if (type === "generator" && typeof window !== "undefined" && window.designDNA) {
-      (data as { provider: string }).provider = "codex";
+      // GLM-5.3-first: новая нода генератора идёт через GLM (Zhipu),
+      // а не через Codex; пользователь меняет выбор в селекторе ноды.
+      (data as { provider: string }).provider = "glm";
     }
     const node = {
       id: String(id),
@@ -660,9 +662,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const styleHint = styleRaw ? String(styleRaw) : undefined;
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
     const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as Record<string, unknown>) : undefined;
-    const selectedProvider: "auto" | "codex" | "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode" = ["kimi", "openai", "glm", "zai", "grok", "zcode"].includes(data.provider)
-      ? (data.provider as "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode")
-      : data.provider === "auto" ? "auto" : "codex";
+    const selectedProvider: "auto" | "codex" | "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode" = ["codex", "kimi", "openai", "glm", "zai", "grok", "zcode"].includes(data.provider)
+      ? (data.provider as "codex" | "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode")
+      : data.provider === "auto" ? "auto" : "glm";
     const desktop = window.designDNA;
     const provider = desktop
       ? selectedProvider

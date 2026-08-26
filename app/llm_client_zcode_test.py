@@ -167,8 +167,9 @@ class RoutingTest(unittest.TestCase):
         self.assertIn("zai/glm-5.3", chain)
         self.assertIn("grok/grok-4.6", chain)
         self.assertLess(chain.index("zai/glm-5.3"), chain.index("zcode/GLM-5.3"))
-        # прямой Z.AI предпочтительнее legacy Zhipu GLM при auto-маршрутизации
-        self.assertLess(chain.index("zai/glm-5.3"), chain.index("glm/glm-5.3"))
+        # GLM-5.3-first: Zhipu GLM — основной, прямой Z.AI — запасной той же модели
+        self.assertLess(chain.index("glm/glm-5.3"), chain.index("zai/glm-5.3"))
+        self.assertEqual(chain[0], "glm/glm-5.3")
 
     def test_zcode_rejects_hard_unsupported_envelope_fields(self):
         request = llm_client.ChatRequest(

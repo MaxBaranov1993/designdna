@@ -112,17 +112,17 @@ def main():
     for role in ("generator", "clone", "blockparse", "source_semantics", "reskin", "reproduce", "edit", "vision", "taste"):
         os.environ.pop("LLM_MODELS_" + role.upper(), None)
     check("routing_models: дефолт taste",
-          llm_client.routing_models("taste")[0] == "openai/gpt-5.6-sol")
+          llm_client.routing_models("taste")[0] == "glm/glm-5.3")
     check(
         "routing_models: дефолтные роли на прямых провайдерах",
-        llm_client.routing_models("generator")[0] == "openai/gpt-5.6-sol"
-        and llm_client.routing_models("motion_director")[0] == "openai/gpt-5.6-sol"
-        and llm_client.routing_models("clone")[0] == "openai/gpt-5.6-sol"
-        and llm_client.routing_models("blockparse")[0] == "openai/gpt-5.6-sol"
-        and llm_client.routing_models("source_semantics")[0] == "openai/gpt-5.6-sol"
-        and llm_client.routing_models("reskin")[0] == "openai/gpt-5.6-sol"
-        and llm_client.routing_models("reproduce")[0] == "openai/gpt-5.6-sol"
-        and llm_client.routing_models("vision") == ["openai/gpt-5.6-sol", "kimi/k3", "glm/glm-5.3"],
+        llm_client.routing_models("generator")[0] == "glm/glm-5.3"
+        and llm_client.routing_models("motion_director")[0] == "glm/glm-5.3"
+        and llm_client.routing_models("clone")[0] == "glm/glm-5.3"
+        and llm_client.routing_models("blockparse")[0] == "glm/glm-5.3"
+        and llm_client.routing_models("source_semantics")[0] == "glm/glm-5.3"
+        and llm_client.routing_models("reskin")[0] == "glm/glm-5.3"
+        and llm_client.routing_models("reproduce")[0] == "glm/glm-5.3"
+        and llm_client.routing_models("vision") == ["glm/glm-5.3", "openai/gpt-5.6-sol", "kimi/k3"],
     )
     check("routing_models: все роли — композитные slug'и известных провайдеров",
           all(slug.partition("/")[0] in llm_client.PROVIDERS and slug.partition("/")[2]

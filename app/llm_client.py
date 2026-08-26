@@ -105,10 +105,11 @@ PROVIDERS = {
 # Vision не включён: модели coding-плана (GLM-5.x) не принимают
 # inline-изображения на этом эндпоинте — vision остаётся на прямых API.
 # Любую роль можно переопределить env: LLM_MODELS_<ROLE> (через запятую).
-# Текущий роутинг: все роли — openai/gpt-5.6-sol с запасным kimi/k3
-# (обе модели vision-capable).
-STRONG = CHEAP = ["openai/gpt-5.6-sol", "kimi/k3", "zai/glm-5.3", "glm/glm-5.3", "grok/grok-4.6", "zcode/GLM-5.3"]
-VISION = ["openai/gpt-5.6-sol", "kimi/k3", "glm/glm-5.3"]
+# Текущий роутинг (ветка GLM-5.3): все роли — glm/glm-5.3 (Zhipu) с запасным
+# zai/glm-5.3 (прямой Z.AI), затем openai/gpt-5.6-sol и kimi/k3;
+# vision-роли — glm/glm-5.3 с запасом openai/kimi (обе vision-capable).
+STRONG = CHEAP = ["glm/glm-5.3", "zai/glm-5.3", "openai/gpt-5.6-sol", "kimi/k3", "grok/grok-4.6", "zcode/GLM-5.3"]
+VISION = ["glm/glm-5.3", "openai/gpt-5.6-sol", "kimi/k3"]
 ROUTING = {
     # канонические роли владельца
     "prompt_enhancer": STRONG,
