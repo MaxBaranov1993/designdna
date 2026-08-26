@@ -69,17 +69,18 @@ test("zcodeCliPath honours the ZCODE_CLI override and rejects missing files", ()
   assert.equal(zcodeCliPath({ ZCODE_CLI: "C:/definitely/missing.cjs" }), null);
 });
 
-test("zcodeCliPath never auto-discovers the installed app's private entry point", async () => {
-  // Even when resources/glm/zcode.cjs exists under LOCALAPPDATA, transport
-  // stays disabled without an explicit ZCODE_CLI opt-in.
-  const root = await mkdtemp(path.join(os.tmpdir(), "zcode-no-discovery-"));
+test("zcodeCliPath auto-discovers the installed app and ZCODE_CLI wins over discovery", async () => {
+  // «Z.AI без API-ключа»: стандартная установка ZCode находится сама
+  // (LOCALAPPDATA/Programs/ZCode/resources/glm/zcode.cjs); явный ZCODE_CLI
+  // по-прежнему приоритетнее найденного пути.
+  const root = await mkdtemp(path.join(os.tmpdir(), "zcode-discovery-"));
   try {
     const installed = path.join(root, "Programs", "ZCode", "resources", "glm");
     await mkdir(installed, { recursive: true });
-    await writeFile(path.join(installed, "zcode.cjs"), "// private entry", "utf-8");
-    assert.equal(zcodeCliPath({ LOCALAPPDATA: root }), null);
-    // explicit opt-in to that same file still works
+    await writeFile(path.join(installed, "zcode.cjs"), "// entry", "utf-8");
+    assert.equal(zcodeCliPath({ LOCALAPPDATA: root }), path.join(installed, "zcode.cjs"));
     assert.equal(zcodeCliPath({ LOCALAPPDATA: root, ZCODE_CLI: path.join(installed, "zcode.cjs") }), path.join(installed, "zcode.cjs"));
+    assert.equal(zcodeCliPath({ LOCALAPPDATA: path.join(root, "empty") }), null);
   } finally {
     await rm(root, { recursive: true, force: true }).catch(() => {});
   }

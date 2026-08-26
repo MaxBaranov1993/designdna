@@ -100,8 +100,8 @@ PROVIDERS = {
 # Если у записи нет ключа провайдера в env — она пропускается: так цепочка
 # сама выбирает подключённый аккаунт (только Kimi → Kimi, только OpenAI → OpenAI).
 # zcode/GLM-5.3 стоит последним в текстовых цепочках: локальный ZCode CLI —
-# явный opt-in через ZCODE_CLI (автоматический discovery установленного
-# приложения удалён: приватный entry point без стабильного CLI-контракта).
+# вход «Z.AI без API-ключа» (login Z.AI, coding plan); discovery стандартной
+# установки + override через ZCODE_CLI.
 # Vision не включён: модели coding-плана (GLM-5.x) не принимают
 # inline-изображения на этом эндпоинте — vision остаётся на прямых API.
 # Любую роль можно переопределить env: LLM_MODELS_<ROLE> (через запятую).
@@ -1017,13 +1017,18 @@ ZCODE_MIN_TIMEOUT_S = 420
 
 
 def _zcode_cli_path() -> str | None:
-    """Путь к zcode.cjs — ТОЛЬКО явный opt-in через ZCODE_CLI.
-    Автоматический поиск установленного приложения
-    (resources/glm/zcode.cjs) удалён: приватный внутренний entry point GUI
-    без стабильного CLI-контракта."""
+    """Путь к zcode.cjs: явный ZCODE_CLI → стандартный путь установленного
+    приложения (resources/glm/zcode.cjs). Это вход «Z.AI без API-ключа»
+    (login Z.AI, coding plan) — владелец явно попросил автоподключение;
+    override выигрывает, авторизацию проверяет zcode_available()."""
     override = os.environ.get("ZCODE_CLI", "").strip()
     if override and Path(override).exists():
         return override
+    localappdata = os.environ.get("LOCALAPPDATA", "").strip()
+    if localappdata:
+        candidate = Path(localappdata) / "Programs" / "ZCode" / "resources" / "glm" / "zcode.cjs"
+        if candidate.exists():
+            return str(candidate)
     return None
 
 

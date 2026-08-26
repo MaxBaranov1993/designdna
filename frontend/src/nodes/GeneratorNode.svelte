@@ -29,7 +29,7 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   const desktop = typeof window !== "undefined" && !!window.designDNA;
   let provider = $derived(
     desktop
-      ? ["auto", "codex", "kimi", "openai", "glm", "zai", "grok"].includes(data.provider) ? data.provider : "glm"
+      ? ["auto", "codex", "kimi", "openai", "glm", "zai", "grok", "zcode"].includes(data.provider) ? data.provider : "glm"
       : ["kimi", "openai", "glm", "zai", "grok"].includes(data.provider) ? data.provider : "auto",
   );
   let count = $derived(Math.max(1, Math.min(2, Number(data.count) || 1)));
@@ -65,7 +65,7 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
       <option value="glm">GLM-5.3 · Zhipu API</option>
       <option value="zai">GLM-5.3 · Z.AI API</option>
       <option value="grok">Grok 4.6 · xAI API</option>
-      <option value="zcode">GLM · ZCode (явный ZCODE_CLI)</option>
+      <option value="zcode">GLM-5.3 · ZCode (Z.AI без ключа)</option>
     </select>
   </div>
   <div class="ctl-row">

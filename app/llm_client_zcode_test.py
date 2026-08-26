@@ -129,26 +129,36 @@ class ZcodeChatTest(unittest.TestCase):
                 llm_client.chat(None, [{"role": "user", "content": "x"}], 0.5, timeout=5)
         self.assertIn("zcode/GLM-5.3", str(ctx.exception))
 
-    def test_no_auto_discovery_of_installed_app(self):
-        # Без явного ZCODE_CLI транспорт отключён, даже если приватный
-        # resources/glm/zcode.cjs существует в LOCALAPPDATA.
-        fake_root = tempfile.mkdtemp(prefix="zcode-no-discovery-")
+    def test_auto_discovery_of_installed_app(self):
+        # «Z.AI без API-ключа»: стандартная установка ZCode находится сама
+        # (LOCALAPPDATA/Programs/ZCode/resources/glm/zcode.cjs); явный
+        # ZCODE_CLI по-прежнему приоритетнее найденного пути.
+        fake_root = tempfile.mkdtemp(prefix="zcode-discovery-")
         installed = pathlib.Path(fake_root) / "Programs" / "ZCode" / "resources" / "glm"
         installed.mkdir(parents=True)
-        (installed / "zcode.cjs").write_text("// private entry", encoding="utf-8")
-        with mock.patch.dict(os.environ, {"LOCALAPPDATA": fake_root}, clear=False):
-            os.environ.pop("ZCODE_CLI", None)
-            try:
+        (installed / "zcode.cjs").write_text("// entry", encoding="utf-8")
+        try:
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": fake_root, "ZCODE_CLI": ""}, clear=False):
+                self.assertEqual(llm_client._zcode_cli_path(), str(installed / "zcode.cjs"))
+            missing_root = tempfile.mkdtemp(prefix="zcode-empty-")
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": missing_root, "ZCODE_CLI": ""}, clear=False):
                 self.assertIsNone(llm_client._zcode_cli_path())
-            finally:
-                import shutil as _shutil
-                _shutil.rmtree(fake_root, ignore_errors=True)
+        finally:
+            import shutil as _shutil
+            _shutil.rmtree(fake_root, ignore_errors=True)
 
     def test_unconfigured_zcode_skip_message_is_loud(self):
         for env_key in ("OPENAI_API_KEY", "KIMI_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "XAI_API_KEY", "ZCODE_CLI"):
             os.environ.pop(env_key, None)
-        with self.assertRaises(RuntimeError) as ctx:
-            llm_client.chat(None, [{"role": "user", "content": "x"}], 0.5, timeout=5)
+        # изолируем discovery от реальной установки ZCode на машине теста
+        empty_root = tempfile.mkdtemp(prefix="zcode-isolated-")
+        try:
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": empty_root}, clear=False):
+                with self.assertRaises(RuntimeError) as ctx:
+                    llm_client.chat(None, [{"role": "user", "content": "x"}], 0.5, timeout=5)
+        finally:
+            import shutil as _shutil
+            _shutil.rmtree(empty_root, ignore_errors=True)
         self.assertIn("ZCODE_CLI", str(ctx.exception))
 
 

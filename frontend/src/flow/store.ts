@@ -157,6 +157,7 @@ export interface FlowStoreState {
   clearGraph: () => void;
   setView: (v: LegacyView) => void;
   createPage: (name?: string) => void;
+  addVideoChainPage: (options?: { url?: string; provider?: string }) => void;
   switchPage: (id: string) => void;
   renamePage: (id: string, name: string) => void;
   deletePage: (id: string) => void;
@@ -1873,6 +1874,71 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       edges: [],
       view: { ...DEFAULT_VIEW },
       nextId: 1,
+    };
+    set((state) => ({
+      pages: [...withCurrentPageSaved(state), page],
+      activePageId: id,
+      nodes: page.nodes,
+      edges: page.edges,
+      view: page.view,
+      nextId: page.nextId,
+      statuses: {},
+      busy: {},
+    }));
+  },
+
+  /* Параллельная видео-ветка — отдельной страницей, не трогая текущий граф:
+   * Source Import (url, по умолчанию rsale.net) → Generator → Interaction
+   * Recorder → Motion Editor (MP4). AI-звено цепочки — генератор: на десктопе
+   * по умолчанию zcode (локальный ZCode CLI, login Z.AI, без API-ключа),
+   * в web — auto (серверная цепочка доходит до zcode/GLM-5.3 последней). */
+  addVideoChainPage: (options) => {
+    const rawUrl = (options?.url || "rsale.net").trim() || "rsale.net";
+    const url = /^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl)
+      ? rawUrl
+      : rawUrl.startsWith("//") ? `https:${rawUrl}` : `https://${rawUrl}`;
+    const host = url.replace(/^https?:\/\//, "").replace(/\/.*$/, "") || "source";
+    const desktop = typeof window !== "undefined" && !!window.designDNA;
+    const provider = options?.provider || (desktop ? "zcode" : "auto");
+    let nextId = 1;
+    const mkNode = (type: NodeType, x: number, y: number, patch: Record<string, unknown> = {}) => ({
+      id: String(nextId++),
+      type,
+      position: { x: Math.round(x), y: Math.round(y) },
+      initialWidth: 260,
+      initialHeight: 120,
+      data: { ...defaultData(type), ...patch },
+    }) as FlowNode;
+    const source = mkNode("sourceimport", 40, 120, { mode: "url", url, mine: true });
+    const prompt = mkNode("prompt", 40, 480, {
+      text:
+        `Видео-версия главной страницы ${host} по Style DNA источника: сохрани цвета, ` +
+        "шрифты и ритм секций. Собери динамичный лендинг под 15-секундный ролик: " +
+        "hero с крупным заголовком и CTA, две-три короткие секции с ясной иерархией, " +
+        "финальный экран с призывом. Усиль контраст и крупность типографики — " +
+        "текст должен читаться в видео.",
+    });
+    const generator = mkNode("generator", 450, 200, { provider, count: 1 });
+    const recorder = mkNode("recorder", 860, 120);
+    const motion = mkNode("motion", 1270, 120);
+    const nodes = [source, prompt, generator, recorder, motion];
+    const edge = (fromNode: number, fromPort: string, toNode: number, toPort: string) =>
+      makeRfEdge(nodes, { node: fromNode, port: fromPort }, { node: toNode, port: toPort });
+    const edges = [
+      edge(Number(prompt.id), "out", Number(generator.id), "prompt"),
+      edge(Number(source.id), "tokens", Number(generator.id), "tokens"),
+      edge(Number(generator.id), "ir", Number(recorder.id), "ir"),
+      edge(Number(generator.id), "ir", Number(motion.id), "ir"),
+      edge(Number(recorder.id), "interaction", Number(motion.id), "interaction"),
+    ];
+    const id = pageId();
+    const page: FlowPage = {
+      id,
+      name: `${host} → видео`,
+      nodes,
+      edges,
+      view: { ...DEFAULT_VIEW },
+      nextId,
     };
     set((state) => ({
       pages: [...withCurrentPageSaved(state), page],

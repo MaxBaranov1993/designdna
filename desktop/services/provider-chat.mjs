@@ -320,12 +320,19 @@ const ZCODE_BOOT_GRACE_MS = 45_000;
 // полную генерацию IR) — не даём коротким таймаутам ролей убивать генерации.
 const ZCODE_MIN_TIMEOUT_MS = 420_000;
 
-// Локальный ZCode CLI — ТОЛЬКО явный opt-in через ZCODE_CLI. Автоматический
-// поиск установленного приложения (resources/glm/zcode.cjs) удалён: это
-// приватный внутренний entry point GUI без стабильного CLI-контракта.
+// Локальный ZCode CLI — вход «Z.AI без API-ключа» (login Z.AI, coding plan).
+// Порядок: явный ZCODE_CLI → стандартный путь установленного приложения
+// (%LOCALAPPDATA%/Programs/ZCode/resources/glm/zcode.cjs). Владелец явно
+// попросил автоподключение к Z.AI без ключа — discovery возвращён; override
+// по-прежнему выигрывает, а авторизацию проверяет zcodeEnsureConfig.
 export function zcodeCliPath(environment = process.env) {
   const override = String(environment.ZCODE_CLI || "").trim();
   if (override && existsSync(override)) return override;
+  const localappdata = String(environment.LOCALAPPDATA || "");
+  if (localappdata) {
+    const candidate = path.join(localappdata, "Programs", "ZCode", "resources", "glm", "zcode.cjs");
+    if (existsSync(candidate)) return candidate;
+  }
   return null;
 }
 
@@ -413,7 +420,7 @@ function runZcode(cli, args, { cwd, timeoutMs, environment = process.env, spawnI
  *  transport.dropped. */
 export async function chatWithZcode({ envelope = null, messages, timeoutMs = 180_000, environment = process.env, spawnImpl = spawn, ensureConfig = zcodeEnsureConfig, signal }) {
   const cli = ensureConfig(environment);
-  if (!cli) throw new Error("ZCode CLI не найден или не включён: автоматический поиск установленного приложения удалён — задайте ZCODE_CLI с полным путём к zcode.cjs и выполните login Z.AI");
+  if (!cli) throw new Error("ZCode CLI не найден или не авторизован: установите ZCode и выполните login Z.AI (или задайте ZCODE_CLI с полным путём к zcode.cjs)");
   const request = envelope || envelopeFromCall({ messages });
   assertEnvelopeSupported(request, "zcode");
   const { envelope: adapted, dropped } = adaptEnvelopeForProvider(request, "zcode");

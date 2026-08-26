@@ -21,10 +21,11 @@ async function autoProvider({ codex, credentials, exclude = new Set(), zcodeAvai
       // Codex is optional; fall through to the local ZCode CLI.
     }
   }
-  // Локальный ZCode CLI — только явный opt-in через ZCODE_CLI (см.
-  // provider-chat.zcodeCliPath); автоматического discovery нет.
+  // Локальный ZCode CLI — вход «Z.AI без API-ключа» (login Z.AI, coding plan);
+  // discovery стандартной установки + override через ZCODE_CLI (см.
+  // provider-chat.zcodeCliPath).
   if (!exclude.has("zcode") && zcodeAvailable()) return "zcode";
-  throw new Error("Нет подключённого AI-аккаунта. Откройте Agents → Connections или включите ZCode через ZCODE_CLI.");
+  throw new Error("Нет подключённого AI-аккаунта. Откройте Agents → Connections или войдите в ZCode (Z.AI).");
 }
 
 async function resolveProvider({ provider, codex, credentials, zcodeAvailable = zcodeEnsureConfig }) {
@@ -41,7 +42,7 @@ async function resolveProvider({ provider, codex, credentials, zcodeAvailable = 
     return { provider, fallback: null };
   }
   if (provider === "zcode") {
-    if (!zcodeAvailable()) throw new Error("ZCode CLI не найден или не включён: автоматический поиск установленного приложения удалён — задайте ZCODE_CLI с полным путём к zcode.cjs и выполните login Z.AI");
+    if (!zcodeAvailable()) throw new Error("ZCode CLI не найден или не авторизован: установите ZCode и выполните login Z.AI (или задайте ZCODE_CLI с полным путём к zcode.cjs)");
     return { provider, fallback: null };
   }
   if (PROVIDER_ORDER.includes(provider)) {

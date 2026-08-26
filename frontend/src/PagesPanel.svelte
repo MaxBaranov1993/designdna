@@ -20,7 +20,10 @@
   <CardHeader>
     <div class="flex items-center justify-between gap-2">
       <CardTitle>Страницы</CardTitle>
-      <Button variant="outline" size="sm" onclick={() => $flow.createPage()}>+ Page</Button>
+      <div class="flex items-center gap-2">
+        <Button variant="outline" size="sm" onclick={() => $flow.addVideoChainPage()} title="Параллельная ветка: Source Import rsale.net → Generator → Recorder → видео (MP4), AI через Z.AI без ключа">+ Видео</Button>
+        <Button variant="outline" size="sm" onclick={() => $flow.createPage()}>+ Page</Button>
+      </div>
     </div>
   </CardHeader>
   <CardContent class="space-y-3">
