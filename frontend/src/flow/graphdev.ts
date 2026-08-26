@@ -42,13 +42,19 @@ declare global {
 
 /* Минимальный интерфейс инстанса канваса, нужный GraphDev.fit (Svelte Flow) */
 export interface FlowInstanceLike {
-  fitView: () => unknown;
+  fitView: (options?: { padding?: number; duration?: number }) => unknown;
 }
 
 let rfInstance: FlowInstanceLike | null = null;
 
 export function setReactFlowInstance(instance: FlowInstanceLike | null) {
   rfInstance = instance;
+}
+
+/** Вписать текущий граф в экран (используется при создании/переключении
+ *  страниц, чтобы ноды были видны целиком без ручного зума). */
+export function fitFlowView() {
+  if (rfInstance) void rfInstance.fitView({ padding: 0.12, duration: 250 });
 }
 
 function legacyEdges(edges: FlowEdge[]) {

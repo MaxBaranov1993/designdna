@@ -17,3 +17,4 @@ export const flowChannels = selectReadable(useFlowStore, (s) => s.channels, shal
 export const flowDesignSystems = selectReadable(useFlowStore, (s) => s.designSystems);
 export const flowStatuses = selectReadable(useFlowStore, (s) => s.statuses, shallowRecordEquals);
 export const flowBusy = selectReadable(useFlowStore, (s) => s.busy, shallowRecordEquals);
+export const flowProgresses = selectReadable(useFlowStore, (s) => s.progresses, shallowRecordEquals);

@@ -26,6 +26,7 @@ import {
   scheduleProjectSave,
 } from "./serialize";
 import { toast } from "./toast";
+import { fitFlowView } from "./graphdev";
 import { offloadSourceEvidenceInPlace } from "../desktop/blobStore";
 import type {
   AnyNodeData,
@@ -110,6 +111,7 @@ export interface FlowStoreState {
   statuses: Record<number, NodeStatus>;
   /* run-based ноды в полёте запроса (спиннер на ноде); runtime-поле, в сейв не попадает */
   busy: Record<number, boolean>;
+  progresses: Record<number, { startedAt: number; expectedMs: number; label: string }>;
 
   addNode: (
     type: NodeType,
@@ -128,6 +130,7 @@ export interface FlowStoreState {
   commitEditorDraft: (id: number, expectedRevision: number, ir: IRObject) => boolean;
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void;
   setBusy: (id: number, v: boolean) => void;
+  setProgress: (id: number, progress: { expectedMs: number; label: string } | null) => void;
   propagate: (startId: number, visited?: Set<number>) => void;
   runNode: (id: number) => void;
   runGenerator: (id: number) => Promise<void>;
@@ -369,6 +372,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   channels: initialChannels,
   statuses: {},
   busy: {},
+  /* Прогресс длинных операций (импорт/генерация): асимптотическая кривая в
+   * UI, реальное завершение снимает прогресс и пишет итоговое время в статус */
+  progresses: {},
 
   /* Зеркало addNode (nodes.js:256-264): id из nextId, координаты Math.round */
   addNode: (type, x, y) => {
@@ -558,6 +564,16 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     set((state) => ({ busy: { ...state.busy, [id]: v } }));
   },
 
+  /* Прогресс длинной операции: startedAt фиксируется здесь, UI сам тикает
+   * elapsed и асимптотические проценты; null снимает полосу. */
+  setProgress: (id, progress) => {
+    set((state) => ({
+      progresses: progress
+        ? { ...state.progresses, [id]: { startedAt: Date.now(), expectedMs: Math.max(1_000, progress.expectedMs), label: progress.label } }
+        : Object.fromEntries(Object.entries(state.progresses).filter(([key]) => Number(key) !== id)),
+    }));
+  },
+
   /* Зеркало propagate (nodes.js:943-968): edit/reference получают КЛОН IR,
    * mix помечается stale; через generator/mix поток не идёт (run-based).
    * Защита от повторов — visited (nodes.js:944-946). */
@@ -681,6 +697,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       : provider === "auto" ? "Auto route" : "GPT Codex";
     get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
     get().setBusy(id, true);
+    const startedAt = Date.now();
+    get().setProgress(id, { expectedMs: 90_000, label: `Генерация · ${providerLabel}` });
     try {
       const designSystemRef = pinnedDesignSystemRef(
         data as unknown as Record<string, unknown>,
@@ -716,13 +734,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       const fixedCount = (res.qa || []).reduce((s, q) => s + (q.fixed || 0), 0);
       const qaNote = fixedCount ? `, автофиксов QA: ${fixedCount}` : "";
       const designNote = res.design?.label ? `, тип: ${res.design.label}` : "";
-      get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote}`, "ok");
+      get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
       get().propagate(id);
     } catch (e) {
       const msg = friendlyProviderError(e);
       get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Генератор: " + msg, "error");
     } finally {
+      get().setProgress(id, null);
       get().setBusy(id, false);
     }
   },
@@ -812,6 +831,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     if (!n || n.type !== "sourceimport" || st.busy[id]) return;
     const data = n.data as SourceImportNodeData;
     get().setBusy(id, true);
+    const startedAt = Date.now();
+    get().setProgress(id, { expectedMs: 90_000, label: data.mode === "screenshot" ? "Скриншот → IR" : "Импорт Source" });
     try {
       if (data.mode === "screenshot") {
         if (!data.image) {
@@ -837,7 +858,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             }]
           : [];
         get().setNodeData(id, { blocks, tokens: dna.tokens });
-        get().setStatus(id, ir ? "Готово: capture + Style DNA" : "Не удалось получить IR из скриншота", ir ? "ok" : "err");
+        const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
+        get().setStatus(id, ir ? `Готово: capture + Style DNA · ${secs}с` : "Не удалось получить IR из скриншота", ir ? "ok" : "err");
       } else {
         const rawUrl = (data.url || "").trim();
         const url = rawUrl && !/^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl)
@@ -888,7 +910,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         const errCount = blocks.filter((b) => b.error).length;
         const authNote = res.authWarning ? ` · ${res.authWarning}` : "";
         const cacheNote = res.cached ? " · локальный кэш" : "";
-        get().setStatus(id, `${blocks.length} блоков (${errCount} ошибок) · Source Import${cacheNote}${authNote}`, errCount ? "err" : "ok");
+        const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
+        get().setStatus(id, `${blocks.length} блоков (${errCount} ошибок) · Source Import${cacheNote}${authNote} · ${secs}с`, errCount ? "err" : "ok");
       }
       get().propagate(id);
     } catch (e) {
@@ -896,6 +919,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Source Import: " + msg, "error");
     } finally {
+      get().setProgress(id, null);
       get().setBusy(id, false);
     }
   },
@@ -1451,6 +1475,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         page.id === state.activePageId ? { ...page, ...graph } : page,
       ),
       statuses: {},
+      progresses: {},
     }));
   },
 
@@ -1884,6 +1909,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       nextId: page.nextId,
       statuses: {},
       busy: {},
+      progresses: {},
     }));
   },
 
@@ -1909,8 +1935,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       initialHeight: 120,
       data: { ...defaultData(type), ...patch },
     }) as FlowNode;
+    // один ряд слева-направо: ширины нод (360/260/300/420/390) + зазор 50px,
+    // перекрытий нет даже с длинным списком блоков Source Import
     const source = mkNode("sourceimport", 40, 120, { mode: "url", url, mine: true });
-    const prompt = mkNode("prompt", 40, 480, {
+    const prompt = mkNode("prompt", 450, 120, {
       text:
         `Видео-версия главной страницы ${host} по Style DNA источника: сохрани цвета, ` +
         "шрифты и ритм секций. Собери динамичный лендинг под 15-секундный ролик: " +
@@ -1918,9 +1946,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         "финальный экран с призывом. Усиль контраст и крупность типографики — " +
         "текст должен читаться в видео.",
     });
-    const generator = mkNode("generator", 450, 200, { provider, count: 1 });
-    const recorder = mkNode("recorder", 860, 120);
-    const motion = mkNode("motion", 1270, 120);
+    const generator = mkNode("generator", 760, 120, { provider, count: 1 });
+    const recorder = mkNode("recorder", 1110, 120);
+    const motion = mkNode("motion", 1580, 120);
     const nodes = [source, prompt, generator, recorder, motion];
     const edge = (fromNode: number, fromPort: string, toNode: number, toPort: string) =>
       makeRfEdge(nodes, { node: fromNode, port: fromPort }, { node: toNode, port: toPort });
@@ -1949,7 +1977,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       nextId: page.nextId,
       statuses: {},
       busy: {},
+      progresses: {},
     }));
+    // вписать цепочку в экран: ноды измеряются асинхронно, поэтому дважды
+    setTimeout(fitFlowView, 80);
+    setTimeout(fitFlowView, 450);
   },
 
   switchPage: (id) => {
@@ -1967,7 +1999,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       nextId: page.nextId,
       statuses: {},
       busy: {},
+      progresses: {},
     });
+    // каждая страница начинается с полного вида: без ручного зума
+    setTimeout(fitFlowView, 80);
+    setTimeout(fitFlowView, 450);
   },
 
   renamePage: (id, name) => {
@@ -1994,6 +2030,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       nextId: next.nextId,
       statuses: {},
       busy: {},
+      progresses: {},
     });
   },
 
@@ -2020,6 +2057,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       channels: project.channels,
       statuses: {},
       busy: {},
+      progresses: {},
     });
   },
 }));

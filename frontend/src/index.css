@@ -172,6 +172,41 @@
   color: var(--flow-ok);
 }
 
+/* тонкая строка прогресса под нодой: полоса 3px + подпись с % и elapsed */
+.n-progress {
+  padding: 0 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.n-progress-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+.n-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, hsl(var(--ring)), #8b5cf6);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.55);
+  transition: width 0.45s ease;
+}
+.n-progress-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: var(--flow-muted);
+  font-variant-numeric: tabular-nums;
+}
+.n-progress-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* порты: строки как в legacy, RF-handle встроен в строку */
 .port-row {
   display: flex;
