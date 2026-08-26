@@ -3,7 +3,6 @@
   import IrPreview from "../components/IrPreview.svelte";
   import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
-import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   import type { GeneratorFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -124,7 +123,6 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
     </div>
   {/if}
   <IrPreview class="f-preview" ir={activeIr} height={180} empty="Варианты появятся после запуска" />
-  <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} usageMode={(data as any).designSystemUsageMode || "strict"} fixtureProfile={(data as any).designSystemFixture || "typical"} onChange={(v, meta) => $flow.setNodeData(Number(id), { designSystemSelection: v, designSystemUsageMode: meta?.usageMode, designSystemFixture: meta?.fixtureProfile } as any)} />
   <div class="gen-actions">
     <button class="btn-node small f-to-editor nodrag" onclick={() => $flow.sendToNode(Number(id), "edit")}>
       → Editor

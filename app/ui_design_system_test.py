@@ -93,7 +93,8 @@ def main() -> None:
                 blocks: [{name:'Header', selector:'header', ir, lit:true}],
               });
               const generator = window.GraphDev.add('generator', 40, 420);
-              return {source: source.id, generator: generator.id};
+              const reskin = window.GraphDev.add('reskin', 460, 420);
+              return {source: source.id, generator: generator.id, reskin: reskin.id};
             }""", SOURCE_IR)
 
             ds_id = page.evaluate("""async (sourceId) => {
@@ -456,11 +457,16 @@ def main() -> None:
             page.locator(f'.n-designsystem[data-id="{ds_id}"] [data-ds-action="default"]').click()
             page.wait_for_function("id => window.GraphDev.node(id).data.defaultSet === true", arg=ds_id)
 
-            page.locator(".n-generator [data-ds-field='selection']").select_option(published["systemId"])
-            page.locator(".n-generator [data-ds-field='usage']").select_option("strict")
+            # пикер убран из ноды Генератора (перегружала ноду) — выбор
+            # дизайн-системы для генерации живёт на project default;
+            # контракт пикера проверяем на Reskin-ноде
+            page.locator(".n-reskin [data-ds-field='selection']").select_option(published["systemId"])
+            page.locator(".n-reskin [data-ds-field='usage']").select_option("strict")
+            reskin_data = page.evaluate("id => window.GraphDev.node(id).data", ids["reskin"])
+            check("picker reference selection persisted (reskin)", reskin_data.get("designSystemSelection") == published["systemId"], json.dumps(reskin_data))
+            check("picker strict usage persisted (reskin)", reskin_data.get("designSystemUsageMode") == "strict")
             gen = page.evaluate("id => window.GraphDev.node(id).data", ids["generator"])
-            check("picker reference selection persisted", gen.get("designSystemSelection") == published["systemId"], json.dumps(gen))
-            check("picker strict usage persisted", gen.get("designSystemUsageMode") == "strict")
+            check("generator node has no picker state overrides", "designSystemSelection" not in gen, json.dumps(gen))
 
             persisted = page.evaluate("""async (systemId) => {
               const list = await (await fetch('/api/design-system/list')).json();
