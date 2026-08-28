@@ -26,7 +26,6 @@
   import SourceImportNode from "./nodes/SourceImportNode.svelte";
   import DesignUiNode from "./nodes/DesignUiNode.svelte";
   import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
-  import StyleDnaNode from "./nodes/StyleDnaNode.svelte";
   import DeriveNode from "./nodes/DeriveNode.svelte";
   import ReskinNode from "./nodes/ReskinNode.svelte";
   import QualityPassNode from "./nodes/QualityPassNode.svelte";
@@ -45,7 +44,6 @@
     sourceimport: SourceImportNode,
     designui: DesignUiNode,
     designsystem: DesignSystemNode,
-    styledna: StyleDnaNode,
     derive: DeriveNode,
     reskin: ReskinNode,
     qualitypass: QualityPassNode,

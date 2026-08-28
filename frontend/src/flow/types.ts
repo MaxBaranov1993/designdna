@@ -15,7 +15,6 @@ export type NodeType =
   | "page"
   | "sourceimport"
   | "designui"
-  | "styledna"
   | "derive"
   | "reskin"
   | "qualitypass"
@@ -273,10 +272,6 @@ export type DesignUiNodeData = {
   artifact: SourceArtifact | null;
   selectedComponent: number;
 };
-export type StyleDnaNodeData = {
-  tokens: Record<string, unknown> | null;
-  summary: string;
-};
 export type DeriveNodeData = {
   prompt: string;
   count: number;
@@ -411,7 +406,6 @@ export type AnyNodeData =
   | PageNodeData
   | SourceImportNodeData
   | DesignUiNodeData
-  | StyleDnaNodeData
   | DeriveNodeData
   | ReskinNodeData
   | QualityPassNodeData
@@ -428,7 +422,6 @@ export type MixFlowNode = Node<MixNodeData, "mix">;
 export type PageFlowNode = Node<PageNodeData, "page">;
 export type SourceImportFlowNode = Node<SourceImportNodeData, "sourceimport">;
 export type DesignUiFlowNode = Node<DesignUiNodeData, "designui">;
-export type StyleDnaFlowNode = Node<StyleDnaNodeData, "styledna">;
 export type DeriveFlowNode = Node<DeriveNodeData, "derive">;
 export type ReskinFlowNode = Node<ReskinNodeData, "reskin">;
 export type QualityPassFlowNode = Node<QualityPassNodeData, "qualitypass">;
@@ -446,7 +439,6 @@ export type FlowNode =
   | PageFlowNode
   | SourceImportFlowNode
   | DesignUiFlowNode
-  | StyleDnaFlowNode
   | DeriveFlowNode
   | ReskinFlowNode
   | QualityPassFlowNode

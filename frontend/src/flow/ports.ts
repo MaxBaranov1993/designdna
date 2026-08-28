@@ -12,7 +12,6 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   page: { title: "Страница", icon: "▤", w: 340 },
   sourceimport: { title: "Source Import", icon: "⌁", w: 360 },
   designui: { title: "Design UI (legacy)", icon: "UI", w: 380 },
-  styledna: { title: "Style DNA", icon: "◇", w: 320 },
   derive: { title: "Derive", icon: "↳", w: 330 },
   reskin: { title: "Reskin", icon: "✦", w: 340 },
   qualitypass: { title: "Quality Pass", icon: "✓", w: 350 },
@@ -46,9 +45,12 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   page: { in: [], out: [{ name: "ir", label: "страница", kind: "ir" }] },
   // Source Artifact enters as measured evidence. Consumption still happens
   // through project registry and DesignSystemPicker, so there is no output wire.
+  // Design System заменил отдельную ноду Style DNA: токены системы уходят
+  // проводом так же, как раньше уходили из неё. Потребление через реестр и
+  // DesignSystemPicker сохраняется — выход не заменяет их, а дополняет.
   designsystem: {
     in: [{ name: "artifact", label: "Source Artifact", kind: "artifact" }],
-    out: [],
+    out: [{ name: "tokens", label: "style DNA", kind: "tokens" }],
   },
   sourceimport: { in: [], out: [
     { name: "artifact", label: "Source Artifact", kind: "artifact" },
@@ -57,16 +59,6 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   designui: {
     in: [{ name: "artifact", label: "Source Artifact", kind: "artifact" }],
     out: [{ name: "artifact", label: "Design UI", kind: "artifact" }],
-  },
-  styledna: {
-    in: [
-      { name: "ir", label: "IR", kind: "ir" },
-      { name: "tokens", label: "tokens", kind: "tokens" },
-    ],
-    out: [
-      { name: "tokens", label: "style DNA", kind: "tokens" },
-      { name: "summary", label: "summary", kind: "text" },
-    ],
   },
   derive: {
     in: [
@@ -168,8 +160,6 @@ export function defaultData(type: NodeType): AnyNodeData {
       return { mode: "url", url: "", image: null, fileName: "", mine: false, authenticatedSession: false, activeViewport: "desktop", previewMode: "reference", importedUrl: null, blocks: [], tokens: null, sourceArtifact: null, aiRefine: false, aiProvider: "openai" };
     case "designui":
       return { artifact: null, selectedComponent: 0 };
-    case "styledna":
-      return { tokens: null, summary: "" };
     case "derive":
       return { prompt: "", count: 2, variants: [], active: 0 };
     case "reskin":
@@ -209,7 +199,6 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "reference", note: "лёгкая стилевая подсказка" },
   { type: "generator", note: "LLM → варианты IR" },
   { type: "sourceimport", note: "URL/скрин → блоки + DNA" },
-  { type: "styledna", note: "палитра, шрифты, отступы" },
   { type: "derive", note: "родственный компонент" },
   { type: "edit", note: "DNA-редактор" },
   { type: "mix", note: "смешение по весам" },

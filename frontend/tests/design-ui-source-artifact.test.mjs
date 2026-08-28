@@ -49,7 +49,10 @@ test("Design System is the single new canvas surface for Source UI", async () =>
 
   const contextMenu = ports.slice(ports.indexOf("export const CTX_ITEMS"));
   assert.doesNotMatch(contextMenu, /type: "designui"/);
-  assert.match(ports, /designsystem: \{[\s\S]*?name: "artifact"[\s\S]*?out: \[\]/);
+  // Design System принял на себя роль удалённой ноды Style DNA: вход —
+  // Source Artifact, выход — токены системы проводом.
+  assert.match(ports, /designsystem: \{[\s\S]*?name: "artifact"[\s\S]*?name: "tokens"/);
+  assert.doesNotMatch(ports, /styledna/);
   assert.match(store, /connect\(\{ node: sourceId, port: "artifact" \}, \{ node: dsId, port: "artifact" \}\)/);
   assert.match(store, /cons\.type === "designsystem"/);
   assert.match(store, /sourceUpdate: true/);

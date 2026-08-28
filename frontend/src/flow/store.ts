@@ -1,6 +1,6 @@
 import { createStore } from "zustand/vanilla";
 
-import { api, apiGet, extractStyleDna as extractStyleDnaApi } from "./api";
+import { api, apiGet } from "./api";
 import type {
   BlockParseJobResp,
   BlockParseResp,
@@ -253,7 +253,6 @@ export interface FlowStoreState {
   runPage: (id: number) => void;
   refreshEdit: (id: number) => void;
   runSourceImport: (id: number) => Promise<void>;
-  runStyleDna: (id: number) => Promise<void>;
   runDerive: (id: number) => Promise<void>;
   runReskin: (id: number) => Promise<void>;
   runQualityPass: (id: number) => Promise<void>;
@@ -728,20 +727,6 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         }
       } else if (cons.type === "mix") {
         get().setStatus(consId, "Входы обновлены — нажмите «Смешать»");
-      } else if (cons.type === "styledna") {
-        const ir = pullInput(nodes, edges, cons, "ir");
-        const tokensRaw = pullInput(nodes, edges, cons, "tokens");
-        if (ir || tokensRaw) {
-          if (ir) {
-            // Wait for exact IR extraction before updating downstream nodes.
-            void get().runStyleDna(consId);
-          } else {
-            const dna = extractStyleDna(null, tokensRaw);
-            get().setNodeData(consId, { tokens: dna.tokens, summary: dna.summary });
-            get().setStatus(consId, "Style DNA обновлён", "ok");
-            get().propagate(consId, visited);
-          }
-        }
       } else if (cons.type === "derive") {
         get().setStatus(consId, "Входы обновлены — нажмите Derive");
       } else if (cons.type === "qualitypass") {
@@ -781,7 +766,6 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     else if (n.type === "mix") void get().runMix(id);
     else if (n.type === "page") get().runPage(id);
     else if (n.type === "sourceimport") void get().runSourceImport(id);
-    else if (n.type === "styledna") void get().runStyleDna(id);
     else if (n.type === "derive") void get().runDerive(id);
     else if (n.type === "reskin") void get().runReskin(id);
     else if (n.type === "qualitypass") void get().runQualityPass(id);
@@ -910,7 +894,6 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setBusy(id, false);
     }
   },
-
 
   /* Page: сборка страницы из подключённых блоков — детерминированно, без LLM.
    * Порядок inputs = порядок секций; tokens — style DNA с провода > первый блок. */
@@ -1103,41 +1086,6 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       toast("Source Import: " + msg, "error");
     } finally {
       get().setProgress(id, null);
-      get().setBusy(id, false);
-    }
-  },
-
-  runStyleDna: async (id) => {
-    const st = get();
-    const n = st.nodes.find((x) => Number(x.id) === id);
-    if (!n || n.type !== "styledna" || st.busy[id]) return;
-    const ir = pullInput(st.nodes, st.edges, n, "ir");
-    const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
-    if (!ir && !tokensRaw) {
-      get().setStatus(id, "Подключите IR или tokens", "err");
-      return;
-    }
-    if (!ir) {
-      const dna = extractStyleDna(null, tokensRaw);
-      get().setNodeData(id, { tokens: dna.tokens, summary: dna.summary });
-      get().setStatus(id, "Style DNA собран из tokens", "ok");
-      get().propagate(id);
-      return;
-    }
-    get().setBusy(id, true);
-    get().setStatus(id, "Style DNA: извлекаю из входного IR…");
-    try {
-      const response = await extractStyleDnaApi(ir as IRObject);
-      const tokens = asRecord(response.tokens);
-      if (!tokens) throw new Error("сервер не вернул Style DNA");
-      get().setNodeData(id, { tokens: deepClone(tokens), summary: summarizeStyleDna(tokens) });
-      get().setStatus(id, "Style DNA собран из входного IR", "ok");
-      get().propagate(id);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      get().setStatus(id, "Style DNA: " + message, "err");
-      toast("Style DNA: " + message, "error");
-    } finally {
       get().setBusy(id, false);
     }
   },
@@ -1595,7 +1543,6 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     get().refreshEdit(id);
     get().propagate(id);
   },
-
 
   /* «+ вход» у Page: до 8 блоков, имена a..h (паттерн addMixInput) */
   addPageInput: (id) => {
@@ -2326,7 +2273,6 @@ useFlowStore.subscribe((state, prev) => {
   localDirtySinceInit = true;
   scheduleProjectSave(() => buildPagesProjectPayload(useFlowStore.getState()));
 });
-
 
 // AI-ассист редактора читает registry дизайн-систем отсюда (§16.2)
 if (typeof window !== "undefined") (window as unknown as { __flowStore?: unknown }).__flowStore = useFlowStore;

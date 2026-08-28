@@ -3,6 +3,7 @@
   import { flow, flowBusy, flowNodes } from "../flow/state";
   import type { DesignSystemFlowNode, SourceArtifact } from "../flow/types";
   import InPorts from "./InPorts.svelte";
+  import OutPorts from "./OutPorts.svelte";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
 
@@ -111,6 +112,7 @@
     {/if}
   </div>
   <NodeStatus {id} />
+  <OutPorts type="designsystem" />
 </NodeShell>
 
 <style>

@@ -34,7 +34,6 @@ export const NODE_TYPES: NodeType[] = [
   "page",
   "sourceimport",
   "designui",
-  "styledna",
   "derive",
   "reskin",
   "qualitypass",

@@ -19,7 +19,7 @@ type NodeRestoreMutation = { action: "graph.node.restore"; node: FlowNode; edges
 type UndoMutation = UndoMove | StyleMutation | NodeCreateMutation | NodeDeleteMutation | NodeRestoreMutation;
 const undoStack: Array<{ commandId: string; inverse: UndoMutation; forward: UndoMutation }> = [];
 const NODE_TYPES = new Set<NodeType>([
-  "prompt", "reference", "generator", "edit", "mix", "page", "sourceimport", "designui", "styledna", "derive",
+  "prompt", "reference", "generator", "edit", "mix", "page", "sourceimport", "designui", "derive",
   "reskin", "qualitypass", "recorder", "motion", "pagebridge", "designsystem",
 ]);
 const STYLE_KEYS = new Set([

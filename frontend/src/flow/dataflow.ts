@@ -74,9 +74,19 @@ export function outValue(n: FlowNode, port?: string): unknown {
       }
     case "designui":
       return n.data.artifact || null;
-    case "styledna":
-      if (port === "summary") return n.data.summary || "";
-      return n.data.tokens || null;
+    // Design System заменил ноду Style DNA: наружу уходят токены системы —
+    // семантические (styleGuide.tokens) либо, если ревизия старая, измеренные
+    // foundations. Документ в ноде — кэш, при ссылке на ревизию порт пуст,
+    // пока панель не подтянет документ.
+    case "designsystem": {
+      const document = n.data.document as Record<string, unknown> | null | undefined;
+      if (!document || typeof document !== "object") return null;
+      const styleGuide = document.styleGuide as Record<string, unknown> | undefined;
+      const semantic = styleGuide?.tokens as Record<string, unknown> | undefined;
+      if (semantic && Object.keys(semantic).length) return semantic;
+      const foundations = document.foundations as Record<string, unknown> | undefined;
+      return foundations && Object.keys(foundations).length ? foundations : null;
+    }
     case "derive":
       return n.data.variants.length ? n.data.variants[n.data.active] || null : null;
     case "reskin":

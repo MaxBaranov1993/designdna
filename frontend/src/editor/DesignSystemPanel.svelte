@@ -15,17 +15,18 @@
     return ((node?.data || {}) as unknown) as DesignSystemNodeData;
   });
 
-  /* Две основные вкладки: «Компоненты» и «Стиль сайта». Остальные девять —
-   * инженерная диагностика (identity, archetypes, tests, proof, validation,
-   * mock, suggestions); они прячутся за «Ещё», чтобы каждодневная работа
-   * шла в двух понятных экранах, а не в свалке из одиннадцати. */
+  /* Постоянных вкладок ровно две: «Компоненты» и «Стиль сайта». Девять
+   * диагностических экранов (identity, archetypes, tests, proof, validation,
+   * mock, suggestions, foundations, библиотека) не занимают место в шапке —
+   * каждый открывается своим действием (Validate, Proof, Организовать…) и
+   * возвращает пользователя кнопкой «К компонентам». */
   let activeTab = $state<"source" | "styleguide" | "foundations" | "components" | "suggestions" | "mock" | "identity" | "archetypes" | "tests" | "proof" | "validation">("source");
-  let showAdvanced = $state(false);
-  const ADVANCED_TABS = new Set(["foundations", "suggestions", "mock", "identity", "archetypes", "tests", "proof", "validation"]);
-  $effect(() => {
-    // Переход в диагностику (например, из validate()) сам раскрывает раздел.
-    if (ADVANCED_TABS.has(activeTab)) showAdvanced = true;
-  });
+  const DIAGNOSTIC_LABELS: Record<string, string> = {
+    foundations: "Foundations", suggestions: "Suggestions", mock: "Mock data",
+    identity: "Identity", archetypes: "Archetypes", tests: "Tests",
+    proof: "Proof", validation: "Validation", components: "Библиотека",
+  };
+  const isDiagnosticView = $derived(activeTab !== "source" && activeTab !== "styleguide");
   type CatalogPool = "components" | "review" | "suggestions";
   type CatalogEntry = { key: string; pool: CatalogPool; component: Record<string, any> };
   let selectedKey = $state<string>("");
@@ -757,23 +758,14 @@
   <nav class="ds-section-tabs" aria-label="Разделы дизайн-системы">
     <button type="button" data-ds-tab="source" class:active={activeTab === "source" || activeTab === "components"} onclick={() => (activeTab = "source")}>Компоненты <span>{catalogEntries.length}</span></button>
     <button type="button" data-ds-tab="styleguide" class:active={activeTab === "styleguide"} onclick={() => (activeTab = "styleguide")}>Стиль сайта{#if styleReview}<span>AI</span>{/if}</button>
-    <button type="button" class="ds-tab-more" aria-expanded={showAdvanced} onclick={() => (showAdvanced = !showAdvanced)}>
-      {showAdvanced ? "Свернуть" : "Ещё"}
-    </button>
+    {#if isDiagnosticView}
+      <!-- Диагностические экраны (Validation, Tests, Proof…) больше не занимают
+           постоянный ряд вкладок: они открываются своим действием и здесь
+           показывают, где пользователь находится и как вернуться. -->
+      <span class="ds-diagnostic-crumb">{DIAGNOSTIC_LABELS[activeTab] || activeTab}</span>
+      <button type="button" class="ds-tab-more" onclick={() => (activeTab = "source")}>← К компонентам</button>
+    {/if}
   </nav>
-  {#if showAdvanced}
-  <nav class="ds-section-tabs ds-advanced-tabs" aria-label="Диагностика дизайн-системы">
-    <button type="button" data-ds-tab="components" class:active={activeTab === "components"} onclick={() => (activeTab = "components")}>Библиотека <span>{catalogEntries.length}</span></button>
-    <button type="button" data-ds-tab="foundations" class:active={activeTab === "foundations"} onclick={() => (activeTab = "foundations")}>Foundations</button>
-    <button type="button" data-ds-tab="suggestions" class:active={activeTab === "suggestions"} onclick={() => (activeTab = "suggestions")}>Suggestions <span>{semanticSuggestions.length}</span></button>
-    <button type="button" data-ds-tab="identity" class:active={activeTab === "identity"} onclick={() => (activeTab = "identity")}>Identity</button>
-    <button type="button" data-ds-tab="archetypes" class:active={activeTab === "archetypes"} onclick={() => (activeTab = "archetypes")}>Archetypes</button>
-    <button type="button" data-ds-tab="tests" class:active={activeTab === "tests"} onclick={() => (activeTab = "tests")}>Tests <span>{identityTests.length}</span></button>
-    <button type="button" data-ds-tab="proof" class:active={activeTab === "proof"} onclick={() => (activeTab = "proof")}>Proof</button>
-    <button type="button" data-ds-tab="mock" class:active={activeTab === "mock"} onclick={() => (activeTab = "mock")}>Mock data</button>
-    <button type="button" data-ds-tab="validation" class:active={activeTab === "validation"} onclick={() => (activeTab = "validation")}>Validation</button>
-  </nav>
-  {/if}
 
   <div class="ds-editor-body" class:source-overview={activeTab === "source"}>
     <aside class="ds-editor-lib">
@@ -1246,13 +1238,15 @@
   /* Основные вкладки крупнее: их всего две, и они несут ежедневную работу. */
   .ds-section-tabs:not(.ds-advanced-tabs) button:not(.ds-tab-more) { font-size: 12.5px; padding: 0 14px; }
   .ds-tab-more { margin-left: auto; color: #6f788a !important; font-size: 11px !important; }
-  .ds-advanced-tabs {
-    min-height: 38px;
-    padding-top: 4px;
-    padding-bottom: 4px;
-    background: #090c11;
+  .ds-diagnostic-crumb {
+    margin-left: 12px;
+    border: 1px solid #2c3340;
+    border-radius: 999px;
+    background: #151a23;
+    padding: 4px 10px;
+    color: #a7afbd;
+    font-size: 10.5px;
   }
-  .ds-advanced-tabs button { font-size: 10.5px; opacity: .85; }
   .ds-section-tabs button {
     flex: none;
     min-height: 32px;
