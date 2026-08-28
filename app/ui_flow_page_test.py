@@ -341,8 +341,7 @@ def main():
               fin["frame"].get("width") == 1440 and fin["frame"].get("layout") == "auto",
               str(fin["frame"]))
 
-        # 5) Р С—РЎР‚Р ВµР Р†РЎРЉРЎР‹ Page Р Р…Р В° mobile: Р СР В°РЎвЂљР ВµРЎР‚Р С‘Р В°Р В»Р С‘Р В·Р С•Р Р†Р В°Р Р…Р Р…РЎвЂ№Р в„– Р В°РЎР‚РЎвЂљР В±Р С•РЎР‚Р Т‘ 390 РЎР‚Р В°РЎРѓРЎвЂљРЎРЏР Р…РЎС“РЎвЂљ fitPreview
-        #    Р Р…Р В° Р Р†РЎРѓРЎР‹ РЎв‚¬Р С‘РЎР‚Р С‘Р Р…РЎС“ Р С—РЎР‚Р ВµР Р†РЎРЉРЎР‹ (РЎР‚Р ВµР С–РЎР‚Р ВµРЎРѓРЎРѓР С‘РЎРЏ Р’В«РЎС“Р В·Р С”Р В°РЎРЏ Р С”Р С•Р В»Р С•Р Р…Р С”Р В° Р Р†Р СР ВµРЎРѓРЎвЂљР С• Р СР С•Р В±Р С‘Р В»РЎРЉР Р…Р С•Р в„– РЎРѓРЎвЂљРЎР‚Р В°Р Р…Р С‘РЎвЂ РЎвЂ№Р’В»)
+        # 5) Node preview obeys fitPreview: shrink only when the container is narrower than the design.
         pv = pg.evaluate(f"""(() => {{
             const inner = document.querySelector('.svelte-flow__node[data-id="{page_id}"] .ir-preview-inner');
             const art = inner.querySelector('div[class^="ir-"]');
@@ -350,8 +349,10 @@ def main():
             return {{ innerW: inner.clientWidth, designW: Number(art.dataset.designWidth),
                       rectW: Math.round(r.width) }};
         }})()""")
-        check("Р СР С•Р В±. Р С—РЎР‚Р ВµР Р†РЎРЉРЎР‹ Page: Р В°РЎР‚РЎвЂљР В±Р С•РЎР‚Р Т‘ 390 Р Р†Р С• Р Р†РЎРѓРЎР‹ РЎв‚¬Р С‘РЎР‚Р С‘Р Р…РЎС“ Р С—РЎР‚Р ВµР Р†РЎРЉРЎР‹",
-              pv["designW"] == 390 and abs(pv["rectW"] - pv["innerW"]) <= 2, str(pv))
+        check("mobile Page preview uses fitPreview without upscaling",
+              pv["designW"] == 390 and
+              abs(pv["rectW"] - min(pv["designW"], pv["innerW"])) <= 2,
+              str(pv))
 
         # 6) РЎР‚Р ВµР Т‘Р В°Р С”РЎвЂљР С•РЎР‚: Р С”Р Р…Р С•Р С—Р С”Р С‘ D/T/M РЎР‚Р ВµР В°Р В»РЎРЉР Р…Р С• Р СР ВµР Р…РЎРЏРЎР‹РЎвЂљ Р СР В°РЎвЂљР ВµРЎР‚Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎР‹ (1440/768/390)
         pg.click(f'.svelte-flow__node[data-id="{edit3}"] .f-open-editor')
