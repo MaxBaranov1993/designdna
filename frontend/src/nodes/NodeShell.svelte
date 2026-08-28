@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { NODE_DEFS } from "../flow/ports";
-  import { flow, flowProgresses } from "../flow/state";
+  import { flow, flowBusy, flowProgresses, flowStatuses } from "../flow/state";
   import { subscribeTick } from "../flow/ticker";
   import type { NodeType } from "../flow/types";
   import { cn } from "../lib/utils";
@@ -22,6 +22,10 @@
   } = $props();
 
   let def = $derived(NODE_DEFS[type]);
+  let status = $derived($flowStatuses[Number(id)] ?? null);
+  let busy = $derived(Boolean($flowBusy[Number(id)]));
+  let badgeClass = $derived(busy ? "run" : status?.kind === "err" ? "err" : status?.kind === "ok" ? "ok" : "");
+  let badgeText = $derived(busy ? "выполняется" : status?.text || "готова");
 
   /* Source Import supplies measured backend stages; legacy operations retain
    * the asymptotic elapsed-time fallback until they expose stage events. */
@@ -43,10 +47,14 @@
   })());
 </script>
 
-<div class={cn("fnode node", "n-" + type, selected && "selected")} data-id={id} style="width: {def.w}px">
+<div class={cn("fnode node", "n-" + type, selected && "selected")} data-id={id} style="width: {def.w}px; --n-accent: {def.accent}">
   <div class="node-head">
-    <span class="n-icon">{def.icon}</span>
-    <span class="n-title">{def.title}</span>
+    <span class:wide={def.icon.length > 2} class="n-icon">{def.icon}</span>
+    <span class="n-head-main">
+      <span class="n-title">{def.title}</span>
+      <span class="n-sub">{def.sub}</span>
+    </span>
+    <span class={`n-badge ${badgeClass}`} title={status?.text || badgeText}>{badgeText}</span>
     <button class="n-x nodrag" title="Удалить ноду (Del)" onclick={() => $flow.deleteNode(Number(id))}>✕</button>
   </div>
   <div class="node-body">{@render children?.()}</div>

@@ -1,13 +1,11 @@
 <script lang="ts">
   import { useSvelteFlow, useViewport } from "@xyflow/svelte";
   import { onMount } from "svelte";
-  import Button from "./components/ui/Button.svelte";
   import { buildExportPayload, downloadJson, parseLegacyPayload } from "./flow/serialize";
   import { useFlowStore } from "./flow/store";
   import { toast } from "./flow/toast";
+  import { leftPanelOpen, requestNodeMenu } from "./flow/ui";
 
-  /* Топбар — зеркало header.topbar (nodes.html): Fit, Экспорт JSON, Импорт, Очистить,
-   * счётчик кэша, zoom-label */
   const { fitView, setViewport } = useSvelteFlow();
   const viewport = useViewport();
   let cacheStat = $state("");
@@ -15,9 +13,9 @@
 
   onMount(() => {
     fetch("/api/cache/stats")
-      .then((r) => r.json())
-      .then((s) => {
-        cacheStat = s.hits_total > 0 ? `💾 кэш сэкономил ${s.hits_total} вызов(ов)` : "";
+      .then((response) => response.json())
+      .then((stats) => {
+        cacheStat = stats.hits_total > 0 ? `Кэш сэкономил ${stats.hits_total} вызовов` : "";
       })
       .catch(() => {});
   });
@@ -27,59 +25,62 @@
       void setViewport({ x: 80, y: 40, zoom: 1 });
       return;
     }
-    void fitView();
+    void fitView({ padding: 0.14 });
   };
 
-  const onExport = () => {
-    downloadJson("designai-graph.json", buildExportPayload(useFlowStore.getState()));
+  const stepZoom = (delta: number) => {
+    const current = viewport.current;
+    void setViewport({ x: current.x, y: current.y, zoom: Math.min(2, Math.max(0.3, current.zoom + delta)) });
   };
 
-  const onImportFile = (e: Event) => {
-    const input = e.currentTarget as HTMLInputElement;
-    const f = input.files && input.files[0];
-    if (!f) return;
-    const rd = new FileReader();
-    rd.onload = () => {
+  const onExport = () => downloadJson("designai-graph.json", buildExportPayload(useFlowStore.getState()));
+
+  const onImportFile = (event: Event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
       try {
-        useFlowStore.getState().loadGraph(parseLegacyPayload(JSON.parse(String(rd.result))));
+        useFlowStore.getState().loadGraph(parseLegacyPayload(JSON.parse(String(reader.result))));
         toast("Граф загружен", "ok");
-      } catch (err) {
-        toast("Не удалось прочитать JSON: " + (err instanceof Error ? err.message : String(err)), "error");
+      } catch (error) {
+        toast("Не удалось прочитать JSON: " + (error instanceof Error ? error.message : String(error)), "error");
       }
     };
-    rd.readAsText(f);
+    reader.readAsText(file);
     input.value = "";
-  };
-
-  const onClear = () => {
-    const st = useFlowStore.getState();
-    if (!st.nodes.length) return;
-    if (!window.confirm("Удалить все ноды графа?")) return;
-    st.clearGraph();
   };
 </script>
 
-<header class="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-4">
-  <span class="text-sm font-extrabold tracking-tight">
-    DNA<span class="text-muted-foreground">·</span>Web
-  </span>
-  <span class="hidden text-xs text-muted-foreground lg:inline">
-    ПКМ — создать ноду · колесо — зум · drag фона — панорама
-  </span>
-  <div class="flex-1"></div>
-  <span
-    id="cache-stat"
-    class="max-w-64 truncate text-xs text-muted-foreground"
-    title="Повторные запросы Source Import отданы из кэша — токены не тратились"
-  >
-    {cacheStat}
-  </span>
-  <span class="w-11 text-center text-xs tabular-nums text-muted-foreground">
-    {Math.round(viewport.current.zoom * 100)}%
-  </span>
-  <Button variant="outline" size="sm" id="btn-fit" onclick={onFit}>⤢ Всё</Button>
-  <Button variant="outline" size="sm" id="btn-export" onclick={onExport}>Экспорт JSON</Button>
-  <Button variant="outline" size="sm" id="btn-import" onclick={() => fileInput?.click()}>Импорт</Button>
-  <Button variant="outline" size="sm" id="btn-clear" onclick={onClear}>Очистить</Button>
-  <input bind:this={fileInput} type="file" accept="application/json" class="hidden" onchange={onImportFile} />
+<header class="dna-strip">
+  <div class="dna-strip-left">
+    <button class="dna-collapse" title={$leftPanelOpen ? "Свернуть страницы" : "Показать страницы"} onclick={() => ($leftPanelOpen = !$leftPanelOpen)}>
+      {$leftPanelOpen ? "⟨" : "⟩"}
+    </button>
+    <span class="dna-strip-title">DNA · Web</span>
+    <span class="dna-vsep"></span>
+    <div class="dna-hints" aria-label="Управление холстом">
+      <span class="dna-hint-chip">ПКМ — нода</span>
+      <span class="dna-hint-chip">Колесо — зум</span>
+      <span class="dna-hint-chip">Drag или СКМ — панорама</span>
+    </div>
+  </div>
+  <div class="dna-strip-right">
+    {#if cacheStat}<span class="dna-cache-chip" title="Повторные Source Import отданы из кэша">{cacheStat}</span>{/if}
+    <div class="dna-zoom" aria-label="Масштаб холста">
+      <button class="dna-zoom-step" title="Уменьшить" onclick={() => stepZoom(-0.1)}>−</button>
+      <button class="dna-zoom-pct" title="Сбросить масштаб" onclick={() => void setViewport({ x: viewport.current.x, y: viewport.current.y, zoom: 1 })}>
+        {Math.round(viewport.current.zoom * 100)}%
+      </button>
+      <button class="dna-zoom-step" title="Увеличить" onclick={() => stepZoom(0.1)}>+</button>
+      <button class="dna-zoom-fit" id="btn-fit" onclick={onFit}>Всё</button>
+    </div>
+    <div class="dna-tools">
+      <button class="dna-tool-btn" id="btn-import" onclick={() => fileInput?.click()}>Импорт</button>
+      <button class="dna-tool-btn" id="btn-export" onclick={onExport}>Экспорт JSON</button>
+      <button class="dna-btn-primary" onclick={requestNodeMenu}>+ Нода</button>
+    </div>
+    <input bind:this={fileInput} type="file" accept="application/json" class="hidden" onchange={onImportFile} />
+  </div>
 </header>

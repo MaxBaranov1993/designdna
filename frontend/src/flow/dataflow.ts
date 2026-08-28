@@ -4,12 +4,12 @@ import type { FlowEdge, FlowNode, PortKind, SourceViewport } from "./types";
 /* Цвета проводов — зеркало #wires path в nodes.html: text серый, ir акцентный;
  * tokens — янтарный (решение владельца 9) */
 export const WIRE_COLORS: Record<PortKind, string> = {
-  text: "#7a7a8c",
-  ir: "#5b5bd6",
-  tokens: "#d6a13b",
-  artifact: "#35b8a0",
-  interaction: "#2fbf9f",
-  motion: "#e05fb0",
+  text: "#8A8A93",
+  ir: "#9B5CFF",
+  tokens: "#FF691D",
+  artifact: "#35B8A0",
+  interaction: "#2FBF9F",
+  motion: "#E05FB0",
 };
 
 /* Глубокое копирование значения между нодами. */

@@ -1,72 +1,77 @@
 <script lang="ts">
-  import Button from "./components/ui/Button.svelte";
-  import Card from "./components/ui/Card.svelte";
-  import CardContent from "./components/ui/CardContent.svelte";
-  import CardHeader from "./components/ui/CardHeader.svelte";
-  import CardTitle from "./components/ui/CardTitle.svelte";
   import { flow, flowActivePageId, flowChannels, flowNodes, flowPages } from "./flow/state";
+  import { leftPanelOpen } from "./flow/ui";
 
+  let editingId = $state<string | null>(null);
   let pages = $derived($flowPages);
   let activePageId = $derived($flowActivePageId);
   let channelNames = $derived(Object.keys($flowChannels).filter((key) => $flowChannels[key]));
 
-  const countNodes = (pageId: string) => {
-    if (pageId === activePageId) return $flowNodes.length;
-    return pages.find((page) => page.id === pageId)?.nodes.length || 0;
-  };
+  const countNodes = (pageId: string) => pageId === activePageId
+    ? $flowNodes.length
+    : pages.find((page) => page.id === pageId)?.nodes.length || 0;
 </script>
 
-<Card>
-  <CardHeader>
-    <div class="flex items-center justify-between gap-2">
-      <CardTitle>Страницы</CardTitle>
-      <div class="flex items-center gap-2">
-        <Button variant="outline" size="sm" onclick={() => $flow.addVideoChainPage()} title="Параллельная ветка: Source Import rsale.net → GPT-5.6 Sol → Recorder → видео (MP4)">+ Видео</Button>
-        <Button variant="outline" size="sm" onclick={() => $flow.createPage()}>+ Page</Button>
-      </div>
+<aside class:closed={!$leftPanelOpen} class="dna-left">
+  <div class="dna-left-head">
+    <span class="dna-panel-cap">СТРАНИЦЫ</span>
+    <div style="display:flex; gap:6px">
+      <button class="dna-chip-sm" onclick={() => $flow.addVideoChainPage()}>+ Видео</button>
+      <button class="dna-chip-sm" onclick={() => $flow.createPage()}>+ Page</button>
     </div>
-  </CardHeader>
-  <CardContent class="space-y-3">
-    <div class="page-list">
-      {#each pages as page (page.id)}
-        <div class={page.id === activePageId ? "page-row active" : "page-row"}>
-          <button class="page-switch" onclick={() => $flow.switchPage(page.id)}>
-            <span>{page.name}</span>
-            <small>{countNodes(page.id)} nodes</small>
-          </button>
-          <input
-            class="page-name"
-            value={page.name}
-            oninput={(e) => $flow.renamePage(page.id, e.currentTarget.value)}
-            aria-label="Page name"
-          />
-          <button
-            class="page-delete"
-            disabled={pages.length <= 1}
-            onclick={() => {
-              if (window.confirm(`Удалить страницу "${page.name}"?`)) $flow.deletePage(page.id);
-            }}
-            title="Удалить страницу"
-          >
-            ×
-          </button>
+  </div>
+  <div class="dna-left-list">
+    {#each pages as page (page.id)}
+      <div class:active={page.id === activePageId} class="dna-page-card">
+        <button class="dna-page-main" onclick={() => $flow.switchPage(page.id)} ondblclick={() => (editingId = page.id)}>
+          <span class="dna-page-dot"></span>
+          {#if editingId === page.id}
+            <input
+              class="dna-page-rename"
+              value={page.name}
+              aria-label="Название страницы"
+              oninput={(event) => $flow.renamePage(page.id, event.currentTarget.value)}
+              onblur={() => (editingId = null)}
+              onkeydown={(event) => event.key === "Enter" && (editingId = null)}
+              onclick={(event) => event.stopPropagation()}
+            />
+          {:else}
+            <span class="dna-page-name">{page.name}</span>
+          {/if}
+          <span class="dna-page-count">{countNodes(page.id)}</span>
+        </button>
+        <button
+          class="dna-page-x"
+          disabled={pages.length <= 1}
+          title="Удалить страницу"
+          onclick={(event) => {
+            event.stopPropagation();
+            if (window.confirm(`Удалить страницу «${page.name}»?`)) $flow.deletePage(page.id);
+          }}
+        >✕</button>
+      </div>
+    {/each}
+  </div>
+
+  <div class="dna-left-cap dna-panel-cap">BRIDGE CHANNELS</div>
+  <div class="dna-left-list">
+    {#if channelNames.length}
+      {#each channelNames as name, index (name)}
+        <div class="dna-bridge-row">
+          <div class="dna-bridge-main">
+            <span class:send={index % 2 === 0} class:recv={index % 2 !== 0} class="dna-bridge-ic">{index % 2 === 0 ? "S" : "R"}</span>
+            <span class="dna-bridge-name">{name}</span>
+          </div>
+          <span class="dna-badge" style="--badge-tone: {index % 2 === 0 ? '#FF691D' : '#9B5CFF'}">{index % 2 === 0 ? "SEND" : "RECV"}</span>
         </div>
       {/each}
-    </div>
-    <div class="page-channels">
-      <div class="panel-label">Bridge channels</div>
-      {#if channelNames.length}
-        {#each channelNames as name (name)}
-          <div class="channel-row">
-            <span>{name}</span>
-            <small>IR</small>
-          </div>
-        {/each}
-      {:else}
-        <p class="text-xs leading-relaxed text-muted-foreground">
-          Создайте Page Bridge: Send на одной странице и Receive на другой с тем же channel.
-        </p>
-      {/if}
-    </div>
-  </CardContent>
-</Card>
+    {:else}
+      <p class="dna-bridge-empty">Page Bridge передаёт готовый компонент между страницами через именованный канал.</p>
+    {/if}
+  </div>
+
+  <div class="dna-ir-card">
+    <strong>Design IR</strong>
+    <p>Единый источник истины для графа, DNA-редактора и генерации.</p>
+  </div>
+</aside>

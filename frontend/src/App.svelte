@@ -3,14 +3,10 @@
   import { onMount } from "svelte";
   import type { Component } from "svelte";
 
-  import Button from "./components/ui/Button.svelte";
-  import Card from "./components/ui/Card.svelte";
-  import CardContent from "./components/ui/CardContent.svelte";
-  import CardHeader from "./components/ui/CardHeader.svelte";
-  import CardTitle from "./components/ui/CardTitle.svelte";
   import TopBar from "./TopBar.svelte";
   import PagesPanel from "./PagesPanel.svelte";
   import FlowCanvas from "./FlowCanvas.svelte";
+  import GraphInspector from "./GraphInspector.svelte";
   import ToastViewport from "./flow/ToastViewport.svelte";
   import { installGraphDev } from "./flow/graphdev";
   import { toast } from "./flow/toast";
@@ -28,6 +24,7 @@
   let editorLoad: Promise<LazyComponent> | null = null;
   let dsEditorNodeId = $state<number | null>(null);
   let DsEditorComponent: any = $state(null);
+  const isDesktop = typeof window !== "undefined" && !!window.designDNA;
   async function ensureDsEditor() {
     if (!DsEditorComponent) {
       const mod = await import("./editor/DesignSystemPanel.svelte");
@@ -85,64 +82,58 @@
   });
 </script>
 
-<div class="flex h-full flex-col">
-  <nav class="flex h-11 shrink-0 items-center justify-between border-b bg-background px-3">
-    <strong class="text-sm tracking-tight">DesignDNA</strong>
-    <div class="flex rounded-lg border bg-muted/50 p-0.5" aria-label="Workspace surface">
-      <Button variant={surface === "design" ? "default" : "ghost"} size="sm" onclick={() => showSurface("design")}>
-        Design
-      </Button>
-      <Button variant={surface === "map" ? "default" : "ghost"} size="sm" onclick={() => showSurface("map")}>
-        Project Map
-      </Button>
-      <Button variant={surface === "agents" ? "default" : "ghost"} size="sm" onclick={() => showSurface("agents")}>
-        Agents
-      </Button>
-    </div>
-    <span class="text-[11px] text-muted-foreground">{window.designDNA ? "Desktop · local" : "Browser mode"}</span>
-  </nav>
-  <div class="min-h-0 flex-1">
-    {#if surface === "design"}
-      <div class="flex h-full flex-col">
-        <SvelteFlowProvider>
-          <TopBar />
-          <div class="flex min-h-0 flex-1">
-            <aside class="w-72 shrink-0 space-y-4 overflow-y-auto border-r p-4">
-              <PagesPanel />
-              <Card>
-                <CardHeader>
-                  <CardTitle>Инспектор</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p class="text-xs leading-relaxed text-muted-foreground">
-                    Design IR — единый источник истины для графа, редактора DNA и генерации.
-                  </p>
-                </CardContent>
-              </Card>
-            </aside>
-            <main class="min-w-0 flex-1">
-              <FlowCanvas />
-            </main>
-          </div>
-        </SvelteFlowProvider>
-        <ToastViewport />
-        {#if EditorComponent}<EditorComponent />{/if}
-        {#if DsEditorComponent && dsEditorNodeId != null}
-          <DsEditorComponent nodeId={dsEditorNodeId} onClose={() => (dsEditorNodeId = null)} />
-        {/if}
+<div class="dna-scroll">
+  <div class="dna-app">
+    <header class="dna-topbar">
+      <div class="dna-topbar-group">
+        <div class="dna-logo-badge">D</div>
+        <div class="dna-logo-name">DesignDNA</div>
+        <div class="dna-version-pill">{isDesktop ? "v2 · local" : "v2 · browser"}</div>
       </div>
-    {:else if surface === "map"}
-      {#if ProjectMapComponent}
-        <ProjectMapComponent />
+      <div class="dna-seg" aria-label="Workspace surface">
+        <button class:active={surface === "design"} onclick={() => showSurface("design")}>Design</button>
+        <button class:active={surface === "map"} onclick={() => showSurface("map")}>Project Map</button>
+        <button class:active={surface === "agents"} onclick={() => showSurface("agents")}>Agents</button>
+      </div>
+      <div class="dna-topbar-group">
+        <span class="dna-badge lg" style="--badge-tone: {isDesktop ? '#22C55E' : '#8A8A93'}">
+          {isDesktop ? "Runner онлайн" : "Browser mode"}
+        </span>
+        <div class="dna-avatar">M</div>
+      </div>
+    </header>
+    <div class="min-h-0 flex-1" style="display: flex; flex-direction: column;">
+      {#if surface === "design"}
+        <div class="flex h-full min-h-0 flex-1 flex-col">
+          <SvelteFlowProvider>
+            <TopBar />
+            <div class="dna-body">
+              <PagesPanel />
+              <main class="dna-canvas">
+                <FlowCanvas />
+              </main>
+              <GraphInspector />
+            </div>
+          </SvelteFlowProvider>
+          <ToastViewport />
+          {#if EditorComponent}<EditorComponent />{/if}
+          {#if DsEditorComponent && dsEditorNodeId != null}
+            <DsEditorComponent nodeId={dsEditorNodeId} onClose={() => (dsEditorNodeId = null)} />
+          {/if}
+        </div>
+      {:else if surface === "map"}
+        {#if ProjectMapComponent}
+          <ProjectMapComponent />
+        {:else}
+          <div class="grid h-full place-items-center text-sm text-muted-foreground">Загрузка Project Map…</div>
+        {/if}
       {:else}
-        <div class="grid h-full place-items-center text-sm text-muted-foreground">Загрузка Project Map…</div>
+        {#if AgentComponent}
+          <AgentComponent />
+        {:else}
+          <div class="grid h-full place-items-center text-sm text-muted-foreground">Загрузка Agents…</div>
+        {/if}
       {/if}
-    {:else}
-      {#if AgentComponent}
-        <AgentComponent />
-      {:else}
-        <div class="grid h-full place-items-center text-sm text-muted-foreground">Загрузка Agents…</div>
-      {/if}
-    {/if}
+    </div>
   </div>
 </div>

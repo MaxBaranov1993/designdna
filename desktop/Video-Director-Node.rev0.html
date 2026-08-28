@@ -1,0 +1,1630 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Режиссёр · одна нода — весь ролик · редизайн rev0</title>
+<!--
+  Дизайн-референс ноды «Режиссёр» (docs/VIDEO-DIRECTOR-TZ.md) в дизайн-языке
+  бандла «Редизайн нодового редактора» (Rsale DS, тёмная тема, Manrope 500/600/700).
+  Самодостаточный прототип: открывается в браузере, без сборки и зависимостей.
+
+  Ключевая идея ТЗ, отражённая здесь: ВЕСЬ конвейер ролика живёт внутри ОДНОЙ ноды —
+  бриф → пресет → провайдер → «Собрать ролик» → раскадровка → таймлайн (3 дорожки) →
+  судья → рендер mp4. Граф вокруг ноды не нужен.
+
+  Экран 1 «graph»  — канвас с единственной нодой (компактная карточка).
+  Экран 2 «studio» — нода, раскрытая в студию: материал из входов, каталог приёмов,
+                     вьюер с рамкой камеры и safe-areas, таймлайн, инспектор сцены, судья.
+
+  Мышь: drag фона или СКМ — панорама, колесо — зум, drag шапки ноды — перемещение.
+  В студии: клик по сцене — выбор, драг границы блока — длительность, рамка на превью
+  тянется, плейхед перематывается кликом по любой дорожке, Space — play/pause, ESC — закрыть.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* поверхности */
+    --bg:#0A0A0C; --panel:#0D0D10; --panel2:#101013; --node:#131317; --sunken:#0E0E11;
+    --elev:#17171B; --hov:#1F1F26; --hov2:#212127;
+    --brd:#26262D; --brd-soft:#1F1F26; --brd-strong:#33333C;
+    /* текст */
+    --text:#F5F5F6; --text2:#C9C9D0; --text2b:#D5D5DA; --mut:#A0A0A8; --mutb:#9A9AA3;
+    --dim:#8A8A93; --faint:#7E7E88; --faint2:#6E6E78;
+    /* бренд и семантика */
+    --action:#FF691D; --action-h:#FF864D; --violet:#7018E6; --violet-l:#9B5CFF; --violet-t:#C7A6FF;
+    --ok:#22C55E; --ok-t:#7EE2A4; --amber:#F5A623; --amber-t:#F5C069;
+    --danger:#E5305C; --danger-t:#F58BA5;
+    --motion:#E05FB0; --motion-t:#F191CE; --artifact:#35B8A0; --inter:#2FBF9F; --sb:#f0883e;
+    /* цвет провода = kind порта (зеркало frontend/src/nodes/portKind.ts) */
+    --k-ir:#9B5CFF; --k-tokens:#FF691D; --k-artifact:#35B8A0; --k-inter:#2FBF9F; --k-motion:#E05FB0; --k-text:#8A8A93; --k-storyboard:#f0883e;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:var(--bg); }
+  body{ color:var(--text); font-family:Manrope, -apple-system, 'Segoe UI', sans-serif; font-weight:500;
+        overflow:auto; user-select:none; min-width:1180px; }
+  .num{ font-variant-numeric:tabular-nums; }
+  ::-webkit-scrollbar{ width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb{ background:#2E2E37; border-radius:999px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+  @keyframes dnaFlow{ to{ stroke-dashoffset:-24; } }
+  @keyframes dnaPulse{ 0%,100%{ opacity:.35; } 50%{ opacity:1; } }
+  @keyframes popIn{ from{ transform:scale(.86); opacity:0; } to{ transform:scale(1); opacity:1; } }
+  @keyframes nodePulse{ 0%,100%{ box-shadow:0 8px 26px rgba(0,0,0,.42); } 50%{ box-shadow:0 0 0 5px rgba(224,95,176,.30), 0 14px 40px rgba(0,0,0,.55); } }
+  @keyframes flashBar{ from{ background:rgba(255,255,255,.22); } to{ background:transparent; } }
+
+  /* ── общие контролы ─────────────────────────────────────────────── */
+  .lbl{ font-size:10px; font-weight:700; letter-spacing:.06em; color:var(--dim); }
+  .lbl-sec{ font-size:11px; font-weight:700; letter-spacing:.08em; color:var(--faint); }
+  .field{ padding:8px 10px; border-radius:8px; background:var(--sunken); border:1px solid var(--brd);
+          font-size:12px; font-weight:600; color:var(--text2); line-height:1.45; }
+  .btn{ padding:8px 14px; border-radius:8px; background:#151519; border:1px solid var(--brd);
+        font-size:12px; font-weight:600; color:var(--text2); cursor:pointer; white-space:nowrap; }
+  .btn:hover{ background:var(--hov); }
+  .btn-primary{ padding:8px 14px; border-radius:8px; background:var(--action); border:none;
+        font-size:12px; font-weight:700; color:#fff; cursor:pointer; white-space:nowrap; text-align:center; }
+  .btn-primary:hover{ background:var(--action-h); }
+  .btn-ic{ width:30px; height:30px; flex:none; border-radius:8px; background:#17171B; border:1px solid var(--brd);
+        display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700;
+        color:var(--mutb); cursor:pointer; }
+  .btn-ic:hover{ background:var(--hov); color:var(--text); }
+  .badge{ display:inline-flex; align-items:center; padding:3px 9px; border-radius:999px;
+        font-size:10.5px; font-weight:700; white-space:nowrap; }
+  .badge.run{ background:rgba(255,105,29,.14); color:#FFB183; }
+  .badge.ok{ background:rgba(34,197,94,.14); color:var(--ok-t); }
+  .badge.idle{ background:var(--elev); color:var(--dim); }
+  .badge.pink{ background:rgba(224,95,176,.14); color:var(--motion-t); }
+  .badge.amber{ background:rgba(245,166,35,.12); color:var(--amber-t); }
+  .badge.teal{ background:rgba(53,184,160,.14); color:#7CD6C2; }
+  .pill{ padding:4px 10px; border-radius:999px; background:#141418; border:1px solid var(--brd);
+        font-size:11px; font-weight:600; color:var(--dim); cursor:pointer; white-space:nowrap; }
+  .pill:hover{ background:#1D1D22; color:var(--text2b); }
+  .pill.on-v{ background:rgba(155,92,255,.18); border-color:rgba(155,92,255,.45); color:var(--violet-t); }
+  .pill.on-p{ background:rgba(224,95,176,.16); border-color:rgba(224,95,176,.42); color:var(--motion-t); }
+  .stpr{ display:flex; align-items:center; gap:8px; padding:7px 8px 7px 12px; border-radius:9px;
+        background:#121216; border:1px solid var(--brd); }
+  .stpr .k{ flex:1; font-size:11.5px; font-weight:600; color:var(--dim); }
+  .stpr .v{ min-width:54px; text-align:right; font-size:12.5px; font-weight:700; }
+  .stpr .b{ width:26px; height:26px; flex:none; border-radius:7px; background:var(--sunken);
+        border:1px solid var(--brd-strong); display:flex; align-items:center; justify-content:center;
+        font-size:13px; font-weight:700; color:var(--text2); cursor:pointer; }
+  .stpr .b:hover{ background:#1D1D22; }
+
+  /* ── экраны ─────────────────────────────────────────────────────── */
+  .screen{ height:100vh; display:flex; flex-direction:column; position:relative; }
+  .hidden{ display:none !important; }
+
+  /* ── топбары ────────────────────────────────────────────────────── */
+  .topbar{ height:56px; flex:none; display:flex; align-items:center; justify-content:space-between;
+        padding:0 20px; background:var(--panel2); border-bottom:1px solid var(--brd-soft); }
+  .ctxbar{ height:52px; flex:none; display:flex; align-items:center; justify-content:space-between;
+        padding:0 20px; background:var(--panel); border-bottom:1px solid var(--brd-soft); }
+  .seg{ display:flex; gap:4px; padding:4px; background:var(--elev); border:1px solid var(--brd); border-radius:999px; }
+  .seg div{ padding:7px 18px; border-radius:999px; font-size:13px; font-weight:600; color:var(--mutb); cursor:pointer; }
+  .seg div:hover{ background:var(--hov2); color:var(--text); }
+  .seg div.on{ background:var(--text); color:var(--bg); font-weight:700; }
+  .hintchip{ padding:4px 10px; border-radius:6px; background:#151519; font-size:11px; font-weight:600; color:var(--faint); }
+  .zoomgrp{ display:flex; align-items:center; background:#151519; border:1px solid var(--brd); border-radius:8px; overflow:hidden; }
+  .zoomgrp .z{ width:30px; height:32px; display:flex; align-items:center; justify-content:center;
+        color:var(--mutb); font-size:16px; font-weight:700; cursor:pointer; }
+  .zoomgrp .z:hover{ background:var(--hov); color:#fff; }
+  .zoomgrp .zp{ min-width:52px; text-align:center; font-size:12px; font-weight:700; color:var(--text2b); }
+  .zoomgrp .fit{ padding:0 12px; height:32px; display:flex; align-items:center; border-left:1px solid var(--brd);
+        font-size:12px; font-weight:600; color:var(--mutb); cursor:pointer; }
+  .zoomgrp .fit:hover{ background:var(--hov); color:#fff; }
+
+  /* ── левая панель графа ─────────────────────────────────────────── */
+  .lp{ width:264px; flex:none; background:var(--panel); border-right:1px solid var(--brd-soft);
+       display:flex; flex-direction:column; overflow-y:auto; transition:width .18s ease; }
+  .lp.closed{ width:0; border-right:none; overflow:hidden; }
+  .pagecard{ padding:11px 12px; border-radius:10px; background:var(--elev); border:1px solid var(--brd);
+       display:flex; align-items:center; justify-content:space-between; cursor:pointer; }
+  .pagecard:hover{ background:#1D1D22; }
+  .pagecard.on{ background:rgba(112,24,230,.14); border-color:rgba(155,92,255,.4); }
+  .bridge{ padding:10px 12px; border-radius:10px; background:#121216; border:1px solid var(--brd-soft);
+       display:flex; align-items:center; justify-content:space-between; }
+  .dnacard{ margin:auto 12px 14px; padding:13px 14px; border-radius:12px;
+       background:linear-gradient(150deg, rgba(112,24,230,.20), rgba(255,105,29,.10)); border:1px solid #2A2233; }
+  .dnacard .t{ font-size:12px; font-weight:700; margin-bottom:5px; }
+  .dnacard .d{ font-size:11.5px; font-weight:500; color:var(--mutb); line-height:1.5; text-wrap:pretty; }
+
+  /* ── канвас графа ───────────────────────────────────────────────── */
+  #canvas{ flex:1; position:relative; overflow:hidden; background:var(--bg); cursor:grab; }
+  #canvas.panning{ cursor:grabbing; }
+  #grid{ position:absolute; inset:0;
+       background-image:radial-gradient(circle at 1px 1px, #1B1B22 1px, transparent 0);
+       background-size:26px 26px; }
+  #world{ position:absolute; left:0; top:0; transform-origin:0 0; }
+  #wires{ position:absolute; left:0; top:0; overflow:visible; pointer-events:none; }
+
+  /* источники входов — не ноды, просто метки на канвасе */
+  .srcchip{ position:absolute; width:150px; height:28px; padding:0 10px; border-radius:8px;
+       background:rgba(16,16,20,.9); border:1px solid var(--brd); display:flex; align-items:center; gap:8px;
+       font-size:11px; font-weight:600; color:var(--text2); white-space:nowrap; }
+  .srcchip i{ width:8px; height:8px; flex:none; border-radius:999px; }
+  .srcchip span{ overflow:hidden; text-overflow:ellipsis; }
+
+  /* ── нода ───────────────────────────────────────────────────────── */
+  .fnode{ position:absolute; width:380px; border-radius:14px; background:var(--node);
+       border:1px solid var(--brd); box-shadow:0 8px 26px rgba(0,0,0,.42);
+       transition:box-shadow .15s ease, border-color .15s ease; }
+  .fnode.sel{ border-color:var(--motion); box-shadow:0 0 0 3px rgba(224,95,176,.15), 0 14px 40px rgba(0,0,0,.55); }
+  .fnode.pulse{ animation:nodePulse .9s ease; }
+  .fnode-head{ display:flex; align-items:center; gap:9px; padding:12px 13px;
+       border-bottom:1px solid var(--brd-soft); cursor:grab; border-radius:14px 14px 0 0; }
+  .fnode-head:active{ cursor:grabbing; }
+  .nicon{ width:26px; height:26px; border-radius:8px; flex:none; background:rgba(224,95,176,.16);
+       color:var(--motion-t); font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .ntit{ flex:1; min-width:0; }
+  .ntit .t{ font-size:13px; font-weight:700; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ntit .s{ font-size:10.5px; font-weight:600; color:var(--faint2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .fnode-body{ padding:12px 13px; display:flex; flex-direction:column; gap:10px; }
+  .frow{ display:flex; flex-direction:column; gap:6px; }
+  .chips{ display:flex; flex-wrap:wrap; gap:5px; }
+  .stats3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; }
+  .stat{ padding:8px 9px; border-radius:8px; background:var(--sunken); border:1px solid var(--brd-soft); }
+  .stat .v{ font-size:14px; font-weight:700; letter-spacing:-.02em; }
+  .stat .k{ font-size:9.5px; font-weight:600; color:var(--dim); letter-spacing:.04em; margin-top:1px; }
+  .prog{ display:flex; flex-direction:column; gap:6px; }
+  .prog .row{ display:flex; align-items:center; justify-content:space-between; }
+  .prog .pl{ font-size:11px; font-weight:600; color:var(--mutb); }
+  .prog .pv{ font-size:11px; font-weight:700; color:var(--text2b); }
+  .prog .bar{ height:5px; border-radius:999px; background:#1B1B21; overflow:hidden; position:relative; }
+  .prog .fill{ position:absolute; left:0; top:0; bottom:0; border-radius:999px;
+       background:linear-gradient(90deg, var(--motion), rgba(224,95,176,.67)); }
+  .acts{ display:flex; gap:6px; flex-wrap:wrap; }
+
+  /* лента сцен внутри ноды */
+  .ribbon{ display:flex; gap:6px; overflow-x:auto; padding-bottom:3px; }
+  .rib-card{ flex:none; width:86px; border-radius:9px; background:var(--sunken); border:1px solid var(--brd-soft);
+       padding:7px 8px 6px; cursor:pointer; }
+  .rib-card:hover{ background:#121217; }
+  .rib-card.on{ border-color:rgba(224,95,176,.55); box-shadow:0 0 0 2px rgba(224,95,176,.14); }
+  .rib-card.off{ opacity:.38; }
+  .rib-card .ic{ width:20px; height:20px; border-radius:6px; display:flex; align-items:center; justify-content:center;
+       font-size:10.5px; font-weight:700; margin-bottom:6px; }
+  .rib-card .tg{ font-size:10px; font-weight:700; color:var(--text2b); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rib-card .du{ font-size:9.5px; font-weight:600; color:var(--faint2); margin-top:2px; }
+  .pop{ animation:popIn .3s ease both; }
+
+  /* порты */
+  .pin-l{ position:absolute; right:calc(100% - 5px); height:10px; display:flex; align-items:center;
+       justify-content:flex-end; gap:7px; }
+  .pin-l span{ font-size:10px; font-weight:600; color:var(--dim); white-space:nowrap; }
+  .pin-l i{ width:10px; height:10px; border-radius:999px; flex:none; background:var(--bg); border:2px solid var(--dim); }
+  .pin-r{ position:absolute; right:-5px; height:10px; display:flex; align-items:center; gap:7px; }
+  .pin-r i{ width:10px; height:10px; border-radius:999px; flex:none; }
+  .pin-r span{ font-size:10px; font-weight:600; color:var(--faint2); white-space:nowrap; }
+
+  /* меню создания ноды */
+  .ctxmenu{ position:absolute; width:330px; border-radius:14px; background:rgba(16,16,20,.97);
+       border:1px solid #2A2A33; box-shadow:0 20px 60px rgba(0,0,0,.6); backdrop-filter:blur(12px); z-index:40; }
+  .ctxmenu .mh{ padding:11px 13px; border-bottom:1px solid var(--brd-soft); display:flex; align-items:center; gap:9px; }
+  .ctxmenu .esc{ margin-left:auto; padding:2px 7px; border-radius:5px; background:var(--elev);
+       border:1px solid var(--brd); font-size:10px; font-weight:700; color:var(--faint2); }
+  .ctxmenu .mi{ display:flex; align-items:center; gap:11px; padding:8px; border-radius:8px; cursor:pointer; }
+  .ctxmenu .mi:hover{ background:#1B1B21; }
+  .ctxmenu .mi .it{ flex:1; min-width:0; font-size:12.5px; font-weight:700; }
+  .ctxmenu .mi .nt{ max-width:150px; text-align:right; font-size:10.5px; font-weight:500; color:var(--dim); line-height:1.35; }
+
+  .float-note{ position:absolute; right:16px; bottom:16px; max-width:300px; padding:11px 13px; border-radius:12px;
+       background:rgba(13,13,16,.92); border:1px solid var(--brd); box-shadow:0 8px 24px rgba(0,0,0,.4);
+       font-size:11.5px; font-weight:600; color:var(--mutb); line-height:1.5; text-wrap:pretty; }
+  .float-note b{ color:var(--motion-t); font-weight:700; }
+
+  /* ── СТУДИЯ ─────────────────────────────────────────────────────── */
+  .st-top{ height:56px; flex:none; display:flex; align-items:center; justify-content:space-between; gap:16px;
+       padding:0 18px; background:var(--panel2); border-bottom:1px solid var(--brd-soft); }
+  .st-top .idl{ display:flex; align-items:center; gap:11px; white-space:nowrap; }
+  .st-top .ttl{ font-size:13.5px; font-weight:700; letter-spacing:-.01em; }
+  .st-top .meta{ padding:5px 11px; border-radius:8px; background:var(--sunken); border:1px solid var(--brd);
+       font-size:11.5px; font-weight:600; color:var(--dim); }
+  .transport{ display:flex; align-items:center; gap:9px; }
+  .playbtn{ width:38px; height:38px; flex:none; border-radius:999px; background:var(--action); color:#fff;
+       font-size:12.5px; font-weight:700; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .playbtn:hover{ background:var(--action-h); }
+
+  .briefbar{ height:52px; flex:none; display:flex; align-items:center; gap:10px; padding:0 18px;
+       background:var(--panel); border-bottom:1px solid var(--brd-soft); }
+  .briefbar input{ flex:1; min-width:220px; max-width:560px; height:34px; padding:0 12px; border-radius:8px;
+       background:var(--sunken); border:1px solid var(--brd); color:var(--text2b); font-family:inherit;
+       font-size:12px; font-weight:600; outline:none; user-select:text; }
+  .briefbar input:focus{ border-color:rgba(224,95,176,.5); }
+  .vsep{ width:1px; height:22px; background:var(--brd); flex:none; }
+  .presetbtn{ display:flex; align-items:center; gap:8px; height:34px; padding:0 12px; border-radius:8px;
+       background:var(--sunken); border:1px solid var(--brd); font-size:12px; font-weight:600;
+       color:var(--text2b); cursor:pointer; white-space:nowrap; }
+  .presetbtn:hover{ background:#131318; }
+  .presetbtn .ca{ color:var(--dim); font-size:10px; }
+  .runbtn{ min-width:150px; height:34px; padding:0 14px; border-radius:8px; background:var(--action);
+       border:none; font-family:inherit; font-size:12px; font-weight:700; color:#fff; cursor:pointer;
+       display:flex; align-items:center; justify-content:center; gap:10px; white-space:nowrap; }
+  .runbtn:hover{ background:var(--action-h); }
+  .runbtn .pb{ flex:1; height:5px; border-radius:999px; background:rgba(0,0,0,.28); overflow:hidden; }
+  .runbtn .pf{ height:100%; border-radius:999px; background:#fff; }
+
+  .st-body{ flex:1; display:flex; min-height:0; }
+
+  /* левая панель студии */
+  .slp{ width:250px; flex:none; background:var(--panel); border-right:1px solid var(--brd-soft);
+       display:flex; flex-direction:column; overflow-y:auto; }
+  .matgrp{ margin-bottom:12px; }
+  .matgrp .gh{ display:flex; align-items:center; gap:7px; padding:0 4px 7px; }
+  .matgrp .dot{ width:7px; height:7px; flex:none; border-radius:2px; }
+  .matgrp .gl{ font-size:10.5px; font-weight:700; letter-spacing:.04em; color:var(--dim);
+       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .matitem{ display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:8px; cursor:pointer; }
+  .matitem:hover{ background:var(--elev); }
+  .matitem.on{ background:rgba(224,95,176,.14); }
+  .matitem .ic{ width:22px; height:22px; flex:none; border-radius:6px; display:flex; align-items:center;
+       justify-content:center; font-size:10px; font-weight:700; }
+  .matitem .nm{ flex:1; min-width:0; font-size:12px; font-weight:600; color:var(--text2);
+       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .matitem .kd{ font-size:10px; font-weight:600; color:var(--faint2); white-space:nowrap; }
+  .stchip{ padding:2px 7px; border-radius:5px; background:rgba(47,191,159,.14); color:#7FE0C4;
+       font-size:9px; font-weight:700; margin-left:4px; }
+  .catgrp{ padding:11px 6px 5px; font-size:10px; font-weight:700; letter-spacing:.08em; color:var(--faint); }
+  .catitem{ display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:8px; cursor:pointer; }
+  .catitem:hover{ background:#1B1B21; }
+  .catitem.on{ background:rgba(224,95,176,.13); }
+  .catitem .ic{ width:24px; height:24px; flex:none; border-radius:7px; display:flex; align-items:center;
+       justify-content:center; font-size:11px; font-weight:700; }
+  .catitem .tt{ flex:1; min-width:0; font-size:12px; font-weight:700; white-space:nowrap;
+       overflow:hidden; text-overflow:ellipsis; }
+  .catitem .rq{ font-size:9.5px; font-weight:600; color:var(--faint2); white-space:nowrap; }
+  .slp-note{ margin:auto 10px 12px; padding:11px 12px; border-radius:11px; background:#121216;
+       border:1px solid var(--brd-soft); }
+  .slp-note .t{ font-size:11.5px; font-weight:700; margin-bottom:4px; }
+  .slp-note .d{ font-size:11px; font-weight:500; color:var(--dim); line-height:1.5; text-wrap:pretty; }
+
+  /* центр студии */
+  .st-center{ flex:1; min-width:0; display:flex; flex-direction:column; background:var(--bg); }
+  .st-tools{ flex:none; display:flex; align-items:center; gap:6px; padding:9px 14px;
+       border-bottom:1px solid var(--brd-soft); background:var(--panel); }
+  .tool{ display:flex; align-items:center; gap:7px; padding:6px 12px; border-radius:8px; background:#151519;
+       border:1px solid var(--brd); font-size:11.5px; font-weight:600; color:var(--mutb); cursor:pointer;
+       white-space:nowrap; }
+  .tool:hover{ background:var(--hov); color:var(--text); }
+  .tool.on{ background:var(--violet-l); border-color:var(--violet-l); color:#fff; font-weight:700; }
+  .st-tools .hint{ margin-left:auto; font-size:11px; font-weight:600; color:var(--dim); white-space:nowrap; }
+
+  #viewer{ flex:1; min-height:0; overflow:hidden; display:flex; align-items:center; justify-content:center; padding:18px; }
+  #stage-outer{ position:relative; flex:none; border-radius:10px; overflow:hidden; background:#FDFDFD;
+       border:1px solid var(--brd); box-shadow:0 18px 50px rgba(0,0,0,.5); }
+  #stage{ position:absolute; left:0; top:0; width:1920px; height:1080px; transform-origin:0 0; background:#FDFDFD; }
+  #scene-badge{ position:absolute; left:12px; top:12px; z-index:6; padding:4px 10px; border-radius:999px;
+       background:rgba(10,10,12,.72); backdrop-filter:blur(6px); font-size:10.5px; font-weight:700; color:#fff;
+       white-space:nowrap; max-width:92%; overflow:hidden; text-overflow:ellipsis; }
+
+  /* «целевая страница» внутри кадра — рисуем дивами, кратно токенам rsale */
+  .pg{ position:absolute; }
+  .pg-header{ left:60px; top:44px; width:1800px; height:84px; display:flex; align-items:center; gap:22px; }
+  .pg-logo{ width:44px; height:44px; border-radius:11px; background:var(--action); color:#fff; font-size:19px;
+       font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .pg-brand{ font-size:27px; font-weight:700; color:#000; letter-spacing:-.02em; }
+  .pg-menu{ margin-left:auto; display:flex; gap:34px; font-size:19px; font-weight:600; color:#888; }
+  .pg-login{ padding:12px 30px; border-radius:999px; border:2px solid #E8E8EB; font-size:19px; font-weight:700; color:#000; }
+  .pg-h1{ left:60px; top:172px; width:1400px; font-size:92px; font-weight:700; color:#000; letter-spacing:-.025em; line-height:1.02; }
+  .pg-sub{ left:60px; top:292px; width:1200px; font-size:30px; font-weight:500; color:#888; }
+  .pg-cta{ left:60px; top:372px; padding:24px 52px; border-radius:999px; background:var(--action);
+       font-size:26px; font-weight:700; color:#fff; }
+  .pg-table{ left:60px; top:530px; width:1120px; border:1px solid #E8E8EB; border-radius:18px; overflow:hidden; }
+  .pg-tr{ display:flex; align-items:center; height:82px; padding:0 26px; border-bottom:1px solid #E8E8EB;
+       font-size:22px; font-weight:600; color:#2B2B2B; }
+  .pg-tr:last-child{ border-bottom:none; }
+  .pg-tr.h{ height:58px; font-size:14px; font-weight:700; color:#888; letter-spacing:.06em;
+       text-transform:uppercase; background:#F7F7F8; }
+  .pg-tr .c1{ width:110px; color:#888; }
+  .pg-tr .c2{ flex:1; }
+  .pg-tr .c3{ width:170px; text-align:right; font-weight:700; }
+  .pg-tr .c4{ width:170px; text-align:right; }
+  .pg-st{ display:inline-block; padding:6px 16px; border-radius:999px; font-size:15px; font-weight:700; }
+  .pg-st.ok{ background:rgba(22,163,74,.12); color:#16A34A; }
+  .pg-st.wait{ background:rgba(245,166,35,.14); color:#B45309; }
+  .pg-st.late{ background:rgba(229,48,92,.10); color:#E5305C; }
+  .pg-form{ left:1240px; top:530px; width:620px; display:flex; flex-direction:column; gap:18px; }
+  .pg-fld{ height:86px; border-radius:16px; background:#fff; border:1px solid #E8E8EB; display:flex;
+       align-items:center; padding:0 26px; font-size:22px; font-weight:600; color:#888; }
+  .pg-send{ height:86px; border-radius:16px; background:var(--violet); font-size:23px; font-weight:700;
+       color:#fff; display:flex; align-items:center; justify-content:center; }
+  .pg-total{ left:60px; top:1002px; width:1120px; display:flex; align-items:baseline; justify-content:space-between; }
+  .pg-total .a{ font-size:28px; font-weight:600; color:#888; }
+  .pg-total .b{ font-size:36px; font-weight:700; color:#000; }
+  .pg-footer{ left:60px; top:1072px; width:1800px; height:2px; background:#E8E8EB; }
+
+  /* оверлеи кадра */
+  #tgt-outline{ position:absolute; z-index:4; border:3px dashed var(--motion); border-radius:10px;
+       pointer-events:none; }
+  #tgt-label{ position:absolute; z-index:5; padding:5px 12px; border-radius:7px; background:var(--motion);
+       font-size:19px; font-weight:700; color:#fff; white-space:nowrap; }
+  #cam-frame{ position:absolute; z-index:4; border:3px dashed var(--action); border-radius:12px; cursor:move;
+       background:rgba(255,105,29,.05); }
+  #cam-frame .hnd{ position:absolute; right:-9px; bottom:-9px; width:18px; height:18px; border-radius:6px;
+       background:var(--action); border:3px solid #FDFDFD; cursor:nwse-resize; }
+  #cam-label{ position:absolute; z-index:5; left:0; top:-34px; padding:4px 10px; border-radius:6px;
+       background:var(--action); font-size:16px; font-weight:700; color:#fff; white-space:nowrap; }
+  .safe{ position:absolute; z-index:3; border:1.5px dashed rgba(112,24,230,.5); background:rgba(112,24,230,.06);
+       pointer-events:none; }
+  .safe .rl{ position:absolute; left:8px; top:6px; font-size:15px; font-weight:700; color:rgba(112,24,230,.75); }
+  .safe.bad{ border-color:rgba(229,48,92,.65);
+       background:repeating-linear-gradient(45deg, rgba(229,48,92,.12) 0 10px, transparent 10px 20px); }
+  #txt-ov{ position:absolute; inset:0; z-index:4; background:rgba(10,10,12,.82); display:flex;
+       flex-direction:column; align-items:center; justify-content:center; gap:28px; }
+  #txt-ov .tx{ font-size:110px; font-weight:700; color:#F5F5F6; letter-spacing:-.02em; text-align:center; }
+  #txt-ov .bt{ padding:22px 60px; border-radius:999px; background:var(--action); font-size:32px; font-weight:700; color:#fff; }
+  /* оверлей рендера живёт внутри #stage (1920×1080) — размеры в кадро-пикселях */
+  #render-ov{ position:absolute; inset:0; z-index:8; background:rgba(10,10,12,.88); backdrop-filter:blur(4px);
+       display:flex; flex-direction:column; align-items:center; justify-content:center; gap:34px; }
+  #render-ov .t{ font-size:46px; font-weight:700; }
+  #render-ov .d{ font-size:26px; font-weight:600; color:var(--dim); }
+  #render-ov .bar{ width:920px; height:14px; border-radius:999px; background:#1B1B21; overflow:hidden; }
+  #render-ov .fill{ height:100%; border-radius:999px; background:linear-gradient(90deg, var(--action), var(--action-h)); }
+  #render-ov .row{ display:flex; gap:22px; }
+  #render-ov .row div{ padding:20px 52px; border-radius:999px; font-size:28px; font-weight:700; cursor:pointer; }
+  #render-ov .row .g{ background:#17171B; border:2px solid #26262D; color:#C9C9D0; }
+  #render-ov .row .p{ background:var(--action); color:#fff; }
+
+  /* таймлайн */
+  .tl{ flex:none; height:262px; border-top:1px solid var(--brd-soft); background:var(--panel);
+       display:flex; flex-direction:column; }
+  .tl-head{ flex:none; display:flex; align-items:center; gap:10px; padding:9px 14px 0; }
+  .tl-names{ width:216px; flex:none; }
+  .tl-lane{ position:relative; flex:1; min-width:0; }
+  .tl-scroll{ flex:1; min-height:0; overflow-y:auto; padding:4px 14px 10px; }
+  .tl-row{ display:flex; align-items:center; gap:10px; }
+  .tl-row + .tl-row{ margin-top:3px; }
+  .tname{ width:216px; flex:none; display:flex; align-items:center; gap:7px; font-size:10.5px;
+       font-weight:700; letter-spacing:.06em; color:var(--faint); white-space:nowrap; overflow:hidden;
+       text-overflow:ellipsis; }
+  .tname .plus{ padding:2px 8px; border-radius:6px; border:1px dashed var(--brd-strong); font-size:9.5px;
+       color:var(--dim); cursor:pointer; }
+  .tname .plus:hover{ border-color:var(--violet-l); color:var(--violet-t); }
+  .lane{ position:relative; height:100%; border-radius:7px; background:var(--sunken); border:1px solid var(--brd-soft);
+       cursor:pointer; }
+  .lane:hover{ border-color:var(--brd); }
+  .tick{ position:absolute; top:0; font-size:9.5px; font-weight:700; color:var(--faint); transform:translateX(-50%); }
+  .ph{ position:absolute; top:0; bottom:0; width:2px; background:#fff; box-shadow:0 0 8px rgba(255,255,255,.6);
+       z-index:5; pointer-events:none; }
+  .scb{ position:absolute; top:5px; bottom:5px; border-radius:8px; overflow:hidden; cursor:pointer;
+       display:flex; align-items:center; gap:7px; padding:0 9px; min-width:34px; }
+  .scb .ic{ width:17px; height:17px; flex:none; border-radius:5px; display:flex; align-items:center;
+       justify-content:center; font-size:9.5px; font-weight:700; }
+  .scb .tx{ min-width:0; flex:1; }
+  .scb .tt{ font-size:10.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .scb .tg{ font-size:9px; font-weight:600; opacity:.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .scb .du{ margin-left:auto; font-size:9.5px; font-weight:700; }
+  .scb .rz{ position:absolute; right:-4px; top:0; bottom:0; width:9px; cursor:ew-resize; z-index:3; }
+  .scb .rz::after{ content:''; position:absolute; right:3px; top:20%; bottom:20%; width:3px; border-radius:2px;
+       background:rgba(255,255,255,.35); }
+  .scb.sel{ box-shadow:0 6px 18px rgba(0,0,0,.35); }
+  .scb.dis{ opacity:.35; filter:grayscale(.6); }
+  .scb.flash{ animation:flashBar 1s ease; }
+  .stub{ position:absolute; top:12px; bottom:12px; width:8px; border-radius:4px; opacity:.4; }
+  .pin{ position:absolute; top:-6px; width:13px; height:13px; border-radius:999px; border:2.5px solid var(--panel);
+       z-index:6; cursor:pointer; transform:translateX(-50%); }
+  .pin:hover{ transform:translateX(-50%) scale(1.25); }
+  .mk{ position:absolute; top:50%; width:9px; height:9px; transform:translate(-50%,-50%) rotate(45deg);
+       border-radius:2px; background:var(--motion); }
+  .mk.amber{ background:var(--amber); }
+  .lrow-name{ width:216px; flex:none; display:flex; align-items:center; gap:7px; padding-left:16px;
+       font-size:11.5px; font-weight:600; color:var(--mut); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lrow-name .ty{ color:var(--faint2); font-size:10px; }
+  .lrow-lane{ position:relative; flex:1; min-width:0; height:24px; border-radius:6px; background:#0C0C0F;
+       border:1px solid #171720; }
+  .lspan{ position:absolute; top:3px; bottom:3px; border-radius:5px; background:rgba(155,92,255,.12);
+       border:1px solid rgba(155,92,255,.24); }
+  .lspan.cam{ background:rgba(53,184,160,.14); border-color:rgba(53,184,160,.3); }
+  .lspan.ovl{ background:rgba(245,166,35,.10); border-color:rgba(245,166,35,.26); }
+  .lspan.det{ background:rgba(245,166,35,.14); border:1px dashed rgba(245,166,35,.55); }
+  .detb{ margin-left:6px; padding:1px 6px; border-radius:5px; background:rgba(245,166,35,.16); color:var(--amber-t);
+       font-size:8.5px; font-weight:700; cursor:pointer; flex:none; }
+
+  /* инспектор сцены */
+  .insp{ width:318px; flex:none; background:var(--panel); border-left:1px solid var(--brd-soft); overflow-y:auto;
+       padding:15px; display:flex; flex-direction:column; gap:13px; }
+  .insp .hdr{ display:flex; align-items:center; gap:9px; }
+  .insp .sid{ font-size:12.5px; font-weight:700; font-family:ui-monospace, monospace; color:var(--motion-t); }
+  .insp .del{ margin-left:auto; font-size:11px; font-weight:700; color:var(--danger-t); cursor:pointer; }
+  .insp .del:hover{ color:#FFB0C4; }
+  .tgl{ width:34px; height:20px; flex:none; border-radius:999px; padding:2px; display:flex; cursor:pointer;
+       background:#2A2A32; transition:background .15s ease; }
+  .tgl.on{ background:var(--ok); justify-content:flex-end; }
+  .tgl i{ width:16px; height:16px; border-radius:999px; background:#fff; }
+  .shotbtn{ display:flex; align-items:center; gap:9px; padding:9px 11px; border-radius:9px; background:#121216;
+       border:1px solid var(--brd); font-size:12.5px; font-weight:700; cursor:pointer; }
+  .shotbtn:hover{ background:#15151b; }
+  .shotbtn .ic{ width:22px; height:22px; border-radius:6px; display:flex; align-items:center; justify-content:center;
+       font-size:11px; font-weight:700; }
+  .shotbtn .ca{ margin-left:auto; color:var(--dim); font-size:10px; }
+  .prevrow{ display:flex; gap:6px; }
+  .prevcard{ flex:1; border-radius:9px; overflow:hidden; background:var(--sunken); border:1px solid var(--brd-soft);
+       cursor:pointer; }
+  .prevcard.on{ border-color:rgba(224,95,176,.55); box-shadow:0 0 0 2px rgba(224,95,176,.14); }
+  .prevcard .th{ height:44px; display:flex; align-items:center; justify-content:center; position:relative;
+       font-size:13px; color:#fff; }
+  .prevcard .th .du{ position:absolute; right:5px; bottom:4px; font-size:8.5px; font-weight:700; color:#fff;
+       background:rgba(0,0,0,.4); padding:1px 4px; border-radius:4px; }
+  .prevcard .nm{ padding:5px 7px; font-size:9.5px; font-weight:700; color:var(--text2); white-space:nowrap;
+       overflow:hidden; text-overflow:ellipsis; }
+  .tgtcard{ display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:10px;
+       background:rgba(155,92,255,.10); border:1px solid rgba(155,92,255,.28); }
+  .tgtcard .th{ width:42px; height:42px; flex:none; border-radius:9px; background:#FDFDFD; display:flex;
+       align-items:center; justify-content:center; font-size:17px; color:#2B2B2B; }
+  .tgtcard .nm{ font-size:12.5px; font-weight:700; color:var(--violet-t); }
+  .tgtcard .rl{ font-size:10.5px; font-weight:600; color:var(--dim); margin-top:2px; }
+  .pickbtn{ padding:7px 0; border-radius:8px; background:var(--sunken); border:1px dashed var(--brd-strong);
+       font-size:11px; font-weight:700; color:var(--mutb); cursor:pointer; text-align:center; }
+  .pickbtn:hover{ border-color:var(--violet-l); color:var(--violet-t); }
+  .trchips{ display:flex; flex-wrap:wrap; gap:5px; }
+
+  /* судья */
+  .judge{ border-radius:12px; background:#121216; border:1px solid var(--brd); padding:13px; }
+  .judge .scorerow{ display:flex; align-items:baseline; gap:8px; margin-bottom:10px; }
+  .judge .sc{ font-size:26px; font-weight:700; letter-spacing:-.02em; color:var(--amber-t); }
+  .judge .of{ font-size:11px; font-weight:600; color:var(--faint2); }
+  .judge .delta{ margin-left:auto; padding:2px 8px; border-radius:999px; background:rgba(34,197,94,.14);
+       color:var(--ok-t); font-size:11px; font-weight:700; }
+  .jf{ display:flex; gap:9px; padding:8px 10px; border-radius:9px; background:var(--sunken);
+       border:1px solid var(--brd-soft); cursor:pointer; transition:opacity .4s ease; }
+  .jf:hover{ background:#121217; }
+  .jf .dt{ width:8px; height:8px; flex:none; border-radius:999px; margin-top:4px; }
+  .jf .bd{ flex:1; min-width:0; }
+  .jf .m1{ font-size:11px; font-weight:700; color:var(--text2b); line-height:1.4; }
+  .jf .m2{ font-size:10px; font-weight:600; color:var(--faint2); margin-top:2px; }
+  .jf.res{ opacity:.4; }
+  .jf .fixd{ margin-left:auto; align-self:center; padding:2px 7px; border-radius:5px; background:rgba(34,197,94,.14);
+       color:var(--ok-t); font-size:9px; font-weight:700; flex:none; }
+  .fixbtn{ margin-top:10px; padding:9px 0; border-radius:8px; text-align:center; cursor:pointer;
+       background:rgba(245,166,35,.14); border:1px solid rgba(245,166,35,.45); font-size:11.5px;
+       font-weight:700; color:var(--amber-t); }
+  .fixbtn:hover{ background:rgba(245,166,35,.22); }
+  .fixbtn:disabled{ opacity:.55; cursor:default; }
+  .jlog{ margin-top:8px; font-size:10.5px; font-weight:600; color:var(--dim); }
+
+  .rgen{ padding:10px 0; border-radius:9px; background:rgba(255,105,29,.16); border:1px solid rgba(255,105,29,.45);
+       font-size:11.5px; font-weight:700; color:#FFB183; cursor:pointer; text-align:center; }
+  .rgen:hover{ background:rgba(255,105,29,.24); }
+
+  /* дропдаун пресета */
+  .pmenu{ position:absolute; z-index:60; width:300px; border-radius:14px; background:rgba(16,16,20,.97);
+       border:1px solid #2A2A33; box-shadow:0 20px 60px rgba(0,0,0,.6); backdrop-filter:blur(12px); padding:6px; }
+  .pmenu .pi{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 10px;
+       border-radius:9px; cursor:pointer; }
+  .pmenu .pi:hover{ background:#1B1B21; }
+  .pmenu .pt{ font-size:12.5px; font-weight:700; }
+  .pmenu .pm{ font-size:10.5px; font-weight:600; color:var(--dim); white-space:nowrap; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════ ЭКРАН 1 · ГРАФ С ЕДИНСТВЕННОЙ НОДОЙ ═══════════ -->
+<div class="screen" id="scr-graph">
+
+  <div class="topbar">
+    <div style="display:flex; align-items:center; gap:10px; white-space:nowrap;">
+      <div style="width:26px; height:26px; border-radius:8px; background:linear-gradient(140deg,#FF691D,#7018E6);
+           display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:#fff;">D</div>
+      <div style="font-size:15px; font-weight:700; letter-spacing:-.02em;">DesignDNA</div>
+      <div style="padding:3px 9px; border-radius:999px; background:var(--elev); border:1px solid var(--brd);
+           font-size:11px; font-weight:600; color:var(--dim);">v2 · local</div>
+    </div>
+    <div class="seg">
+      <div class="on">Design</div><div>Project Map</div><div>Agents</div>
+    </div>
+    <div style="display:flex; align-items:center; gap:12px; white-space:nowrap;">
+      <span class="badge ok">● Runner онлайн</span>
+      <div style="width:30px; height:30px; border-radius:999px; background:linear-gradient(140deg,#7018E6,#FF691D);
+           font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center;">M</div>
+    </div>
+  </div>
+
+  <div class="ctxbar">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <div id="lp-toggle" title="Скрыть панель" class="btn-ic">⟨</div>
+      <div style="font-size:14px; font-weight:700; letter-spacing:-.01em;">rsale.net → видео</div>
+      <div style="width:1px; height:18px; background:var(--brd);"></div>
+      <div style="display:flex; gap:6px; white-space:nowrap;">
+        <span class="hintchip">ПКМ — нода</span>
+        <span class="hintchip">Колесо — зум</span>
+        <span class="hintchip">Drag или СКМ — панорама</span>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div style="display:flex; align-items:center; gap:8px; padding:6px 12px; border-radius:999px;
+           background:rgba(255,105,29,.10); border:1px solid rgba(255,105,29,.22); font-size:12px;
+           font-weight:600; color:#FFB183;">Кэш сэкономил 13 вызовов</div>
+      <div class="zoomgrp">
+        <div class="z" onclick="zoomBy(-0.1)">−</div>
+        <div class="zp num" id="zoomPct">82%</div>
+        <div class="z" onclick="zoomBy(0.1)">+</div>
+        <div class="fit" onclick="fitAll()">Всё</div>
+      </div>
+      <div class="btn">Импорт</div>
+      <div class="btn">Экспорт JSON</div>
+      <div class="btn-primary" onclick="openMenu(320, 96)">+ Нода</div>
+    </div>
+  </div>
+
+  <div style="flex:1; display:flex; min-height:0;">
+    <div class="lp" id="lp">
+      <div style="padding:18px 16px 12px; display:flex; align-items:center; justify-content:space-between;">
+        <div class="lbl-sec">СТРАНИЦЫ</div>
+        <div style="display:flex; gap:6px;">
+          <span class="pill">+ Видео</span><span class="pill">+ Page</span>
+        </div>
+      </div>
+      <div style="padding:0 12px; display:flex; flex-direction:column; gap:6px;">
+        <div class="pagecard">
+          <div style="display:flex; align-items:center; gap:9px;">
+            <div style="width:6px; height:6px; border-radius:2px; background:#4A4A55;"></div>
+            <div style="font-size:13px; font-weight:600; color:var(--text2b);">Page 1</div>
+          </div>
+          <div style="font-size:11px; font-weight:600; color:var(--faint2);">5</div>
+        </div>
+        <div class="pagecard on">
+          <div style="display:flex; align-items:center; gap:9px;">
+            <div style="width:6px; height:6px; border-radius:2px; background:var(--violet-l);"></div>
+            <div style="font-size:13px; font-weight:700;">rsale.net → видео</div>
+          </div>
+          <div style="font-size:11px; font-weight:700; color:#B98CFF;">1</div>
+        </div>
+      </div>
+      <div style="padding:22px 16px 10px;" class="lbl-sec">BRIDGE CHANNELS</div>
+      <div style="padding:0 12px; display:flex; flex-direction:column; gap:6px;">
+        <div class="bridge">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="width:14px; height:14px; border-radius:4px; background:rgba(255,105,29,.18); color:#FF9A5E;
+                 font-size:9px; font-weight:700; display:flex; align-items:center; justify-content:center;">S</div>
+            <div style="font-size:12px; font-weight:600; color:var(--text2);">invoice-flow</div>
+          </div>
+          <span class="badge ok">SEND</span>
+        </div>
+        <div class="bridge">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="width:14px; height:14px; border-radius:4px; background:rgba(155,92,255,.18); color:#B98CFF;
+                 font-size:9px; font-weight:700; display:flex; align-items:center; justify-content:center;">R</div>
+            <div style="font-size:12px; font-weight:600; color:var(--text2);">card-grid</div>
+          </div>
+          <span class="badge" style="background:rgba(155,92,255,.14); color:#B98CFF;">RECV</span>
+        </div>
+      </div>
+      <div class="dnacard">
+        <div class="t">Режиссёр = приёмы × ваши компоненты</div>
+        <div class="d">ИИ выбирает приёмы из каталога и цели из Source Artifact. Кривые и ритм — детерминированный код, не модель.</div>
+      </div>
+    </div>
+
+    <div id="canvas">
+      <div id="grid"></div>
+      <div id="world">
+        <svg id="wires" width="3000" height="2000"></svg>
+        <!-- источники входов (не ноды) -->
+        <div id="chips"></div>
+        <!-- единственная нода -->
+        <div id="node" class="fnode sel"></div>
+      </div>
+      <div class="float-note">Весь конвейер ролика — <b>внутри одной ноды</b>: бриф → раскадровка → таймлайн → судья → рендер mp4. Остальные ноды не нужны.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ ЭКРАН 2 · СТУДИЯ (всё внутри ноды) ═══════════ -->
+<div class="screen hidden" id="scr-studio">
+
+  <div class="st-top">
+    <div class="idl">
+      <div class="nicon" style="width:24px; height:24px; border-radius:7px;">▶</div>
+      <div class="ttl">Режиссёр</div>
+      <div class="meta num" id="st-meta">Промо 16:9 · 1920 × 1080 · 30 fps · 30.0 с</div>
+    </div>
+    <div class="transport">
+      <div class="btn-ic" title="В начало" onclick="toStart()">|◀</div>
+      <div class="playbtn" id="playbtn" onclick="togglePlay()">▶</div>
+      <div style="font-size:12.5px; font-weight:700;" class="num" id="st-time">0:13.6 / 0:30.0</div>
+    </div>
+    <div class="idl">
+      <span class="badge pink" id="st-badge">storyboard · 8 сцен</span>
+      <span class="badge amber num" id="st-judge">Судья 62</span>
+      <div class="btn" onclick="closeStudio()">Закрыть</div>
+      <div class="btn-primary" onclick="renderMp4()">Рендер MP4</div>
+    </div>
+  </div>
+
+  <div class="briefbar">
+    <span class="lbl">БРИФ</span>
+    <input id="brief-input" spellcheck="false" value="30-секундный ролик для лендинга: показать, как создаётся счёт за один клик">
+    <div class="vsep"></div>
+    <div class="presetbtn" onclick="togglePresetMenu(event)">
+      <span id="presetbtn-t">Промо 16:9</span><span class="ca">▾</span>
+    </div>
+    <div class="vsep"></div>
+    <div style="display:flex; gap:5px;" id="prov-pills"></div>
+    <div class="pill" id="effort-pill" title="Режим модели" onclick="cycleEffort()">high</div>
+    <div style="flex:1;"></div>
+    <button class="runbtn" id="runbtn" onclick="assemble()">Собрать ролик</button>
+  </div>
+
+  <div class="st-body">
+    <!-- материалы и каталог приёмов -->
+    <div class="slp">
+      <div style="padding:13px 14px 9px;" class="lbl-sec">МАТЕРИАЛ · ИЗ ВХОДОВ НОДЫ</div>
+      <div style="padding:0 10px 10px;" id="mat-list"></div>
+      <div style="padding:6px 14px 8px; display:flex; align-items:center; justify-content:space-between;">
+        <span class="lbl-sec">КАТАЛОГ ПРИЁМОВ</span>
+        <span style="font-size:10px; font-weight:700; color:var(--faint2);">клик — в сцену</span>
+      </div>
+      <div style="padding:0 8px;" id="cat-list"></div>
+      <div class="slp-note">
+        <div class="t">Storyboard — источник правды</div>
+        <div class="d">Слои, правленные вручную, помечены «правлено» и переживают перекомпиляцию. Кнопка возвращает их к приёму.</div>
+      </div>
+    </div>
+
+    <!-- вьюер + таймлайн -->
+    <div class="st-center">
+      <div class="st-tools">
+        <div class="tool on" id="tool-sel" onclick="setTool('sel')"><span style="font-size:13px;">✥</span>Выбор цели</div>
+        <div class="tool" id="tool-cam" onclick="setTool('cam')"><span style="font-size:13px;">⤢</span>Рамка камеры</div>
+        <div class="hint">Тяните границы сцен на дорожке — меняется вес и длительность</div>
+      </div>
+
+      <div id="viewer">
+        <div id="stage-outer">
+          <div id="stage">
+            <div class="pg pg-header">
+              <div class="pg-logo">RS</div><div class="pg-brand">RSale</div>
+              <div class="pg-menu"><span>Возможности</span><span>Тарифы</span><span>Поддержка</span></div>
+              <div class="pg-login">Войти</div>
+            </div>
+            <div class="pg pg-h1">Счета для фрилансеров</div>
+            <div class="pg pg-sub">Счёт за один клик. Клиенты платят вовремя.</div>
+            <div class="pg pg-cta">Создать счёт</div>
+            <div class="pg pg-table">
+              <div class="pg-tr h"><span class="c1">Номер</span><span class="c2">Клиент</span><span class="c3">Сумма</span><span class="c4">Статус</span></div>
+              <div class="pg-tr"><span class="c1">0021</span><span class="c2">Иван Йованович</span><span class="c3 num">340 €</span><span class="c4"><span class="pg-st ok">Оплачен</span></span></div>
+              <div class="pg-tr"><span class="c1">0022</span><span class="c2">Мария Петрович</span><span class="c3 num">1 250 €</span><span class="c4"><span class="pg-st wait">Ожидает</span></span></div>
+              <div class="pg-tr"><span class="c1">0023</span><span class="c2">Luka Stanković</span><span class="c3 num">860 €</span><span class="c4"><span class="pg-st late">Просрочен</span></span></div>
+              <div class="pg-tr"><span class="c1">0024</span><span class="c2">Ана Марич</span><span class="c3 num">3 940 €</span><span class="c4"><span class="pg-st wait">Ожидает</span></span></div>
+            </div>
+            <div class="pg pg-form">
+              <div class="pg-fld">Название услуги</div>
+              <div class="pg-fld">Сумма, €</div>
+              <div class="pg-fld">Клиент · e-mail</div>
+              <div class="pg-send">Отправить клиенту</div>
+            </div>
+            <div class="pg pg-total"><span class="a">Итого, январь</span><span class="b num">11 900 €</span></div>
+            <div class="pg pg-footer"></div>
+
+            <!-- оверлеи кадра -->
+            <div class="safe" id="sa-caption"><span class="rl">caption</span></div>
+            <div class="safe" id="sa-logo"><span class="rl">logo</span></div>
+            <div id="tgt-outline"></div><div id="tgt-label"></div>
+            <div id="cam-frame"><div id="cam-label">рамка камеры · params.region</div><div class="hnd" id="cam-hnd"></div></div>
+            <div id="txt-ov" class="hidden"><div class="tx"></div><div class="bt hidden"></div></div>
+            <div id="render-ov" class="hidden"></div>
+          </div>
+          <div id="scene-badge"></div>
+        </div>
+      </div>
+
+      <div class="tl">
+        <div class="tl-head">
+          <div class="tl-names"><span class="lbl-sec">ТАЙМЛАЙН · STORYBOARD → MOTION IR</span></div>
+          <div class="tl-lane" id="ruler-lane" style="height:16px; cursor:pointer;"></div>
+        </div>
+        <div class="tl-scroll" id="tl-scroll"></div>
+      </div>
+    </div>
+
+    <!-- инспектор сцены + судья -->
+    <div class="insp" id="insp"></div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════ ДАННЫЕ (зеркало реестров ТЗ) ═══════════════ */
+
+const KIND = { ir:'#9B5CFF', tokens:'#FF691D', artifact:'#35B8A0', interaction:'#2FBF9F',
+               motion:'#E05FB0', text:'#8A8A93', storyboard:'#f0883e' };
+
+/* группы приёмов — цвет дорожки сцен (ТЗ §6.1) */
+const GROUPS = {
+  opening:   { label:'ОТКРЫТИЕ',  color:'#9B5CFF' },
+  camera:    { label:'КАМЕРА',    color:'#35B8A0' },
+  screencast:{ label:'СКРИНКАСТ', color:'#F5A623' },
+  accent:    { label:'АКЦЕНТ',    color:'#E05FB0' },
+  closing:   { label:'ФИНАЛ',     color:'#22C55E' },
+};
+
+/* каталог приёмов: 6 этапа 1 + 8 этапа 7 (ТЗ §6.2, §6.3) */
+const SHOTS = {
+  'establish':     { g:'opening',    icon:'◻', title:'Обзор страницы',  req:'none',       when:'открыть страницу целиком' },
+  'title-card':    { g:'opening',    icon:'T',  title:'Титр',           req:'none',       needsText:true, when:'заголовок-крючок в начале' },
+  'zoom-to-region':{ g:'camera',     icon:'⤢', title:'Наезд на регион',req:'any',        when:'показать часть экрана крупно' },
+  'pan-scroll':    { g:'camera',     icon:'↕', title:'Прокрутка',      req:'any',        when:'провести по длинной странице' },
+  'orbit-card':    { g:'camera',     icon:'⟳', title:'Въезд карточки', req:'any',        when:'карточка въезжает с поворотом' },
+  'cursor-click':  { g:'screencast', icon:'➤', title:'Клик',           req:'interactive',when:'показать нажатие кнопки' },
+  'cursor-hover':  { g:'screencast', icon:'☞', title:'Наведение',      req:'interactive',when:'показать hover-состояние' },
+  'type-into':     { g:'screencast', icon:'⌨', title:'Ввод текста',    req:'any',        when:'заполнение поля' },
+  'state-swap':    { g:'screencast', icon:'⇄', title:'Смена состояния',req:'any',        when:'loading → success' },
+  'spotlight':     { g:'accent',     icon:'◐', title:'Прожектор',      req:'any',        when:'затемнить всё, кроме цели' },
+  'stagger-reveal':{ g:'accent',     icon:'≡', title:'Каскад',         req:'container',  when:'дети появляются по очереди' },
+  'callout':       { g:'accent',     icon:'╲', title:'Выноска',        req:'any',        when:'подписать часть экрана' },
+  'number-count':  { g:'accent',     icon:'#', title:'Счётчик',        req:'text-numeric', when:'число докручивается' },
+  'cta-outro':     { g:'closing',    icon:'★', title:'Финал CTA',      req:'none',       needsText:true, when:'логотип + призыв' },
+};
+const REQ_LABEL = { none:'без цели', any:'цель', container:'контейнер',
+                    interactive:'interactive', 'text-numeric':'число' };
+
+/* пресеты (ТЗ §8) */
+const PRESETS = {
+  'promo-16x9':     { title:'Промо 16:9',    res:'1920 × 1080', total:30000, scenes:'5–9 сцен',  tempo:1.0 },
+  'ad-9x16':        { title:'Реклама 9:16',  res:'1080 × 1920', total:15000, scenes:'3–6 сцен',  tempo:1.35 },
+  'ad-1x1':         { title:'Реклама 1:1',   res:'1080 × 1080', total:22000, scenes:'4–7 сцен',  tempo:1.25 },
+  'onboarding-16x9':{ title:'Онбординг',     res:'1920 × 1080', total:90000, scenes:'8–20 сцен', tempo:0.85 },
+  'feature-loop':   { title:'Цикл 9 с',      res:'1920 × 1080', total:9000,  scenes:'2–3 сцены', tempo:1.4 },
+};
+
+/* инвентарь целей — что пришло по проводам (ТЗ §12) */
+const MATERIAL = [
+  { label:'Source Import · rsale.net', color:'#FF691D', items:[
+    { id:'Header',                kind:'блок' },
+    { id:'Hero',                  kind:'блок' },
+    { id:'InvoiceTable',          kind:'компонент' },
+    { id:'InvoiceForm',           kind:'контейнер · 6 детей' },
+    { id:'Button · Создать счёт', kind:'кнопка', states:['hover','active'] },
+    { id:'Итого · 11 900 €',      kind:'текст · число' },
+    { id:'Footer',                kind:'блок' },
+  ]},
+  { label:'Design System / UI Kit', color:'#7018E6', items:[
+    { id:'Button', kind:'компонент' }, { id:'Badge', kind:'компонент' },
+    { id:'Input',  kind:'компонент' }, { id:'Card',  kind:'компонент' },
+  ]},
+  { label:'Interaction IR · запись', color:'#2FBF9F', items:[
+    { id:'Запись · 7 шагов', kind:'клик-путь' },
+  ]},
+];
+
+/* bbox целей в кадре 1920×1080 — для подсветки и рамки камеры */
+const TGT_BOX = {
+  'Header':[60,44,1800,84], 'Hero':[60,168,1160,150], 'InvoiceTable':[60,522,1120,390],
+  'InvoiceForm':[1240,522,620,462], 'Button · Создать счёт':[60,366,410,86],
+  'Итого · 11 900 €':[60,996,1120,60], 'Footer':[60,1064,1800,16],
+};
+
+/* раскадровка: 8 сцен, сумма 30.0 с (ТЗ §4, §18) */
+let scenes = [
+  { id:'sc-01', shot:'title-card',     target:null, weight:1.0, dur:3000, text:'Счёт за один клик',
+    note:'открываем обещанием', trans:{ t:'fade', d:320 }, enabled:true },
+  { id:'sc-02', shot:'establish',      target:null, weight:1.0, dur:4200, text:null,
+    note:'сайт целиком, медленный наезд', trans:{ t:'cut' }, enabled:true },
+  { id:'sc-03', shot:'zoom-to-region', target:'InvoiceTable', weight:1.4, dur:4600, text:null,
+    note:'вот где живут счета', region:[0.06,0.10,0.56,0.46], trans:{ t:'fade', d:200 }, enabled:true },
+  { id:'sc-04', shot:'cursor-click',   target:'Button · Создать счёт', weight:1.2, dur:3800, text:null,
+    note:'клик создаёт счёт', trans:{ t:'cut' }, enabled:true },
+  { id:'sc-05', shot:'stagger-reveal', target:'InvoiceForm', weight:1.0, dur:3400, text:null,
+    note:'форма собирается построчно', trans:{ t:'cut' }, enabled:true },
+  { id:'sc-06', shot:'state-swap',     target:'InvoiceTable', weight:1.0, dur:3600, text:null,
+    note:'счёт становится готовым', trans:{ t:'cut' }, enabled:true },
+  { id:'sc-07', shot:'number-count',   target:'Итого · 11 900 €', weight:1.1, dur:3400, text:null,
+    note:'итог докручивается', trans:{ t:'fade', d:220 }, enabled:true },
+  { id:'sc-08', shot:'cta-outro',      target:null, weight:1.0, dur:4000, text:'Попробуйте бесплатно',
+    note:'финал с кнопкой из DS', trans:{ t:'fade', d:320 }, enabled:true },
+];
+
+/* находки судьи (ТЗ §11) */
+let findings = [
+  { sev:'error',   scene:'sc-03', msg:'Цель видна на 48% кадра',        thr:'≥ 60%',  act:'48%',   fixed:false },
+  { sev:'warning', scene:'sc-05', msg:'Статичный кадр 3.4 с',           thr:'≤ 3.0 с', act:'3.4 с', fixed:false },
+  { sev:'warning', scene:'sc-07', msg:'Титр заходит в safe-area caption', thr:'≤ 5%',  act:'12%',   fixed:false },
+  { sev:'info',    scene:'sc-02', msg:'Контраст подписи 4.1:1',         thr:'≥ 4.5:1', act:'4.1:1', fixed:false },
+];
+const SEV_COLOR = { error:'#E5305C', warning:'#F5A623', info:'#2FBF9F' };
+const SEV_LABEL = { error:'ошибка', warning:'предупр.', info:'инфо' };
+
+/* скомпилированные слои Motion IR 2.1 — дорожка 3 (ТЗ §15.3), спаны = границы сцен */
+const LAYERS = [
+  { name:'Камера',                 ty:'cam', span:[0,30000],  det:false },
+  { name:'sc-01 · Титр',           ty:'txt', span:[0,3000],   det:false },
+  { name:'sc-02 · Дизайн-подложка', ty:'dsg', span:[3000,7200],  det:false },
+  { name:'sc-03 · Дизайн-подложка', ty:'dsg', span:[7200,11800], det:false },
+  { name:'sc-04 · Курсор + ripple', ty:'cur', span:[11800,15600], det:false },
+  { name:'sc-05 · Каскад · 6 детей', ty:'dsg', span:[15600,19000], det:false },
+  { name:'sc-06 · Кроссфейд состояний', ty:'dsg', span:[19000,22600], det:false },
+  { name:'sc-07 · Титр счёта',     ty:'txt', span:[22600,26000], det:true },
+  { name:'sc-08 · Финал CTA',      ty:'txt', span:[26000,30000], det:false },
+  { name:'Рамка браузера · macos', ty:'ovl', span:[0,30000],  det:false },
+];
+/* маркеры-акценты (kind: accent) — внутри соответствующих сцен */
+const ACCENTS = [ {t:1200,label:'слово 3'}, {t:11200,label:'наезд'}, {t:13800,label:'клик'},
+                  {t:20500,label:'успех'}, {t:24800,label:'счёт готов'}, {t:27500,label:'логотип'} ];
+
+/* ───────────── состояние ───────────── */
+const S = {
+  screen:'graph',
+  zoom:0.82, pan:{ x:170, y:26 },
+  node:{ x:470, y:78 },
+  status:'ok', running:false, runPct:0,
+  preset:'promo-16x9', provider:'claude', effort:'high',
+  brief:'30-секундный ролик для лендинга: показать, как создаётся счёт за один клик',
+  sel:2, t:13600, playing:false, tool:'sel',
+  score:62, repaired:false,
+  fit:0.35, lastActive:-1,
+};
+
+const $ = s => document.querySelector(s);
+const shot = id => SHOTS[id];
+const grp  = id => GROUPS[shot(id).g];
+function starts(){ const r=[]; let a=0; scenes.forEach(sc=>{ r.push(a); a += sc.enabled ? sc.dur : 0; }); return r; }
+function total(){ return scenes.reduce((a,s)=>a+(s.enabled?s.dur:0),0); }
+function fmt(ms){ const t=ms/1000, m=Math.floor(t/60), s=t-m*60; return m+':'+(s<10?'0':'')+s.toFixed(1); }
+function dur_s(ms){ return (ms/1000).toFixed(1)+' с'; }
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+
+/* ═══════════════ ЭКРАН 1 · ГРАФ ═══════════════ */
+
+const IN_PORTS = [
+  { label:'Design IR',       kind:'ir' },
+  { label:'Source Artifact', kind:'artifact' },
+  { label:'style DNA',       kind:'tokens' },
+  { label:'бриф',            kind:'text' },
+  { label:'Interaction IR',  kind:'interaction' },
+];
+const OUT_PORTS = [ { label:'ролик · Motion IR', kind:'motion' } ];
+const SRC_CHIPS = [ 'Страница', 'Source Import', 'Design System', 'Промпт' ]; /* первые 4 порта */
+
+function renderNode(){
+  const n = $('#node');
+  n.style.left = S.node.x+'px'; n.style.top = S.node.y+'px';
+  const sc = scenes[S.sel];
+  const statusCls = S.running ? 'run' : 'ok';
+  const statusTxt = S.running ? 'сборка…' : dur_s(total());
+  const p = PRESETS[S.preset];
+  n.innerHTML = `
+    <div class="fnode-head" onmousedown="dragNodeStart(event)" ondblclick="openStudio()">
+      <div class="nicon">▶</div>
+      <div class="ntit"><div class="t">Режиссёр</div><div class="s">бриф + компоненты → ролик</div></div>
+      <span class="badge ${statusCls}" id="nb-status">${statusTxt}</span>
+    </div>
+    <div class="fnode-body">
+      <div class="frow"><div class="lbl">БРИФ</div>
+        <div class="field" style="white-space:normal;">${esc(S.brief)}</div></div>
+      <div class="frow"><div class="lbl">ПРЕСЕТ</div>
+        <div class="chips">${Object.entries(PRESETS).map(([k,v]) =>
+          `<span class="pill ${k===S.preset?'on-v':''}" onclick="setPreset('${k}')">${v.title}</span>`).join('')}</div></div>
+      <div class="frow"><div class="lbl">ПРОВАЙДЕР · ${S.effort.toUpperCase()}</div>
+        <div class="chips">
+          <span class="pill ${S.provider==='openai'?'on-v':''}" onclick="setProvider('openai')">GPT-5.6 Sol</span>
+          <span class="pill ${S.provider==='codex'?'on-v':''}" onclick="setProvider('codex')">Codex</span>
+          <span class="pill ${S.provider==='claude'?'on-v':''}" onclick="setProvider('claude')">Claude Opus</span>
+        </div></div>
+      <div class="stats3">
+        <div class="stat"><div class="v num">${scenes.filter(s=>s.enabled).length}</div><div class="k">СЦЕНЫ</div></div>
+        <div class="stat"><div class="v num">${dur_s(total())}</div><div class="k">ХРОНОМЕТРАЖ</div></div>
+        <div class="stat"><div class="v num" style="color:var(--amber-t);">${S.score}</div><div class="k">СУДЬЯ</div></div>
+      </div>
+      <div class="frow"><div class="lbl">РАСКАДРОВКА · STORYBOARD</div>
+        <div class="ribbon" id="rib"></div></div>
+      ${S.running ? `<div class="prog"><div class="row"><span class="pl">Раскладываем бриф на сцены</span>
+        <span class="pv num" id="nb-pct">${Math.round(S.runPct*100)}%</span></div>
+        <div class="bar"><div class="fill" id="nb-fill" style="width:${S.runPct*100}%"></div></div></div>` : ''}
+      <div class="acts">
+        <div class="btn-primary" onclick="assemble()">Собрать ролик</div>
+        <div class="btn" onclick="openStudio()">Студия →</div>
+      </div>
+    </div>
+    ${IN_PORTS.map((p,i)=>`<div class="pin-l" style="top:${61+i*24}px"><span>${p.label}</span>
+      <i style="border-color:${KIND[p.kind]}"></i></div>`).join('')}
+    ${OUT_PORTS.map((p,i)=>{ const c=KIND[p.kind]; return `<div class="pin-r" style="bottom:${31-i*24}px">
+      <i style="background:${c}; box-shadow:0 0 0 3px ${c}22"></i><span>${p.label}</span></div>`; }).join('')}
+  `;
+  renderRibbon();
+  requestAnimationFrame(drawWires);
+}
+
+function renderRibbon(){
+  const rib = $('#rib'); if(!rib) return;
+  rib.innerHTML = scenes.map((sc,i)=>{
+    const g = grp(sc.shot), sh = shot(sc.shot);
+    return `<div class="rib-card ${i===S.sel?'on':''} ${sc.enabled?'':'off'}" onclick="selScene(${i})" title="${esc(sc.note)}">
+      <div class="ic" style="background:${g.color}26; color:${g.color};">${sh.icon}</div>
+      <div class="tg">${sc.target ? esc(sc.target) : (sc.text ? '«'+esc(sc.text.slice(0,14))+'»' : sh.title)}</div>
+      <div class="du num">${dur_s(sc.dur)}</div></div>`;
+  }).join('');
+}
+
+function drawWires(){
+  const svg = $('#wires');
+  let html = '';
+  SRC_CHIPS.forEach((name,i)=>{
+    const y = S.node.y + 66 + i*24;
+    const a = { x:170+150-8, y };
+    const b = { x:S.node.x, y:S.node.y + 66 + i*24 };
+    const dx = Math.max(56, Math.abs(b.x-a.x)*0.45);
+    const d = `M ${a.x} ${a.y} C ${a.x+dx} ${a.y}, ${b.x-dx} ${b.y}, ${b.x} ${b.y}`;
+    const c = KIND[IN_PORTS[i].kind];
+    html += `<path d="${d}" fill="none" stroke="${c}" stroke-width="1.8" stroke-linecap="round" opacity="0.75"/>`+
+            `<path d="${d}" fill="none" stroke="${c}" stroke-width="2.4" stroke-dasharray="3 21"
+                    stroke-linecap="round" style="animation:dnaFlow 1.2s linear infinite;"/>`;
+  });
+  svg.innerHTML = html;
+}
+
+function renderChips(){
+  $('#chips').innerHTML = SRC_CHIPS.map((name,i)=>{
+    const y = S.node.y + 66 + i*24 - 9;
+    const c = KIND[IN_PORTS[i].kind];
+    return `<div class="srcchip" style="left:170px; top:${y}px;"><i style="background:${c}"></i><span>${name}</span></div>`;
+  }).join('');
+}
+
+/* пан/зум/драг ноды */
+let drag = null, panning = null;
+function canvasDown(e){
+  closeMenu();
+  if(e.button === 1 || e.button === 0){
+    if(e.target.closest('.fnode') || e.target.closest('.srcchip')) { if(e.button===0) return; }
+    panning = { mx:e.clientX, my:e.clientY, px:S.pan.x, py:S.pan.y };
+    $('#canvas').classList.add('panning');
+    e.preventDefault();
+  }
+}
+function canvasWheel(e){ e.preventDefault(); S.zoom = Math.max(0.3, Math.min(2, S.zoom - e.deltaY*0.0012)); applyView(); }
+function applyView(){
+  $('#world').style.transform = `translate(${S.pan.x}px,${S.pan.y}px) scale(${S.zoom})`;
+  $('#zoomPct').textContent = Math.round(S.zoom*100)+'%';
+}
+function zoomBy(d){ S.zoom = Math.max(0.3, Math.min(2, S.zoom+d)); applyView(); }
+function fitAll(){ S.zoom = 0.82; S.pan = { x:170, y:26 }; applyView(); }
+function dragNodeStart(e){
+  if(e.button !== 0) return;
+  e.stopPropagation();
+  drag = { mx:e.clientX, my:e.clientY, nx:S.node.x, ny:S.node.y };
+}
+window.addEventListener('mousemove', e => {
+  if(drag){
+    S.node.x = drag.nx + (e.clientX-drag.mx)/S.zoom;
+    S.node.y = drag.ny + (e.clientY-drag.my)/S.zoom;
+    const n = $('#node'); n.style.left = S.node.x+'px'; n.style.top = S.node.y+'px';
+    drawWires();
+  } else if(panning){
+    S.pan = { x:panning.px + (e.clientX-panning.mx), y:panning.py + (e.clientY-panning.my) };
+    applyView();
+  } else if(camDrag){ camMove(e); }
+  else if(rzDrag){ rzMove(e); }
+});
+window.addEventListener('mouseup', () => {
+  if(drag){ renderChips(); }
+  drag = null; panning = null;
+  $('#canvas') && $('#canvas').classList.remove('panning');
+  if(camDrag){ camDrag = null; renderInspector(); }
+  if(rzDrag){ rzDrag = null; renderAll(); }
+});
+
+/* меню создания — на этой странице достаточно одной ноды */
+function openMenu(x,y){
+  closeMenu();
+  const m = document.createElement('div');
+  m.className = 'ctxmenu'; m.id = 'ctxmenu';
+  m.style.left = x+'px'; m.style.top = y+'px';
+  m.innerHTML = `
+    <div class="mh"><span class="lbl-sec">СОЗДАТЬ НОДУ</span><span class="esc">ESC</span></div>
+    <div style="padding:10px 13px 6px;"><div class="field" style="color:var(--dim);">Поиск по типам…</div></div>
+    <div style="padding:4px 8px 10px;">
+      <div style="padding:11px 6px 5px; font-size:10px; font-weight:700; letter-spacing:.08em; color:var(--faint);">ВИДЕО</div>
+      <div class="mi" onclick="closeMenu(); pulseNode()">
+        <div style="width:26px; height:26px; flex:none; border-radius:7px; background:rgba(224,95,176,.16); color:var(--motion-t);
+             font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center;">▶</div>
+        <div class="it">Режиссёр</div><div class="nt">бриф + компоненты → ролик</div>
+      </div>
+      <div style="margin:8px 6px 4px; padding:9px 11px; border-radius:8px; background:rgba(224,95,176,.10);
+           border:1px solid rgba(224,95,176,.26); font-size:10.5px; font-weight:600; color:var(--motion-t); line-height:1.45;">
+        Весь конвейер ролика живёт внутри ноды Режиссёр — другие ноды не нужны.</div>
+    </div>`;
+  $('#canvas').appendChild(m);
+}
+function closeMenu(){ const m = $('#ctxmenu'); if(m) m.remove(); }
+function pulseNode(){ const n = $('#node'); n.classList.remove('pulse'); void n.offsetWidth; n.classList.add('pulse'); }
+
+function toggleLeft(){
+  const lp = $('#lp'); lp.classList.toggle('closed');
+  const open = !lp.classList.contains('closed');
+  $('#lp-toggle').textContent = open ? '⟨' : '⟩';
+}
+
+/* ═══════════════ ЭКРАН 2 · СТУДИЯ ═══════════════ */
+
+function openStudio(){ S.screen='studio'; $('#scr-graph').classList.add('hidden'); $('#scr-studio').classList.remove('hidden'); renderAll(); }
+function closeStudio(){ stopPlay(); S.screen='graph'; $('#scr-studio').classList.add('hidden'); $('#scr-graph').classList.remove('hidden'); renderNode(); }
+
+function renderAll(){
+  if(S.screen==='graph'){ renderNode(); renderChips(); return; }
+  renderTopbar(); renderBriefbar(); renderMaterial(); renderCatalog();
+  renderTimeline(); renderInspector(); renderOverlays(); updatePlayhead(true);
+}
+
+function renderTopbar(){
+  const p = PRESETS[S.preset];
+  $('#st-meta').textContent = `${p.title} · ${p.res} · 30 fps · ${dur_s(total())}`;
+  $('#st-badge').textContent = `storyboard · ${scenes.filter(s=>s.enabled).length} сцен`;
+  $('#st-judge').textContent = `Судья ${S.score}`;
+  $('#playbtn').textContent = S.playing ? '❙❙' : '▶';
+  $('#st-time').textContent = fmt(Math.min(S.t,total()))+' / '+fmt(total());
+}
+
+function renderBriefbar(){
+  $('#presetbtn-t').textContent = PRESETS[S.preset].title;
+  $('#prov-pills').innerHTML = [
+    ['openai','GPT-5.6 Sol'], ['codex','Codex'], ['claude','Claude Opus']
+  ].map(([k,t])=>`<span class="pill ${S.provider===k?'on-p':''}" onclick="setProvider('${k}')">${t}</span>`).join('');
+  $('#effort-pill').textContent = S.effort;
+  const rb = $('#runbtn');
+  if(S.running){
+    rb.innerHTML = `<span class="num">${Math.round(S.runPct*100)}%</span>
+      <div class="pb"><div class="pf" style="width:${S.runPct*100}%"></div></div>`;
+  } else { rb.textContent = 'Собрать ролик'; }
+}
+
+function renderMaterial(){
+  const cur = scenes[S.sel];
+  $('#mat-list').innerHTML = MATERIAL.map(g=>`
+    <div class="matgrp">
+      <div class="gh"><div class="dot" style="background:${g.color}"></div><div class="gl">${esc(g.label)}</div></div>
+      <div style="display:flex; flex-direction:column; gap:2px;">
+        ${g.items.map(it=>`
+          <div class="matitem ${cur.target===it.id?'on':''}" onclick="pickTarget('${esc(it.id)}')" title="Сделать целью выбранной сцены">
+            <div class="ic" style="background:${g.color}22; color:${g.color};">◈</div>
+            <div class="nm">${esc(it.id)}${(it.states||[]).map(s=>`<span class="stchip">${s}</span>`).join('')}</div>
+            <div class="kd">${esc(it.kind)}</div>
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function renderCatalog(){
+  let html = '';
+  Object.entries(GROUPS).forEach(([gk,g])=>{
+    const items = Object.entries(SHOTS).filter(([id,s])=>s.g===gk);
+    html += `<div class="catgrp" style="color:${g.color}; opacity:.8;">${g.label} · ${items.length}</div>`;
+    items.forEach(([id,s])=>{
+      html += `<div class="catitem ${scenes[S.sel].shot===id?'on':''}" onclick="setShot('${id}')" title="${esc(s.when)}">
+        <div class="ic" style="background:${g.color}22; color:${g.color};">${s.icon}</div>
+        <div class="tt">${s.title}</div><div class="rq">${REQ_LABEL[s.req]}</div></div>`;
+    });
+  });
+  $('#cat-list').innerHTML = html;
+}
+
+/* ── таймлайн: 3 синхронные дорожки (ТЗ §15.3) ── */
+function renderTimeline(){
+  const T = total(), st = starts(), pct = v => (v/T*100)+'%';
+  /* линейка */
+  const step = T/6;
+  let ticks = '';
+  for(let i=0;i<=6;i++) ticks += `<span class="tick num" style="left:${(i*step/T*100)}%">${Math.round(i*step/1000)}с</span>`;
+  $('#ruler-lane').innerHTML = ticks + `<div class="ph" style="left:${S.t/T*100}%"></div>`;
+
+  const sel = scenes[S.sel];
+  const selGrp = grp(sel.shot);
+
+  /* дорожка 1 — сцены + булавки судьи */
+  let lane1 = '';
+  scenes.forEach((sc,i)=>{
+    const g = grp(sc.shot), sh = shot(sc.shot);
+    const left = pct(st[i]), width = sc.enabled ? pct(sc.dur) : '8px';
+    if(!sc.enabled){
+      lane1 += `<div class="stub" title="${sc.id} · выключена" style="left:${left}; background:${g.color}"></div>`;
+      return;
+    }
+    const pins = findings.filter(f=>!f.fixed && f.scene===sc.id)
+      .map(f=>`<div class="pin" style="left:calc(${left} + 14px); background:${SEV_COLOR[f.sev]}"
+            onclick="event.stopPropagation(); selScene(${i})" title="${esc(f.msg)}"></div>`).join('');
+    lane1 += `<div class="scb ${i===S.sel?'sel':''}" style="left:${left}; width:${width};
+        background:${g.color}1F; border:1px solid ${i===S.sel?g.color+'AA':g.color+'55'};"
+        onclick="event.stopPropagation(); selScene(${i})">
+        <div class="ic" style="background:${g.color}33; color:${g.color};">${sh.icon}</div>
+        <div class="tx"><div class="tt" style="color:${g.color}">${sh.title}</div>
+          <div class="tg" style="color:${g.color}CC">${sc.target?esc(sc.target):(sc.text?'«'+esc(sc.text.slice(0,16))+'»':'без цели')}</div></div>
+        <div class="du num" style="color:${g.color}">${(sc.dur/1000).toFixed(1)}</div>
+        <div class="rz" onmousedown="rzStart(event,${i})" onclick="event.stopPropagation()"></div>
+        ${pins}</div>`;
+  });
+  const row1 = `<div class="tl-row" style="height:64px;">
+    <div class="tname" style="color:${selGrp.color}">СЦЕНЫ<div class="plus" onclick="addScene()">+ сцена</div></div>
+    <div class="tl-lane" style="height:64px;" onclick="seekFrom(event)">${lane1}<div class="ph" style="left:${S.t/T*100}%"></div></div>
+  </div>`;
+
+  /* дорожка 2 — акценты */
+  const lane2 = ACCENTS.map(a=>`<div class="mk ${a.t>T*0.8?'amber':''}" style="left:${pct(a.t)}"
+      title="${esc(a.label)}"></div>`).join('');
+  const row2 = `<div class="tl-row">
+    <div class="tname" style="color:var(--motion)">АКЦЕНТЫ · МАРКЕРЫ</div>
+    <div class="tl-lane" style="height:22px;" onclick="seekFrom(event)">${lane2}<div class="ph" style="left:${S.t/T*100}%"></div></div>
+  </div>`;
+
+  /* дорожка 3 — слои Motion IR */
+  const row3 = `<div style="padding:9px 4px 3px;" class="tname" >СЛОИ · MOTION IR 2.1 <span style="color:var(--faint2); letter-spacing:0;">· свёрнуты</span></div>` +
+    LAYERS.map(l=>`
+      <div class="tl-row">
+        <div class="lrow-name"><span class="ty">${l.ty==='cam'?'⤢':l.ty==='cur'?'➤':l.ty==='ovl'?'▢':l.ty==='dsg'?'▤':'T'}</span>
+          ${esc(l.name)}${l.det?`<span class="detb" title="Вернуть к приёму" onclick="reattach('${esc(l.name)}')">правлено вручную · вернуть</span>`:''}</div>
+        <div class="lrow-lane" onclick="seekFrom(event)">
+          <div class="lspan ${l.ty==='cam'?'cam':l.ty==='ovl'?'ovl':l.ty==='txt'?'':'dsg'} ${l.det?'det':''}"
+               style="left:${pct(l.span[0])}; width:${pct(l.span[1]-l.span[0])}"></div>
+          <div class="ph" style="left:${S.t/T*100}%"></div></div>
+      </div>`).join('');
+
+  $('#tl-scroll').innerHTML = row1 + row2 + row3;
+}
+
+/* ── инспектор сцены (ТЗ §15.5) + судья (§15.4) ── */
+function renderInspector(){
+  const sc = scenes[S.sel], sh = shot(sc.shot), g = grp(sc.shot);
+  const box = sc.target ? TGT_BOX[sc.target] : null;
+
+  /* превью приёма: текущий + две альтернативы из каталога */
+  const all = Object.entries(SHOTS);
+  const idx = all.findIndex(([id])=>id===sc.shot);
+  const alts = [ all[idx], all[(idx+3)%all.length], all[(idx+5)%all.length] ];
+
+  /* параметры приёма — из params_schema */
+  let params = '';
+  if(sc.shot==='zoom-to-region'){
+    const r = sc.region||[0,0,.5,.5];
+    params = `<div class="frow"><div class="lbl">РАМКА КАМЕРЫ · REGION</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+        ${[['X',0],['Y',1],['Ш',2],['В',3]].map(([n,i])=>`
+          <div class="stpr"><div class="k">${n}</div><div class="v num" id="rg-${i}">${Math.round(r[i]*100)}%</div>
+          <div class="b" onclick="bumpRegion(${i},-0.01)">−</div><div class="b" onclick="bumpRegion(${i},0.01)">+</div></div>`).join('')}
+      </div>
+      <div style="font-size:10.5px; font-weight:600; color:var(--faint2);">или тяните рамку прямо на превью</div></div>`;
+  } else if(sh.needsText){
+    params = `<div class="frow"><div class="lbl">ТЕКСТ СЦЕНЫ</div><div class="field" id="sc-text">${esc(sc.text||'')}</div>
+      <div style="font-size:10.5px; font-weight:600; color:var(--faint2);">собирается по словам · стаггер 70 мс</div></div>`;
+  } else if(sc.shot==='state-swap'){
+    params = `<div class="frow"><div class="lbl">СОСТОЯНИЯ ЦЕЛИ</div><div class="field">default → loading → success</div></div>`;
+  } else if(sc.shot==='type-into'){
+    params = `<div class="frow"><div class="lbl">ТЕКСТ ВВОДА</div><div class="field">Счёт за SEO-аудит</div></div>`;
+  } else {
+    params = `<div class="frow"><div class="lbl">ПАРАМЕТРЫ ПРИЁМА</div>
+      <div class="field" style="color:var(--faint2);">нет параметров — только кривые из каталога</div></div>`;
+  }
+
+  const jf = findings.map((f,i)=>`
+    <div class="jf ${f.fixed?'res':''}" onclick="jumpFinding('${f.scene}')">
+      <div class="dt" style="background:${SEV_COLOR[f.sev]}"></div>
+      <div class="bd"><div class="m1">${esc(f.msg)}</div>
+        <div class="m2 num">${f.scene} · порог ${f.thr} · факт ${f.act}</div></div>
+      ${f.fixed?'<span class="fixd">исправлено</span>':''}
+    </div>`).join('');
+
+  $('#insp').innerHTML = `
+    <div class="hdr">
+      <span class="sid">${sc.id}</span>
+      <span class="badge" style="background:${g.color}22; color:${g.color};">${g.label}</span>
+      <div class="tgl ${sc.enabled?'on':''}" onclick="toggleEnabled()" title="Вкл/выкл сцену"><i></i></div>
+      <span class="del" onclick="delScene()">Удалить</span>
+    </div>
+
+    <div class="frow"><div class="lbl">ПРИЁМ</div>
+      <div class="shotbtn"><div class="ic" style="background:${g.color}26; color:${g.color};">${sh.icon}</div>
+        ${sh.title}<span class="ca">▾</span></div>
+      <div class="prevrow">${alts.map(([id,s],i)=>`
+        <div class="prevcard ${i===0?'on':''}" onclick="setShot('${id}')" title="Превью-webm · 2.0 с">
+          <div class="th" style="background:linear-gradient(135deg, ${GROUPS[s.g].color}3A, #12121A);">▶
+            <span class="du num">2.0s</span></div>
+          <div class="nm">${s.title}</div></div>`).join('')}
+      </div></div>
+
+    <div class="frow"><div class="lbl">ЦЕЛЬ · ${REQ_LABEL[sh.req]}</div>
+      ${sc.target ? `
+        <div class="tgtcard"><div class="th">▤</div>
+          <div style="min-width:0;"><div class="nm">${esc(sc.target)}</div>
+          <div class="rl">${esc((MATERIAL[0].items.find(i=>i.id===sc.target)||{}).kind||'компонент')}
+          ${(MATERIAL[0].items.find(i=>i.id===sc.target)||{}).states ? '· hover, active' : ''}</div></div></div>
+        <div class="pickbtn" onclick="flash('Кликните по компоненту на превью')">Выбрать на превью</div>`
+      : `<div class="field" style="color:var(--faint2);">не требуется для этого приёма</div>`}
+    </div>
+
+    <div class="frow"><div class="lbl">ТАЙМИНГ</div>
+      <div class="stpr"><div class="k">Длительность</div><div class="v num">${dur_s(sc.dur)}</div>
+        <div class="b" onclick="bumpDur(-200)">−</div><div class="b" onclick="bumpDur(200)">+</div></div>
+      <div class="stpr"><div class="k">Вес сцены</div><div class="v num">${sc.weight.toFixed(1)}</div>
+        <div class="b" onclick="bumpWeight(-0.1)">−</div><div class="b" onclick="bumpWeight(0.1)">+</div></div>
+      <div><div class="lbl" style="margin:6px 0 5px;">ПЕРЕХОД · ИЗ ТАБЛИЦЫ РИТМА</div>
+        <div class="trchips">
+          ${[['cut','cut'],['fade200','fade 200'],['fade320','fade 320']].map(([v,t])=>{
+            const on = (sc.trans.t==='cut'&&v==='cut')||(sc.trans.t==='fade'&&sc.trans.d===+v.slice(4));
+            return `<span class="pill ${on?'on-p':''}" onclick="setTrans('${v}')">${t}</span>`; }).join('')}
+        </div></div>
+    </div>
+
+    ${params}
+
+    <div class="frow"><div class="lbl">NOTE · НЕ ВЛИЯЕТ НА РЕНДЕР</div>
+      <div class="field" style="white-space:normal;">${esc(sc.note)}</div></div>
+
+    <div class="rgen" onclick="regenScene()">↻ Перегенерировать эту сцену</div>
+
+    <div style="height:1px; background:var(--brd-soft); margin-top:2px;"></div>
+
+    <div class="judge">
+      <div class="scorerow">
+        <span class="sc num" id="j-score">${S.score}</span><span class="of">/ 100</span>
+        ${S.repaired?`<span class="delta num">+${S.score-62}</span>`:''}
+      </div>
+      <div style="display:flex; flex-direction:column; gap:6px;">${jf}</div>
+      <div class="fixbtn" id="fixbtn" ${S.repaired?'disabled':''}
+           onclick="repair()">${S.repaired?'Принято · откат при падении':'Починить'}</div>
+      ${S.repaired?`<div class="jlog num">итерация 1 · 62 → ${S.score} · принято</div>`:''}
+    </div>
+  `;
+}
+
+/* ── оверлеи превью ── */
+function renderOverlays(){
+  const sc = scenes[S.sel], sh = shot(sc.shot);
+  const T = total(), st = starts();
+  /* бейдж — активная по времени сцена */
+  let ai = 0; scenes.forEach((s,i)=>{ if(S.t >= st[i] + (s.enabled?s.dur:0) - 1) ai = i; });
+  const asc = scenes[ai], ash = shot(asc.shot);
+  $('#scene-badge').textContent = `${asc.id} · ${ash.title} · ${asc.target||ash.title}`;
+
+  /* подсветка цели выбранной сцены */
+  const box = sc.target ? TGT_BOX[sc.target] : null;
+  const o = $('#tgt-outline'), l = $('#tgt-label');
+  if(box && S.tool==='sel'){
+    o.style.display='block'; l.style.display='block';
+    o.style.left=box[0]+'px'; o.style.top=box[1]+'px'; o.style.width=box[2]+'px'; o.style.height=box[3]+'px';
+    l.style.left=box[0]+'px'; l.style.top=(box[1]-38)+'px'; l.textContent=sc.target;
+  } else { o.style.display='none'; l.style.display='none'; }
+
+  /* рамка камеры — только для zoom-to-region */
+  const cf = $('#cam-frame');
+  if(sc.shot==='zoom-to-region' && sc.region){
+    const r = sc.region; cf.style.display='block';
+    cf.style.left=r[0]*1920+'px'; cf.style.top=r[1]*1080+'px';
+    cf.style.width=r[2]*1920+'px'; cf.style.height=r[3]*1080+'px';
+  } else cf.style.display='none';
+
+  /* текстовые сцены (титр / финал) */
+  const tov = $('#txt-ov');
+  if(sh.needsText && sc.enabled){
+    tov.classList.remove('hidden');
+    tov.querySelector('.tx').textContent = sc.text||'';
+    tov.querySelector('.bt').classList.toggle('hidden', sc.shot!=='cta-outro');
+    tov.querySelector('.bt').textContent = sc.text||'';
+  } else tov.classList.add('hidden');
+
+  /* safe-areas: подсветка нарушения (ТЗ §15.4) */
+  const bad = findings.some(f=>!f.fixed && f.scene===sc.id && f.msg.includes('safe-area'));
+  const cap = $('#sa-caption'), lg = $('#sa-logo');
+  cap.style.left='6%'; cap.style.top='80%'; cap.style.width='88%'; cap.style.height='14%';
+  lg.style.left='78%'; lg.style.top='5%'; lg.style.width='16%'; lg.style.height='12%';
+  cap.classList.toggle('bad', bad);
+}
+
+function layoutViewer(){
+  const v = $('#viewer'); if(!v) return;
+  const cs = getComputedStyle(v);
+  const w = v.clientWidth - parseFloat(cs.paddingLeft)*2, h = v.clientHeight - parseFloat(cs.paddingTop)*2;
+  if(w<40||h<40) return;
+  S.fit = Math.min(w/1920, h/1080);
+  const so = $('#stage-outer');
+  so.style.width = Math.round(1920*S.fit)+'px';
+  so.style.height = Math.round(1080*S.fit)+'px';
+  $('#stage').style.transform = `scale(${S.fit})`;
+}
+
+/* ── транспорт ── */
+let timer = null;
+function togglePlay(){ S.playing ? stopPlay() : startPlay(); }
+function startPlay(){
+  if(total()<=0) return;
+  if(S.t >= total()-30) S.t = 0;
+  S.playing = true; renderTopbar();
+  timer = setInterval(()=>{
+    S.t += 50;
+    if(S.t >= total()){ S.t = total(); stopPlay(); }
+    updatePlayhead();
+  }, 50);
+}
+function stopPlay(){ S.playing = false; if(timer){ clearInterval(timer); timer=null; } renderTopbar(); }
+function toStart(){ S.t = 0; updatePlayhead(true); }
+function seekFrom(e){
+  const r = e.currentTarget.getBoundingClientRect();
+  S.t = Math.max(0, Math.min(total(), (e.clientX-r.left)/r.width*total()));
+  updatePlayhead(true);
+}
+function updatePlayhead(force){
+  const T = total()||1, p = (Math.min(S.t,T)/T*100)+'%';
+  document.querySelectorAll('#scr-studio .ph').forEach(el=>el.style.left=p);
+  $('#st-time').textContent = fmt(Math.min(S.t,T))+' / '+fmt(T);
+  const st = starts(); let ai = 0;
+  scenes.forEach((s,i)=>{ if(s.enabled && S.t >= st[i]+s.dur-1) ai = i; });
+  if(ai !== S.lastActive || force){
+    S.lastActive = ai;
+    const asc = scenes[ai], ash = shot(asc.shot);
+    $('#scene-badge').textContent = `${asc.id} · ${ash.title} · ${asc.target||ash.title}`;
+  }
+}
+function selScene(i){
+  S.sel = i;
+  const st = starts();
+  S.t = st[i]+240;
+  if(S.screen==='graph'){ renderNode(); return; }
+  renderAll();
+}
+function jumpFinding(sid){
+  const i = scenes.findIndex(s=>s.id===sid);
+  if(i>=0) selScene(i);
+}
+
+/* ── правки сцен ── */
+let rzDrag = null;
+function rzStart(e,i){
+  if(e.button!==0) return;
+  e.stopPropagation();
+  const lane = e.currentTarget.closest('.tl-lane').getBoundingClientRect();
+  rzDrag = { i, mx:e.clientX, dur:scenes[i].dur, msPerPx: total()/(lane.width-2) };
+}
+function rzMove(e){
+  if(!rzDrag) return;
+  const d = Math.max(800, Math.min(15000, Math.round((rzDrag.dur + (e.clientX-rzDrag.mx)*rzDrag.msPerPx)/100)*100));
+  scenes[rzDrag.i].dur = d;
+  scenes[rzDrag.i].weight = Math.max(0.5, Math.min(2.0, Math.round(d/3000*10)/10));
+  renderTimeline(); renderTopbar();
+}
+function bumpDur(d){ const sc=scenes[S.sel]; sc.dur=Math.max(800,Math.min(15000,sc.dur+d)); renderAll(); }
+function bumpWeight(d){ const sc=scenes[S.sel]; sc.weight=Math.max(0.5,Math.min(2.0,+(sc.weight+d).toFixed(1))); renderInspector(); }
+function bumpRegion(i,d){
+  const sc=scenes[S.sel]; if(!sc.region) sc.region=[0.06,0.10,0.56,0.46];
+  sc.region[i] = Math.max(0, Math.min(1, +(sc.region[i]+d).toFixed(2)));
+  renderOverlays(); renderInspector();
+}
+function setTrans(v){
+  const sc = scenes[S.sel];
+  sc.trans = v==='cut' ? {t:'cut'} : {t:'fade', d:+v.slice(4)};
+  renderInspector();
+}
+function setShot(id){
+  const sc = scenes[S.sel], sh = shot(id);
+  sc.shot = id;
+  if(sh.req==='none') sc.target = null;
+  if(sh.needsText && !sc.text) sc.text = 'Новый текст сцены';
+  if(id==='zoom-to-region' && !sc.region) sc.region = [0.06,0.10,0.56,0.46];
+  if(id==='zoom-to-region' && !sc.target) sc.target = 'InvoiceTable';
+  renderAll();
+  if(S.screen==='graph') renderNode();
+}
+function pickTarget(id){
+  const sc = scenes[S.sel], sh = shot(sc.shot);
+  if(sh.req==='none'){ flash('Этому приёму цель не нужна'); return; }
+  sc.target = id;
+  renderAll();
+}
+function toggleEnabled(){
+  const sc = scenes[S.sel];
+  sc.enabled = !sc.enabled;
+  renderAll();
+}
+function addScene(){
+  const n = scenes.length+1;
+  scenes.push({ id:'sc-'+String(n).padStart(2,'0'), shot:'spotlight', target:'Hero', weight:1.0, dur:3000,
+    text:null, note:'новая сцена', trans:{t:'cut'}, enabled:true });
+  S.sel = scenes.length-1;
+  renderAll(); renderNode();
+  flash('Сцена добавлена — выберите приём в каталоге');
+}
+function delScene(){
+  if(scenes.length<=2){ flash('Меньше двух сцен нельзя'); return; }
+  scenes.splice(S.sel,1);
+  S.sel = Math.max(0,S.sel-1);
+  renderAll(); renderNode();
+}
+function reattach(name){
+  const l = LAYERS.find(x=>x.name===name); if(l) l.det=false;
+  renderTimeline();
+}
+function regenScene(){
+  const el = document.querySelectorAll('#tl-scroll .scb')[S.sel];
+  if(el){ el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+  flash('Перегенерирована только эта сцена — остальное не тронуто');
+}
+
+/* ── рамка камеры на превью ── */
+let camDrag = null;
+function camMove(e){
+  const sc = scenes[S.sel]; if(!sc.region) return;
+  const r = $('#stage').getBoundingClientRect();
+  const fx = (e.clientX-r.left)/S.fit/1920, fy = (e.clientY-r.top)/S.fit/1080;
+  if(camDrag.mode==='move'){
+    sc.region[0] = Math.max(0, Math.min(1-sc.region[2], +(camDrag.rx + fx-camDrag.fx).toFixed(3)));
+    sc.region[1] = Math.max(0, Math.min(1-sc.region[3], +(camDrag.ry + fy-camDrag.fy).toFixed(3)));
+  } else {
+    sc.region[2] = Math.max(0.08, Math.min(1-sc.region[0], +(camDrag.rw + fx-camDrag.fx).toFixed(3)));
+    sc.region[3] = Math.max(0.08, Math.min(1-sc.region[1], +(camDrag.rh + fy-camDrag.fy).toFixed(3)));
+  }
+  const rr = sc.region, cf = $('#cam-frame');
+  cf.style.left=rr[0]*1920+'px'; cf.style.top=rr[1]*1080+'px';
+  cf.style.width=rr[2]*1920+'px'; cf.style.height=rr[3]*1080+'px';
+  ['0','1','2','3'].forEach(i=>{ const el=$('#rg-'+i); if(el) el.textContent=Math.round(rr[i]*100)+'%'; });
+}
+function setTool(t){
+  S.tool = t;
+  $('#tool-sel').classList.toggle('on', t==='sel');
+  $('#tool-cam').classList.toggle('on', t==='cam');
+  renderOverlays();
+  flash(t==='cam' ? 'Тяните рамку на превью — params.region' : 'Клик по компоненту на превью — цель сцены');
+}
+
+/* ── пресет / провайдер / бриф ── */
+function setPreset(k){
+  const old = PRESETS[S.preset].total, nw = PRESETS[k].total;
+  scenes.forEach(sc=>{ sc.dur = Math.max(800, Math.min(15000, Math.round(sc.dur*nw/old/100)*100)); });
+  S.preset = k; closePresetMenu();
+  renderAll(); if(S.screen==='graph') renderNode();
+}
+function setProvider(k){ S.provider = k; renderBriefbar(); if(S.screen==='graph') renderNode(); }
+function cycleEffort(){
+  const order = ['medium','high','max'];
+  S.effort = order[(order.indexOf(S.effort)+1)%3];
+  renderBriefbar(); if(S.screen==='graph') renderNode();
+}
+function togglePresetMenu(e){
+  e.stopPropagation();
+  if($('#pmenu')){ closePresetMenu(); return; }
+  const m = document.createElement('div');
+  m.className = 'pmenu'; m.id='pmenu';
+  const r = e.currentTarget.getBoundingClientRect();
+  m.style.left = r.left+'px'; m.style.top = (r.bottom+6)+'px';
+  m.style.position = 'fixed';
+  m.innerHTML = Object.entries(PRESETS).map(([k,p])=>`
+    <div class="pi" onclick="setPreset('${k}')">
+      <span class="pt">${p.title}${k===S.preset?' ✓':''}</span>
+      <span class="pm num">${p.res} · ${p.total/1000} с · ${p.scenes}</span></div>`).join('');
+  document.body.appendChild(m);
+}
+function closePresetMenu(){ const m=$('#pmenu'); if(m) m.remove(); }
+document.addEventListener('click', e=>{ if(!e.target.closest('.pmenu') && !e.target.closest('.presetbtn')) closePresetMenu(); });
+
+/* ── «Собрать ролик» — конверт LLM (ТЗ §3.1) ── */
+function assemble(){
+  if(S.running) return;
+  S.running = true; S.runPct = 0;
+  const step = () => {
+    S.runPct += 0.016 + Math.random()*0.012;
+    if(S.runPct >= 1){
+      S.runPct = 1; S.running = false;
+      if(S.screen==='graph'){ renderNode(); renderChips(); }
+      else { renderBriefbar(); renderTopbar(); }
+      scenes.forEach((sc,i)=>{ /* лента «пересобралась» */ });
+      document.querySelectorAll('#rib .rib-card').forEach((el,i)=>{
+        el.classList.add('pop'); el.style.animationDelay = (i*40)+'ms';
+        setTimeout(()=>el.classList.remove('pop'), 600);
+      });
+      flash('Раскадровка собрана: ' + scenes.filter(s=>s.enabled).length + ' сцен · все цели существуют');
+      return;
+    }
+    if(S.screen==='graph'){
+      const st = $('#nb-status'); if(st){ st.className='badge run'; st.textContent='сборка…'; }
+      const f = $('#nb-fill'); if(f) f.style.width = (S.runPct*100)+'%';
+      const p = $('#nb-pct'); if(p) p.textContent = Math.round(S.runPct*100)+'%';
+    } else renderBriefbar();
+    setTimeout(step, 42);
+  };
+  if(S.screen==='graph') renderNode(); else renderBriefbar();
+  step();
+}
+
+/* ── судья и починка (ТЗ §11) ── */
+function repair(){
+  if(S.repaired) return;
+  findings[0].fixed = true; findings[2].fixed = true;
+  S.repaired = true;
+  /* счёт докручивается */
+  const from = S.score, to = 90, t0 = performance.now();
+  const anim = now => {
+    const u = Math.min(1,(now-t0)/700);
+    S.score = Math.round(from + (to-from)*u);
+    const el = $('#j-score'); if(el) el.textContent = S.score;
+    $('#st-judge').textContent = 'Судья '+S.score;
+    if(u<1) requestAnimationFrame(anim);
+    else { renderInspector(); renderTimeline(); if(S.screen==='graph') renderNode(); }
+  };
+  requestAnimationFrame(anim);
+  flash('Починка принята: балл вырос, откат при падении работает');
+}
+
+/* ── рендер mp4 (ТЗ §10.2) ── */
+let rendering = false;
+function renderMp4(){
+  if(rendering) return;
+  rendering = true;
+  const ov = $('#render-ov');
+  ov.classList.remove('hidden');
+  const frames = Math.round(total()/1000*30);
+  let f = 0;
+  const step = () => {
+    f = Math.min(frames, f + Math.round(frames/110) + 6);
+    const pct = f/frames;
+    if(f >= frames){
+      ov.innerHTML = `<div class="t" style="color:var(--ok-t);">MP4 готов</div>
+        <div class="d num">${dur_s(total())} · 1920×1080 · 30 fps · 12.4 МБ · звук: −an</div>
+        <div class="row"><div class="g" onclick="closeRender()">Закрыть</div>
+        <div class="p" onclick="closeRender()">Открыть</div></div>`;
+      rendering = false;
+      return;
+    }
+    ov.innerHTML = `<div class="t">Рендер · <span class="num">кадр ${f} / ${frames}</span></div>
+      <div class="bar"><div class="fill" style="width:${pct*100}%"></div></div>
+      <div class="d num">Playwright + ffmpeg · sample_frame в Python · 30 fps</div>`;
+    setTimeout(step, 30);
+  };
+  step();
+}
+function closeRender(){ $('#render-ov').classList.add('hidden'); rendering=false; }
+
+/* ── флеш-строка внизу вьюера ── */
+let flashT = null;
+function flash(msg){
+  let el = $('#flashbar');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'flashbar';
+    el.style.cssText = 'position:absolute; left:50%; bottom:14px; transform:translateX(-50%); z-index:9;'+
+      'padding:8px 16px; border-radius:999px; background:rgba(16,16,20,.95); border:1px solid #2A2A33;'+
+      'box-shadow:0 10px 30px rgba(0,0,0,.5); font-size:12px; font-weight:600; color:var(--text2);'+
+      'white-space:nowrap; transition:opacity .3s ease;';
+    $('#scr-studio').appendChild(el);
+  }
+  el.textContent = msg; el.style.opacity = '1';
+  clearTimeout(flashT);
+  flashT = setTimeout(()=>{ el.style.opacity = '0'; }, 2600);
+}
+
+/* ── хоткеи ── */
+window.addEventListener('keydown', e => {
+  if(e.key==='Escape'){ closeMenu(); closePresetMenu(); if(S.screen==='studio') closeStudio(); }
+  if(e.code==='Space' && S.screen==='studio' && e.target.tagName!=='INPUT'){
+    e.preventDefault(); togglePlay();
+  }
+});
+
+/* ── drag рамки камеры на превью (params.region, ТЗ §15.2) ── */
+function camStart(e, mode){
+  if(e.button !== 0) return;
+  e.stopPropagation(); e.preventDefault();
+  const sc = scenes[S.sel]; if(!sc.region) sc.region=[0.06,0.10,0.56,0.46];
+  const r = $('#stage').getBoundingClientRect();
+  camDrag = { mode,
+    fx:(e.clientX-r.left)/S.fit/1920, fy:(e.clientY-r.top)/S.fit/1080,
+    rx:sc.region[0], ry:sc.region[1], rw:sc.region[2], rh:sc.region[3] };
+}
+
+/* ═══════════════ инициализация ═══════════════ */
+$('#canvas').addEventListener('mousedown', canvasDown);
+$('#canvas').addEventListener('wheel', canvasWheel, { passive:false });
+$('#canvas').addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const r = e.currentTarget.getBoundingClientRect();
+  openMenu(Math.min(e.clientX-r.left, r.width-350), Math.min(e.clientY-r.top, Math.max(20, r.height-300)));
+});
+$('#lp-toggle').addEventListener('click', toggleLeft);
+$('#brief-input').addEventListener('input', e => {
+  S.brief = e.target.value;
+  if(S.screen==='graph') renderNode();
+});
+new ResizeObserver(layoutViewer).observe($('#viewer'));
+window.addEventListener('resize', layoutViewer);
+$('#cam-frame').addEventListener('mousedown', e => camStart(e, 'move'));
+$('#cam-hnd').addEventListener('mousedown', e => camStart(e, 'resize'));
+
+renderNode();
+renderChips();
+applyView();
+</script>
+</body>
+</html>

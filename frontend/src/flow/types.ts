@@ -113,6 +113,8 @@ export type PageNodeData = SourceAwareNodeData & {
 export type MixNodeData = {
   inputs: string[];
   weights: Record<string, number>;
+  /** Сколько вариантов собрать (1–8) — счётчик из дизайн-хендоффа. */
+  variants?: number;
   ir: IRObject | null;
 };
 /* Блок Source Import: lit — «зажжён» ли выходной порт блока. */

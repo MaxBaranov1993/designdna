@@ -10,19 +10,22 @@
    * тоже динамические, с drag-порядком прямо в PageNode. */
   let { type, data = undefined }: { type: NodeType; data?: AnyNodeData } = $props();
 
-  let ports = $derived(
-    type === "mix" || type === "page" || type === "edit" ? [] : portsOfNode({ type, data }).in,
-  );
+  let ports = $derived(portsOfNode({ type, data }).in);
 </script>
 
-{#each ports as p (p.name)}
-  <div class="port-row in" data-port={p.name} data-kind={p.kind}>
+{#each ports as p, index (p.name)}
+  <div
+    class="port-row dna-port in"
+    data-port={p.name}
+    data-kind={p.kind}
+    style={`top: ${61 + index * 24}px`}
+  >
+    <span class="plabel">{p.label}</span>
     <Handle
       id={p.name}
       type="target"
       position={Position.Left}
       class={cn("port-dot", "pp-in-" + p.name, kindClass(p.kind))}
     />
-    <span class="plabel">{p.label}</span>
   </div>
 {/each}

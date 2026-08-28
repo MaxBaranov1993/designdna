@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { Handle, Position } from "@xyflow/svelte";
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { MixFlowNode } from "../flow/types";
-  import { cn } from "../lib/utils";
+  import InPorts from "./InPorts.svelte";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
   import OutPorts from "./OutPorts.svelte";
@@ -20,10 +19,10 @@
 </script>
 
 <NodeShell {id} type="mix" {selected}>
+  <InPorts type="mix" {data} />
   {#each data.inputs as name (name)}
     {@const weight = data.weights[name] ?? 50}
-    <div class="mix-row port-row in" data-port={name} data-kind="ir">
-      <Handle id={name} type="target" position={Position.Left} class={cn("port-dot port-ir", "pp-in-" + name)} />
+    <div class="mix-row" data-port={name} data-kind="ir">
       <span class="cap">{name}</span>
       <input
         type="range"

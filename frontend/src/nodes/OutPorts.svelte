@@ -11,8 +11,13 @@
   let ports = $derived(portsOfNode({ type, data }).out);
 </script>
 
-{#each ports as p (p.name)}
-  <div class="port-row out" data-port={p.name} data-kind={p.kind}>
+{#each ports as p, index (p.name)}
+  <div
+    class="port-row dna-port out"
+    data-port={p.name}
+    data-kind={p.kind}
+    style={`bottom: ${21 + index * 24}px`}
+  >
     <span class="plabel">{p.label}</span>
     <Handle
       id={p.name}

@@ -2,23 +2,25 @@ import type { AnyNodeData, EditNodeData, MixNodeData, NodeType, PageNodeData, Po
 
 export type PortDecl = { name: string; label: string; kind: PortKind };
 
-/* Зеркало NODE_DEFS (nodes.js:24-32) */
-export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: number }> = {
-  prompt: { title: "Промпт", icon: "✎", w: 260 },
-  reference: { title: "Референс", icon: "▣", w: 270 },
-  generator: { title: "Генератор", icon: "◈", w: 300 },
-  edit: { title: "Редактор (DNA)", icon: "⬚", w: 430 },
-  mix: { title: "Микс", icon: "⊕", w: 290 },
-  page: { title: "Страница", icon: "▤", w: 340 },
-  sourceimport: { title: "Source Import", icon: "⌁", w: 360 },
-  designui: { title: "Design UI (legacy)", icon: "UI", w: 380 },
-  derive: { title: "Derive", icon: "↳", w: 330 },
-  reskin: { title: "Reskin", icon: "✦", w: 340 },
-  qualitypass: { title: "Quality Pass", icon: "✓", w: 350 },
-  recorder: { title: "Interaction Recorder", icon: "REC", w: 420 },
-  motion: { title: "Motion Editor", icon: "M", w: 390 },
-  pagebridge: { title: "Page Bridge", icon: "↔", w: 300 },
-  designsystem: { title: "Design System / UI Kit", icon: "◈", w: 340 },
+/* Зеркало NODE_DEFS (nodes.js:24-32), расширено дизайн-хендоффом
+ * design_handoff_node_editor: sub — подзаголовок шапки, accent — цвет типа
+ * (иконка, выделение, прогресс), ширины 300–334px по макету. */
+export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: number; sub: string; accent: string }> = {
+  prompt: { title: "Промпт", icon: "✎", w: 300, sub: "текст задачи", accent: "#FF691D" },
+  reference: { title: "Референс", icon: "▣", w: 300, sub: "лёгкая стилевая подсказка", accent: "#FF691D" },
+  generator: { title: "Генератор", icon: "◈", w: 322, sub: "LLM → варианты IR", accent: "#9B5CFF" },
+  edit: { title: "Редактор (DNA)", icon: "⬚", w: 330, sub: "DNA-редактор", accent: "#35B8A0" },
+  mix: { title: "Микс", icon: "⊕", w: 334, sub: "смешение вариантов по весам", accent: "#9B5CFF" },
+  page: { title: "Страница", icon: "▤", w: 330, sub: "merge: страница из блоков", accent: "#22C55E" },
+  sourceimport: { title: "Source Import", icon: "⌁", w: 322, sub: "URL/скрин → блоки + DNA", accent: "#FF691D" },
+  designui: { title: "Design UI (legacy)", icon: "UI", w: 380, sub: "legacy-артефакт", accent: "#35B8A0" },
+  derive: { title: "Derive", icon: "↳", w: 310, sub: "родственный компонент", accent: "#9B5CFF" },
+  reskin: { title: "Reskin", icon: "✦", w: 310, sub: "вариант с локом структуры", accent: "#9B5CFF" },
+  qualitypass: { title: "Quality Pass", icon: "✓", w: 310, sub: "judge + repair + scorecard", accent: "#22C55E" },
+  recorder: { title: "Interaction Recorder", icon: "REC", w: 334, sub: "IR actions → Interaction IR", accent: "#22C55E" },
+  motion: { title: "Motion Editor", icon: "M", w: 322, sub: "Interaction IR → editable timeline", accent: "#E05FB0" },
+  pagebridge: { title: "Page Bridge", icon: "↔", w: 300, sub: "передать компонент между страницами", accent: "#35B8A0" },
+  designsystem: { title: "Design System / UI Kit", icon: "◈", w: 300, sub: "Source → published DS", accent: "#9B5CFF" },
 };
 
 /* Зеркало PORTS (nodes.js:35-48); у mix входы динамические — из data.inputs (portsOfNode),
@@ -153,11 +155,12 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "edit":
       return { inputs: ["a", "b"], ir: null, sourceRegistry: {}, nodeSources: {} };
     case "mix":
-      return { inputs: ["a", "b"], weights: { a: 70, b: 30 }, ir: null };
+      return { inputs: ["a", "b"], weights: { a: 70, b: 30 }, variants: 3, ir: null };
     case "page":
       return { inputs: ["a", "b"], ir: null, activeViewport: "desktop" };
     case "sourceimport":
-      return { mode: "url", url: "", image: null, fileName: "", mine: false, authenticatedSession: false, activeViewport: "desktop", previewMode: "reference", importedUrl: null, blocks: [], tokens: null, sourceArtifact: null, aiRefine: false, aiProvider: "openai" };
+      /* Дизайн-хендофф: AI-уточнение включено по умолчанию (чекбокс из ноды убран). */
+      return { mode: "url", url: "", image: null, fileName: "", mine: false, authenticatedSession: false, activeViewport: "desktop", previewMode: "reference", importedUrl: null, blocks: [], tokens: null, sourceArtifact: null, aiRefine: true, aiProvider: "openai" };
     case "designui":
       return { artifact: null, selectedComponent: 0 };
     case "derive":
@@ -192,6 +195,49 @@ export function defaultData(type: NodeType): AnyNodeData {
       return { channel: "shared-component", mode: "send", ir: null };
   }
 }
+
+/* Меню «Создать ноду» по дизайн-хендоффу: стадии пайплайна с цветовым кодом.
+ * Состав — реальный реестр CTX_ITEMS, сгруппированный (designui не создаётся). */
+export const CTX_GROUPS: { label: string; color: string; items: { type: NodeType; note: string }[] }[] = [
+  {
+    label: "ИСТОЧНИК",
+    color: "#FF691D",
+    items: [
+      { type: "prompt", note: "текст задачи" },
+      { type: "reference", note: "лёгкая стилевая подсказка" },
+      { type: "sourceimport", note: "URL/скрин → блоки + DNA" },
+    ],
+  },
+  {
+    label: "ГЕНЕРАЦИЯ",
+    color: "#9B5CFF",
+    items: [
+      { type: "generator", note: "LLM → варианты IR" },
+      { type: "derive", note: "родственный компонент" },
+      { type: "mix", note: "смешение по весам" },
+      { type: "reskin", note: "вариант с локом структуры" },
+    ],
+  },
+  {
+    label: "СБОРКА",
+    color: "#35B8A0",
+    items: [
+      { type: "edit", note: "DNA-редактор" },
+      { type: "page", note: "страница из блоков" },
+      { type: "pagebridge", note: "передать компонент между страницами" },
+    ],
+  },
+  {
+    label: "КОНТРОЛЬ И ДВИЖЕНИЕ",
+    color: "#22C55E",
+    items: [
+      { type: "qualitypass", note: "judge + repair + scorecard" },
+      { type: "recorder", note: "IR actions → Interaction IR" },
+      { type: "motion", note: "Interaction IR → editable timeline" },
+      { type: "designsystem", note: "Source → UI Kit → published Design System" },
+    ],
+  },
+];
 
 /* Зеркало CTX_ITEMS (nodes.js:1096-1104) — состав контекстного меню создания ноды */
 export const CTX_ITEMS: { type: NodeType; note: string }[] = [

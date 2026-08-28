@@ -2,6 +2,7 @@
   import {
     Background,
     BackgroundVariant,
+    MiniMap,
     SvelteFlow,
     useSvelteFlow,
     useUpdateNodeInternals,
@@ -10,12 +11,13 @@
   import "@xyflow/svelte/dist/style.css";
   import { onMount, tick } from "svelte";
 
-  import { CTX_ITEMS, NODE_DEFS, portsOfNode } from "./flow/ports";
+  import { CTX_GROUPS, NODE_DEFS, portsOfNode } from "./flow/ports";
   import { flow, flowActivePageId, flowEdges, flowNodes } from "./flow/state";
   import { useFlowStore } from "./flow/store";
   import { setReactFlowInstance } from "./flow/graphdev";
   import { reachable } from "./flow/dataflow";
-  import type { FlowEdge, FlowNode } from "./flow/types";
+  import type { FlowEdge, FlowNode, NodeType } from "./flow/types";
+  import { OPEN_NODE_MENU_EVENT } from "./flow/ui";
 
   import PromptNode from "./nodes/PromptNode.svelte";
   import ReferenceNode from "./nodes/ReferenceNode.svelte";
@@ -32,6 +34,7 @@
   import RecorderNode from "./nodes/RecorderNode.svelte";
   import MotionNode from "./nodes/MotionNode.svelte";
   import PageBridgeNode from "./nodes/PageBridgeNode.svelte";
+  import DnaEdge from "./flow/DnaEdge.svelte";
 
   /* Реестр кастомных нод — вне компонента, ключи = legacy type (конвертация данных не нужна) */
   const nodeTypes = {
@@ -51,6 +54,7 @@
     motion: MotionNode,
     pagebridge: PageBridgeNode,
   };
+  const edgeTypes = { default: DnaEdge };
 
   type CtxMenuState = { x: number; y: number; flowX: number; flowY: number };
 
@@ -61,6 +65,8 @@
   let edges = $state.raw<FlowEdge[]>(useFlowStore.getState().edges);
   let menu = $state<CtxMenuState | null>(null);
   let pendingConnection = $state<{ nodeId: string; handleId: string } | null>(null);
+  let menuSearch = $state("");
+  let canvasHost: HTMLDivElement | null = null;
   let snapNodeId: string | null = null;
   let didConnect = false;
   // Svelte Flow already moves nodes locally at pointer frequency. Mirroring
@@ -75,7 +81,20 @@
 
   onMount(() => {
     setReactFlowInstance(rf);
-    return () => setReactFlowInstance(null);
+    const openNodeMenu = () => {
+      if (!canvasHost) return;
+      const rect = canvasHost.getBoundingClientRect();
+      const x = rect.left + Math.min(rect.width * 0.56, rect.width - 190);
+      const y = rect.top + Math.min(rect.height * 0.34, rect.height - 260);
+      const point = rf.screenToFlowPosition({ x, y });
+      menuSearch = "";
+      menu = { x, y, flowX: point.x, flowY: point.y };
+    };
+    window.addEventListener(OPEN_NODE_MENU_EVENT, openNodeMenu);
+    return () => {
+      window.removeEventListener(OPEN_NODE_MENU_EVENT, openNodeMenu);
+      setReactFlowInstance(null);
+    };
   });
 
   // zustand → канвас (bind:nodes/edges зеркалят стор). Подписка срезами:
@@ -234,7 +253,22 @@
     return !reachable(Number(c.target), Number(c.source), st.edges);
   };
 
-  const closeMenu = () => (menu = null);
+  const closeMenu = () => {
+    menu = null;
+    menuSearch = "";
+  };
+
+  let visibleGroups = $derived.by(() => {
+    const query = menuSearch.trim().toLocaleLowerCase("ru");
+    if (!query) return CTX_GROUPS;
+    return CTX_GROUPS.map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        const def = NODE_DEFS[item.type];
+        return `${def.title} ${def.sub} ${item.note}`.toLocaleLowerCase("ru").includes(query);
+      }),
+    })).filter((group) => group.items.length);
+  });
 </script>
 
 <svelte:window
@@ -244,6 +278,7 @@
 />
 
 <div
+  bind:this={canvasHost}
   class="h-full w-full"
   class:flow-drag-active={nodeDragActive}
   role="presentation"
@@ -254,10 +289,13 @@
     bind:nodes
     bind:edges
     {nodeTypes}
+    {edgeTypes}
     onlyRenderVisibleElements={true}
     onconnect={onConnect}
     {isValidConnection}
-    minZoom={0.1}
+    minZoom={0.3}
+    maxZoom={2}
+    panOnDrag={[0, 1]}
     onconnectstart={(_event, params) => {
       if (params.handleType === "source" && params.nodeId && params.handleId) {
         didConnect = false;
@@ -318,7 +356,15 @@
     selectionKey={null}
     connectionLineStyle="stroke: #d4d4d8; stroke-width: 2; stroke-dasharray: 5 4;"
   >
-    <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} patternColor="#23232e" />
+    <Background variant={BackgroundVariant.Dots} gap={26} size={1} patternColor="#1B1B22" />
+    <MiniMap
+      pannable
+      zoomable
+      maskColor="rgba(10,10,12,.72)"
+      bgColor="#101013"
+      nodeColor={(node) => node.type ? NODE_DEFS[node.type as NodeType].accent : "#9B5CFF"}
+    />
+    <div class="dna-minimap-label"></div>
   </SvelteFlow>
   {#if menu}
     <!-- Контекстное меню создания ноды — зеркало showCtxMenu/CTX_ITEMS (nodes.js:1096-1122) -->
@@ -326,29 +372,40 @@
       id="ctx-menu"
       style="display: block; left: {Math.max(12, Math.min(menu.x, window.innerWidth - 312))}px; top: {Math.max(12, Math.min(menu.y, window.innerHeight - 480))}px;"
     >
-      <div class="ctx-cap">Создать ноду</div>
-      {#each CTX_ITEMS as it (it.type)}
-        <div
-          class="ctx-item"
-          data-type={it.type}
-          role="button"
-          tabindex="0"
-          onkeydown={(event) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            $flow.addNode(it.type, menu!.flowX, menu!.flowY);
-            closeMenu();
-          }}
-          onclick={() => {
-            $flow.addNode(it.type, menu!.flowX, menu!.flowY);
-            closeMenu();
-          }}
-        >
-          <span class="ci">{NODE_DEFS[it.type].icon}</span>
-          {NODE_DEFS[it.type].title}
-          <small>{it.note}</small>
-        </div>
-      {/each}
+      <div class="ctx-head"><div class="ctx-cap">СОЗДАТЬ НОДУ</div><span class="ctx-esc">ESC</span></div>
+      <div class="ctx-search-wrap">
+        <input class="ctx-search" bind:value={menuSearch} placeholder="Найти тип ноды…" aria-label="Найти тип ноды" />
+      </div>
+      <div class="ctx-list">
+        {#each visibleGroups as group (group.label)}
+          <div class="ctx-group-cap" style="color: {group.color}">{group.label}</div>
+          {#each group.items as item (item.type)}
+            <div
+              class="ctx-item"
+              data-type={item.type}
+              role="button"
+              tabindex="0"
+              onkeydown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                $flow.addNode(item.type, menu!.flowX, menu!.flowY);
+                closeMenu();
+              }}
+              onclick={() => {
+                $flow.addNode(item.type, menu!.flowX, menu!.flowY);
+                closeMenu();
+              }}
+            >
+              <span class:wide={NODE_DEFS[item.type].icon.length > 2} class="ci" style="background: color-mix(in srgb, {NODE_DEFS[item.type].accent}, transparent 86%); color: {NODE_DEFS[item.type].accent}">
+                {NODE_DEFS[item.type].icon}
+              </span>
+              <span class="ctx-title">{NODE_DEFS[item.type].title}</span>
+              <small>{item.note}</small>
+            </div>
+          {/each}
+        {/each}
+        {#if !visibleGroups.length}<div class="ctx-none">Ничего не найдено</div>{/if}
+      </div>
     </div>
   {/if}
 </div>

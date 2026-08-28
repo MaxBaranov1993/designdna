@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { Handle, Position } from "@xyflow/svelte";
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { flow } from "../flow/state";
   import type { PageFlowNode, SourceViewport } from "../flow/types";
+  import InPorts from "./InPorts.svelte";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
   import OutPorts from "./OutPorts.svelte";
@@ -28,13 +28,10 @@
 </script>
 
 <NodeShell {id} type="page" {selected}>
-  <div class="port-row in" data-port="tokens" data-kind="tokens">
-    <Handle id="tokens" type="target" position={Position.Left} class="port-dot port-tokens pp-in-tokens" />
-    <span class="plabel">style DNA</span>
-  </div>
+  <InPorts type="page" {data} />
   {#each data.inputs as name, idx (name)}
     <div
-      class="mix-row port-row in page-row"
+      class="mix-row page-row"
       data-port={name}
       data-kind="ir"
       role="listitem"
@@ -51,7 +48,6 @@
       }}
       title="Порядок строк = порядок секций на странице (таскайте)"
     >
-      <Handle id={name} type="target" position={Position.Left} class={"port-dot port-ir pp-in-" + name} />
       <span class="page-grip nodrag">⠿</span>
       <span class="cap">{name}</span>
       <span class="page-row-ctl nodrag">

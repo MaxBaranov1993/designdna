@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { Handle, Position } from "@xyflow/svelte";
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { toast } from "../flow/toast";
   import { flow } from "../flow/state";
   import { loadEditorController } from "../editor/runtime";
   import type { EditFlowNode } from "../flow/types";
+  import InPorts from "./InPorts.svelte";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
   import OutPorts from "./OutPorts.svelte";
@@ -41,10 +41,11 @@
 </script>
 
 <NodeShell {id} type="edit" {selected}>
+  <InPorts type="edit" data={data} />
   <div class="edit-inputs-label">Компоненты · порядок сверху вниз</div>
   {#each inputs as name, index (name)}
     <div
-      class="edit-input-row port-row in"
+      class="edit-input-row"
       data-port={name}
       data-kind="ir"
       role="listitem"
@@ -59,7 +60,6 @@
         dragFrom = null;
       }}
     >
-      <Handle id={name} type="target" position={Position.Left} class={"port-dot port-ir pp-in-" + name} />
       <span class="page-grip nodrag">⠿</span>
       <span class="cap">{name}</span>
       <span class="page-row-ctl nodrag">
