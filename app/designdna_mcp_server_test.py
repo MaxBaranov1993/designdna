@@ -171,6 +171,8 @@ def test_initialize_list_get_round_trip(data_dir):
             "designdna_project_put",
             "designdna_design_ir_validate",
             "designdna_project_summary",
+            # Live Command Bus: превью/применение к открытому редактору.
+            "designdna_live_command",
         ]
         by_name = {tool["name"]: tool for tool in listed["result"]["tools"]}
         assert by_name["designdna_project_get"]["annotations"]["readOnlyHint"] is True
@@ -527,6 +529,8 @@ def test_modern_tools_list_and_get_without_initialize(data_dir):
             "designdna_project_put",
             "designdna_design_ir_validate",
             "designdna_project_summary",
+            # Live Command Bus: превью/применение к открытому редактору.
+            "designdna_live_command",
         ]
         reply, body = mcp.tool("designdna_project_get", {}, params=_modern_params())
         assert reply["result"]["resultType"] == "complete"

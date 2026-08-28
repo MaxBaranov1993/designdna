@@ -219,9 +219,13 @@ def test_generate_receives_taste_memory(tmp_path: Path) -> None:
             }
         )
 
-        def fake_chat(provider, messages, temperature, role=None):
+        # Сигнатура llm.chat расширялась (role, model, reasoning_effort);
+        # заглушка принимает всё лишнее, чтобы тест не ломался от неё.
+        def fake_chat(provider, messages, temperature, role=None, **kwargs):
             seen.append(messages[-1]["content"])
-            return '{"version":"1.0","tokens":{},"tree":[]}'
+            # Минимальный IR, проходящий схему: пустые tokens/tree сервер
+            # отвергает валидацией, и тест падал на этом, а не на памяти вкуса.
+            return json.dumps({"version": "1.0", "tokens": {"mode": "light", "color": {"primary": "#111827", "secondary": "#374151", "accent": "#7c6cf0", "background": "#ffffff", "surface": "#f8fafc", "text": "#111827", "textMuted": "#6b7280", "border": "#e5e7eb"}, "font": {"display": {"family": "Inter", "weight": 700}, "body": {"family": "Inter", "weight": 400}, "scale": "default"}, "radius": {"card": "lg", "button": "md", "input": "md"}, "spacing": {"section": "lg", "container": "wide"}, "shadow": "sm"}, "tree": [{"id": "s1", "type": "hero", "variant": "centered", "props": {"heading": "Hero", "subheading": "sub", "ctaPrimary": {"text": "Go", "href": "#"}}}]})
 
         server.llm.chat = fake_chat
         response = server.generate(server.GenerateReq(brief="сделай hero", count=1))
