@@ -21,9 +21,42 @@
     onOpen?: (key: string, pool: CatalogPool) => void;
   } = $props();
 
+  /* Одно семейство — одна карточка. Fidelity-гейт раскладывает провалившиеся
+   * вхождения в ключи "family-review", "-review-2", ... — раньше каждый такой
+   * ключ становился отдельной карточкой с тем же названием, и каталог выглядел
+   * как свалка дублей. Здесь review-вхождения сворачиваются под свой мастер. */
+  type FamilyCard = { baseKey: string; primary: CatalogEntry; review: CatalogEntry[] };
+
+  const baseKeyOf = (key: string) => key.replace(/-review(?:-\d+)?$/, "");
+
+  function mergeFamilies(entries: CatalogEntry[]): FamilyCard[] {
+    const families = new Map<string, FamilyCard>();
+    const order: string[] = [];
+    for (const entry of entries) {
+      const baseKey = baseKeyOf(entry.key);
+      let family = families.get(baseKey);
+      if (!family) {
+        family = { baseKey, primary: entry, review: [] };
+        families.set(baseKey, family);
+        order.push(baseKey);
+        continue;
+      }
+      // Мастером карточки становится verified-вхождение из основного пула;
+      // остальные показываются внутри как экземпляры на ревью.
+      const better = entry.pool === "components" && family.primary.pool !== "components";
+      if (better) {
+        family.review.push(family.primary);
+        family.primary = entry;
+      } else {
+        family.review.push(entry);
+      }
+    }
+    return order.map((key) => families.get(key)!);
+  }
+
   let screens = $derived(artifact?.screens || []);
   let foundationGroups = $derived(artifact?.foundations.groups || []);
-  let catalogGroups = $derived.by(() => {
+  let catalogGroups = $derived.by((): Array<[string, FamilyCard[]]> => {
     const byKey = new Map(catalogEntries.map((entry) => [entry.key, entry]));
     const groups: Array<[string, CatalogEntry[]]> = [];
     const seen = new Set<string>();
@@ -40,7 +73,8 @@
       const category = String(entry.component.category || "Other");
       fallback.set(category, [...(fallback.get(category) || []), entry]);
     }
-    return [...groups, ...Array.from(fallback.entries())];
+    return [...groups, ...Array.from(fallback.entries())]
+      .map(([label, entries]) => [label, mergeFamilies(entries)]);
   });
   let detectedComponents = $derived(catalogEntries.length
     || artifact?.summary.componentSetCount || artifact?.summary.componentCount || 0);
@@ -128,17 +162,21 @@
         <small>{detectedComponents} exact masters · quality status never hides a component</small>
       </div>
       <div class="component-sheet" data-source-component-catalog>
-        {#each catalogGroups as [category, entries] (category)}
+        {#each catalogGroups as [category, families] (category)}
           <section class="catalog-group">
-            <header><h4>{category}</h4><span>{entries.length} sets</span></header>
+            <header><h4>{category}</h4><span>{families.length} families</span></header>
             <div class="catalog-grid">
-              {#each entries as entry (entry.pool + ":" + entry.key)}
+              {#each families as family (family.baseKey)}
+                {@const entry = family.primary}
                 {@const comp = entry.component}
                 {@const variants = Object.entries(comp.variants || {}) as Array<[string, any]>}
-                <article class:needs-review={comp.status !== "verified"} data-catalog-component={entry.key}>
+                {@const allVerified = comp.status === "verified" && family.review.every((item) => item.component.status === "verified")}
+                <article class:needs-review={!allVerified} data-catalog-component={entry.key}>
                   <header class="catalog-card-head">
-                    <div><strong>{comp.name || entry.key}</strong><small>{comp.canonicalRole || entry.key}</small></div>
-                    <span class:verified={comp.status === "verified"}>{comp.status === "verified" ? "verified" : "needs review"}</span>
+                    <div><strong>{comp.name || entry.key}</strong><small>{comp.canonicalRole || family.baseKey}</small></div>
+                    <span class:verified={allVerified}>
+                      {allVerified ? "verified" : family.review.length ? `review ×${family.review.length}` : "needs review"}
+                    </span>
                   </header>
                   <div class="catalog-variants">
                     {#each (variants.length ? variants : [["default", {}] as [string, any]]) as [variantKey, variant] (variantKey)}
@@ -148,8 +186,21 @@
                       </div>
                     {/each}
                   </div>
+                  {#if family.review.length}
+                    <div class="catalog-review-strip">
+                      <span>Экземпляры на ревью</span>
+                      <div>
+                        {#each family.review as instance (instance.pool + ":" + instance.key)}
+                          <button type="button" title="Открыть экземпляр {instance.key}"
+                                  onclick={() => onOpen?.(instance.key, instance.pool)}>
+                            <ComponentCatalogPreview component={instance.component} variantKey="default" />
+                          </button>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
                   <footer>
-                    <span>{comp.provenance?.occurrenceCount || 1} source instances</span>
+                    <span>{comp.provenance?.occurrenceCount || 1} source instances{family.review.length ? ` · +${family.review.length} review` : ""}</span>
                     <button type="button" onclick={() => onOpen?.(entry.key, entry.pool)}>Inspect component</button>
                   </footer>
                 </article>
@@ -223,6 +274,11 @@
   .catalog-variant { min-width: 0; }
   .catalog-variant > div:last-child { display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 5px 2px 2px; color: #9ba4b5; font-size: 8px; }
   .catalog-variant small { color: #687184; }
+  .catalog-review-strip { margin-top: 8px; padding: 0 9px; }
+  .catalog-review-strip > span { display: block; margin-bottom: 5px; color: #b9925e; font-size: 8px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .catalog-review-strip > div { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 5px; }
+  .catalog-review-strip button { overflow: hidden; border: 1px dashed #4a4133; border-radius: 8px; background: #171512; padding: 3px; cursor: pointer; }
+  .catalog-review-strip button:hover { border-color: #6d5f45; }
   .catalog-grid article > footer { border-top: 1px solid #272e39; margin-top: 7px; color: #6f788a; font-size: 8px; }
   .catalog-grid article > footer button { border: 1px solid #394252; border-radius: 7px; background: #1b222d; padding: 5px 7px; color: #cbd1dc; font-size: 8px; cursor: pointer; }
   .catalog-grid article > footer button:hover { border-color: #5e6a7f; background: #232b38; }

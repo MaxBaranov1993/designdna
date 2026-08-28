@@ -1902,6 +1902,10 @@ def build_draft(pack: dict, *, name: str | None = None, locale: str = "ru",
     from .organizer import deterministic_catalog
     doc["catalog"] = deterministic_catalog(doc)
     doc["extraction"] = extraction
+    # Style Guide: семантическая карта токенов (в духе shadcn/ui) и характер
+    # стиля из измеренных значений. AI-ревью (по запросу) допишет review-часть.
+    from .style_review import ensure_style_guide
+    ensure_style_guide(doc)
     doc["referenceAssets"] = _reference_assets(blocks)
 
     # Deterministic first pass: measurements and provenance are available even

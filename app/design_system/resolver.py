@@ -131,6 +131,7 @@ def resolve_context(document: dict, brief: str, *, usage_mode: str = "strict",
     return {
         "systemRef": {"systemId": document.get("id"), "revision": document.get("revision"), "contentHash": document.get("contentHash")},
         "foundations": document.get("foundations") or {},
+        "styleGuide": document.get("styleGuide") or {},
         "components": closure,
         "patterns": list((document.get("patterns") or {}).keys()),
         "identity": document.get("identity") or {},

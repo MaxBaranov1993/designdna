@@ -129,6 +129,27 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
     add("foundations.colors", f"- Semantic colors: {_json(colors)}", required=True)
     add("foundations.typography", f"- Type: families={_json(typography.get('families') or [])}; scale={_json(typography.get('scale') or {})}; weights={_json(typography.get('weights') or [])}", required=True)
     add("foundations.geometry", f"- Geometry: spacing={_json(foundations.get('spacing') or {})}; radii={_json(foundations.get('radii') or [])}")
+    # Style Guide: семантические UI-токены и дизайн-язык сайта. Именно эта
+    # секция заставляет НОВЫЕ компоненты стилистически вписываться в уже
+    # работающий сайт, а не просто использовать те же hex-значения.
+    style_guide = context.get("styleGuide") or {}
+    ui_tokens = style_guide.get("tokens") or {}
+    if ui_tokens:
+        add("styleguide.tokens", f"- UI tokens (use these roles, shadcn-style): {_json(ui_tokens)}", required=True)
+    measured_character = style_guide.get("measured") or {}
+    if measured_character:
+        add("styleguide.character", f"- Measured character: {_json(measured_character)}", required=True)
+    review = style_guide.get("review") or {}
+    if review:
+        traits = {key: review[key] for key in
+                  ("tone", "density", "cornerCharacter", "colorUsage", "typographyCharacter", "imageryStyle")
+                  if review.get(key)}
+        if traits:
+            add("styleguide.review", f"- Design language: {_json(traits)}", required=True)
+        for index, rule in enumerate(review.get("doRules") or []):
+            add(f"styleguide.do.{index}", f"- DO: {rule}", required=True)
+        for index, rule in enumerate(review.get("dontRules") or []):
+            add(f"styleguide.dont.{index}", f"- DON'T: {rule}", required=True)
     coverage = identity.get("paletteCoverage") or {}
     if coverage.get("roles"):
         add("identity.palette-coverage", f"- Palette role coverage target: {_json(coverage.get('roles'))}; method={coverage.get('method')}")

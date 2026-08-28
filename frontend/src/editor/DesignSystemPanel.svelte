@@ -15,7 +15,7 @@
     return ((node?.data || {}) as unknown) as DesignSystemNodeData;
   });
 
-  let activeTab = $state<"source" | "foundations" | "components" | "suggestions" | "mock" | "identity" | "archetypes" | "tests" | "proof" | "validation">("source");
+  let activeTab = $state<"source" | "styleguide" | "foundations" | "components" | "suggestions" | "mock" | "identity" | "archetypes" | "tests" | "proof" | "validation">("source");
   type CatalogPool = "components" | "review" | "suggestions";
   type CatalogEntry = { key: string; pool: CatalogPool; component: Record<string, any> };
   let selectedKey = $state<string>("");
@@ -31,6 +31,12 @@
   let saving = $state(false);
   let organizing = $state(false);
   let organizerEffort = $state<"medium" | "high" | "max">("high");
+  /* AI-ревью стиля: провайдер выбирается пользователем (Sol/Codex/Claude);
+   * в desktop промпт готовит сервер, отвечает выбранный аккаунт, применяет
+   * и валидирует снова сервер — креденшелы не покидают main-процесс. */
+  let reviewing = $state(false);
+  let reviewProvider = $state<"openai" | "codex" | "claude">("openai");
+  let reviewEffort = $state<"medium" | "high" | "max">("high");
   let actionError = $state("");
   let validationResult = $state<{ errors: Array<{ message: string }> } | null>(null);
   let identityResult = $state<any>(null);
@@ -64,6 +70,9 @@
   });
   const semanticSuggestions = $derived(suggestions.filter(([, component]) => component?.origin !== "observed"));
   const foundations = $derived(doc.foundations || {});
+  const styleGuide = $derived((doc.styleGuide || {}) as Record<string, any>);
+  const styleTokens = $derived(Object.entries(styleGuide.tokens || {}) as Array<[string, unknown]>);
+  const styleReview = $derived((styleGuide.review || null) as Record<string, any> | null);
   const identity = $derived(doc.identity || {});
   const identityTests = $derived((doc.identityTests || []) as any[]);
   const archetypes = $derived((identity.archetypes || []) as any[]);
@@ -184,7 +193,7 @@
   });
 
   const dirty = $derived(!!snapshot && memoJson(data.document) !== snapshot);
-  const busy = $derived(publishing || validating || applying || saving || organizing || !!$flowBusy[Number(nodeId)]);
+  const busy = $derived(publishing || validating || applying || saving || organizing || reviewing || !!$flowBusy[Number(nodeId)]);
 
   $effect(() => {
     if (activeTab === "components" && catalogEntries.length && !selectedComp) {
@@ -485,6 +494,54 @@
     }
   }
 
+  async function runStyleReview() {
+    if (!doc.id) return;
+    reviewing = true;
+    actionError = "";
+    $flow.setNodeData(Number(nodeId), { busyAction: "style-review", lastError: "" });
+    try {
+      const desktop = window.designDNA;
+      let payload: Record<string, unknown>;
+      if (desktop && reviewProvider !== "openai") {
+        // Desktop: сервер готовит промпт, выбранный аккаунт (Codex/Claude)
+        // отвечает, сервер валидирует и применяет ответ.
+        const prepResp = await fetch("/api/design-system/style-review", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document: doc, prepareOnly: true }),
+        });
+        const prep = await prepResp.json();
+        if (!prepResp.ok || prep.error) throw new Error(prep.error || `HTTP ${prepResp.status}`);
+        const messages = prep.prompts?.[0]?.messages;
+        if (!messages?.length) throw new Error("Не удалось подготовить промпт ревью");
+        const route = reviewProvider === "codex"
+          ? { provider: "codex" as const, model: null }
+          : { provider: "claude" as const, model: "opus", reasoning: { effort: reviewEffort } };
+        const answer = await desktop.providers.chatRequest({ ...route, messages });
+        payload = { document: doc, rawOutput: answer.content, provider: reviewProvider };
+      } else {
+        payload = { document: doc, reasoningEffort: reviewEffort };
+      }
+      const resp = await fetch("/api/design-system/style-review", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = await resp.json();
+      if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
+      pushUndo();
+      $flow.setNodeData(Number(nodeId), {
+        document: result.document,
+        summary: result.summary,
+        status: "draft",
+      });
+      activeTab = "styleguide";
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      reviewing = false;
+      $flow.setNodeData(Number(nodeId), { busyAction: "" });
+    }
+  }
+
   async function publish() {
     publishing = true;
     actionError = "";
@@ -690,6 +747,7 @@
   <nav class="ds-section-tabs" aria-label="Разделы дизайн-системы">
     <button type="button" data-ds-tab="source" class:active={activeTab === "source"} onclick={() => (activeTab = "source")}>Source UI <span>{catalogEntries.length || sourceArtifact?.summary.componentCount || 0}</span></button>
     <button type="button" data-ds-tab="components" class:active={activeTab === "components"} onclick={() => (activeTab = "components")}>Components <span>{catalogEntries.length}</span></button>
+    <button type="button" data-ds-tab="styleguide" class:active={activeTab === "styleguide"} onclick={() => (activeTab = "styleguide")}>Style Guide{#if styleReview}<span>AI</span>{/if}</button>
     <button type="button" data-ds-tab="foundations" class:active={activeTab === "foundations"} onclick={() => (activeTab = "foundations")}>Foundations</button>
     <button type="button" data-ds-tab="suggestions" class:active={activeTab === "suggestions"} onclick={() => (activeTab = "suggestions")}>Suggestions <span>{semanticSuggestions.length}</span></button>
     <button type="button" data-ds-tab="identity" class:active={activeTab === "identity"} onclick={() => (activeTab = "identity")}>Identity</button>
@@ -780,6 +838,98 @@
             </li>
           {/each}
         </ul>
+      {:else if activeTab === "styleguide"}
+        <div class="ds-styleguide">
+          <section class="ds-sg-review-bar" aria-label="AI style review">
+            <div>
+              <strong>AI-ревью стиля</strong>
+              <small>Модель изучает дизайн-язык сайта: тон, правила, характер. Новые компоненты будут генерироваться по этому гайду.</small>
+            </div>
+            <label>
+              <span>Провайдер</span>
+              <select bind:value={reviewProvider} disabled={busy}>
+                <option value="openai">GPT-5.6 Sol</option>
+                <option value="codex">Codex</option>
+                <option value="claude">Claude Opus</option>
+              </select>
+            </label>
+            {#if reviewProvider !== "codex"}
+              <label>
+                <span>Усилие</span>
+                <select bind:value={reviewEffort} disabled={busy}>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="max">max</option>
+                </select>
+              </label>
+            {/if}
+            <button type="button" data-ds-action="style-review" onclick={() => void runStyleReview()} disabled={busy || !doc.id}>
+              {reviewing ? "Ревью…" : styleReview ? "Обновить ревью" : "Сделать ревью"}
+            </button>
+            <span class="ds-organizer-state" data-kind={styleGuide.origin === "ai" ? "ai" : "deterministic"}>
+              {styleGuide.origin === "ai" ? `AI · ${styleGuide.provider || "openai"}` : "measured baseline"}
+            </span>
+          </section>
+
+          <h4>Семантические токены</h4>
+          <p class="ds-sg-hint">Стандартная карта ролей (как в shadcn/ui) — из измеренных значений сайта. Генератор обязан использовать роли, а не сырые hex.</p>
+          <div class="ds-sg-tokens">
+            {#each styleTokens as [name, value] (name)}
+              <div class="ds-sg-token">
+                {#if typeof value === "string" && value.startsWith("#")}
+                  <i style="background:{value}"></i>
+                {:else}
+                  <i class="abstract">{typeof value === "number" ? "px" : "Aa"}</i>
+                {/if}
+                <div><strong>{name}</strong><small>{value}</small></div>
+              </div>
+            {:else}
+              <p class="ds-sg-hint">Токены появятся после сборки из Source.</p>
+            {/each}
+          </div>
+
+          <h4>Измеренный характер</h4>
+          <div class="ds-sg-chips">
+            {#each Object.entries(styleGuide.measured || {}) as [name, value] (name)}
+              <span><small>{name}</small>{value}</span>
+            {/each}
+          </div>
+
+          {#if styleReview}
+            <h4>Дизайн-язык (AI)</h4>
+            <dl class="ds-sg-traits">
+              {#each [["tone", "Тон"], ["density", "Плотность"], ["cornerCharacter", "Формы"], ["colorUsage", "Цвет"], ["typographyCharacter", "Типографика"], ["imageryStyle", "Изображения"]] as [field, label] (field)}
+                {#if styleReview[field]}
+                  <div><dt>{label}</dt><dd>{styleReview[field]}</dd></div>
+                {/if}
+              {/each}
+            </dl>
+            {#if styleReview.doRules?.length || styleReview.dontRules?.length}
+              <div class="ds-sg-rules">
+                {#if styleReview.doRules?.length}
+                  <div>
+                    <h4>Do</h4>
+                    <ul>{#each styleReview.doRules as rule}<li class="do">{rule}</li>{/each}</ul>
+                  </div>
+                {/if}
+                {#if styleReview.dontRules?.length}
+                  <div>
+                    <h4>Don't</h4>
+                    <ul>{#each styleReview.dontRules as rule}<li class="dont">{rule}</li>{/each}</ul>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+            {#if Object.keys(styleReview.componentNotes || {}).length}
+              <h4>Заметки по компонентам</h4>
+              {#each Object.entries(styleReview.componentNotes || {}) as [key, note] (key)}
+                <p class="ds-sg-note"><code>{key}</code> {note}</p>
+              {/each}
+            {/if}
+          {:else}
+            <p class="ds-sg-hint">AI-ревью ещё не выполнялось. Запустите его, чтобы новые компоненты генерировались строго в стилистике сайта.</p>
+          {/if}
+        </div>
       {:else if activeTab === "foundations"}
         <div class="ds-foundations">
           <h4>Цвета (semantic)</h4>
@@ -1272,6 +1422,37 @@
   .ds-swatches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
   .ds-swatch { min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; color: #a7afbd; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
   .ds-swatch i { flex: none; width: 20px; height: 20px; border: 1px solid #3a4250; border-radius: 5px; }
+  .ds-styleguide { display: grid; gap: 10px; align-content: start; }
+  .ds-styleguide h4 { margin: 8px 0 0; font-size: 11px; }
+  .ds-sg-review-bar { display: grid; gap: 8px; border: 1px solid #2a303b; border-radius: 10px; background: #11151d; padding: 10px; }
+  .ds-sg-review-bar strong { display: block; font-size: 11px; }
+  .ds-sg-review-bar small { color: #8f97a8; font-size: 9px; line-height: 1.4; }
+  .ds-sg-review-bar label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #8f97a8; font-size: 9.5px; }
+  .ds-sg-review-bar select { min-width: 0; border: 1px solid #333b49; border-radius: 7px; background: #171c26; color: #dfe4ee; padding: 4px 6px; font-size: 10px; }
+  .ds-sg-review-bar button { border: 1px solid #394252; border-radius: 8px; background: #1b222d; padding: 7px 9px; color: #e6eaf2; font-size: 10px; cursor: pointer; }
+  .ds-sg-review-bar button:hover:not(:disabled) { border-color: #5e6a7f; }
+  .ds-sg-hint { margin: 0; color: #79839a; font-size: 9.5px; line-height: 1.45; }
+  .ds-sg-tokens { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+  .ds-sg-token { display: flex; align-items: center; gap: 7px; min-width: 0; border: 1px solid #262d38; border-radius: 8px; background: #121720; padding: 6px; }
+  .ds-sg-token i { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid #3a4250; border-radius: 6px; color: #97a1b4; font-size: 8px; font-style: normal; }
+  .ds-sg-token i.abstract { background: #1a212c; }
+  .ds-sg-token div { min-width: 0; }
+  .ds-sg-token strong { display: block; overflow: hidden; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-sg-token small { display: block; overflow: hidden; color: #6f788a; font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-sg-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ds-sg-chips span { border: 1px solid #2c3340; border-radius: 999px; background: #151a23; padding: 4px 9px; color: #c4cad6; font-size: 9.5px; }
+  .ds-sg-chips small { margin-right: 5px; color: #6f788a; }
+  .ds-sg-traits { display: grid; gap: 6px; margin: 0; }
+  .ds-sg-traits div { border-left: 2px solid #3d4658; padding-left: 8px; }
+  .ds-sg-traits dt { color: #8f97a8; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+  .ds-sg-traits dd { margin: 2px 0 0; color: #d5dae4; font-size: 10.5px; line-height: 1.45; }
+  .ds-sg-rules { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .ds-sg-rules ul { margin: 4px 0 0; padding-left: 14px; }
+  .ds-sg-rules li { margin-bottom: 4px; font-size: 10px; line-height: 1.4; }
+  .ds-sg-rules li.do { color: #7fd7b6; }
+  .ds-sg-rules li.dont { color: #e2988a; }
+  .ds-sg-note { margin: 0; color: #a7afbd; font-size: 9.5px; line-height: 1.45; }
+  .ds-sg-note code { margin-right: 5px; color: #8b7cf6; }
   .ds-mock-item { padding: 9px 0; border-bottom: 1px solid #222833; }
   .ds-mock-item strong { display: block; font-size: 10.8px; }
   .ds-mock-item small { color: #727c8e; font-size: 9.5px; }

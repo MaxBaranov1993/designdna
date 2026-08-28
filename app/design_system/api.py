@@ -32,6 +32,16 @@ class OrganizeRequest(BaseModel):
     reasoningEffort: str = "high"
 
 
+class StyleReviewRequest(BaseModel):
+    """AI-ревью стилистики. prepareOnly → промпт; rawOutput → применить ответ
+    внешнего провайдера (desktop); без обоих — серверный вызов Sol."""
+    document: dict
+    prepareOnly: bool = False
+    rawOutput: str = ""
+    provider: str = "openai"
+    reasoningEffort: str = "high"
+
+
 class RefRequest(BaseModel):
     systemId: str
     revision: int = 0
@@ -128,6 +138,32 @@ def organize_design_system(req: OrganizeRequest):
     from .document import summary
     document = saved.get("document") or updated
     return {"document": document, "catalog": document.get("catalog") or catalog,
+            "summary": summary(document)}
+
+
+@router.post("/api/design-system/style-review")
+def style_review_design_system(req: StyleReviewRequest):
+    """AI-ревью дизайн-языка сайта → styleGuide.review (мастера неприкосновенны)."""
+    if not isinstance(req.document, dict) or not req.document.get("id"):
+        return _err(422, "No Design System document")
+    from . import style_review
+    if req.prepareOnly:
+        return {"prompts": [{"messages": style_review.build_style_review_prompt(req.document)}]}
+    try:
+        if req.rawOutput.strip():
+            updated = style_review.apply_style_review(
+                req.document, req.rawOutput, provider=req.provider)
+        else:
+            updated = style_review.review_with_ai(
+                req.document, reasoning_effort=req.reasoningEffort)
+        saved = store.save_draft(updated)
+    except (ValueError, RuntimeError) as exc:
+        return _err(422, str(exc))
+    except Exception as exc:
+        return _err(502, f"AI style review failed: {exc}")
+    from .document import summary
+    document = saved.get("document") or updated
+    return {"document": document, "styleGuide": document.get("styleGuide") or {},
             "summary": summary(document)}
 
 
