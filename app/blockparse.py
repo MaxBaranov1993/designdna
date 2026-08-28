@@ -250,6 +250,46 @@ def _full_resolution_preview(uri: str | None) -> str | None:
         return _compact_preview(uri)
 
 
+def repair_evidence_key(url: str, selector: str) -> str:
+    """Ключ кэша с данными захвата, нужными для перезамера после AI-починки."""
+    return hashlib.sha256(f"{url}|{selector}".encode("utf-8")).hexdigest()
+
+
+def _stash_repair_evidence(url: str, selector: str, item: dict, report: dict | None) -> str:
+    """Отложить измеренные в источнике величины, которых нет в публичном блоке.
+
+    AI-починка правит IR уже после ответа /api/block-parse, и честный перезамер
+    требует ровно того, что измерил браузер на живой странице: листовых кадров,
+    потерянных визуальных каналов, paint coverage. Возить это в редактор нет
+    смысла — кладём в кэш, наружу отдаём короткий ключ. Нет записи (истёк TTL,
+    вытеснено) — перезамер просто не делается, и гейт остаётся строгим.
+
+    Здесь же лежит region_diffs: сетка расхождений 8×8 на каждый viewport и
+    каждый компонент когда-то раздувала ответ до предела live-сессии, поэтому
+    в публичном отчёте её нет. Но именно по ней AI-починка выбирает, какой
+    участок показать модели, — в кэше она никому не мешает.
+    """
+    key = repair_evidence_key(url, selector)
+    viewports = (report or {}).get("viewports") or {}
+    try:
+        cache_store.put("repair_evidence", key, {
+            "leafBoxesByViewport": item.get("leaf_boxes_by_viewport") or {},
+            "paintCoverage": item.get("paint_coverage") or {},
+            "droppedByViewport": item.get("dropped_by_viewport") or {},
+            "extrasByViewport": item.get("extras_by_viewport") or {},
+            "provenance": item.get("provenance") or {},
+            "regionDiffsByViewport": {
+                str(name): copy.deepcopy(metrics.get("region_diffs") or [])
+                for name, metrics in viewports.items()
+                if isinstance(metrics, dict) and metrics.get("region_diffs")
+            },
+        })
+    except Exception:
+        traceback.print_exc()
+        return ""
+    return key
+
+
 def _public_fidelity_report(report: dict | None) -> dict:
     """Return serialisable fidelity evidence without local artifact paths."""
     if not isinstance(report, dict):
@@ -843,6 +883,11 @@ def parse_blocks(url: str, blocks: list | None = None,
         if not isinstance(block, dict):
             continue
         report = fidelity_reports.get(block.get("selector"))
+        captured_item = final_items.get(block.get("selector"))
+        if isinstance(captured_item, dict):
+            block["evidenceKey"] = _stash_repair_evidence(
+                url, str(block.get("selector") or ""), captured_item,
+                report if isinstance(report, dict) else None)
         if isinstance(report, dict):
             block["fidelityReport"] = _public_fidelity_report(report)
             viewport_metrics = report.get("viewports") or {}

@@ -260,9 +260,6 @@ export type SourceImportNodeData = {
   sourceArtifact?: SourceArtifact | null;
   /** Опциональный AI-проход: уточняет имена компонентов и роли блоков. */
   aiRefine?: boolean;
-  /** Цикл починки расхождений: правка принимается только при росте
-   *  измеренного пиксельного сходства (судья — fidelity-harness). */
-  aiRepair?: boolean;
   aiProvider?: NodeProvider;
   lastRun?: {
     cached: boolean;

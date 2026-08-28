@@ -143,22 +143,14 @@
         />
         AI-уточнение компонентов
       </label>
-      <label class="bp-mine nodrag" title="Модель объясняет расхождения рендера с оригиналом. Правка применяется, только если измеренное сходство выросло — ухудшить результат она не может.">
-        <input
-          type="checkbox"
-          class="f-ai-repair"
-          checked={!!data.aiRepair}
-          onchange={(e) => $flow.setNodeData(Number(id), { aiRepair: e.currentTarget.checked })}
-        />
-        AI-починка расхождений
-      </label>
-      {#if data.aiRefine || data.aiRepair}
-        <ProviderPicker
-          provider={data.aiProvider || "openai"}
-          effort="medium"
-          onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider })}
-        />
-      {/if}
+      <!-- AI-починка расхождений тумблера не имеет: она идёт сама на каждом
+           импорте, где гейт не пройден, и принимается только при росте
+           измеренного сходства. Выбор здесь один — чей аккаунт отвечает. -->
+      <ProviderPicker
+        provider={data.aiProvider || "openai"}
+        effort="medium"
+        onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider })}
+      />
     {/if}
     <div class="source-viewports nodrag" aria-label="Source viewport">
       {#each VIEWPORTS as viewport (viewport)}

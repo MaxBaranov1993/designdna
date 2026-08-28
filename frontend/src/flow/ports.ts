@@ -157,7 +157,7 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "page":
       return { inputs: ["a", "b"], ir: null, activeViewport: "desktop" };
     case "sourceimport":
-      return { mode: "url", url: "", image: null, fileName: "", mine: false, authenticatedSession: false, activeViewport: "desktop", previewMode: "reference", importedUrl: null, blocks: [], tokens: null, sourceArtifact: null, aiRefine: false, aiRepair: false, aiProvider: "openai" };
+      return { mode: "url", url: "", image: null, fileName: "", mine: false, authenticatedSession: false, activeViewport: "desktop", previewMode: "reference", importedUrl: null, blocks: [], tokens: null, sourceArtifact: null, aiRefine: false, aiProvider: "openai" };
     case "designui":
       return { artifact: null, selectedComponent: 0 };
     case "derive":

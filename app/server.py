@@ -921,6 +921,57 @@ def block_parse_refine(req: BlockParseRefineReq):
             "applied": applied, "appliedCount": len(applied)}
 
 
+def _block_gate_passed(block: dict) -> bool:
+    """Прошёл ли блок fidelity-гейт по последнему отчёту harness."""
+    report = block.get("fidelityReport") if isinstance(block.get("fidelityReport"), dict) else {}
+    gate = report.get("gate") if isinstance(report.get("gate"), dict) else {}
+    return gate.get("passed") is True
+
+
+def _refresh_block_fidelity(block: dict, page) -> bool:
+    """Перемерить блок тем же harness после принятой AI-починки.
+
+    Собираем запись захвата обратно: публичный блок несёт IR, эталоны и
+    размеры, а измеренные на живой странице листовые кадры и потери лежат в
+    кэше улик (blockparse._stash_repair_evidence). Нет улик — перезамера не
+    делаем: мерить bbox без листовых кадров значило бы ослабить гейт.
+    """
+    import blockparse
+    import cache_store
+    import fidelity_harness
+
+    evidence = cache_store.get("repair_evidence", str(block.get("evidenceKey") or ""))
+    if not isinstance(evidence, dict) or not evidence.get("leafBoxesByViewport"):
+        return False
+    item = {
+        "ir": block.get("ir"),
+        "previews": block.get("previews") or {},
+        "sizes": block.get("sizes") or {},
+        "paint_coverage": evidence.get("paintCoverage") or {},
+        "leaf_boxes_by_viewport": evidence.get("leafBoxesByViewport") or {},
+        "dropped_by_viewport": evidence.get("droppedByViewport") or {},
+        "extras_by_viewport": evidence.get("extrasByViewport") or {},
+    }
+    if evidence.get("provenance"):
+        item["provenance"] = evidence["provenance"]
+    try:
+        report = fidelity_harness.evaluate_capture_item(item, page)
+    except Exception:
+        traceback.print_exc()
+        return False
+    block["fidelityReport"] = blockparse._public_fidelity_report(report)
+    viewport_metrics = report.get("viewports") or {}
+    for field, metric in (("fidelity", "pixel_similarity"),
+                          ("paintCoverage", "paint_coverage"),
+                          ("p95LayoutError", "bbox_p95")):
+        block[field] = {
+            name: metrics.get(metric)
+            for name, metrics in viewport_metrics.items()
+            if isinstance(metrics, dict) and metrics.get(metric) is not None
+        }
+    return True
+
+
 @app.post("/api/block-parse/repair")
 def block_parse_repair(req: FidelityRepairReq):
     """AI-починка расхождений захвата с детерминированным судьёй.
@@ -939,13 +990,28 @@ def block_parse_repair(req: FidelityRepairReq):
     viewport = str(req.viewport or "desktop")
 
     def viewport_report(block: dict) -> dict:
+        """Метрики viewport для починки: публичный отчёт + карта расхождений.
+
+        region_diffs намеренно нет в ответе /api/block-parse (сетка 8×8 на
+        каждый компонент раздувала полезную нагрузку), поэтому единственная
+        нужная починке карта берётся из кэша улик по ключу блока.
+        """
+        import cache_store
+
         report = block.get("fidelityReport") if isinstance(block.get("fidelityReport"), dict) else {}
         viewports = report.get("viewports") if isinstance(report.get("viewports"), dict) else {}
-        return viewports.get(viewport) if isinstance(viewports.get(viewport), dict) else {}
+        metrics = viewports.get(viewport) if isinstance(viewports.get(viewport), dict) else {}
+        if metrics.get("region_diffs"):
+            return metrics
+        evidence = cache_store.get("repair_evidence", str(block.get("evidenceKey") or ""))
+        regions = ((evidence or {}).get("regionDiffsByViewport") or {}).get(viewport)
+        return {**metrics, "region_diffs": regions} if regions else metrics
 
     if req.prepareOnly:
         tasks = []
         for index, block in enumerate(blocks):
+            if _block_gate_passed(block):
+                continue  # прошедший гейт блок чинить нечего
             metrics = viewport_report(block)
             for rect in fidelity_repair.region_rects(metrics, limit=max(1, min(6, req.maxRegions))):
                 nodes = fidelity_repair.nodes_in_region(block["ir"], rect)
@@ -979,6 +1045,12 @@ def block_parse_repair(req: FidelityRepairReq):
             try:
                 page = browser.new_page(viewport={"width": 1440, "height": 900},
                                         device_scale_factor=1)
+                # Тот же блок сетевых шрифтов, что в evaluate_captures: иначе
+                # судья мерит текст в fallback-шрифте и врёт в обе стороны.
+                page.route("https://fonts.googleapis.com/**",
+                           lambda route: route.abort("blockedbyclient"))
+                page.route("https://fonts.gstatic.com/**",
+                           lambda route: route.abort("blockedbyclient"))
                 for index, block in enumerate(blocks):
                     answers = list(outputs.get(index) or [])
                     if not answers:
@@ -1000,8 +1072,13 @@ def block_parse_repair(req: FidelityRepairReq):
                         measure=measure,
                         propose=lambda _messages: next(pending, ""),
                         max_regions=max(1, min(6, req.maxRegions)))
-                    if outcome.get("ir"):
+                    remeasured = False
+                    if outcome.get("ir") and outcome.get("applied"):
                         block["ir"] = outcome["ir"]
+                        # Статус обязан догнать IR: без перезамера правка живёт
+                        # в дереве, а гейт продолжает судить по отчёту, снятому
+                        # до починки, и компонент навсегда «нужна проверка».
+                        remeasured = _refresh_block_fidelity(block, page)
                     results.append({
                         "blockIndex": index, "block": block.get("name"),
                         "baseline": outcome.get("baseline"), "similarity": outcome.get("similarity"),
@@ -1009,6 +1086,8 @@ def block_parse_repair(req: FidelityRepairReq):
                         "appliedCount": len(outcome.get("applied") or []),
                         "rejectedCount": len(outcome.get("rejected") or []),
                         "applied": outcome.get("applied") or [],
+                        "remeasured": remeasured,
+                        "gatePassed": _block_gate_passed(block),
                     })
             finally:
                 browser.close()
@@ -1017,6 +1096,7 @@ def block_parse_repair(req: FidelityRepairReq):
         return err(502, f"Ошибка починки: {exc}")
 
     return {"ok": True, "viewport": viewport, "blocks": blocks, "results": results,
+            "gatePassed": all(_block_gate_passed(block) for block in blocks),
             "totalGain": round(sum(float(r.get("gain") or 0) for r in results), 2)}
 
 

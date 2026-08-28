@@ -78,6 +78,14 @@ export type BlockParseBlockResp = {
   warnings?: string[];
   repeat?: { count?: number; kind?: string } | null;
   parserContract?: ParserSourceEnvelope;
+  /** Отчёт harness: по нему судится публикуемость и работает AI-починка. */
+  fidelityReport?: {
+    gate?: { passed?: boolean; reasons?: string[] };
+    viewports?: Record<string, Record<string, unknown>>;
+    components?: Record<string, Record<string, unknown>>;
+  } | null;
+  /** Ключ кэша с уликами захвата: нужен серверу для перезамера после починки. */
+  evidenceKey?: string;
 };
 export type BlockParseResp = {
   url: string;

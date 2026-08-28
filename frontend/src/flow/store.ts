@@ -183,6 +183,19 @@ async function refineSourceWithAi(
  * только если она реально улучшила картинку. Поэтому неудачная гипотеза
  * модели не может ухудшить результат — худший исход это откат. */
 type RepairTask = { blockIndex: number; block?: string; region: Record<string, number>; messages: import("./api").ApiChatMessage[] };
+type RepairApplyResp = {
+  blocks: BlockParseResp["blocks"];
+  totalGain: number;
+  gatePassed?: boolean;
+  results: Array<{ appliedCount: number; rejectedCount: number; remeasured?: boolean }>;
+};
+
+/** Прошёл ли блок fidelity-гейт по последнему отчёту harness. */
+function blockGatePassed(block: BlockParseResp["blocks"][number]): boolean {
+  return block.fidelityReport?.gate?.passed === true;
+}
+
+const REPAIR_MAX_ROUNDS = 3;
 
 async function repairSourceWithAi(
   response: BlockParseResp,
@@ -193,41 +206,80 @@ async function repairSourceWithAi(
 ): Promise<BlockParseResp | null> {
   const desktop = window.designDNA;
   if (!desktop) return null;
-  const prepared = await api<{ tasks: RepairTask[] }>("/api/block-parse/repair", {
-    blocks: response.blocks, viewport, prepareOnly: true,
-  });
-  const tasks = prepared?.tasks || [];
-  if (!tasks.length) return null;
+  let current = response;
+  let improved = false;
+  let totalApplied = 0;
+  let totalGain = 0;
 
-  const rawOutputs: Array<{ blockIndex: number; content: string }> = [];
-  for (const [index, task] of tasks.entries()) {
-    setStatus(id, `AI-починка: диагностика ${index + 1}/${tasks.length}…`);
-    try {
-      const answer = await desktop.providers.chatRequest({
-        ...chatRoute(provider, "high"),
-        messages: task.messages,
-      });
-      rawOutputs.push({ blockIndex: task.blockIndex, content: answer.content });
-    } catch {
-      // Один неудачный диагноз не отменяет остальные.
+  /* Раунды, а не один проход: одна правка открывает следующее расхождение —
+   * восстановили свечение, и худшим регионом становится уже другой. Цикл
+   * идёт, пока гейт не пройден, правки принимаются и раунды не кончились. */
+  for (let round = 1; round <= REPAIR_MAX_ROUNDS; round += 1) {
+    if ((current.blocks || []).every(blockGatePassed)) break;
+    const prepared = await api<{ tasks: RepairTask[] }>("/api/block-parse/repair", {
+      blocks: current.blocks, viewport, prepareOnly: true,
+    });
+    const tasks = prepared?.tasks || [];
+    if (!tasks.length) break;
+
+    const rawOutputs: Array<{ blockIndex: number; content: string }> = [];
+    let providerError: unknown = null;
+    for (const [index, task] of tasks.entries()) {
+      setStatus(id, `AI-починка ${round}/${REPAIR_MAX_ROUNDS}: диагностика ${index + 1}/${tasks.length}…`);
+      try {
+        const answer = await desktop.providers.chatRequest({
+          ...chatRoute(provider, "high"),
+          messages: task.messages,
+        });
+        rawOutputs.push({ blockIndex: task.blockIndex, content: answer.content });
+      } catch (error) {
+        // Один неудачный диагноз не отменяет остальные. Но если не отвечает
+        // сам аккаунт, дальше пойдут те же десятки отказов — выходим сразу.
+        providerError = error;
+        if (!rawOutputs.length) break;
+      }
     }
-  }
-  if (!rawOutputs.length) return null;
+    if (!rawOutputs.length) {
+      if (providerError) {
+        setStatus(id, `AI-починка пропущена: ${friendlyProviderError(providerError)}`);
+      }
+      break;
+    }
 
-  setStatus(id, "AI-починка: перепроверяю сходство…");
-  const applied = await api<{
-    blocks: BlockParseResp["blocks"];
-    totalGain: number;
-    results: Array<{ appliedCount: number; rejectedCount: number }>;
-  }>("/api/block-parse/repair", { blocks: response.blocks, viewport, rawOutputs });
-  const acceptedCount = (applied?.results || []).reduce((sum, r) => sum + (r.appliedCount || 0), 0);
-  const rejectedCount = (applied?.results || []).reduce((sum, r) => sum + (r.rejectedCount || 0), 0);
-  if (!acceptedCount) {
-    setStatus(id, `AI-починка: улучшений не найдено (${rejectedCount} отклонено замером)`);
+    setStatus(id, `AI-починка ${round}/${REPAIR_MAX_ROUNDS}: перепроверяю сходство…`);
+    const applied = await api<RepairApplyResp>("/api/block-parse/repair", {
+      blocks: current.blocks, viewport, rawOutputs,
+    });
+    const acceptedCount = (applied?.results || []).reduce((sum, r) => sum + (r.appliedCount || 0), 0);
+    if (!acceptedCount) {
+      // Замер отверг все гипотезы раунда — следующий даст то же самое.
+      break;
+    }
+    // Сервер отвечает только разобранными блоками (ошибочные он отбрасывает),
+    // поэтому починенные вживляются по selector, а не заменяют весь список.
+    const repaired = new Map((applied.blocks || []).map((block) => [block.selector, block]));
+    current = {
+      ...current,
+      blocks: (current.blocks || []).map((block) => repaired.get(block.selector) || block),
+    };
+    improved = true;
+    totalApplied += acceptedCount;
+    totalGain = Math.round((totalGain + (applied.totalGain || 0)) * 100) / 100;
+  }
+
+  if (!improved) {
+    setStatus(id, "AI-починка: улучшений не найдено — расхождения остаются на ревью");
     return null;
   }
-  setStatus(id, `AI-починка: +${applied.totalGain}% сходства, ${acceptedCount} правок`, "ok");
-  return { ...response, blocks: applied.blocks };
+  const left = (current.blocks || []).filter((block) => !blockGatePassed(block)).length;
+  setStatus(
+    id,
+    left
+      ? `AI-починка: +${totalGain}% сходства, ${totalApplied} правок · ${left} блок(ов) на ревью`
+      : `AI-починка: +${totalGain}% сходства, ${totalApplied} правок · все блоки прошли гейт`,
+    left ? undefined : "ok",
+  );
+  return current;
 }
 
 const DESIGN_SYSTEM_SECTION_TYPES = new Set([
@@ -1102,9 +1154,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             get().setStatus(id, `AI-уточнение пропущено: ${friendlyProviderError(error)}`);
           }
         }
-        // AI-починка расхождений: судья — fidelity-harness, правка принимается
-        // только при росте измеренного сходства.
-        if (data.aiRepair && window.designDNA) {
+        // AI-починка расхождений идёт всегда, без тумблера: пользователь должен
+        // получить готовый кит, а не список «нужна проверка». Судья — тот же
+        // fidelity-harness, правка принимается только при росте измеренного
+        // сходства, поэтому автоматический прогон не может сделать хуже.
+        if (window.designDNA && (res.blocks || []).some((block) => !blockGatePassed(block))) {
           try {
             const repaired = await repairSourceWithAi(
               res, nodeProvider(data.aiProvider), data.activeViewport || "desktop",

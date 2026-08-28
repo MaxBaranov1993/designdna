@@ -47,6 +47,14 @@
    * и валидирует снова сервер — креденшелы не покидают main-процесс. */
   let reviewing = $state(false);
   let exportingKit = $state(false);
+  /* Живой кит открывается прямо в разделе «Компоненты»: тот же самодостаточный
+   * HTML, что уходит в файл, показывается в песочнице <iframe>. Файл стал
+   * вторым действием, а не единственным способом увидеть собранный кит. */
+  let sourceView = $state<"catalog" | "kit">("catalog");
+  let kitUrl = $state("");
+  let kitReport = $state<{ filename: string; bytes: number; components: number; warnings: number } | null>(null);
+  let savingKit = $state(false);
+  let kitBytes: Uint8Array | null = null;
   let reviewProvider = $state<"openai" | "codex" | "claude">("openai");
   let reviewEffort = $state<"medium" | "high" | "max">("high");
   let actionError = $state("");
@@ -569,10 +577,12 @@
     }
   }
 
-  /* Выгрузка живого UI kit: сервер собирает самодостаточный HTML (шрифты,
-   * картинки и движок рендера внутри), клиент только сохраняет файл. */
-  async function exportStyleguide() {
-    if (!doc.id) return;
+  /* Живой UI kit: сервер собирает самодостаточный HTML (шрифты, картинки и
+   * движок рендера внутри). Клиент открывает его прямо в разделе
+   * «Компоненты» — там же, где каталог, — а сохранение в файл остаётся
+   * отдельным действием рядом с превью. */
+  async function buildStyleguide(): Promise<Uint8Array | null> {
+    if (!doc.id) return null;
     exportingKit = true;
     actionError = "";
     $flow.setNodeData(Number(nodeId), { busyAction: "styleguide", lastError: "" });
@@ -585,8 +595,41 @@
         const detail = await resp.json().catch(() => ({}));
         throw new Error(detail.error || `HTTP ${resp.status}`);
       }
-      const filename = resp.headers.get("X-DesignDNA-Filename") || "ui-kit.html";
       const bytes = new Uint8Array(await resp.arrayBuffer());
+      kitBytes = bytes;
+      kitReport = {
+        filename: resp.headers.get("X-DesignDNA-Filename") || "ui-kit.html",
+        bytes: Number(resp.headers.get("X-DesignDNA-Bytes")) || bytes.length,
+        components: Number(resp.headers.get("X-DesignDNA-Components")) || 0,
+        warnings: Number(resp.headers.get("X-DesignDNA-Warnings")) || 0,
+      };
+      // Blob-URL, а не srcdoc: кит весит мегабайты, и атрибут такого размера
+      // браузер разбирает заметно дольше отдельного документа.
+      if (kitUrl) URL.revokeObjectURL(kitUrl);
+      kitUrl = URL.createObjectURL(new Blob([bytes], { type: "text/html" }));
+      return bytes;
+    } catch (e) {
+      actionError = `UI Kit: ${e instanceof Error ? e.message : String(e)}`;
+      return null;
+    } finally {
+      exportingKit = false;
+      $flow.setNodeData(Number(nodeId), { busyAction: "" });
+    }
+  }
+
+  /** Кнопка шапки: собрать кит и показать его в разделе «Компоненты». */
+  async function openStyleguide() {
+    activeTab = "source";
+    sourceView = "kit";
+    await buildStyleguide();
+  }
+
+  async function saveStyleguideFile() {
+    const bytes = kitBytes || (await buildStyleguide());
+    if (!bytes) return;
+    savingKit = true;
+    try {
+      const filename = kitReport?.filename || "ui-kit.html";
       const desktopFiles = window.designDNA?.files;
       if (desktopFiles) {
         // Кусками по 32 КБ: String.fromCharCode(...bytes) на мегабайтах
@@ -596,21 +639,25 @@
           binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
         }
         await desktopFiles.save(filename, btoa(binary));
-      } else {
-        const url = URL.createObjectURL(new Blob([bytes], { type: "text/html" }));
+      } else if (kitUrl) {
+        // Тот же Blob, что показан в превью: второй копии мегабайтов не нужно.
         const anchor = document.createElement("a");
-        anchor.href = url;
+        anchor.href = kitUrl;
         anchor.download = filename;
         anchor.click();
-        setTimeout(() => URL.revokeObjectURL(url), 5_000);
       }
     } catch (e) {
       actionError = `UI Kit: ${e instanceof Error ? e.message : String(e)}`;
     } finally {
-      exportingKit = false;
-      $flow.setNodeData(Number(nodeId), { busyAction: "" });
+      savingKit = false;
     }
   }
+
+  // Blob живёт до закрытия редактора: пока кит открыт во вкладке, ссылку
+  // отзывать нельзя, иначе iframe теряет документ при перерисовке.
+  $effect(() => () => {
+    if (kitUrl) URL.revokeObjectURL(kitUrl);
+  });
 
   async function publish() {
     publishing = true;
@@ -792,9 +839,9 @@
       </span>
     </div>
     <div class="ds-editor-actions">
-      <button type="button" data-ds-action="styleguide" aria-label="Выгрузить живой UI Kit одним HTML-файлом"
-              aria-busy={exportingKit} onclick={() => void exportStyleguide()} disabled={busy || !catalogEntries.length}>
-        {exportingKit ? "Сборка…" : "UI Kit (HTML)"}
+      <button type="button" data-ds-action="styleguide" aria-label="Собрать живой UI Kit и открыть в разделе «Компоненты»"
+              aria-busy={exportingKit} onclick={() => void openStyleguide()} disabled={busy || !catalogEntries.length}>
+        {exportingKit ? "Сборка…" : "UI Kit"}
       </button>
       <button type="button" data-ds-action="validate" aria-label="Проверить документ" aria-busy={validating} onclick={validate} disabled={busy || !components.length}>
         {validating ? "Проверка…" : "Validate"}
@@ -835,14 +882,48 @@
       <nav class="ds-legacy-tabs" aria-hidden="true"></nav>
 
       {#if activeTab === "source"}
-        <SourceArtifactPanel
-          artifact={sourceArtifact}
-          {catalogEntries}
-          {catalog}
-          acceptedMasters={Number((data.summary as Record<string, unknown> | null)?.components || components.length)}
-          acceptedVariants={Number((data.summary as Record<string, unknown> | null)?.variants || 0)}
-          onOpen={selectCatalogComponent}
-        />
+        <div class="ds-source-views" role="tablist" aria-label="Вид раздела «Компоненты»">
+          <button type="button" role="tab" data-ds-source-view="catalog" aria-selected={sourceView === "catalog"}
+                  class:active={sourceView === "catalog"} onclick={() => (sourceView = "catalog")}>Каталог</button>
+          <button type="button" role="tab" data-ds-source-view="kit" aria-selected={sourceView === "kit"}
+                  class:active={sourceView === "kit"} aria-busy={exportingKit}
+                  onclick={() => void (kitUrl ? (sourceView = "kit") : openStyleguide())}>
+            Живой UI Kit{#if kitReport}<span>{kitReport.components}</span>{/if}
+          </button>
+          {#if sourceView === "kit"}
+            <div class="ds-kit-tools">
+              {#if kitReport}
+                <small>{kitReport.filename} · {(kitReport.bytes / 1_048_576).toFixed(1)} МБ{kitReport.warnings ? ` · ${kitReport.warnings} предупреждений` : ""}</small>
+              {/if}
+              <button type="button" data-ds-action="styleguide-rebuild" onclick={() => void buildStyleguide()} disabled={busy || exportingKit}>
+                {exportingKit ? "Сборка…" : "Пересобрать"}
+              </button>
+              <button type="button" data-ds-action="styleguide-save" onclick={() => void saveStyleguideFile()} disabled={exportingKit || savingKit}>
+                {savingKit ? "Сохранение…" : "Сохранить HTML"}
+              </button>
+            </div>
+          {/if}
+        </div>
+        {#if sourceView === "kit"}
+          <div class="ds-kit-view">
+            {#if kitUrl}
+              <!-- Кит самодостаточен и рисует мастера своим встроенным движком:
+                   отдаём ему песочницу со скриптами, но без доступа к приложению. -->
+              <iframe title="Живой UI Kit" src={kitUrl} sandbox="allow-scripts allow-popups" data-ds-kit-frame></iframe>
+            {:else}
+              <div class="ds-kit-empty">{exportingKit ? "Собираем живой кит…" : "Кит ещё не собран — нажмите «UI Kit» в шапке."}</div>
+            {/if}
+          </div>
+        {:else}
+          <SourceArtifactPanel
+            artifact={sourceArtifact}
+            {catalogEntries}
+            {catalog}
+            acceptedMasters={Number((data.summary as Record<string, unknown> | null)?.components || components.length)}
+            acceptedVariants={Number((data.summary as Record<string, unknown> | null)?.variants || 0)}
+            onOpen={selectCatalogComponent}
+          />
+        {/if}
       {:else if activeTab === "components"}
         <div class="ds-lib-heading">
           <div><strong>Component library</strong><small>Exact Source families, without content duplicates</small></div>
@@ -1334,6 +1415,19 @@
   .ds-editor-body.source-overview .ds-editor-lib { padding: 0; border-right: 0; background: #0a0d12; }
   .ds-editor-body.source-overview .ds-editor-canvas,
   .ds-editor-body.source-overview .ds-editor-inspector { display: none; }
+  .ds-source-views { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #1d222c; padding: 10px 16px; }
+  .ds-source-views > button { border: 1px solid #2a3140; border-radius: 8px; background: #12161e; padding: 6px 12px; color: #97a0b1; font-size: 11.5px; cursor: pointer; }
+  .ds-source-views > button:hover { background: #171c26; color: #dfe3ed; }
+  .ds-source-views > button.active { border-color: #3a4253; background: #1b202b; color: #fff; }
+  .ds-source-views > button span { margin-left: 6px; border-radius: 999px; background: #262c39; padding: 1px 5px; color: #b8c0cf; font-size: 9.5px; }
+  .ds-kit-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .ds-kit-tools small { color: #6f788a; font-size: 9.5px; }
+  .ds-kit-tools button { border: 1px solid #333b49; border-radius: 8px; background: #171c26; padding: 6px 10px; color: #cbd1dc; font-size: 11px; cursor: pointer; }
+  .ds-kit-tools button:hover:not(:disabled) { border-color: #5e6a7f; }
+  .ds-kit-tools button:disabled { opacity: .55; cursor: default; }
+  .ds-kit-view { height: calc(100vh - 168px); min-height: 420px; background: #0a0d12; }
+  .ds-kit-view iframe { display: block; width: 100%; height: 100%; border: 0; background: #0b0e14; }
+  .ds-kit-empty { display: grid; place-items: center; height: 100%; color: #7c8595; font-size: 11px; }
   .ds-editor-lib, .ds-editor-inspector { min-width: 0; overflow-y: auto; background: var(--panel); scrollbar-color: #555d6d transparent; scrollbar-width: thin; }
   .ds-editor-lib { padding: 16px 14px 24px; border-right: 1px solid var(--border); }
   .ds-editor-inspector { padding: 18px; border-left: 1px solid var(--border); }
