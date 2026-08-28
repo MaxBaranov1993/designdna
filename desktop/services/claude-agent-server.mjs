@@ -22,29 +22,42 @@ export function claudeEffortBudget(effort) {
   return Object.hasOwn(THINKING_BUDGETS, effort) ? THINKING_BUDGETS[effort] : THINKING_BUDGETS.medium;
 }
 
+function pathApiForPlatform(platform) {
+  return platform === "win32" ? path.win32 : path.posix;
+}
+
 /* Официальный установщик Claude Code кладёт бинарь в ~/.local/bin, который
  * НЕ добавляется в PATH процесса Electron. Ищем сначала там, потом по PATH:
  * иначе на машине с установленным CLI запуск падал в cmd.exe с «"claude" не
- * является внутренней или внешней командой». */
-export function claudeInstallPaths(environment = process.env) {
+ * является внутренней или внешней командой».
+ *
+ * platform вычисляется отдельно от host OS: desktop tests эмулируют Windows
+ * на Linux/macOS, и discovery обязан строить Windows-пути в этой ситуации. */
+export function claudeInstallPaths(
+  environment = process.env,
+  platform = environment.USERPROFILE && !environment.HOME ? "win32" : process.platform,
+) {
   const home = environment.USERPROFILE || environment.HOME || "";
   if (!home) return [];
+  const pathApi = pathApiForPlatform(platform);
   return [
-    path.join(home, ".local", "bin", "claude.exe"),
-    path.join(home, ".local", "bin", "claude"),
-    path.join(home, "AppData", "Local", "Programs", "claude", "claude.exe"),
+    pathApi.join(home, ".local", "bin", "claude.exe"),
+    pathApi.join(home, ".local", "bin", "claude"),
+    pathApi.join(home, "AppData", "Local", "Programs", "claude", "claude.exe"),
   ];
 }
 
-function findClaudeBinary(environment, fileExists = existsSync) {
-  for (const candidate of claudeInstallPaths(environment)) {
+function findClaudeBinary(environment, fileExists = existsSync, platform = process.platform) {
+  const pathApi = pathApiForPlatform(platform);
+  for (const candidate of claudeInstallPaths(environment, platform)) {
     if (fileExists(candidate)) return candidate;
   }
-  for (const directory of String(environment.PATH || environment.Path || "").split(path.delimiter)) {
+  const delimiter = platform === "win32" ? ";" : ":";
+  for (const directory of String(environment.PATH || environment.Path || "").split(delimiter)) {
     if (!directory) continue;
     for (const candidate of [
-      path.join(directory, "claude.exe"),
-      path.join(directory, "claude"),
+      pathApi.join(directory, "claude.exe"),
+      pathApi.join(directory, "claude"),
     ]) {
       if (fileExists(candidate)) return candidate;
     }
@@ -78,7 +91,7 @@ export function claudeProcessSpec({
   if (environment.DESIGNDNA_CLAUDE) {
     return { command: environment.DESIGNDNA_CLAUDE, args, resolved: true };
   }
-  const binary = findClaudeBinary(environment, fileExists);
+  const binary = findClaudeBinary(environment, fileExists, platform);
   if (binary) return { command: binary, args, resolved: true };
   if (platform === "win32") {
     const quoted = args.map((arg) => (/[\s"&|<>^]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg)).join(" ");
