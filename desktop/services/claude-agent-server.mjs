@@ -189,8 +189,18 @@ export class ClaudeAgentServer {
       child.stderr.on("data", (chunk) => { stderrChunks.push(Buffer.from(chunk)); });
       child.once("error", (error) => finish(new Error(`Claude CLI недоступен: ${error.message}`)));
       child.once("exit", (code) => {
-        if (code === 0) { finish(null, decodeProcessOutput(Buffer.concat(stdoutChunks))); return; }
-        const detail = decodeProcessOutput(Buffer.concat(stderrChunks)).trim().slice(-1_000);
+        const stdout = decodeProcessOutput(Buffer.concat(stdoutChunks));
+        if (code === 0) { finish(null, stdout); return; }
+        // CLI кладёт настоящую причину в JSON-конверт на stdout (is_error+result),
+        // а stderr при этом пуст — без разбора stdout пользователь видел голое
+        // «завершился с кодом 1» вместо «выполните /login».
+        let envelopeReason = "";
+        try {
+          const envelope = JSON.parse(stdout.trim());
+          if (envelope && typeof envelope.result === "string") envelopeReason = envelope.result;
+        } catch { /* не JSON — остаёмся со stderr */ }
+        const detail = (envelopeReason
+          || decodeProcessOutput(Buffer.concat(stderrChunks))).trim().slice(-1_000);
         if (/not recognized|не является|не найден|command not found|ENOENT/i.test(detail)) {
           finish(new Error("Claude CLI не найден в PATH. Установите Claude Code или задайте путь в DESIGNDNA_CLAUDE."));
           return;

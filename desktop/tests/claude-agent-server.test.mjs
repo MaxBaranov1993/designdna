@@ -191,6 +191,20 @@ test("unknown profiles are rejected before the process starts", async () => {
   assert.equal(calls.length, 0);
 });
 
+test("a login failure reported on stdout is surfaced, not swallowed as exit 1", async () => {
+  // Регрессия: CLI кладёт причину в JSON-конверт на stdout, stderr при этом
+  // пуст — пользователь видел голое «завершился с кодом 1».
+  const { spawnProcess } = fakeSpawn({
+    stdout: JSON.stringify({ type: "result", is_error: true, result: "Not logged in · Please run /login" }),
+    code: 1,
+  });
+  const server = new ClaudeAgentServer({
+    cwd: "/repo", spawnProcess,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+  });
+  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude не подключён.*\/login/s);
+});
+
 test("an authentication failure becomes a readable login instruction", async () => {
   const { spawnProcess } = fakeSpawn({ stderr: "Invalid API key · please run /login", code: 1 });
   const server = new ClaudeAgentServer({

@@ -57,6 +57,67 @@ CATEGORY_SECTION = {
     "patterns": "patterns",
 }
 
+# Уровни атомарного дизайна — принятый способ читать UI kit: неделимые
+# элементы, их сочетания и собранные из них блоки. Без этой оси каталог
+# выглядит плоской свалкой карточек, по которой непонятно, с чего начинать.
+ATOMIC_LEVELS = (
+    ("atoms", "Атомы", "Неделимые элементы: кнопки, поля, метки, иконки"),
+    ("molecules", "Молекулы", "Сочетания атомов: поле поиска, пункт меню, заголовок секции"),
+    ("organisms", "Организмы", "Собранные блоки: карточки, навигация, футер, секции"),
+)
+ROLE_ATOMIC = {
+    "button": "atoms",
+    "text-link": "atoms",
+    "form-field": "atoms",
+    "badge": "atoms",
+    "icon": "atoms",
+    "avatar": "atoms",
+    "list-item": "atoms",
+    "search-field": "molecules",
+    "form-group": "molecules",
+    "section-header": "molecules",
+    "listing-section-header": "molecules",
+    "mobile-navigation-item": "molecules",
+    "process-step": "molecules",
+    "accordion-item": "molecules",
+    "category-tile": "molecules",
+    "filter-bar": "molecules",
+    "header-actions": "molecules",
+    "navigation-group": "organisms",
+    "footer-navigation": "organisms",
+    "service-card": "organisms",
+    "article-card": "organisms",
+    "trust-card": "organisms",
+    "support-card": "organisms",
+    "content-card": "organisms",
+    "nested-surface": "organisms",
+    "hero-slide": "organisms",
+    "article-section": "organisms",
+}
+CATEGORY_ATOMIC = {
+    "actions": "atoms",
+    "forms": "molecules",
+    "content": "molecules",
+    "disclosure": "molecules",
+    "navigation": "organisms",
+    "surfaces": "organisms",
+    "patterns": "organisms",
+}
+
+
+def atomic_level(component: dict) -> str:
+    """Уровень компонента: атом, молекула или организм.
+
+    Роль важнее категории: категория говорит, куда положить в каталоге, а
+    уровень — насколько элемент сложен. Неизвестное считаем организмом:
+    лучше показать как сборный блок, чем выдать за примитив.
+    """
+    role = str(component.get("canonicalRole") or "").lower()
+    if role in ROLE_ATOMIC:
+        return ROLE_ATOMIC[role]
+    category = str(component.get("category") or "").lower()
+    return CATEGORY_ATOMIC.get(category, "organisms")
+
 
 def _catalog_components(document: dict) -> dict[str, dict]:
     result: dict[str, dict] = {}
@@ -110,6 +171,9 @@ def deterministic_catalog(document: dict) -> dict:
             "rationale": "Deterministic Source semantics",
             "qualityAction": quality_action,
             "qualityReasons": reasons,
+            "atomicLevel": atomic_level(component),
+            "variantCount": len(component.get("variants") or {}),
+            "stateCount": len(component.get("states") or {}),
         }
         section_members[section].append(key)
     sections = []
@@ -118,10 +182,20 @@ def deterministic_catalog(document: dict) -> dict:
         if keys:
             sections.append({"key": section_key, "label": label, "description": description,
                              "componentKeys": keys})
+    # Ось атомарного дизайна рядом с секциями: секция отвечает «где искать»,
+    # уровень — «с чего начинать читать кит».
+    levels = []
+    for level_key, label, description in ATOMIC_LEVELS:
+        keys = sorted((key for key, item in meta.items() if item["atomicLevel"] == level_key),
+                      key=lambda item: (meta[item]["label"].lower(), item))
+        if keys:
+            levels.append({"key": level_key, "label": label, "description": description,
+                           "componentKeys": keys})
     return {
         "version": CATALOG_VERSION,
         "organizer": {"kind": "deterministic", "model": None, "reasoningEffort": None},
         "sections": sections,
+        "levels": levels,
         "componentMeta": meta,
         "rules": {
             "variantsStayWithFamily": True,
@@ -203,6 +277,20 @@ def _validate_ai_plan(raw_plan: Any, document: dict, baseline: dict, effort: str
         if keys:
             result["sections"].append({"key": section_key, "label": label,
                                        "description": description, "componentKeys": keys})
+    # Уровень атомарного дизайна модель не переопределяет: это измеренное
+    # свойство компонента, а не вопрос вкуса — она решает только раскладку
+    # по секциям и подписи. Пересобираем ось из baseline.
+    level_members: dict[str, list[str]] = {key: [] for key, _, _ in ATOMIC_LEVELS}
+    for key, item in result["componentMeta"].items():
+        level = str(baseline["componentMeta"].get(key, {}).get("atomicLevel") or "organisms")
+        item["atomicLevel"] = level
+        level_members.setdefault(level, []).append(key)
+    result["levels"] = [
+        {"key": level_key, "label": label, "description": description,
+         "componentKeys": sorted(level_members[level_key],
+                                 key=lambda key: (result["componentMeta"][key]["label"].lower(), key))}
+        for level_key, label, description in ATOMIC_LEVELS if level_members.get(level_key)
+    ]
     result["organizer"] = {"kind": "ai", "model": "gpt-5.6-sol", "reasoningEffort": effort}
     return result
 

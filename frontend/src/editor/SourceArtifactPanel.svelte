@@ -56,26 +56,61 @@
 
   let screens = $derived(artifact?.screens || []);
   let foundationGroups = $derived(artifact?.foundations.groups || []);
-  let catalogGroups = $derived.by((): Array<[string, FamilyCard[]]> => {
+
+  /* Кит читается по уровням атомарного дизайна: сначала неделимые элементы,
+   * потом их сочетания, потом собранные блоки. Плоский список карточек, где
+   * кнопка и целая секция лежат рядом, не отвечает на вопрос «с чего начать». */
+  type LevelGroup = { key: string; label: string; description: string; families: FamilyCard[] };
+  const LEVEL_FALLBACK = [
+    { key: "atoms", label: "Атомы", description: "Неделимые элементы: кнопки, поля, метки, иконки" },
+    { key: "molecules", label: "Молекулы", description: "Сочетания атомов: поле поиска, пункт меню, заголовок секции" },
+    { key: "organisms", label: "Организмы", description: "Собранные блоки: карточки, навигация, футер, секции" },
+  ];
+
+  let levelGroups = $derived.by((): LevelGroup[] => {
     const byKey = new Map(catalogEntries.map((entry) => [entry.key, entry]));
-    const groups: Array<[string, CatalogEntry[]]> = [];
+    const declared = (catalog.levels || []) as Array<{ key: string; label: string; description?: string; componentKeys?: string[] }>;
+    const source = declared.length
+      ? declared
+      : LEVEL_FALLBACK.map((level) => ({
+          ...level,
+          // Старые ревизии каталога без оси уровней: раскладываем по метаданным.
+          componentKeys: catalogEntries
+            .filter((entry) => String(catalog.componentMeta?.[entry.key]?.atomicLevel || "organisms") === level.key)
+            .map((entry) => entry.key),
+        }));
+    const groups: LevelGroup[] = [];
     const seen = new Set<string>();
-    for (const section of catalog.sections || []) {
-      const entries = (section.componentKeys || [])
-        .map((key: string) => byKey.get(key))
-        .filter((entry: CatalogEntry | undefined): entry is CatalogEntry => !!entry);
+    for (const level of source) {
+      const entries = (level.componentKeys || [])
+        .map((key) => byKey.get(key))
+        .filter((entry): entry is CatalogEntry => !!entry);
       for (const entry of entries) seen.add(entry.key);
-      if (entries.length) groups.push([String(section.label || section.key), entries]);
+      if (entries.length) {
+        const preset = LEVEL_FALLBACK.find((item) => item.key === level.key);
+        groups.push({
+          key: level.key,
+          label: String(level.label || preset?.label || level.key),
+          description: String(level.description || preset?.description || ""),
+          families: mergeFamilies(entries),
+        });
+      }
     }
-    const fallback = new Map<string, CatalogEntry[]>();
-    for (const entry of catalogEntries) {
-      if (seen.has(entry.key)) continue;
-      const category = String(entry.component.category || "Other");
-      fallback.set(category, [...(fallback.get(category) || []), entry]);
+    const rest = catalogEntries.filter((entry) => !seen.has(entry.key));
+    if (rest.length) {
+      groups.push({ key: "other", label: "Прочее",
+        description: "Компоненты, которым не определён уровень", families: mergeFamilies(rest) });
     }
-    return [...groups, ...Array.from(fallback.entries())]
-      .map(([label, entries]) => [label, mergeFamilies(entries)]);
+    return groups;
   });
+
+  /** Секция каталога компонента — отвечает «где искать», уровень — «насколько сложен». */
+  function sectionOf(key: string): string {
+    for (const section of catalog.sections || []) {
+      if ((section.componentKeys || []).includes(key)) return String(section.label || section.key);
+    }
+    return "";
+  }
   let detectedComponents = $derived(catalogEntries.length
     || artifact?.summary.componentSetCount || artifact?.summary.componentCount || 0);
   let detectedVariants = $derived(catalogEntries.length
@@ -119,7 +154,7 @@
 
     <section class="source-section">
       <div class="source-section-head">
-        <div><span>01</span><h3>Foundations</h3></div>
+        <div><span>01</span><h3>Основы</h3></div>
         <small>{artifact.summary.tokenCount ?? 0} measured tokens</small>
       </div>
       <div class="foundation-strip">
@@ -133,7 +168,7 @@
 
     <section class="source-section">
       <div class="source-section-head">
-        <div><span>02</span><h3>Screens</h3></div>
+        <div><span>02</span><h3>Экраны</h3></div>
         <small>{screens.length} viewport compositions</small>
       </div>
       <div class="screen-grid">
@@ -158,26 +193,42 @@
 
     <section class="source-section">
       <div class="source-section-head">
-        <div><span>03</span><h3>Component Library</h3></div>
-        <small>{detectedComponents} exact masters · quality status never hides a component</small>
+        <div><span>03</span><h3>Компоненты</h3></div>
+        <small>{detectedComponents} мастеров из источника · от простых к составным</small>
       </div>
       <div class="component-sheet" data-source-component-catalog>
-        {#each catalogGroups as [category, families] (category)}
+        {#each levelGroups as level (level.key)}
           <section class="catalog-group">
-            <header><h4>{category}</h4><span>{families.length} families</span></header>
+            <header>
+              <div class="level-head">
+                <h4>{level.label}</h4>
+                <p>{level.description}</p>
+              </div>
+              <span>{level.families.length} компонент(ов)</span>
+            </header>
             <div class="catalog-grid">
-              {#each families as family (family.baseKey)}
+              {#each level.families as family (family.baseKey)}
                 {@const entry = family.primary}
                 {@const comp = entry.component}
                 {@const variants = Object.entries(comp.variants || {}) as Array<[string, any]>}
+                {@const states = Object.keys(comp.states || {})}
+                {@const section = sectionOf(entry.key)}
                 {@const allVerified = comp.status === "verified" && family.review.every((item) => item.component.status === "verified")}
                 <article class:needs-review={!allVerified} data-catalog-component={entry.key}>
                   <header class="catalog-card-head">
-                    <div><strong>{comp.name || entry.key}</strong><small>{comp.canonicalRole || family.baseKey}</small></div>
+                    <div>
+                      <strong>{comp.name || entry.key}</strong>
+                      <small>{section || comp.category || family.baseKey}</small>
+                    </div>
                     <span class:verified={allVerified}>
-                      {allVerified ? "verified" : family.review.length ? `review ×${family.review.length}` : "needs review"}
+                      {allVerified ? "проверен" : family.review.length ? `на ревью ×${family.review.length}` : "нужна проверка"}
                     </span>
                   </header>
+                  <div class="catalog-facts">
+                    <span>{variants.length || 1} вариант(ов)</span>
+                    {#if states.length}<span>{states.length} состояний</span>{/if}
+                    <span>{comp.provenance?.occurrenceCount || 1}× на сайте</span>
+                  </div>
                   <div class="catalog-variants">
                     {#each (variants.length ? variants : [["default", {}] as [string, any]]) as [variantKey, variant] (variantKey)}
                       <div class="catalog-variant">
@@ -200,8 +251,8 @@
                     </div>
                   {/if}
                   <footer>
-                    <span>{comp.provenance?.occurrenceCount || 1} source instances{family.review.length ? ` · +${family.review.length} review` : ""}</span>
-                    <button type="button" onclick={() => onOpen?.(entry.key, entry.pool)}>Inspect component</button>
+                    <span>{family.review.length ? `+${family.review.length} на ревью` : "все экземпляры совпали"}</span>
+                    <button type="button" onclick={() => onOpen?.(entry.key, entry.pool)}>Открыть</button>
                   </footer>
                 </article>
               {/each}
@@ -274,6 +325,10 @@
   .catalog-variant { min-width: 0; }
   .catalog-variant > div:last-child { display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 5px 2px 2px; color: #9ba4b5; font-size: 8px; }
   .catalog-variant small { color: #687184; }
+  .level-head { min-width: 0; }
+  .level-head p { margin: 2px 0 0; color: #6f788a; font-size: 8.5px; line-height: 1.35; }
+  .catalog-facts { display: flex; flex-wrap: wrap; gap: 4px 8px; padding: 0 10px 8px; color: #8d95a6; font-size: 8px; }
+  .catalog-facts span { border-radius: 999px; background: #171d26; padding: 3px 7px; }
   .catalog-review-strip { margin-top: 8px; padding: 0 9px; }
   .catalog-review-strip > span { display: block; margin-bottom: 5px; color: #b9925e; font-size: 8px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
   .catalog-review-strip > div { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 5px; }

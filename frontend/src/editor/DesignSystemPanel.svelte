@@ -214,6 +214,19 @@
     }
   });
 
+  /* Ревью стиля запускается само, как только документ готов и ревью ещё нет:
+   * это не «дополнительная кнопка», а часть разбора сайта. Запускаем один раз
+   * на документ; отказ (нет провайдера, не выполнен вход) остаётся тихим —
+   * измеренная часть стиль-гайда полноценна и без него. */
+  let autoReviewFor = "";
+  $effect(() => {
+    const systemId = String(doc.id || "");
+    if (!systemId || styleReview || reviewing || busy) return;
+    if (autoReviewFor === systemId) return;
+    autoReviewFor = systemId;
+    void runStyleReview({ silent: true });
+  });
+
   $effect(() => {
     if (selectedComp && !(selectedComp.variants || {})[selectedVariant]) selectedVariant = "default";
   });
@@ -505,10 +518,10 @@
     }
   }
 
-  async function runStyleReview() {
+  async function runStyleReview({ silent = false }: { silent?: boolean } = {}) {
     if (!doc.id) return;
     reviewing = true;
-    actionError = "";
+    if (!silent) actionError = "";
     $flow.setNodeData(Number(nodeId), { busyAction: "style-review", lastError: "" });
     try {
       const desktop = window.designDNA;
@@ -544,9 +557,11 @@
         summary: result.summary,
         status: "draft",
       });
-      activeTab = "styleguide";
+      if (!silent) activeTab = "styleguide";
     } catch (e) {
-      actionError = e instanceof Error ? e.message : String(e);
+      // Автозапуск не должен кричать ошибкой на весь экран: измеренная часть
+      // стиль-гайда полноценна и без AI-ревью. Ручной запуск — сообщает.
+      if (!silent) actionError = e instanceof Error ? e.message : String(e);
     } finally {
       reviewing = false;
       $flow.setNodeData(Number(nodeId), { busyAction: "" });
@@ -852,7 +867,7 @@
           <section class="ds-sg-review-bar" aria-label="AI style review">
             <div>
               <strong>AI-ревью стиля</strong>
-              <small>Модель изучает дизайн-язык сайта: тон, правила, характер. Новые компоненты будут генерироваться по этому гайду.</small>
+              <small>Запускается автоматически при готовом ките. Модель изучает дизайн-язык сайта: тон, правила, характер — новые компоненты генерируются по этому гайду.</small>
             </div>
             <label>
               <span>Провайдер</span>
@@ -873,7 +888,7 @@
               </label>
             {/if}
             <button type="button" data-ds-action="style-review" onclick={() => void runStyleReview()} disabled={busy || !doc.id}>
-              {reviewing ? "Ревью…" : styleReview ? "Обновить ревью" : "Сделать ревью"}
+              {reviewing ? "Ревью…" : styleReview ? "Переснять ревью" : "Запустить вручную"}
             </button>
             <span class="ds-organizer-state" data-kind={styleGuide.origin === "ai" ? "ai" : "deterministic"}>
               {styleGuide.origin === "ai" ? `AI · ${styleGuide.provider || "openai"}` : "measured baseline"}
