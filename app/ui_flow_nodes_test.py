@@ -297,7 +297,9 @@ def main():
         check("Source Import requests the three responsive viewports",
               source_payload.get("url") == SOURCE_URL and
               [v.get("name") for v in source_payload.get("viewports", [])] == ["desktop", "tablet", "mobile"])
-        check("Source Import exposes block + DNA ports", pg.locator(".n-sourceimport .port-row.out").count() == 2)
+        check("Source Import exposes selected block + artifact + DNA ports",
+              pg.locator(".n-sourceimport .port-row.out").evaluate_all(
+                  "els => els.map(e => e.dataset.port)") == ["hero", "artifact", "tokens"])
 
         check("connect prompt → generator", connect_types(pg, "prompt", "out", "generator", "prompt"))
         check("connect generator → edit", connect_types(pg, "generator", "ir", "edit", "a"))
@@ -330,7 +332,8 @@ def main():
 
         run_node_type(pg, "generator")
         pg.wait_for_selector('.n-generator .f-preview .ir-preview-inner div[class^="ir-"]', timeout=8000)
-        check("Generator uses auto provider", CAPTURED.get("generate", [{}])[0].get("provider") == "auto")
+        check("Generator sends the selected OpenAI provider",
+              CAPTURED.get("generate", [{}])[0].get("provider") == "openai")
         pg.wait_for_selector('.n-edit .f-preview .ir-preview-inner div[class^="ir-"]', timeout=5000)
 
         check("Design System exposes Source style DNA", pg.evaluate("""(() => {
