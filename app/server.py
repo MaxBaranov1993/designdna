@@ -424,7 +424,9 @@ def generate(req: GenerateReq):
             return err(422, f"Design System: {ds_error}")
         ds_usage_mode = str(req.designSystem.get("usageMode") or "strict")
         ds_context = ds_resolver.resolve_context(ds_doc, brief, usage_mode=ds_usage_mode)
-        provider_budget = 4000 if ds_usage_mode == "strict" else 1200
+        # Strict обязан вместить exact master целой секции — на 4000 токенов
+        # он не помещался и генерация падала «не помещается в context budget».
+        provider_budget = 24_000 if ds_usage_mode == "strict" else 1200
         ds_compiled = ds_resolver.compiled_context(
             ds_context, brief=brief,
             archetype_id=str(req.designSystem.get("archetypeId") or ""),
@@ -955,7 +957,7 @@ def reskin(req: ReskinReq):
         ds_compiled = ds_resolver.compiled_context(
             ds_context, brief=req.prompt,
             archetype_id=str(req.designSystem.get("archetypeId") or ""),
-            token_budget=int(req.designSystem.get("tokenBudget") or (4000 if ds_usage_mode == "strict" else 1000)),
+            token_budget=int(req.designSystem.get("tokenBudget") or (24_000 if ds_usage_mode == "strict" else 1000)),
         )
         if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
             return err(422, "Design System Strict: exact master не помещается в выбранный context budget")

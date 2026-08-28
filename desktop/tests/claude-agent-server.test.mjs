@@ -7,6 +7,7 @@ import {
   ClaudeAgentServer,
   claudeCredentialPaths,
   claudeEffortBudget,
+  claudeInstallPaths,
   claudeProcessSpec,
 } from "../services/claude-agent-server.mjs";
 
@@ -21,8 +22,8 @@ function fakeSpawn({ stdout = "", stderr = "", code = 0 } = {}) {
     child.kill = () => { calls.at(-1).killed = true; };
     calls.push({ command, args, options, stdin: null, killed: false });
     queueMicrotask(() => {
-      if (stdout) child.stdout.emit("data", stdout);
-      if (stderr) child.stderr.emit("data", stderr);
+      if (stdout) child.stdout.emit("data", Buffer.from(stdout));
+      if (stderr) child.stderr.emit("data", Buffer.isBuffer(stderr) ? stderr : Buffer.from(stderr));
       child.emit("exit", code);
     });
     return child;
@@ -30,13 +31,31 @@ function fakeSpawn({ stdout = "", stderr = "", code = 0 } = {}) {
   return { spawnProcess, calls };
 }
 
-test("Windows falls back to the cmd.exe shim with UTF-8 code page", () => {
+test("the official ~/.local/bin install is found even when PATH omits it", () => {
+  // Регрессия: установщик Claude Code кладёт бинарь в ~/.local/bin, которого
+  // нет в PATH процесса Electron — запуск падал в cmd.exe.
+  const installed = "C:\\Users\\dev\\.local\\bin\\claude.exe";
+  const spec = claudeProcessSpec({
+    platform: "win32",
+    environment: { PATH: "", USERPROFILE: "C:\\Users\\dev" },
+    args: ["-p"],
+    fileExists: (file) => file === installed,
+  });
+  assert.equal(spec.command, installed);
+  assert.equal(spec.resolved, true);
+  assert.deepEqual(spec.args, ["-p"]);
+  assert.ok(claudeInstallPaths({ USERPROFILE: "C:\\Users\\dev" }).includes(installed));
+});
+
+test("Windows falls back to the cmd.exe shim only when nothing resolves", () => {
   const spec = claudeProcessSpec({
     platform: "win32",
     environment: { PATH: "", ComSpec: "C:\\Windows\\system32\\cmd.exe" },
     args: ["-p", "--model", "opus"],
+    fileExists: () => false,
   });
   assert.equal(spec.command, "C:\\Windows\\system32\\cmd.exe");
+  assert.equal(spec.resolved, false);
   assert.deepEqual(spec.args.slice(0, 3), ["/d", "/s", "/c"]);
   assert.match(spec.args[3], /^chcp 65001>nul && claude /);
   assert.match(spec.args[3], /-p --model opus/);
@@ -85,7 +104,23 @@ test("status reports logged out with an actionable hint", () => {
   assert.equal(status.provider, "claude");
   assert.equal(status.installed, true);
   assert.equal(status.loggedIn, false);
+  assert.equal(status.ready, false);
   assert.match(status.hint, /\/login/);
+});
+
+test("credentials without a resolvable binary are not reported as connected", () => {
+  // Регрессия: файл кредов существовал, бинаря не было — статус показывал
+  // «подключён по подписке», а генерация падала кракозябрами из cmd.exe.
+  const server = new ClaudeAgentServer({
+    cwd: ".",
+    environment: { PATH: "", USERPROFILE: "C:\\Users\\dev" },
+    fileExists: (file) => file.endsWith(".credentials.json"),
+  });
+  const status = server.account();
+  assert.equal(status.loggedIn, true);
+  assert.equal(status.installed, false);
+  assert.equal(status.ready, false);
+  assert.match(status.hint, /CLI не найден/);
 });
 
 test("status reports connected once Claude Code holds credentials", () => {
@@ -96,8 +131,21 @@ test("status reports connected once Claude Code holds credentials", () => {
   });
   const status = server.account();
   assert.equal(status.loggedIn, true);
+  assert.equal(status.ready, true);
   assert.equal(status.hint, null);
   assert.equal(status.model, "opus");
+});
+
+test("chat fails fast with an install hint when no binary resolves", async () => {
+  let spawned = false;
+  const server = new ClaudeAgentServer({
+    cwd: ".",
+    spawnProcess: () => { spawned = true; throw new Error("must not spawn"); },
+    environment: { PATH: "", USERPROFILE: "C:\\Users\\dev" },
+    fileExists: (file) => file.endsWith(".credentials.json"),
+  });
+  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /CLI не найден/);
+  assert.equal(spawned, false);
 });
 
 test("chat sends a headless JSON request and returns the result field", async () => {
@@ -150,6 +198,25 @@ test("an authentication failure becomes a readable login instruction", async () 
     environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => false,
   });
   await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude не подключён.*\/login/s);
+});
+
+test("cmd.exe OEM-encoded failures are decoded, not shown as mojibake", async () => {
+  // cmd.exe печатает свои ошибки в cp866 даже после chcp 65001.
+  const oem = Buffer.from([0x22, 0x63, 0x6c, 0x61, 0x75, 0x64, 0x65, 0x22, 0x20,
+    0xad, 0xa5, 0x20, 0xef, 0xa2, 0xab, 0xef, 0xa5, 0xe2, 0xe1, 0xef]); // "claude" не является
+  const { spawnProcess } = fakeSpawn({ stderr: oem, code: 1 });
+  const server = new ClaudeAgentServer({
+    cwd: "/repo", spawnProcess,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+  });
+  await assert.rejects(
+    server.chat([{ role: "user", content: "hi" }]),
+    (error) => {
+      assert.doesNotMatch(error.message, /�/, "сообщение не должно содержать кракозябр");
+      assert.match(error.message, /CLI не найден/);
+      return true;
+    },
+  );
 });
 
 test("an error envelope and an empty result both surface as failures", async () => {

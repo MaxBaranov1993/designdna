@@ -43,7 +43,7 @@ _SEMANTIC_ROLES = {
     "gallery", "navigation", "status", "toolbar", "profile", "panel", "section",
 }
 
-SOURCE_COMPILER_VERSION = "dom-v40"
+SOURCE_COMPILER_VERSION = "dom-v41"
 SOURCE_ARTIFACT_VERSION = "source-artifact/1.0"
 
 # Hidden blocks (display:none / zero box / no visual content) are not import

@@ -26,7 +26,7 @@ from .identity import extract_identity
 # версию, когда нода не передала свою. Расхождение (было "dom-v31" против
 # "dom-v39") помечало свежие захваты устаревшим парсером. Синхронность
 # проверяется тестом test_source_compiler_default_matches_pipeline.
-SOURCE_COMPILER_DEFAULT = "dom-v40"
+SOURCE_COMPILER_DEFAULT = "dom-v41"
 _GEN_STATES = ("hover", "loading", "error", "empty", "disabled")
 
 # ---------- Style DNA нормализация ----------

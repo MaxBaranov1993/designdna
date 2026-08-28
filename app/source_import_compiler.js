@@ -384,6 +384,37 @@
                       let rules = null; try { rules = sheet.cssRules; } catch (_) {}
                       if (rules) walk(rules, sheet.href);
                     }
+                    // Cross-origin таблицы (CDN, Google Fonts) бросают на
+                    // cssRules — их @font-face выше не виден, и страница на
+                    // гротеске превращалась в антикву. Реально загруженные
+                    // файлы шрифтов доступны через resource timing независимо
+                    // от CORS: сопоставляем их с семействами из document.fonts.
+                    try {
+                      const loaded = [];
+                      for (const face of Array.from(document.fonts || [])) {
+                        if (face && face.status === 'loaded' && face.family) {
+                          loaded.push({
+                            family: String(face.family).replace(/["']/g, '').trim(),
+                            weight: String(face.weight || '400'),
+                            style: String(face.style || 'normal'),
+                            unicodeRange: String(face.unicodeRange || ''),
+                          });
+                        }
+                      }
+                      const fontUrls = (performance.getEntriesByType('resource') || [])
+                        .map(entry => String(entry.name || ''))
+                        .filter(name => /\.(woff2?|ttf|otf)(\?|$)/i.test(name));
+                      // Одно семейство — один файл: без src в FontFace точного
+                      // сопоставления нет, поэтому связываем по порядку загрузки
+                      // и не перетираем уже найденные из CSSOM.
+                      for (let i = 0; i < loaded.length && i < fontUrls.length; i++) {
+                        const face = loaded[i];
+                        const key = (face.family + '|' + face.weight + '|' + face.style + '|' + face.unicodeRange).toLowerCase();
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+                        out.push({ ...face, urls: [abs(fontUrls[i])] });
+                      }
+                    } catch (_) { /* resource timing недоступен — остаёмся с CSSOM */ }
                     return out.slice(0, 24);
                   };
                   const compileBlock = (block) => {

@@ -108,6 +108,33 @@ def test_prompt_is_a_compact_digest_without_master_ir():
     assert "masterIr" not in messages[1]["content"]
 
 
+def test_style_guide_never_crowds_the_exact_master_out_of_strict_budget():
+    """Регрессия: многословный стиль-гайд съедал бюджет до мастеров, и strict
+    падал «exact master не помещается в выбранный context budget»."""
+    doc = _document()
+    doc = style_review.apply_style_review(doc, json.dumps({"styleGuide": {
+        "tone": "T" * 300,
+        "colorUsage": "C" * 300,
+        "typographyCharacter": "Y" * 300,
+        "doRules": [f"Do rule number {index} " + "x" * 200 for index in range(10)],
+        "dontRules": [f"Dont rule number {index} " + "y" * 200 for index in range(10)],
+    }}))
+    master = {"tree": [{"type": "card", "children": [
+        {"type": "text", "text": "cell " * 40} for _ in range(25)
+    ]}]}
+    context = {
+        "systemRef": {"systemId": "ds-test", "revision": 1, "contentHash": "x"},
+        "foundations": doc["foundations"],
+        "styleGuide": doc["styleGuide"],
+        "components": [{"componentKey": "service-card", "category": "surfaces",
+                        "masterIr": master, "propsSchema": {}}],
+        "constraints": {"usageMode": "strict"},
+    }
+    compiled = compile_profile(context, token_budget=24_000)
+    assert compiled["strictReady"] is True
+    assert "service-card" in compiled["includedMasterKeys"]
+
+
 def test_style_guide_reaches_the_generation_prompt():
     doc = _document()
     doc = style_review.apply_style_review(doc, json.dumps({"styleGuide": {

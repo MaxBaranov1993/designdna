@@ -56,17 +56,27 @@
 </div>
 
 <style>
+  /* Адаптивно: провайдер занимает свободное место, усилие — по содержимому.
+     minmax(0,…) обязателен, иначе grid-элемент не сжимается ниже ширины
+     текста и «Claude Opus» наползал на соседний селект. */
   .provider-picker {
-    display: flex;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    gap: 6px;
     align-items: center;
     min-width: 0;
   }
+  .provider-picker:has(.f-effort-select:only-child),
+  .provider-picker:not(:has(.f-effort-select)) {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .provider-picker select {
     min-width: 0;
-    flex: 1 1 auto;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .provider-picker .f-effort-select {
-    flex: 0 1 auto;
+  @container (max-width: 220px) {
+    .provider-picker { grid-template-columns: minmax(0, 1fr); }
   }
 </style>

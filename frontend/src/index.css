@@ -351,12 +351,24 @@
   opacity: 0.35;
   cursor: default;
 }
+/* Пять действий в один flex-ряд не помещались в ноду 300px и вылезали за её
+   границы. Сетка переносит их сама и держит кнопки одинаковой ширины. */
 .gen-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   gap: 6px;
+  min-width: 0;
 }
 .gen-actions .btn-node {
-  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 7px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Закрепление стиля — главное действие, отдельной строкой во всю ширину. */
+.gen-actions .btn-node.primary {
+  grid-column: 1 / -1;
 }
 
 /* кнопки внутри нод — зеркало .btn (nodes.html) */
@@ -623,17 +635,21 @@
   white-space: nowrap;
 }
 .generator-model-row {
+  container-type: inline-size;
   min-height: 24px;
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
+  display: block;
+  min-width: 0;
+  padding: 3px 8px;
   border-left: 2px solid var(--flow-accent);
   color: var(--flow-muted);
   background: var(--flow-panel-2);
   font-size: 11px;
 }
-.generator-model-row .f-provider-select {
-  width: 100%;
+/* Оба селекта пикера оформляются одинаково. Раньше width:100% висел на
+   каждом, и в узкой ноде они наползали друг на друга. */
+.generator-model-row .f-provider-select,
+.generator-model-row .f-effort-select {
+  min-width: 0;
   height: 24px;
   border: 0;
   background: transparent;

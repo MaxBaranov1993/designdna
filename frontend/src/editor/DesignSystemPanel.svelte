@@ -15,7 +15,17 @@
     return ((node?.data || {}) as unknown) as DesignSystemNodeData;
   });
 
+  /* Две основные вкладки: «Компоненты» и «Стиль сайта». Остальные девять —
+   * инженерная диагностика (identity, archetypes, tests, proof, validation,
+   * mock, suggestions); они прячутся за «Ещё», чтобы каждодневная работа
+   * шла в двух понятных экранах, а не в свалке из одиннадцати. */
   let activeTab = $state<"source" | "styleguide" | "foundations" | "components" | "suggestions" | "mock" | "identity" | "archetypes" | "tests" | "proof" | "validation">("source");
+  let showAdvanced = $state(false);
+  const ADVANCED_TABS = new Set(["foundations", "suggestions", "mock", "identity", "archetypes", "tests", "proof", "validation"]);
+  $effect(() => {
+    // Переход в диагностику (например, из validate()) сам раскрывает раздел.
+    if (ADVANCED_TABS.has(activeTab)) showAdvanced = true;
+  });
   type CatalogPool = "components" | "review" | "suggestions";
   type CatalogEntry = { key: string; pool: CatalogPool; component: Record<string, any> };
   let selectedKey = $state<string>("");
@@ -745,9 +755,15 @@
   {/if}
 
   <nav class="ds-section-tabs" aria-label="Разделы дизайн-системы">
-    <button type="button" data-ds-tab="source" class:active={activeTab === "source"} onclick={() => (activeTab = "source")}>Source UI <span>{catalogEntries.length || sourceArtifact?.summary.componentCount || 0}</span></button>
-    <button type="button" data-ds-tab="components" class:active={activeTab === "components"} onclick={() => (activeTab = "components")}>Components <span>{catalogEntries.length}</span></button>
-    <button type="button" data-ds-tab="styleguide" class:active={activeTab === "styleguide"} onclick={() => (activeTab = "styleguide")}>Style Guide{#if styleReview}<span>AI</span>{/if}</button>
+    <button type="button" data-ds-tab="source" class:active={activeTab === "source" || activeTab === "components"} onclick={() => (activeTab = "source")}>Компоненты <span>{catalogEntries.length}</span></button>
+    <button type="button" data-ds-tab="styleguide" class:active={activeTab === "styleguide"} onclick={() => (activeTab = "styleguide")}>Стиль сайта{#if styleReview}<span>AI</span>{/if}</button>
+    <button type="button" class="ds-tab-more" aria-expanded={showAdvanced} onclick={() => (showAdvanced = !showAdvanced)}>
+      {showAdvanced ? "Свернуть" : "Ещё"}
+    </button>
+  </nav>
+  {#if showAdvanced}
+  <nav class="ds-section-tabs ds-advanced-tabs" aria-label="Диагностика дизайн-системы">
+    <button type="button" data-ds-tab="components" class:active={activeTab === "components"} onclick={() => (activeTab = "components")}>Библиотека <span>{catalogEntries.length}</span></button>
     <button type="button" data-ds-tab="foundations" class:active={activeTab === "foundations"} onclick={() => (activeTab = "foundations")}>Foundations</button>
     <button type="button" data-ds-tab="suggestions" class:active={activeTab === "suggestions"} onclick={() => (activeTab = "suggestions")}>Suggestions <span>{semanticSuggestions.length}</span></button>
     <button type="button" data-ds-tab="identity" class:active={activeTab === "identity"} onclick={() => (activeTab = "identity")}>Identity</button>
@@ -757,6 +773,7 @@
     <button type="button" data-ds-tab="mock" class:active={activeTab === "mock"} onclick={() => (activeTab = "mock")}>Mock data</button>
     <button type="button" data-ds-tab="validation" class:active={activeTab === "validation"} onclick={() => (activeTab = "validation")}>Validation</button>
   </nav>
+  {/if}
 
   <div class="ds-editor-body" class:source-overview={activeTab === "source"}>
     <aside class="ds-editor-lib">
@@ -1226,6 +1243,16 @@
     border-bottom: 1px solid var(--border);
     background: #0c0f15;
   }
+  /* Основные вкладки крупнее: их всего две, и они несут ежедневную работу. */
+  .ds-section-tabs:not(.ds-advanced-tabs) button:not(.ds-tab-more) { font-size: 12.5px; padding: 0 14px; }
+  .ds-tab-more { margin-left: auto; color: #6f788a !important; font-size: 11px !important; }
+  .ds-advanced-tabs {
+    min-height: 38px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    background: #090c11;
+  }
+  .ds-advanced-tabs button { font-size: 10.5px; opacity: .85; }
   .ds-section-tabs button {
     flex: none;
     min-height: 32px;

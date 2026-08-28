@@ -69,7 +69,11 @@ def component_handle(component: dict, system_ref: dict) -> dict:
 
 
 def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", token_budget: int = 1200) -> dict:
-    token_budget = max(320, min(int(token_budget or 1200), 4000))
+    # Потолок поднят с 4000: exact master IR целой секции сам по себе занимает
+    # тысячи токенов, и strict-режим падал «master не помещается в бюджет».
+    # Современные контексты это выдерживают, а расход всё равно ограничен
+    # запрошенным budget'ом.
+    token_budget = max(320, min(int(token_budget or 1200), 32_000))
     document = {
         "identity": context.get("identity") or {},
         "identityTests": context.get("identityTests") or [],
@@ -140,16 +144,6 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
     if measured_character:
         add("styleguide.character", f"- Measured character: {_json(measured_character)}", required=True)
     review = style_guide.get("review") or {}
-    if review:
-        traits = {key: review[key] for key in
-                  ("tone", "density", "cornerCharacter", "colorUsage", "typographyCharacter", "imageryStyle")
-                  if review.get(key)}
-        if traits:
-            add("styleguide.review", f"- Design language: {_json(traits)}", required=True)
-        for index, rule in enumerate(review.get("doRules") or []):
-            add(f"styleguide.do.{index}", f"- DO: {rule}", required=True)
-        for index, rule in enumerate(review.get("dontRules") or []):
-            add(f"styleguide.dont.{index}", f"- DON'T: {rule}", required=True)
     coverage = identity.get("paletteCoverage") or {}
     if coverage.get("roles"):
         add("identity.palette-coverage", f"- Palette role coverage target: {_json(coverage.get('roles'))}; method={coverage.get('method')}")
@@ -181,6 +175,20 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
             "shapeHash": component_shape_hash(((c.get("masterIr") or {}).get("tree") or [{}])[0]),
         } for c in components if str(c.get("componentKey") or "") in included_master_keys]
         add("registry.components", f"- Masters available in this prompt: {_json(compact)}", required=mode == "strict")
+    # Многословная часть стиль-гайда идёт ПОСЛЕ мастеров и не помечена
+    # required: exact master — обязательство strict-режима, а описание
+    # дизайн-языка деградирует изящно, если бюджет всё же кончился.
+    if review:
+        traits = {key: review[key] for key in
+                  ("tone", "density", "cornerCharacter", "colorUsage", "typographyCharacter", "imageryStyle")
+                  if review.get(key)}
+        if traits:
+            add("styleguide.review", f"- Design language: {_json(traits)}")
+        for index, rule in enumerate(review.get("doRules") or []):
+            add(f"styleguide.do.{index}", f"- DO: {rule}")
+        for index, rule in enumerate(review.get("dontRules") or []):
+            add(f"styleguide.dont.{index}", f"- DON'T: {rule}")
+
     policy = {
         "strict": "STRICT: registered tokens/components and hard identity rules are mandatory; do not invent replacements.",
         "extend": "EXTEND: preserve identity; provisional additions need an explicit reason.",

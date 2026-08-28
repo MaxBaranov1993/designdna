@@ -73,6 +73,10 @@ import { isLockedNode } from "./locked";
       if (!p || p.length > 60 || !/^[\p{L}\p{N}\s._-]+$/u.test(p)) continue;
       out.push(GENERIC.has(p) ? p : `'${p}'`);
     }
+    if (!out.length) return "";
+    // Без явного generic-фолбэка недостающий веб-шрифт откатывался к дефолту
+    // документа — а он serif. Сайт на гротеске превращался в антикву.
+    if (!out.some((name) => GENERIC.has(name.replace(/'/g, "")))) out.push("sans-serif");
     return out.join(",");
   }
 
