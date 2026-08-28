@@ -171,6 +171,15 @@
       {data.image ? (data.fileName || "screenshot") + " (заменить)" : "загрузить скриншот элемента"}
       <input type="file" accept="image/*" hidden onchange={onFile} />
     </label>
+    {#if desktopAuth}
+      <!-- Скриншот размечает агент-сегментатор: рамки компонентов ставит
+           выбранный здесь аккаунт, судит их пиксельная проверка сервера. -->
+      <ProviderPicker
+        provider={data.aiProvider || "openai"}
+        effort="medium"
+        onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider })}
+      />
+    {/if}
   {/if}
   {#if data.mode === "url" && !data.mine}
     <div class="bp-hint">Запуск доступен после отметки «это мой сайт / есть право»</div>

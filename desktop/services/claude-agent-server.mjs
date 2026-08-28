@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 /* Claude как провайдер генерации — через локальный Claude Code CLI.
@@ -136,31 +137,87 @@ export class ClaudeAgentServer {
     };
   }
 
-  /** Одноразовый headless-запрос. messages — тот же формат, что у Codex. */
+  /** Одноразовый headless-запрос. messages — тот же формат, что у Codex.
+   *
+   * Мультимодальные сообщения (content-массив с image_url data:-частями,
+   * стандарт ChatRequestEnvelope) транспортируются файлами: CLI текстовый,
+   * поэтому каждое изображение пишется во временный PNG, в промпт попадает
+   * его путь, и ровно для таких запросов разрешается ОДИН инструмент Read.
+   * Без изображений контракт прежний: без tools и файловых операций. */
   async chat(messages, { timeoutMs = 180_000, profile = "generator", effort = "medium", signal = null } = {}) {
     if (!Object.hasOwn(PROFILE_INSTRUCTIONS, profile)) {
       throw new Error(`Unsupported Claude chat profile: ${profile}`);
     }
+    const { lines, imageFiles, cleanup } = this.materializeMessages(messages);
+    const toolRule = imageFiles.length
+      ? "Use the Read tool ONLY to view the image files listed in the messages. Do not run commands or use any other tool."
+      : "Do not inspect files, run commands, or call tools.";
     const prompt = [
-      `${PROFILE_INSTRUCTIONS[profile]} Do not inspect files, run commands, or call tools. Return only the JSON object.`,
-      ...messages.map((message) => `${String(message.role || "user").toUpperCase()}:\n${String(message.content || "")}`),
+      `${PROFILE_INSTRUCTIONS[profile]} ${toolRule} Return only the JSON object.`,
+      ...lines,
     ].join("\n\n");
 
     // Проверяем доступность до запуска: иначе cmd.exe возвращал собственную
     // ошибку «не является внутренней командой» в чужой кодировке.
     const status = this.account();
-    if (!status.installed) throw new Error(status.hint);
+    if (!status.installed) { cleanup(); throw new Error(status.hint); }
 
     const budget = claudeEffortBudget(effort);
     const args = ["-p", "--output-format", "json", "--model", CLAUDE_MODEL];
+    if (imageFiles.length) args.push("--allowedTools", "Read");
     const spec = claudeProcessSpec({
       environment: this.environment, args, fileExists: this.fileExists,
     });
     const env = { ...this.environment };
     if (budget > 0) env.MAX_THINKING_TOKENS = String(budget);
 
-    const raw = await this.#run(spec, { prompt, timeoutMs, env, signal });
-    return this.#extract(raw);
+    try {
+      const raw = await this.#run(spec, { prompt, timeoutMs, env, signal });
+      return this.#extract(raw);
+    } finally {
+      cleanup();
+    }
+  }
+
+  /** Сообщения → строки промпта; image_url data:-части → временные PNG.
+   *  Возвращает cleanup, удаляющий каталог с изображениями целиком. */
+  materializeMessages(messages) {
+    const lines = [];
+    const imageFiles = [];
+    let tempDir = null;
+    for (const message of messages || []) {
+      const role = String(message.role || "user").toUpperCase();
+      const content = message.content;
+      if (!Array.isArray(content)) {
+        lines.push(`${role}:\n${String(content || "")}`);
+        continue;
+      }
+      const pieces = [];
+      for (const part of content) {
+        if (part?.type === "image_url") {
+          const url = String(part.image_url?.url || "");
+          const match = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/i.exec(url);
+          if (!match) {
+            // https-картинку CLI прочитать не может — честный отказ вместо
+            // молчаливой потери визуального входа.
+            throw new Error("Claude CLI transports only data:image base64 parts");
+          }
+          if (!tempDir) tempDir = mkdtempSync(path.join(tmpdir(), "ddna-claude-img-"));
+          const ext = match[1] === "jpeg" ? "jpg" : match[1];
+          const file = path.join(tempDir, `image-${imageFiles.length + 1}.${ext}`);
+          writeFileSync(file, Buffer.from(match[2], "base64"));
+          imageFiles.push(file);
+          pieces.push(`IMAGE FILE (view it with the Read tool): ${file}`);
+        } else {
+          pieces.push(String(part?.text || ""));
+        }
+      }
+      lines.push(`${role}:\n${pieces.join("\n")}`);
+    }
+    const cleanup = () => {
+      if (tempDir) { try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* уже нет */ } }
+    };
+    return { lines, imageFiles, cleanup };
   }
 
   #run(spec, { prompt, timeoutMs, env, signal }) {

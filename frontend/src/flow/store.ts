@@ -53,6 +53,7 @@ import type {
   RecorderNodeData,
   InteractionLiveAction,
   MotionNodeData,
+  SourceArtifact,
 } from "./types";
 
 function friendlyProviderError(error: unknown) {
@@ -174,6 +175,51 @@ async function refineSourceWithAi(
   if (!applied?.appliedCount) return null;
   setStatus(id, `AI-уточнение: ${applied.appliedCount} правок`);
   return { ...response, blocks: applied.blocks, sourceArtifact: applied.sourceArtifact as never };
+}
+
+/* Скриншот → компоненты: агент-сегментатор с детерминированным судьёй.
+ *
+ * Модель (Claude/GPT — выбор пользователя на ноде) только размечает рамки
+ * по тайлам; сервер клампит координаты, отклоняет рамки без пиксельного
+ * содержимого, схлопывает повторы и собирает Source-блок, где каждая рамка —
+ * boundary-узел с растровым кропом. Ни одна цифра модели не идёт в IR. */
+type SegmentTask = { tileIndex: number; messages: import("./api").ApiChatMessage[] };
+type SegmentResp = {
+  regions: Array<Record<string, unknown>>;
+  block?: BlockParseResp["blocks"][number];
+  tokens?: Record<string, unknown> | null;
+  sourceArtifact?: SourceArtifact;
+  rejectedOutputs?: number;
+};
+
+async function segmentScreenshotWithAi(
+  image: string,
+  provider: NodeProvider,
+  setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
+  id: number,
+): Promise<SegmentResp | null> {
+  const desktop = window.designDNA;
+  if (!desktop) return null;
+  const prepared = await api<{ tasks: SegmentTask[] }>("/api/reproduce/segment", {
+    image, prepareOnly: true,
+  });
+  const tasks = prepared?.tasks || [];
+  if (!tasks.length) return null;
+
+  const rawOutputs: Array<{ tileIndex: number; content: string }> = [];
+  for (const [index, task] of tasks.entries()) {
+    setStatus(id, `Разметка компонентов: тайл ${index + 1}/${tasks.length}…`);
+    const answer = await desktop.providers.chatRequest({
+      ...chatRoute(provider, "high"),
+      messages: task.messages,
+    });
+    rawOutputs.push({ tileIndex: task.tileIndex, content: answer.content });
+  }
+
+  setStatus(id, "Проверяю рамки по пикселям…");
+  const applied = await api<SegmentResp>("/api/reproduce/segment", { image, rawOutputs });
+  if (!applied?.block || !(applied.regions || []).length) return null;
+  return applied;
 }
 
 /* Цикл AI-починки захвата.
@@ -1053,6 +1099,31 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       if (data.mode === "screenshot") {
         if (!data.image) {
           get().setStatus(id, "Загрузите скриншот элемента", "err");
+          return;
+        }
+        // Сначала — сегментация компонентов агентом (Claude/GPT по выбору на
+        // ноде): каждая рамка становится мастером для дизайн-системы. Если
+        // сегментация недоступна (web-режим, отказ провайдера, ноль рамок) —
+        // прежний путь: единый pixel-capture слепок.
+        let segmented: SegmentResp | null = null;
+        if (window.designDNA) {
+          try {
+            segmented = await segmentScreenshotWithAi(
+              data.image, nodeProvider(data.aiProvider), get().setStatus, id);
+          } catch (error) {
+            get().setStatus(id, `Сегментация пропущена: ${friendlyProviderError(error)}`);
+          }
+        }
+        if (segmented?.block) {
+          const block = { ...segmented.block, lit: true };
+          get().setNodeData(id, {
+            blocks: [block],
+            tokens: (segmented.tokens || (block.ir as IRObject | undefined)?.tokens || null) as Record<string, unknown> | null,
+            sourceArtifact: segmented.sourceArtifact || null,
+          });
+          const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
+          get().setStatus(id, `Готово: ${segmented.regions.length} компонент(ов) из скриншота · ${secs}с`, "ok");
+          get().propagate(id);
           return;
         }
         get().setStatus(id, "Скриншот → pixel capture через подключённый аккаунт…");

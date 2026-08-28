@@ -43,6 +43,12 @@ export async function chatWithProvider({
 
   if (resolved === "codex") {
     if (!codex) throw new Error("Codex не подключён. Откройте Agents → Connections.");
+    // Codex — текстовый CLI-транспорт: image-части не доедут, а молча
+    // превратить их в "[object Object]" значит сорвать разметку без причины.
+    if ((source.messages || messages || []).some((item) => Array.isArray(item?.content)
+      && item.content.some((part) => part?.type === "image_url"))) {
+      throw new Error("Codex не передаёт изображения — для разметки скриншота выберите на ноде Claude или GPT.");
+    }
     const content = await codex.chat(source.messages || messages || [], { profile });
     return {
       content,

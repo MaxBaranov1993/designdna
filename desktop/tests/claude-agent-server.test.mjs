@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -267,4 +268,60 @@ test("cancellation kills the CLI process", async () => {
     /cancelled/,
   );
   assert.equal(spawnProcess.child.killed, true);
+});
+
+
+// ---------- мультимодальный вход: изображения уезжают файлами ----------
+
+const PNG_1PX = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==";
+
+test("image parts become temp files, Read is allowed, and the dir is cleaned up", async () => {
+  const { spawnProcess, calls } = fakeSpawn({
+    stdout: JSON.stringify({ type: "result", is_error: false, result: '{"regions":[]}' }),
+  });
+  const server = new ClaudeAgentServer({
+    cwd: "/repo", spawnProcess,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+  });
+  const output = await server.chat([
+    { role: "system", content: "segment" },
+    { role: "user", content: [
+      { type: "text", text: '{"tile":0}' },
+      { type: "image_url", image_url: { url: `data:image/png;base64,${PNG_1PX}`, detail: "high" } },
+    ] },
+  ]);
+  assert.equal(output, '{"regions":[]}');
+  assert.ok(calls[0].args.includes("--allowedTools"), "vision-запрос обязан разрешить Read");
+  assert.ok(calls[0].args.includes("Read"));
+  const match = /IMAGE FILE \(view it with the Read tool\): (.+)/.exec(calls[0].stdin);
+  assert.ok(match, "путь к изображению обязан попасть в промпт");
+  assert.equal(existsSync(match[1].trim()), false, "временный файл обязан удаляться после запроса");
+});
+
+test("text-only requests keep the no-tools contract and flat prompt", async () => {
+  const { spawnProcess, calls } = fakeSpawn({
+    stdout: JSON.stringify({ result: "ok" }),
+  });
+  const server = new ClaudeAgentServer({
+    cwd: "/repo", spawnProcess,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+  });
+  await server.chat([{ role: "user", content: "plain" }]);
+  assert.equal(calls[0].args.includes("--allowedTools"), false);
+  assert.match(calls[0].stdin, /Do not inspect files, run commands, or call tools/);
+});
+
+test("non-data image urls are rejected loudly before any spawn", async () => {
+  const { spawnProcess, calls } = fakeSpawn({ stdout: "{}" });
+  const server = new ClaudeAgentServer({
+    cwd: "/repo", spawnProcess,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+  });
+  await assert.rejects(
+    server.chat([{ role: "user", content: [
+      { type: "image_url", image_url: { url: "https://example.com/x.png" } },
+    ] }]),
+    /data:image/,
+  );
+  assert.equal(calls.length, 0);
 });

@@ -139,3 +139,21 @@ test("Codex and Claude do not require the OpenAI credential", async () => {
   });
   assert.equal(result.content, "ok");
 });
+
+
+test("codex rejects image parts loudly instead of flattening them", async () => {
+  let reached = false;
+  await assert.rejects(
+    chatWithProvider({
+      provider: "codex",
+      envelope: { provider: "codex", messages: [{ role: "user", content: [
+        { type: "text", text: "segment" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+      ] }] },
+      credentials: credentials(false),
+      codex: { chat: async () => { reached = true; return "never"; } },
+    }),
+    /Claude или GPT/,
+  );
+  assert.equal(reached, false, "текстовый транспорт не должен получить изображение");
+});

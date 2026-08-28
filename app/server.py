@@ -3,9 +3,11 @@
 
 Запуск:  .venv/Scripts/python app/server.py   (порт 8420)
 """
+import base64
 import concurrent.futures
 import contextlib
 import copy
+import io
 import json
 import mimetypes
 import os
@@ -368,6 +370,15 @@ class ReproduceReq(BaseModel):
     url: str = ""  # или URL сайта: скриншот снимем сами, результат кэшируется
     provider: str = "auto"  # роль vision выбирает модель из ROUTING
     regions: list | None = None  # опциональные регионы для diff: [["name", x1, y1, x2, y2], ...]
+
+
+class SegmentReq(BaseModel):
+    """Агент-сегментатор скриншота. prepareOnly отдаёт задания разметки по
+    тайлам для провайдера пользователя (Claude/GPT); rawOutputs — ответы;
+    сервер валидирует рамки против пикселей и схлопывает повторы."""
+    image: str = ""  # base64 data URL скриншота
+    prepareOnly: bool = False
+    rawOutputs: list = []  # [{tileIndex, content}]
 
 
 class ProjectSaveReq(BaseModel):
@@ -1634,6 +1645,91 @@ def reproduce(req: ReproduceReq):
     if url_key:
         cache_store.put("reproduce_url", url_key, payload)
     return {**payload, "cached": False}
+
+
+@app.post("/api/reproduce/segment")
+def reproduce_segment(req: SegmentReq):
+    """Скриншот → границы компонентов через агента с детерминированной проверкой.
+
+    Контракт тот же, что у AI-починки: модель только размечает, сервер
+    клампит координаты, отклоняет рамки без пиксельного содержимого и
+    группирует повторы. Ни одна цифра модели не принимается на веру.
+    """
+    import numpy as np
+    from PIL import Image as PILImage
+
+    import screenshot_segmenter as seg
+
+    image = req.image or ""
+    if not image.startswith("data:image"):
+        return err(422, "Нужен скриншот как base64 data URL.")
+    try:
+        raw = base64.b64decode(image.split(",", 1)[1])
+        img = PILImage.open(io.BytesIO(raw)).convert("RGB")
+    except Exception as e:
+        return err(422, f"Не удалось декодировать изображение: {e}")
+    width, height = img.size
+    tiles = seg.tile_grid(width, height)
+    if not tiles:
+        return err(422, "Пустое изображение.")
+
+    if req.prepareOnly:
+        tasks = []
+        for tile in tiles:
+            crop = img.crop((tile["x"], tile["y"],
+                             tile["x"] + tile["width"], tile["y"] + tile["height"]))
+            buffer = io.BytesIO()
+            crop.save(buffer, format="PNG")
+            data_url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+            tasks.append({
+                "tileIndex": tile["index"],
+                "messages": seg.build_segment_prompt(
+                    tile, data_url, {"width": width, "height": height}),
+            })
+        return {"tasks": tasks, "imageSize": {"width": width, "height": height}}
+
+    arr_rgb = np.array(img)
+    tiles_by_index = {tile["index"]: tile for tile in tiles}
+    regions: list[dict] = []
+    rejected = 0
+    for item in req.rawOutputs or []:
+        if not isinstance(item, dict):
+            continue
+        tile = tiles_by_index.get(item.get("tileIndex"))
+        if tile is None:
+            continue
+        match = re.search(r"\{.*\}", str(item.get("content") or ""), re.S)
+        if not match:
+            rejected += 1
+            continue
+        try:
+            parsed = json.loads(match.group(0))
+            validated = seg.validate_regions(parsed, tile, arr_rgb)
+        except (ValueError, json.JSONDecodeError):
+            rejected += 1
+            continue
+        regions.extend(validated)
+    merged = seg.merge_regions(regions)
+    # Сразу собираем Source-блок: рамки → boundary-узлы с растровыми кропами.
+    # Фронту не из чего собирать IR самому — вся геометрия и пиксели тут.
+    import blockparse
+    import screenshot_capture
+    block = screenshot_capture.build_screenshot_block(image, merged)
+    block["ir"] = ensure_current_ir(block["ir"], source="screenshot-import")
+    # Тот же реестр Source, что у URL-импорта: без него раздел «Компоненты»
+    # редактора дизайн-системы показывает «No Source Artifact».
+    artifact = blockparse._build_source_artifact(
+        "screenshot", [block], block["ir"].get("tokens"), False)
+    return {
+        "ok": True,
+        "imageSize": {"width": width, "height": height},
+        "regions": merged,
+        "repeatGroups": sorted({r["repeatGroup"] for r in merged if r.get("repeatGroup")}),
+        "rejectedOutputs": rejected,
+        "block": block,
+        "tokens": block["ir"].get("tokens"),
+        "sourceArtifact": artifact,
+    }
 
 
 @app.get("/api/cache/stats")
