@@ -34,8 +34,8 @@ type RepoCanvasSnapshot = {
   work: Array<{ id: string; title?: string; task?: string; status?: string; actor?: string }>;
 };
 
-type DesktopProvider = "auto" | "codex" | "openai" | "kimi" | "glm" | "zai" | "grok" | "zcode";
-type KimiAccountStatus = { connected: boolean; kind: "oauth" | "api-key" | null; expiresAt: number | null };
+type DesktopProvider = "openai" | "codex" | "claude";
+type SolEffort = "medium" | "high" | "max";
 
 type ChatRequestEnvelope = {
   id?: string;
@@ -52,7 +52,7 @@ type ChatRequestEnvelope = {
   temperature?: number | null;
   topP?: number | null;
   maxOutputTokens?: number | null;
-  reasoning?: { effort: "minimal" | "low" | "medium" | "high" | "max" | "xhigh"; budgetTokens?: number | null } | null;
+  reasoning?: { effort: SolEffort } | null;
   responseFormat?: { type: "json_object" | "json_schema" | "text"; jsonSchema?: { name: string; schema: Record<string, any> } } | null;
   stop?: string[] | null;
   seed?: number | null;
@@ -92,7 +92,7 @@ declare global {
         onRequest(listener: (request: { requestId: string; command: Record<string, unknown> }) => void): DesktopUnsubscribe;
         respond(requestId: string, response: { ok: boolean; result?: Record<string, unknown>; error?: { code: string; message: string } }): Promise<{ accepted: boolean }>;
       };
-      api: { request(request: Record<string, unknown>): Promise<Record<string, unknown>>; cancel(): Promise<{ cancelled: boolean }> };
+      api: { request(request: Record<string, unknown>): Promise<Record<string, unknown>>; cancel(scope?: "long" | "interactive"): Promise<{ cancelled: boolean; scope?: string }> };
       files: { save(name: string, base64: string): Promise<{ saved: boolean; path?: string }> };
       blobs: {
         put(mime: string, base64: string): Promise<{ stored: boolean; name: string; sha256: string; mime: string; bytes: number }>;
@@ -101,16 +101,18 @@ declare global {
       sourceAuth: { open(url: string): Promise<{ opened: boolean }>; clear(): Promise<{ cleared: boolean }> };
       repoCanvas: { snapshot(): Promise<RepoCanvasSnapshot>; check(): Promise<Record<string, unknown>>; refresh(options?: Record<string, unknown>): Promise<Record<string, unknown>> };
       providers: {
-        status(): Promise<{ runtimes: Array<Record<string, any>>; credentials: Record<"openai" | "kimi" | "glm" | "zai" | "grok", boolean>; kimiAccount: KimiAccountStatus; encryptedStorage: boolean }>;
+        status(): Promise<{ runtimes: Array<Record<string, any>>; credentials: Record<"openai", boolean>; encryptedStorage: boolean }>;
         credentials(): Promise<{ configured: Record<string, boolean>; encryptedStorage: boolean }>;
-        setCredential(provider: "openai" | "kimi" | "glm" | "zai" | "grok", value: string): Promise<{ provider: string; configured: boolean }>;
-        deleteCredential(provider: "openai" | "kimi" | "glm" | "zai" | "grok"): Promise<{ provider: string; configured: boolean }>;
-        importKimiCli(): Promise<KimiAccountStatus>;
+        setCredential(provider: "openai", value: string): Promise<{ provider: string; configured: boolean }>;
+        deleteCredential(provider: "openai"): Promise<{ provider: string; configured: boolean }>;
         chat(provider: DesktopProvider, messages: Array<{ role: string; content: string }>, temperature?: number,
           profile?: "generator" | "quality_judge" | "quality_repair", tools?: Array<Record<string, unknown>> | null):
           Promise<{ content: string; toolCalls?: Array<{ id: string; name: string; arguments: string }> }>;
         chatRequest(request: ChatRequestEnvelope): Promise<ChatResponse>;
         cancel(requestId: string): Promise<{ cancelled: boolean; requestId?: string }>;
+      };
+      claude: {
+        status(): Promise<{ provider: "claude"; installed: boolean; loggedIn: boolean; model: string; hint: string | null }>;
       };
       codex: {
         account(): Promise<Record<string, any>>; login(type?: "chatgpt" | "apiKey"): Promise<Record<string, any>>;

@@ -18,6 +18,11 @@ test("store: long runs drive setProgress and clear it in finally", async () => {
   assert.match(si, /setProgress\(id, \{ expectedMs: 90_000, label:/);
   assert.match(si, /setProgress\(id, null\)/);
   assert.match(si, /Source Import\$\{cacheNote\}\$\{authNote\} · \$\{secs\}с/);
+  assert.match(si, /res\.diagnostics\?\.timingsMs/);
+  assert.match(si, /lastRun:/);
+  assert.match(si, /asyncJob: true/);
+  assert.match(si, /apiGet<BlockParseJobResp>/);
+  assert.match(si, /percent: job\.progress/);
 
   const gen = source.slice(
     source.indexOf("runGenerator: async (id) => {"),
@@ -28,12 +33,21 @@ test("store: long runs drive setProgress and clear it in finally", async () => {
   assert.match(gen, /Готово: вариантов \$\{variants\.length\}.*· \$\{\(\(Date\.now\(\) - startedAt\) \/ 1000\)\.toFixed\(0\)\}с/);
 });
 
+test("Source Import shows measured backend stages after a run", async () => {
+  const source = await read("../src/nodes/SourceImportNode.svelte");
+  assert.match(source, /Measured run/);
+  assert.match(source, /data\.lastRun\.timingsMs/);
+  assert.match(source, /captureCompile: "Layers"/);
+  assert.match(source, /fidelity: "Fidelity"/);
+});
+
 test("NodeShell renders the thin progress bar with percent and clock", async () => {
   const source = await read("../src/nodes/NodeShell.svelte");
   assert.match(source, /flowProgresses/);
   assert.match(source, /role="progressbar"/);
   assert.match(source, /n-progress-track/);
   assert.match(source, /n-progress-fill.*style="width: \{percent\}%"/);
+  assert.match(source, /progress\.percent \?\? Math\.min/);
   assert.match(source, /\{Math\.round\(percent\)\}% · \{clock\}/);
   // асимптотическая кривая: до конца операции 100% не показывается
   assert.match(source, /Math\.min\(97, 100 \* \(1 - Math\.exp\(\(-1\.7 \* elapsedMs\) \/ progress\.expectedMs\)\)\)/);

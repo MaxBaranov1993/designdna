@@ -93,6 +93,11 @@ export class CodexAppServer extends EventEmitter {
       approvalPolicy: "never",
       sandbox: "read-only",
       serviceName: "designdna-generator",
+      // Generator and Quality Pass turns are implementation details of
+      // DesignDNA, not user-facing Codex work sessions. Keeping them
+      // ephemeral prevents every IR request from appearing as a separate
+      // task in the Codex history.
+      ephemeral: true,
     });
     const threadId = String(started.thread?.id || "");
     if (!threadId) throw new Error("Codex did not return a generator thread id");

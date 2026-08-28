@@ -5,6 +5,7 @@
 
   import { flow, flowBusy, flowNodes } from "../flow/state";
   import type { DesignSystemNodeData, IRObject } from "../flow/types";
+  import SourceArtifactPanel from "./SourceArtifactPanel.svelte";
   import { useEditorStore } from "./store";
 
   let { nodeId, onClose }: { nodeId: number; onClose: () => void } = $props();
@@ -14,9 +15,11 @@
     return ((node?.data || {}) as unknown) as DesignSystemNodeData;
   });
 
-  let activeTab = $state<"foundations" | "components" | "suggestions" | "mock" | "identity" | "archetypes" | "tests" | "proof" | "validation">("components");
+  let activeTab = $state<"source" | "foundations" | "components" | "suggestions" | "mock" | "identity" | "archetypes" | "tests" | "proof" | "validation">("source");
+  type CatalogPool = "components" | "review" | "suggestions";
+  type CatalogEntry = { key: string; pool: CatalogPool; component: Record<string, any> };
   let selectedKey = $state<string>("");
-  let selectedPool = $state<"components" | "suggestions">("components");
+  let selectedPool = $state<CatalogPool>("components");
   let selectedVariant = $state("default");
   let componentSearch = $state("");
   let viewport = $state<"desktop" | "tablet" | "mobile">("desktop");
@@ -26,37 +29,85 @@
   let validating = $state(false);
   let applying = $state(false);
   let saving = $state(false);
+  let organizing = $state(false);
+  let organizerEffort = $state<"medium" | "high" | "max">("high");
   let actionError = $state("");
   let validationResult = $state<{ errors: Array<{ message: string }> } | null>(null);
   let identityResult = $state<any>(null);
   let proofRunning = $state(false);
 
   const doc = $derived((data.document || {}) as Record<string, any>);
+  const sourceArtifact = $derived.by(() => {
+    const source = $flowNodes.find((node) => Number(node.id) === Number(data.sourceNodeId));
+    if (source?.type === "sourceimport") return source.data.sourceArtifact || null;
+    return doc.sourceArtifact || null;
+  });
   const components = $derived(Object.entries(doc.components || {}) as Array<[string, any]>);
+  const reviewComponents = $derived(Object.entries(doc.reviewComponents || {}) as Array<[string, any]>);
   const suggestions = $derived(Object.entries(doc.suggestions || {}) as Array<[string, any]>);
+  const catalogEntries = $derived.by((): CatalogEntry[] => {
+    const entries: CatalogEntry[] = components.map(([key, component]) => ({ key, pool: "components", component }));
+    const known = new Set(entries.map((entry) => entry.key));
+    for (const [key, component] of reviewComponents) {
+      if (!known.has(key)) entries.push({ key, pool: "review", component });
+      known.add(key);
+    }
+    // Older drafts stored exact fidelity-review masters in suggestions. Keep
+    // them visible until Source Sync migrates them to reviewComponents.
+    for (const [key, component] of suggestions) {
+      if (component?.origin === "observed" && !known.has(key)) {
+        entries.push({ key, pool: "suggestions", component });
+        known.add(key);
+      }
+    }
+    return entries;
+  });
+  const semanticSuggestions = $derived(suggestions.filter(([, component]) => component?.origin !== "observed"));
   const foundations = $derived(doc.foundations || {});
   const identity = $derived(doc.identity || {});
   const identityTests = $derived((doc.identityTests || []) as any[]);
   const archetypes = $derived((identity.archetypes || []) as any[]);
   const reconstruction = $derived(doc.reconstruction || {});
+  const catalog = $derived((doc.catalog || {}) as Record<string, any>);
   const mockSchemas = $derived(Object.entries(doc.mockData?.schemas || {}) as Array<[string, any]>);
-  const selectedComp = $derived(selectedKey
-    ? (selectedPool === "suggestions" ? (doc.suggestions || {})[selectedKey] : (doc.components || {})[selectedKey])
-    : null);
+  const selectedComp = $derived(selectedKey ? (
+    selectedPool === "review" ? (doc.reviewComponents || {})[selectedKey]
+      : selectedPool === "suggestions" ? (doc.suggestions || {})[selectedKey]
+        : (doc.components || {})[selectedKey]
+  ) : null);
   const selectedVariantData = $derived((selectedComp?.variants || {})[selectedVariant] || (selectedComp?.variants || {}).default || null);
   const selectedObservedStyle = $derived((selectedVariantData?.observedStyle || {}) as Record<string, any>);
   const componentGroups = $derived.by(() => {
     const query = componentSearch.trim().toLowerCase();
-    const groups = new Map<string, Array<[string, any]>>();
-    for (const [key, component] of components) {
-      const haystack = `${key} ${component.name || ""} ${component.category || ""}`.toLowerCase();
-      if (query && !haystack.includes(query)) continue;
-      const category = String(component.category || "Other");
-      groups.set(category, [...(groups.get(category) || []), [key, component]]);
+    const byKey = new Map(catalogEntries.map((entry) => [entry.key, entry]));
+    const groups: Array<[string, CatalogEntry[]]> = [];
+    const seen = new Set<string>();
+    const accept = (entry: CatalogEntry) => {
+      const { key, component } = entry;
+      const semantic = catalog.componentMeta?.[key] || {};
+      const haystack = `${key} ${component.name || ""} ${component.category || ""} ${semantic.label || ""} ${semantic.role || ""}`.toLowerCase();
+      return !query || haystack.includes(query);
+    };
+    for (const section of catalog.sections || []) {
+      const items = (section.componentKeys || [])
+        .map((key: string) => byKey.get(key))
+        .filter((entry: CatalogEntry | undefined): entry is CatalogEntry => !!entry && accept(entry));
+      for (const entry of items) seen.add(entry.key);
+      if (items.length) groups.push([String(section.label || section.key), items]);
     }
-    return Array.from(groups.entries());
+    const fallback = new Map<string, CatalogEntry[]>();
+    for (const entry of catalogEntries) {
+      if (seen.has(entry.key) || !accept(entry)) continue;
+      const { component } = entry;
+      const category = String(component.category || "Other");
+      fallback.set(category, [...(fallback.get(category) || []), entry]);
+    }
+    return [...groups, ...Array.from(fallback.entries())];
   });
   const selectedIsSuggestion = $derived(selectedPool === "suggestions" && !!selectedComp);
+  const selectedIsReview = $derived(
+    !!selectedComp && (selectedPool === "review" || (selectedPool === "suggestions" && selectedComp?.origin === "observed"))
+  );
   const selectedCanPromote = $derived(
     selectedIsSuggestion && selectedComp?.origin !== "observed" && !!selectedComp?.templateIr
   );
@@ -133,13 +184,12 @@
   });
 
   const dirty = $derived(!!snapshot && memoJson(data.document) !== snapshot);
-  const busy = $derived(publishing || validating || applying || saving || !!$flowBusy[Number(nodeId)]);
+  const busy = $derived(publishing || validating || applying || saving || organizing || !!$flowBusy[Number(nodeId)]);
 
   $effect(() => {
-    if (activeTab === "components" && components.length
-        && (selectedPool !== "components" || !(doc.components || {})[selectedKey])) {
-      selectedPool = "components";
-      selectedKey = components[0][0];
+    if (activeTab === "components" && catalogEntries.length && !selectedComp) {
+      selectedPool = catalogEntries[0].pool;
+      selectedKey = catalogEntries[0].key;
       selectedVariant = "default";
     }
   });
@@ -208,9 +258,13 @@
           context.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
           image.replaceWith(canvas);
           if (masterContainer && previewMode === "compare") {
-            const evidenceScale = Math.min(1, scaleX, scaleY);
             masterContainer.style.width = `${Number(bounds.width)}px`;
-            masterContainer.style.zoom = String(evidenceScale);
+            requestAnimationFrame(() => {
+              if (!masterContainer) return;
+              const paneWidth = masterContainer.parentElement?.clientWidth || Number(bounds.width);
+              const displayScale = Math.min(1, paneWidth / Number(bounds.width));
+              masterContainer.style.zoom = String(displayScale);
+            });
           }
         };
         image.onload = renderCrop;
@@ -331,9 +385,9 @@
 
   const originIcon = (origin: string) => origin === "observed" ? "⬤" : origin === "suggested" || origin === "inferred" ? "◐" : origin === "user" ? "◆" : "◇";
 
-  function selectComponent(key: string) {
+  function selectCatalogComponent(key: string, pool: CatalogPool) {
     selectedKey = key;
-    selectedPool = "components";
+    selectedPool = pool;
     selectedVariant = "default";
     activeTab = "components";
   }
@@ -404,6 +458,33 @@
     }
   }
 
+  async function organizeCatalog() {
+    if (!doc.id || !catalogEntries.length) return;
+    organizing = true;
+    actionError = "";
+    $flow.setNodeData(Number(nodeId), { busyAction: "organize", lastError: "" });
+    try {
+      const resp = await fetch("/api/design-system/organize", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: doc, reasoningEffort: organizerEffort }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
+      pushUndo();
+      $flow.setNodeData(Number(nodeId), {
+        document: result.document,
+        summary: result.summary,
+        status: "draft",
+      });
+      activeTab = "components";
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      organizing = false;
+      $flow.setNodeData(Number(nodeId), { busyAction: "" });
+    }
+  }
+
   async function publish() {
     publishing = true;
     actionError = "";
@@ -428,7 +509,7 @@
   }
 
   async function confirmState(name: string) {
-    if (!selectedKey || selectedIsSuggestion) return;
+    if (!selectedKey || selectedPool !== "components") return;
     pushUndo();
     const next = JSON.parse(JSON.stringify(doc));
     const state = next.components?.[selectedKey]?.states?.[name];
@@ -462,7 +543,7 @@
   }
 
   function proofCandidate(): any {
-    if (!selectedIsSuggestion && selectedComp?.masterIr) return selectedComp.masterIr;
+    if (selectedComp?.masterIr) return selectedComp.masterIr;
     return components[0]?.[1]?.templateIr || null;
   }
 
@@ -508,7 +589,7 @@
   }
 
   async function applyToEditor() {
-    if (!selectedKey || selectedIsSuggestion) return;
+    if (!selectedKey || selectedPool !== "components") return;
     applying = true;
     actionError = "";
     $flow.setNodeData(Number(nodeId), { busyAction: "apply" });
@@ -579,7 +660,7 @@
       <span class="ds-editor-meta">
         {data.status === "published" ? `Published · v${data.revision}` : "Draft"}
         {data.defaultSet ? " · проект по умолчанию" : ""}
-        · {components.length} masters · {suggestions.length} suggestions
+        · {catalogEntries.length} source masters · {components.length} accepted · {semanticSuggestions.length} suggestions
         {dirty ? " · несохранённые правки" : ""}
       </span>
     </div>
@@ -607,9 +688,10 @@
   {/if}
 
   <nav class="ds-section-tabs" aria-label="Разделы дизайн-системы">
-    <button type="button" data-ds-tab="components" class:active={activeTab === "components"} onclick={() => (activeTab = "components")}>Components <span>{components.length}</span></button>
+    <button type="button" data-ds-tab="source" class:active={activeTab === "source"} onclick={() => (activeTab = "source")}>Source UI <span>{catalogEntries.length || sourceArtifact?.summary.componentCount || 0}</span></button>
+    <button type="button" data-ds-tab="components" class:active={activeTab === "components"} onclick={() => (activeTab = "components")}>Components <span>{catalogEntries.length}</span></button>
     <button type="button" data-ds-tab="foundations" class:active={activeTab === "foundations"} onclick={() => (activeTab = "foundations")}>Foundations</button>
-    <button type="button" data-ds-tab="suggestions" class:active={activeTab === "suggestions"} onclick={() => (activeTab = "suggestions")}>Review <span>{suggestions.length}</span></button>
+    <button type="button" data-ds-tab="suggestions" class:active={activeTab === "suggestions"} onclick={() => (activeTab = "suggestions")}>Suggestions <span>{semanticSuggestions.length}</span></button>
     <button type="button" data-ds-tab="identity" class:active={activeTab === "identity"} onclick={() => (activeTab = "identity")}>Identity</button>
     <button type="button" data-ds-tab="archetypes" class:active={activeTab === "archetypes"} onclick={() => (activeTab = "archetypes")}>Archetypes</button>
     <button type="button" data-ds-tab="tests" class:active={activeTab === "tests"} onclick={() => (activeTab = "tests")}>Tests <span>{identityTests.length}</span></button>
@@ -618,15 +700,44 @@
     <button type="button" data-ds-tab="validation" class:active={activeTab === "validation"} onclick={() => (activeTab = "validation")}>Validation</button>
   </nav>
 
-  <div class="ds-editor-body">
+  <div class="ds-editor-body" class:source-overview={activeTab === "source"}>
     <aside class="ds-editor-lib">
       <nav class="ds-legacy-tabs" aria-hidden="true"></nav>
 
-      {#if activeTab === "components"}
+      {#if activeTab === "source"}
+        <SourceArtifactPanel
+          artifact={sourceArtifact}
+          {catalogEntries}
+          {catalog}
+          acceptedMasters={Number((data.summary as Record<string, unknown> | null)?.components || components.length)}
+          acceptedVariants={Number((data.summary as Record<string, unknown> | null)?.variants || 0)}
+          onOpen={selectCatalogComponent}
+        />
+      {:else if activeTab === "components"}
         <div class="ds-lib-heading">
           <div><strong>Component library</strong><small>Exact Source families, without content duplicates</small></div>
-          <span>{components.length}</span>
+          <span>{catalogEntries.length}</span>
         </div>
+        <section class="ds-ai-organizer" aria-label="AI component catalog organizer">
+          <div>
+            <strong>AI catalog logic</strong>
+            <small>Groups header, controls, button variants and cards. Exact masters stay locked.</small>
+          </div>
+          <label>
+            <span>Sol effort</span>
+            <select bind:value={organizerEffort} disabled={busy}>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+          <button type="button" data-ds-action="organize" onclick={() => void organizeCatalog()} disabled={busy || !catalogEntries.length}>
+            {organizing ? "Organizing…" : "Organize with Sol"}
+          </button>
+          <span class="ds-organizer-state" data-kind={catalog.organizer?.kind || "deterministic"}>
+            {catalog.organizer?.kind === "ai" ? `gpt-5.6-sol · ${catalog.organizer.reasoningEffort}` : "deterministic baseline"}
+          </span>
+        </section>
         <label class="ds-library-search">
           <span>Search components</span>
           <input type="search" placeholder="Search by name or category" bind:value={componentSearch} />
@@ -636,9 +747,11 @@
             <section class="ds-component-group">
               <h4>{category}<span>{items.length}</span></h4>
               <ul class="ds-comp-list">
-                {#each items as [key, comp] (key)}
+                {#each items as entry (entry.pool + ":" + entry.key)}
+                  {@const key = entry.key}
+                  {@const comp = entry.component}
                   <li>
-                    <button type="button" class:active={selectedPool === "components" && selectedKey === key} data-ds-component={key} aria-label={`Выбрать компонент ${comp.name}`} onclick={() => selectComponent(key)}>
+                    <button type="button" class:active={selectedPool === entry.pool && selectedKey === key} data-ds-component={key} aria-label={`Выбрать компонент ${comp.name}`} onclick={() => selectCatalogComponent(key, entry.pool)}>
                       <span class="ds-status-dot" class:verified={comp.status === "verified"} aria-hidden="true"></span>
                       <span class="ds-comp-copy">
                         <span class="ds-comp-name">{comp.name}</span>
@@ -654,10 +767,10 @@
           {#if !componentGroups.length}<p class="ds-empty-filter">No components match “{componentSearch}”.</p>{/if}
         </div>
       {:else if activeTab === "suggestions"}
-        <div class="ds-lib-heading"><div><strong>Review queue</strong><small>Not included in published registry</small></div><span>{suggestions.length}</span></div>
-        <div class="ds-suggestion-intro">Здесь остаются семантические гипотезы и точные Source-masters, не прошедшие fidelity gate. Они не входят в публикуемый registry.</div>
+        <div class="ds-lib-heading"><div><strong>Suggestions</strong><small>Semantic hypotheses, separate from exact Source masters</small></div><span>{semanticSuggestions.length}</span></div>
+        <div class="ds-suggestion-intro">Exact observed masters are always visible in Components. This queue contains only inferred additions that require an explicit Promote.</div>
         <ul class="ds-comp-list">
-          {#each suggestions as [key, comp] (key)}
+          {#each semanticSuggestions as [key, comp] (key)}
             <li>
               <button type="button" class:active={selectedPool === "suggestions" && selectedKey === key} data-ds-suggestion={key} aria-label={`Выбрать предложение ${comp.name}`} onclick={() => selectSuggestion(key)}>
                 <span class="ds-origin" data-origin={comp.origin} title={comp.origin}>{originIcon(comp.origin)}</span>
@@ -771,7 +884,9 @@
               <span>{Object.keys(selectedComp.variants || {}).length} вариантов</span>
             </div>
           </div>
-          {#if selectedIsSuggestion}
+          {#if selectedIsReview}
+            <button type="button" class="ds-promote" data-ds-action="review" aria-label="Компонент сохранён в каталоге, но требует повторной fidelity-проверки" disabled>Нужна fidelity-проверка</button>
+          {:else if selectedIsSuggestion}
             <button type="button" class="ds-promote" data-ds-action="promote" aria-label={selectedCanPromote ? "Продвинуть предложение в registry" : "Требуется повторная fidelity-проверка Source master"} onclick={() => void promoteSuggestion()} disabled={busy || !selectedCanPromote}>{selectedCanPromote ? "Включить в UI Kit" : "Нужна fidelity-проверка"}</button>
           {:else}
             <button type="button" class="ds-edit-master" data-ds-action="apply" aria-label="Применить мастер-компонент в DNA Editor" aria-busy={applying} onclick={applyToEditor} disabled={busy || !hasSelection}>
@@ -981,6 +1096,10 @@
   .ds-section-tabs button span { min-width: 18px; padding: 1px 5px; border-radius: 999px; background: #262c39; color: #b8c0cf; font-size: 10px; text-align: center; }
 
   .ds-editor-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr) 300px; }
+  .ds-editor-body.source-overview { grid-template-columns: minmax(0, 1fr); background: #0a0d12; }
+  .ds-editor-body.source-overview .ds-editor-lib { padding: 0; border-right: 0; background: #0a0d12; }
+  .ds-editor-body.source-overview .ds-editor-canvas,
+  .ds-editor-body.source-overview .ds-editor-inspector { display: none; }
   .ds-editor-lib, .ds-editor-inspector { min-width: 0; overflow-y: auto; background: var(--panel); scrollbar-color: #555d6d transparent; scrollbar-width: thin; }
   .ds-editor-lib { padding: 16px 14px 24px; border-right: 1px solid var(--border); }
   .ds-editor-inspector { padding: 18px; border-left: 1px solid var(--border); }
@@ -991,6 +1110,23 @@
   .ds-lib-heading small { display: block; margin-top: 4px; color: var(--subtle); font-size: 10.5px; line-height: 1.4; }
   .ds-lib-heading > span { min-width: 27px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: #bcc3d0; font-size: 10.5px; text-align: center; }
   .ds-library-search { display: block; margin-bottom: 16px; }
+  .ds-ai-organizer {
+    display: grid; grid-template-columns: minmax(210px, 1fr) auto auto; align-items: center; gap: 10px;
+    margin: 0 0 14px; border: 1px solid #343c4b; border-radius: 12px; padding: 11px 12px;
+    background: linear-gradient(135deg, #171d28, #121720); box-shadow: inset 3px 0 #7767e8;
+  }
+  .ds-ai-organizer > div strong, .ds-ai-organizer > div small { display: block; }
+  .ds-ai-organizer > div strong { color: #e7eaf1; font-size: 11px; }
+  .ds-ai-organizer > div small { margin-top: 3px; color: #858fa1; font-size: 9px; line-height: 1.35; }
+  .ds-ai-organizer label { display: grid; gap: 3px; color: #778195; font-size: 8px; text-transform: uppercase; }
+  .ds-ai-organizer select, .ds-ai-organizer button {
+    min-height: 30px; border: 1px solid #414a5c; border-radius: 8px; background: #1a202b;
+    padding: 0 9px; color: #dce1eb; font-size: 9px;
+  }
+  .ds-ai-organizer button { border-color: #6d5edf; background: #6555d5; color: #fff; font-weight: 700; cursor: pointer; }
+  .ds-ai-organizer button:disabled { opacity: .45; cursor: not-allowed; }
+  .ds-organizer-state { grid-column: 1 / -1; color: #707b8d; font-size: 8px; }
+  .ds-organizer-state[data-kind="ai"] { color: #72cfb9; }
   .ds-library-search > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .ds-library-search input {
     width: 100%;

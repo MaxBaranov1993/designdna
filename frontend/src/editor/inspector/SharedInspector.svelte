@@ -56,9 +56,9 @@ import ColorPicker from "./ColorPicker.svelte";
   }
   function run(action: AssistAction, text: string) {
     confirmed = false;
-    ctl.setAiAssistFormState({ prompt: text, action, scopeMode, provider, designSystemSelection: dsSelection, constraints: { allowContent, allowStyle, allowFrame, allowColor } });
+    ctl.setAiAssistFormState({ prompt: text, action, scopeMode, provider: "openai", effort, designSystemSelection: dsSelection, constraints: { allowContent, allowStyle, allowFrame, allowColor } });
     void ctl.requestAiAssist({
-      action, prompt: text, scopeMode, provider,
+      action, prompt: text, scopeMode, provider: "openai", effort,
       constraints: { allowContent, allowStyle, allowFrame, allowColor },
     });
   }
@@ -90,9 +90,8 @@ import ColorPicker from "./ColorPicker.svelte";
   const textColor = hex(style.color, "#111111");
   const savedAiForm = ctl.getAiAssistFormState();
   let scopeMode = $state<AssistScopeMode>(sels.length > 1 ? (ctl.hasExplicitAiAssistScopeMode() ? savedAiForm.scopeMode : "selection") : "single");
-  let provider = $state<string>(["auto", "codex", "kimi", "openai", "glm", "zai", "grok", "zcode"].includes(String(savedAiForm.provider)) ? String(savedAiForm.provider) : "auto");
+  let effort = $state<"medium" | "high" | "max">(["medium", "high", "max"].includes(String(savedAiForm.effort)) ? savedAiForm.effort as "medium" | "high" | "max" : "medium");
   let dsSelection = $state<string>((savedAiForm as any).designSystemSelection || "inherit");
-  const desktopAssist = typeof window !== "undefined" && !!window.designDNA?.providers;
   let prompt = $state(savedAiForm.prompt);
   let allowContent = $state(savedAiForm.constraints.allowContent);
   let allowStyle = $state(isScalarProp ? false : savedAiForm.constraints.allowStyle);
@@ -134,15 +133,10 @@ import ColorPicker from "./ColorPicker.svelte";
   </section>
   <div class="ai-provider-row" aria-label="Модель">
     <span class="ai-scope-kicker">Модель</span>
-    <select bind:value={provider} onchange={() => ctl.setAiAssistFormState({ provider })} disabled={busy || !!preview}>
-      <option value="auto">Auto · подключённый аккаунт</option>
-      {#if desktopAssist}<option value="codex">GPT Codex · ChatGPT</option>{/if}
-      <option value="kimi">Kimi K3</option>
-      <option value="openai">GPT-5.6-sol</option>
-      <option value="glm">GLM-5.3 · Zhipu</option>
-      <option value="zai">GLM-5.3 · Z.AI</option>
-      <option value="grok">Grok 4.6 · xAI</option>
-      <option value="zcode">GLM · ZCode (явный ZCODE_CLI)</option>
+    <select bind:value={effort} onchange={() => ctl.setAiAssistFormState({ provider: "openai", effort })} disabled={busy || !!preview}>
+      <option value="medium">GPT-5.6 Sol · Medium</option>
+      <option value="high">GPT-5.6 Sol · High</option>
+      <option value="max">GPT-5.6 Sol · Max</option>
     </select>
   </div>
   <div class="ai-scope-list" aria-label="Элементы для AI">

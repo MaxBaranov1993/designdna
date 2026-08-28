@@ -24,7 +24,8 @@
   import MixNode from "./nodes/MixNode.svelte";
   import PageNode from "./nodes/PageNode.svelte";
   import SourceImportNode from "./nodes/SourceImportNode.svelte";
-import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
+  import DesignUiNode from "./nodes/DesignUiNode.svelte";
+  import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
   import StyleDnaNode from "./nodes/StyleDnaNode.svelte";
   import DeriveNode from "./nodes/DeriveNode.svelte";
   import ReskinNode from "./nodes/ReskinNode.svelte";
@@ -42,6 +43,7 @@ import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
     mix: MixNode,
     page: PageNode,
     sourceimport: SourceImportNode,
+    designui: DesignUiNode,
     designsystem: DesignSystemNode,
     styledna: StyleDnaNode,
     derive: DeriveNode,
@@ -94,6 +96,9 @@ import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
   $effect(() => {
     if (nodeDragActive) return;
     const st = useFlowStore.getState();
+    // A clean desktop profile starts with an empty presentation while the
+    // canonical SQLite snapshot loads over IPC.
+    if (!st.projectHydrated) return;
     if (st.nodes !== nodes || st.edges !== edges) st.syncFromCanvas(nodes, edges);
   });
 
@@ -132,17 +137,26 @@ import DesignSystemNode from "./nodes/DesignSystemNode.svelte";
             height: Math.max(1, content.scrollHeight || content.offsetHeight),
           });
         });
-        if (dimensions.size) {
-          const measuredNodes = nodes.map((node) => {
-            const measured = dimensions.get(node.id);
-            if (!measured) return node;
-            return {
-              ...node,
-              initialWidth: undefined,
-              initialHeight: undefined,
-              measured,
-            } as FlowNode;
-          });
+        // Публикуем новый массив только если размеры реально изменились:
+        // setState будит подписчиков стора и оба конвейера автосейва, а на
+        // больших графах пересборка массива без изменений — чистые потери.
+        let changed = false;
+        const measuredNodes = nodes.map((node) => {
+          const measured = dimensions.get(node.id);
+          if (!measured) return node;
+          if (node.measured?.width === measured.width
+            && node.measured?.height === measured.height
+            && node.initialWidth === undefined
+            && node.initialHeight === undefined) return node;
+          changed = true;
+          return {
+            ...node,
+            initialWidth: undefined,
+            initialHeight: undefined,
+            measured,
+          } as FlowNode;
+        });
+        if (changed) {
           // Publish the same array to both sides of the controlled binding so
           // the canvas-to-store mirror cannot restore the bootstrap nodes.
           nodes = measuredNodes;

@@ -51,7 +51,7 @@ def test_generate_sanitizes_provider_meta_and_typography_aliases(monkeypatch) ->
     assert server.validate_ir(result) == []
 
 
-def test_browser_generate_honors_direct_api_provider_and_maps_codex_to_auto(monkeypatch) -> None:
+def test_browser_generate_migrates_every_saved_provider_to_openai(monkeypatch) -> None:
     fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
     seen: list[str] = []
 
@@ -60,19 +60,10 @@ def test_browser_generate_honors_direct_api_provider_and_maps_codex_to_auto(monk
         return deepcopy(fixture), None
 
     monkeypatch.setattr(server, "call_llm_ir", fake_call)
-    for requested, expected in (
-        ("kimi", "kimi"),
-        ("openai", "openai"),
-        ("glm", "glm"),
-        ("zai", "zai"),
-        ("grok", "grok"),
-        ("codex", "auto"),
-        ("openrouter", "auto"),
-        ("auto", "auto"),
-    ):
+    for requested in ("kimi", "openai", "glm", "zai", "grok", "codex", "openrouter", "auto"):
         response = server.generate(server.GenerateReq(brief="marketplace hero", count=1, provider=requested))
         assert len(response["variants"]) == 1
-        assert seen.pop() == expected
+        assert seen.pop() == "openai"
 
 
 def test_generate_applies_locked_dna_to_model_inline_styles(monkeypatch) -> None:
@@ -116,7 +107,7 @@ def test_generate_applies_locked_dna_to_model_inline_styles(monkeypatch) -> None
     assert server.validate_ir(result) == []
 
 
-def test_direct_providers_reject_reserved_provider_option_overrides() -> None:
+def test_retired_provider_options_are_rejected() -> None:
     import llm_client as llm
     for provider in ("kimi", "zai", "grok"):
         request = llm.ChatRequest(
@@ -125,5 +116,4 @@ def test_direct_providers_reject_reserved_provider_option_overrides() -> None:
             provider_options={provider: {"model": "hijack", "temperature": 0}},
         )
         issues = " ".join(request.validate())
-        assert "reserved canonical wire field" in issues, provider
-        assert "model" in issues and "temperature" in issues, provider
+        assert "retired providers" in issues, provider

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
+  import ProviderPicker from "../components/ProviderPicker.svelte";
   import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import { useFlowStore } from "../flow/store";
@@ -13,6 +14,15 @@
 
   const VIEWPORTS: SourceViewport[] = ["desktop", "tablet", "mobile"];
   const PREVIEW_MODES = ["reference", "ir", "compare"] as const;
+  const STAGE_LABELS: Record<string, string> = {
+    renderDom: "DOM",
+    detectBlocks: "Blocks",
+    semanticRefine: "Labels",
+    captureCompile: "Layers",
+    assemble: "IR",
+    fidelity: "Fidelity",
+    cacheWrite: "Cache",
+  };
 
   let busy = $derived(!!$flowBusy[Number(id)]);
   let previewMode = $derived(data.previewMode || "reference");
@@ -123,6 +133,24 @@
         <button class="btn-node small f-auth-open nodrag" onclick={openAuthenticatedSession}>Открыть вход</button>
       {/if}
     {/if}
+    {#if desktopAuth}
+      <label class="bp-mine nodrag" title="После разбора модель уточнит имена компонентов и роли блоков. IR и геометрия не меняются.">
+        <input
+          type="checkbox"
+          class="f-ai-refine"
+          checked={!!data.aiRefine}
+          onchange={(e) => $flow.setNodeData(Number(id), { aiRefine: e.currentTarget.checked })}
+        />
+        AI-уточнение компонентов
+      </label>
+      {#if data.aiRefine}
+        <ProviderPicker
+          provider={data.aiProvider || "openai"}
+          effort="medium"
+          onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider })}
+        />
+      {/if}
+    {/if}
     <div class="source-viewports nodrag" aria-label="Source viewport">
       {#each VIEWPORTS as viewport (viewport)}
         <button
@@ -166,6 +194,27 @@
       {#if busy}<span class="spinner"></span>{/if} Import
     </button>
   </div>
+  {#if data.lastRun}
+    <div class="source-run-diagnostics" title={`Pipeline ${data.lastRun.pipelineVersion || "unknown"}`}>
+      <div class="source-run-summary">
+        <span>{data.lastRun.cached ? "Cache hit" : "Measured run"}</span>
+        <strong>{(data.lastRun.totalMs / 1000).toFixed(1)}s</strong>
+      </div>
+      <div class="source-run-stages">
+        {#each Object.entries(data.lastRun.timingsMs).filter(([name]) => name !== "total" && name !== "prepare" && name !== "cacheLookup") as [name, duration] (name)}
+          <span>{STAGE_LABELS[name] || name} {(duration / 1000).toFixed(duration >= 1000 ? 1 : 2)}s</span>
+        {/each}
+      </div>
+    </div>
+  {/if}
+  {#if data.sourceArtifact}
+    <div class="source-artifact-summary" title={data.sourceArtifact.version}>
+      <strong>Source Artifact</strong>
+      <span>{data.sourceArtifact.summary.componentCount} components</span>
+      <span>{data.sourceArtifact.summary.observedStateCount} states</span>
+      <span>{data.sourceArtifact.summary.viewportCount} viewports</span>
+    </div>
+  {/if}
   {#if data.blocks.length}
     <div class="bp-blocks">
       {#each data.blocks as b (b.name)}

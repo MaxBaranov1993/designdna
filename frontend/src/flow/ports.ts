@@ -11,6 +11,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   mix: { title: "Микс", icon: "⊕", w: 290 },
   page: { title: "Страница", icon: "▤", w: 340 },
   sourceimport: { title: "Source Import", icon: "⌁", w: 360 },
+  designui: { title: "Design UI (legacy)", icon: "UI", w: 380 },
   styledna: { title: "Style DNA", icon: "◇", w: 320 },
   derive: { title: "Derive", icon: "↳", w: 330 },
   reskin: { title: "Reskin", icon: "✦", w: 340 },
@@ -18,7 +19,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   recorder: { title: "Interaction Recorder", icon: "REC", w: 420 },
   motion: { title: "Motion Editor", icon: "M", w: 390 },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300 },
-  designsystem: { title: "Design System", icon: "◈", w: 320 },
+  designsystem: { title: "Design System / UI Kit", icon: "◈", w: 340 },
 };
 
 /* Зеркало PORTS (nodes.js:35-48); у mix входы динамические — из data.inputs (portsOfNode),
@@ -43,10 +44,20 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   },
   mix: { in: [], out: [{ name: "ir", label: "IR", kind: "ir" }] },
   page: { in: [], out: [{ name: "ir", label: "страница", kind: "ir" }] },
-  // ТЗ §11.4: у Design System-ноды нет выходных портов — использование
-  // только через project registry и DesignSystemPicker
-  designsystem: { in: [], out: [] },
-  sourceimport: { in: [], out: [{ name: "tokens", label: "style DNA", kind: "tokens" }] },
+  // Source Artifact enters as measured evidence. Consumption still happens
+  // through project registry and DesignSystemPicker, so there is no output wire.
+  designsystem: {
+    in: [{ name: "artifact", label: "Source Artifact", kind: "artifact" }],
+    out: [],
+  },
+  sourceimport: { in: [], out: [
+    { name: "artifact", label: "Source Artifact", kind: "artifact" },
+    { name: "tokens", label: "style DNA", kind: "tokens" },
+  ] },
+  designui: {
+    in: [{ name: "artifact", label: "Source Artifact", kind: "artifact" }],
+    out: [{ name: "artifact", label: "Design UI", kind: "artifact" }],
+  },
   styledna: {
     in: [
       { name: "ir", label: "IR", kind: "ir" },
@@ -138,8 +149,7 @@ export function portsOfNode(n: {
   return PORTS[n.type];
 }
 
-/* AI-ноды сохраняют переносимый маршрут. Browser отправляет auto/kimi/openai
- * серверу, desktop дополнительно поддерживает явный codex через подключённый ChatGPT. */
+/* AI-ноды хранят выбранного провайдера (Sol / Codex / Claude) и усилие. */
 export function defaultData(type: NodeType): AnyNodeData {
   switch (type) {
     case "prompt":
@@ -147,7 +157,7 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "reference":
       return { brief: "", image: null, fileName: "", decomposed: false };
     case "generator":
-      return { provider: "auto", count: 2, ownPrompt: "", preset: "", variants: [], active: 0 };
+      return { provider: "openai", effort: "medium", count: 2, ownPrompt: "", preset: "", variants: [], active: 0 };
     case "edit":
       return { inputs: ["a", "b"], ir: null, sourceRegistry: {}, nodeSources: {} };
     case "mix":
@@ -155,7 +165,9 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "page":
       return { inputs: ["a", "b"], ir: null, activeViewport: "desktop" };
     case "sourceimport":
-      return { mode: "url", url: "", image: null, fileName: "", mine: false, authenticatedSession: false, activeViewport: "desktop", previewMode: "reference", importedUrl: null, blocks: [], tokens: null };
+      return { mode: "url", url: "", image: null, fileName: "", mine: false, authenticatedSession: false, activeViewport: "desktop", previewMode: "reference", importedUrl: null, blocks: [], tokens: null, sourceArtifact: null, aiRefine: false, aiProvider: "openai" };
+    case "designui":
+      return { artifact: null, selectedComponent: 0 };
     case "styledna":
       return { tokens: null, summary: "" };
     case "derive":
@@ -163,7 +175,8 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "reskin":
       return {
         prompt: "",
-        provider: "auto",
+        provider: "openai",
+        effort: "medium",
         mask: { colors: true, fonts: true, radii: true, shadows: true, texts: false, images: false },
         ir: null,
         log: [],
@@ -206,5 +219,5 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "recorder", note: "IR actions -> Interaction IR" },
   { type: "motion", note: "Interaction IR -> editable timeline" },
   { type: "pagebridge", note: "передать компонент между страницами" },
-  { type: "designsystem", note: "UI Kit и дизайн-система из Source" },
+  { type: "designsystem", note: "Source → UI Kit → published Design System" },
 ];

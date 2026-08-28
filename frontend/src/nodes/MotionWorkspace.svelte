@@ -53,10 +53,14 @@
     playheadInitialized = true;
   });
 
+  /* rAF вместо setInterval(40ms): кадры синхронны с отрисовкой, а в скрытой
+   * вкладке/окне браузер сам останавливает цикл — таймер продолжал будить
+   * реактивность вхолостую. */
   $effect(() => {
     if (!playing || total <= 0) return;
     let previous = performance.now();
-    const timer = window.setInterval(() => {
+    let frame = 0;
+    const step = () => {
       const now = performance.now();
       const delta = now - previous;
       previous = now;
@@ -64,11 +68,13 @@
       if (next >= total) {
         playing = false;
         playhead = total;
-      } else {
-        playhead = next;
+        return;
       }
-    }, 40);
-    return () => window.clearInterval(timer);
+      playhead = next;
+      frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
   });
 
   $effect(() => {

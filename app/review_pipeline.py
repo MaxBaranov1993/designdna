@@ -21,8 +21,8 @@ import llm_client
 # (имя, provider, model, fallback) — модели задаются композитными slug'ами
 # «provider/model»; "auto" = без фильтра предпочтительного провайдера.
 REVIEWERS = [
-    ("architecture", "auto", "openai/gpt-5.6-sol", ("auto", "kimi/k3")),
-    ("implementation", "auto", "openai/gpt-5.6-sol", ("auto", "kimi/k3")),
+    ("architecture", "openai", "openai/gpt-5.6-sol", None),
+    ("implementation", "openai", "openai/gpt-5.6-sol", None),
 ]
 
 PROMPT = (

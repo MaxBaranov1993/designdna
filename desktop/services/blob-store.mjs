@@ -165,15 +165,26 @@ export async function readBlobBatch(root, names, {
 } = {}) {
   if (!Array.isArray(names)) throw new Error("Blob names must be an array");
   if (names.length > maxItems) throw new Error("Too many blob names");
-  const objects = {};
-  let totalBytes = 0;
+  const unique = [];
   for (const raw of new Set(names)) {
     const name = safeBlobName(raw);
     if (!name) throw new Error("Invalid blob name");
-    const object = await readBlobObject(root, name);
-    totalBytes += object.data.length;
-    if (totalBytes > maxTotalBytes) throw new Error("Blob batch exceeds the allowed byte limit");
-    objects[name] = object;
+    unique.push(name);
+  }
+  // Чтение и проверка целостности идут пачками: последовательный цикл держал
+  // main-процесс на сотнях мегабайт (readFile + sha256 на каждый блоб подряд).
+  // Порядок результата детерминирован, лимит суммы проверяется после чтения.
+  const objects = {};
+  let totalBytes = 0;
+  const CONCURRENCY = 8;
+  for (let offset = 0; offset < unique.length; offset += CONCURRENCY) {
+    const slice = unique.slice(offset, offset + CONCURRENCY);
+    const loaded = await Promise.all(slice.map((name) => readBlobObject(root, name)));
+    for (const object of loaded) {
+      totalBytes += object.data.length;
+      if (totalBytes > maxTotalBytes) throw new Error("Blob batch exceeds the allowed byte limit");
+      objects[object.name] = object;
+    }
   }
   return { objects, totalBytes };
 }

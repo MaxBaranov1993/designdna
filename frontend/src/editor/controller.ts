@@ -139,7 +139,8 @@ let aiAssistFormState: AssistRequest = {
   action: "custom",
   scopeMode: "single",
   constraints: { allowContent: true, allowStyle: true, allowFrame: true, allowColor: true },
-  provider: "auto",
+  provider: "openai",
+  effort: "medium",
   designSystemSelection: "inherit",
 };
 
@@ -173,7 +174,8 @@ export function getAiAssistFormState(): AssistRequest {
 }
 
 export function setAiAssistFormState(next: Partial<AssistRequest>) {
-  if (next.provider !== undefined && !["auto", "codex", "kimi", "openai", "glm", "zai", "grok", "zcode"].includes(String(next.provider))) next.provider = "auto";
+  if (next.provider !== undefined) next.provider = "openai";
+  if (next.effort !== undefined && !["medium", "high", "max"].includes(String(next.effort))) next.effort = "medium";
   aiAssistFormState = {
     ...aiAssistFormState,
     ...next,
@@ -1763,8 +1765,15 @@ export async function requestAiAssist(request: AssistRequest) {
       if (signal.aborted) return;
       if (Array.isArray(prepared.messages)) {
         ui.setAiProgress({ stage: "provider", label: "AI анализирует объект и готовит правки", startedAt });
-        const assistProvider = ["auto", "codex", "kimi", "openai", "glm", "zai", "grok", "zcode"].includes(String(request.provider)) ? request.provider as "auto" | "codex" | "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode" : "auto";
-        const answer = await window.designDNA.providers.chat(assistProvider, prepared.messages, 0.2);
+        const effort = ["medium", "high", "max"].includes(String(request.effort))
+          ? request.effort as "medium" | "high" | "max"
+          : "medium";
+        const answer = await window.designDNA.providers.chatRequest({
+          provider: "openai",
+          model: "gpt-5.6-sol",
+          messages: prepared.messages,
+          reasoning: { effort },
+        });
         if (signal.aborted) return;
         ui.setAiProgress({ stage: "validate", label: "Проверяю ответ и строю предпросмотр", startedAt });
         data = await postAiAssist({ ...payload, rawOutput: answer.content }, signal);

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
+  import ProviderPicker from "../components/ProviderPicker.svelte";
   import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { GeneratorFlowNode } from "../flow/types";
@@ -25,12 +26,7 @@
 
   let busy = $derived(!!$flowBusy[Number(id)]);
   let activeIr = $derived(data.variants.length ? data.variants[data.active] || null : null);
-  const desktop = typeof window !== "undefined" && !!window.designDNA;
-  let provider = $derived(
-    desktop
-      ? ["auto", "codex", "kimi", "openai", "glm", "zai", "grok", "zcode"].includes(data.provider) ? data.provider : "glm"
-      : ["kimi", "openai", "glm", "zai", "grok"].includes(data.provider) ? data.provider : "auto",
-  );
+  let effort = $derived(["medium", "high", "max"].includes(data.effort) ? data.effort : "medium");
   let count = $derived(Math.max(1, Math.min(2, Number(data.count) || 1)));
 </script>
 
@@ -47,25 +43,11 @@
     onblur={() => flushNodeText(`generator:${id}:ownPrompt`)}
   ></textarea>
   <div class="generator-model-row">
-    <select
-      class="f-provider-select nodrag"
-      value={provider}
-      onchange={(e) => $flow.setNodeData(Number(id), { provider: e.currentTarget.value })}
-      aria-label="Модель генератора"
-    >
-      {#if desktop}
-        <option value="auto">Auto · connected account</option>
-        <option value="codex">GPT Codex · ChatGPT</option>
-      {:else}
-        <option value="auto">Auto · server routing</option>
-      {/if}
-      <option value="kimi">Kimi K3 · аккаунт</option>
-      <option value="openai">GPT-5.6-sol · OpenAI API</option>
-      <option value="glm">GLM-5.3 · Zhipu API</option>
-      <option value="zai">GLM-5.3 · Z.AI API</option>
-      <option value="grok">Grok 4.6 · xAI API</option>
-      <option value="zcode">GLM-5.3 · ZCode (Z.AI без ключа)</option>
-    </select>
+    <ProviderPicker
+      provider={data.provider || "openai"}
+      {effort}
+      onChange={(next) => $flow.setNodeData(Number(id), next)}
+    />
   </div>
   <div class="ctl-row">
     <select

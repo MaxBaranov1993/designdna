@@ -1,348 +1,141 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chatWithProvider } from "../services/provider-router.mjs";
 
-const messages = [{ role: "user", content: "Judge this IR" }];
-const credentials = (configured = []) => ({
-  has: (provider) => configured.includes(provider),
-  get: (provider) => configured.includes(provider) ? `test-${provider}-credential` : null,
+import { chatWithProvider, resolveProvider, SELECTABLE_PROVIDERS } from "../services/provider-router.mjs";
+
+const credentials = (connected = true) => ({
+  has: (provider) => connected && provider === "openai",
+  get: (provider) => connected && provider === "openai" ? "test-key" : null,
 });
 
-test("auto provider prefers a connected GLM key over an authenticated Codex account", async () => {
-  let codexCalled = false;
-  const result = await chatWithProvider({
-    provider: "auto",
-    messages,
-    credentials: credentials(["glm", "kimi", "openai"]),
-    codex: {
-      account: async () => ({ account: { email: "user@example.com" } }),
-      chat: async () => { codexCalled = true; return '{"unexpected":true}'; },
-    },
-    glmChat: async () => ({ content: '{"score":90}' }),
-  });
-  assert.equal(result.provider, "glm");
-  assert.equal(result.content, '{"score":90}');
-  assert.equal(codexCalled, false);
-});
-
-test("auto provider falls back to an authenticated Codex account when no API keys are configured and keeps its profile", async () => {
-  let options;
-  const result = await chatWithProvider({
-    provider: "auto",
-    messages,
-    profile: "quality_judge",
-    credentials: credentials(),
-    codex: {
-      account: async () => ({ account: { email: "user@example.com" } }),
-      chat: async (_messages, received) => { options = received; return '{"score":90}'; },
-    },
-  });
-  assert.equal(result.provider, "codex");
-  assert.equal(result.content, '{"score":90}');
-  assert.equal(options.profile, "quality_judge");
-  assert.equal(options.timeoutMs, 180_000);
-});
-
-test("Codex generator profile gets a production-page timeout budget", async () => {
-  let options;
-  await chatWithProvider({
-    provider: "codex",
-    messages,
-    profile: "generator",
-    credentials: credentials(),
-    codex: {
-      account: async () => ({ account: { email: "user@example.com" } }),
-      chat: async (_messages, received) => { options = received; return '{"ok":true}'; },
-    },
-  });
-  assert.equal(options.timeoutMs, 300_000);
-});
-
-test("auto provider uses an explicitly connected Kimi account when Codex is signed out", async () => {
-  let called = false;
-  const result = await chatWithProvider({
-    provider: "auto",
-    messages,
-    credentials: credentials(["kimi", "openai"]),
-    codex: { account: async () => ({ account: null }) },
-    kimiChat: async () => { called = true; return '{"score":88}'; },
-  });
-  assert.equal(result.provider, "kimi");
-  assert.equal(called, true);
-});
-
-test("auto provider falls back to a configured OpenAI key", async () => {
-  const result = await chatWithProvider({
-    provider: "auto",
-    messages,
-    credentials: credentials(["openai"]),
-    codex: { account: async () => { throw new Error("not running"); } },
-    openaiChat: async () => '{"score":87}',
-  });
-  assert.equal(result.provider, "openai");
-});
-
-test("auto provider fails clearly when no account is connected", async () => {
-  await assert.rejects(
-    chatWithProvider({
-      provider: "auto",
-      messages,
-      credentials: credentials(),
-      codex: { account: async () => ({ account: null }) },
-      zcodeAvailable: () => null,
-    }),
-    /Нет подключённого AI-аккаунта/,
-  );
-});
-
-test("auto provider falls back to the local ZCode CLI when no account is connected", async () => {
-  let called = false;
-  const result = await chatWithProvider({
-    provider: "auto",
-    messages,
-    credentials: credentials(),
-    codex: { account: async () => ({ account: null }) },
-    zcodeAvailable: () => "C:/fake/zcode.cjs",
-    zcodeChat: async () => { called = true; return { content: '{"score":85}' }; },
-  });
-  assert.equal(result.provider, "zcode");
-  assert.equal(result.content, '{"score":85}');
-  assert.equal(called, true);
-});
-
-test("explicit zcode route works without credentials and fails clearly when unavailable", async () => {
-  const result = await chatWithProvider({
-    provider: "zcode",
-    messages,
-    credentials: credentials(),
-    codex: { account: async () => ({ account: null }) },
-    zcodeAvailable: () => "C:/fake/zcode.cjs",
-    zcodeChat: async () => ({ content: "ok-zcode" }),
-  });
-  assert.equal(result.provider, "zcode");
-  assert.equal(result.content, "ok-zcode");
-
-  await assert.rejects(
-    chatWithProvider({
-      provider: "zcode",
-      messages,
-      credentials: credentials(),
-      codex: { account: async () => ({ account: null }) },
-      zcodeAvailable: () => null,
-    }),
-    /ZCode CLI не найден/,
-  );
-});
-
-test("explicit OpenAI route fails deterministically when no key is configured", async () => {
-  await assert.rejects(
-    chatWithProvider({
+for (const effort of ["medium", "high", "max"]) {
+  test(`router keeps Sol ${effort}`, async () => {
+    let received;
+    const result = await chatWithProvider({
       provider: "openai",
-      messages,
+      envelope: {
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        messages: [{ role: "user", content: "hi" }],
+        reasoning: { effort },
+      },
       credentials: credentials(),
-      codex: { account: async () => ({ account: { email: "user@example.com" } }) },
-    }),
-    /Провайдер openai не подключён/,
-  );
-});
-
-test("explicit Kimi route fails deterministically when no key is configured", async () => {
-  await assert.rejects(
-    chatWithProvider({
-      provider: "kimi",
-      messages,
-      credentials: credentials(["openai"]),
-      codex: { account: async () => ({ account: null }) },
-    }),
-    /Провайдер kimi не подключён/,
-  );
-});
-
-test("auto provider reports the selected fallback in transport.fallback", async () => {
-  const result = await chatWithProvider({
-    provider: "auto",
-    messages,
-    credentials: credentials(["openai"]),
-    codex: { account: async () => ({ account: null }) },
-    openaiChat: async () => ({ content: '{"score":89}' }),
+      openaiChat: async ({ envelope }) => {
+        received = envelope;
+        return { content: "ok", transport: { provider: "openai", model: "gpt-5.6-sol", dropped: [] } };
+      },
+    });
+    assert.equal(received.model, "gpt-5.6-sol");
+    assert.equal(received.reasoning.effort, effort);
+    assert.equal(result.provider, "openai");
+    assert.equal(result.transport.fallback, null);
   });
-  assert.equal(result.provider, "openai");
+}
+
+test("router migrates a retired persisted selection to Sol medium", async () => {
+  let received;
+  const result = await chatWithProvider({
+    provider: "kimi",
+    messages: [{ role: "user", content: "hi" }],
+    credentials: credentials(),
+    openaiChat: async ({ envelope }) => {
+      received = envelope;
+      return { content: "ok", transport: { provider: "openai", model: "gpt-5.6-sol", dropped: [] } };
+    },
+  });
+  assert.equal(received.provider, "openai");
+  assert.equal(received.reasoning.effort, "medium");
   assert.equal(result.transport.fallback, "openai");
 });
 
-test("explicit Codex route does not fall back after a chat error", async () => {
+test("router fails clearly when OpenAI is disconnected", async () => {
   await assert.rejects(
-    chatWithProvider({
-      provider: "codex",
-      messages,
-      credentials: credentials(["kimi"]),
-      codex: {
-        account: async () => ({ account: { email: "user@example.com" } }),
-        chat: async () => { throw new Error("Codex request failed"); },
+    chatWithProvider({ provider: "openai", messages: [{ role: "user", content: "hi" }], credentials: credentials(false) }),
+    /OpenAI.*Connections/,
+  );
+});
+
+test("selectable providers are exactly Sol, Codex and Claude", () => {
+  assert.deepEqual([...SELECTABLE_PROVIDERS], ["openai", "codex", "claude"]);
+});
+
+test("resolveProvider keeps supported values and migrates the rest", () => {
+  for (const provider of ["openai", "codex", "claude"]) {
+    assert.equal(resolveProvider(provider), provider);
+  }
+  for (const retired of ["kimi", "glm", "zai", "grok", "zcode", "auto", "", null, undefined]) {
+    assert.equal(resolveProvider(retired), "openai");
+  }
+});
+
+test("codex selection reaches the Codex app-server, not OpenAI", async () => {
+  let codexProfile;
+  let openaiCalled = false;
+  const result = await chatWithProvider({
+    provider: "codex",
+    envelope: { provider: "codex", messages: [{ role: "user", content: "hi" }] },
+    profile: "quality_judge",
+    credentials: credentials(),
+    codex: {
+      chat: async (messages, options) => {
+        codexProfile = options.profile;
+        assert.deepEqual(messages, [{ role: "user", content: "hi" }]);
+        return "codex-output";
       },
-      kimiChat: async () => '{"unexpected":true}',
-    }),
-    /Codex request failed/,
-  );
-});
-
-test("auto provider uses a GLM key when Codex is signed out and Kimi is absent", async () => {
-  let called = false;
-  const result = await chatWithProvider({
-    provider: "auto",
-    messages,
-    credentials: credentials(["glm"]),
-    codex: { account: async () => ({ account: null }) },
-    glmChat: async () => { called = true; return '{"score":86}'; },
+    },
+    openaiChat: async () => { openaiCalled = true; return { content: "", transport: {} }; },
   });
-  assert.equal(result.provider, "glm");
-  assert.equal(called, true);
-});
-
-test("explicit glm routes to glmChat and fails clearly when disconnected", async () => {
-  let glmCalls = 0;
-  const result = await chatWithProvider({
-    provider: "glm",
-    messages,
-    credentials: credentials(["glm"]),
-    codex: { account: async () => ({ account: null }) },
-    glmChat: async () => { glmCalls += 1; return { content: "ok-glm" }; },
-  });
-  assert.equal(result.provider, "glm");
-  assert.equal(result.content, "ok-glm");
-  assert.equal(glmCalls, 1);
-
-  await assert.rejects(
-    chatWithProvider({
-      provider: "glm",
-      messages,
-      credentials: credentials(["openai"]),
-      codex: { account: async () => ({ account: null }) },
-      openaiChat: async () => ({ content: "ok-openai" }),
-    }),
-    /Провайдер glm не подключён/,
-  );
-});
-
-test("glm tool-calls pass through to the caller (MCP agent loop)", async () => {
-  const result = await chatWithProvider({
-    provider: "glm",
-    messages,
-    credentials: credentials(["glm"]),
-    codex: { account: async () => ({ account: null }) },
-    tools: [{ type: "function", function: { name: "mcp_list_files", description: "list", parameters: { type: "object", properties: {} } } }],
-    glmChat: async () => ({ content: "", toolCalls: [{ id: "1", name: "mcp_list_files", arguments: "{}" }] }),
-  });
-  assert.deepEqual(result.toolCalls, [{ id: "1", name: "mcp_list_files", arguments: "{}" }]);
-});
-
-test("explicit Grok route fails deterministically when no key is configured", async () => {
-  await assert.rejects(
-    chatWithProvider({
-      provider: "grok",
-      messages,
-      credentials: credentials(["openai"]),
-      codex: { account: async () => ({ account: null }) },
-    }),
-    /Провайдер grok не подключён/,
-  );
-});
-
-test("explicit Z.AI route fails deterministically when no key is configured", async () => {
-  await assert.rejects(
-    chatWithProvider({
-      provider: "zai",
-      messages,
-      credentials: credentials(["glm"]),
-      codex: { account: async () => ({ account: null }) },
-    }),
-    /Провайдер zai не подключён/,
-  );
-});
-
-test("explicit Z.AI route reaches the zai adapter and reports fallback: null", async () => {
-  let called = false;
-  const result = await chatWithProvider({
-    provider: "zai",
-    messages,
-    credentials: credentials(["zai"]),
-    codex: { account: async () => ({ account: null }) },
-    zaiChat: async () => { called = true; return { content: "ok-zai", transport: { provider: "zai", model: "glm-5.3", dropped: [] } }; },
-  });
-  assert.equal(called, true);
-  assert.equal(result.provider, "zai");
-  assert.equal(result.content, "ok-zai");
+  assert.equal(openaiCalled, false);
+  assert.equal(codexProfile, "quality_judge");
+  assert.equal(result.content, "codex-output");
+  assert.equal(result.provider, "codex");
+  assert.equal(result.transport.provider, "codex");
   assert.equal(result.transport.fallback, null);
 });
 
-test("auto provider can select a configured Z.AI account", async () => {
+test("claude selection reaches the Claude CLI with the node effort", async () => {
+  let seen;
+  let openaiCalled = false;
   const result = await chatWithProvider({
-    provider: "auto",
-    messages,
-    credentials: credentials(["zai"]),
-    codex: { account: async () => ({ account: null }) },
-    zaiChat: async () => ({ content: "auto-zai", transport: { provider: "zai", model: "glm-5.3", dropped: [] } }),
-  });
-  assert.equal(result.provider, "zai");
-  assert.equal(result.transport.fallback, "zai");
-});
-
-test("auto provider prefers Zhipu GLM over direct Z.AI when both exist (GLM-5.3-first chain)", async () => {
-  let used = null;
-  const result = await chatWithProvider({
-    provider: "auto",
-    messages,
-    credentials: credentials(["glm", "zai"]),
-    codex: { account: async () => ({ account: null }) },
-    glmChat: async () => { used = "glm"; return { content: "glm" }; },
-    zaiChat: async () => { used = "zai"; return { content: "zai", transport: { provider: "zai", model: "glm-5.3", dropped: [] } }; },
-  });
-  assert.equal(used, "glm");
-  assert.equal(result.provider, "glm");
-});
-
-test("explicit Codex route without an account fails deterministically", async () => {
-  await assert.rejects(
-    chatWithProvider({
-      provider: "codex",
-      messages,
-      credentials: credentials(["openai"]),
-      codex: { account: async () => ({ account: null }) },
-      openaiChat: async () => ({ content: "unexpected" }),
-    }),
-    /Codex не подключён/,
-  );
-});
-
-test("explicit provider routes report transport.fallback === null", async () => {
-  const result = await chatWithProvider({
-    provider: "openai",
-    messages,
-    credentials: credentials(["openai"]),
-    codex: { account: async () => ({ account: null }) },
-    openaiChat: async () => ({ content: "ok-openai" }),
-  });
-  assert.equal(result.provider, "openai");
-  assert.equal(result.transport.fallback, null);
-});
-
-test("explicit codex route rejects image parts instead of silently flattening them", async () => {
-  await assert.rejects(
-    chatWithProvider({
-      provider: "codex",
-      messages: [{
-        role: "user",
-        content: [
-          { type: "text", text: "describe" },
-          { type: "image_url", image_url: { url: "data:image/png;base64,aGk=" } },
-        ],
-      }],
-      credentials: credentials(),
-      codex: {
-        account: async () => ({ account: { email: "user@example.com" } }),
-        chat: async () => "unexpected",
+    provider: "claude",
+    envelope: {
+      provider: "claude",
+      messages: [{ role: "user", content: "hi" }],
+      reasoning: { effort: "max" },
+    },
+    credentials: credentials(),
+    claude: {
+      chat: async (messages, options) => {
+        seen = { messages, options };
+        return "claude-output";
       },
-    }),
-    (error) => error.code === "UNSUPPORTED_CAPABILITY" && /multimodal/.test(error.message),
+    },
+    openaiChat: async () => { openaiCalled = true; return { content: "", transport: {} }; },
+  });
+  assert.equal(openaiCalled, false);
+  assert.equal(seen.options.effort, "max");
+  assert.equal(result.content, "claude-output");
+  assert.equal(result.provider, "claude");
+  assert.equal(result.transport.model, "opus");
+});
+
+test("selecting a runtime that is not wired fails with a Connections hint", async () => {
+  await assert.rejects(
+    chatWithProvider({ provider: "claude", messages: [], credentials: credentials() }),
+    /Claude.*Connections/,
   );
+  await assert.rejects(
+    chatWithProvider({ provider: "codex", messages: [], credentials: credentials() }),
+    /Codex.*Connections/,
+  );
+});
+
+test("Codex and Claude do not require the OpenAI credential", async () => {
+  const result = await chatWithProvider({
+    provider: "claude",
+    envelope: { provider: "claude", messages: [{ role: "user", content: "hi" }] },
+    credentials: credentials(false),
+    claude: { chat: async () => "ok" },
+  });
+  assert.equal(result.content, "ok");
 });

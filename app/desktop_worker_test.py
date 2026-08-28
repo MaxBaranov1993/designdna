@@ -135,7 +135,7 @@ def main() -> None:
               f"fast={results.get('fast'):.2f}s slow={results.get('slow'):.2f}s")
         check("slow call completed", 1.5 <= results.get("slow", 0) <= 10, f"{results.get('slow'):.2f}s")
 
-        conf = worker.request("runtime.configure", {"kimiApiKey": ""})
+        conf = worker.request("runtime.configure", {"openaiApiKey": ""})
         check("runtime.configure stays inline and serial", conf.get("result", {}).get("ok") is True, json.dumps(conf))
 
         # Оба frame попадают в stdin одним write без паузы. configure обязан
@@ -143,7 +143,7 @@ def main() -> None:
         # начать его и увеличить какой-либо running-counter.
         batch_slow_id, batch_configure_id = worker.send_batch([
             ("debug.sleep", {"seconds": 0.4}),
-            ("runtime.configure", {"kimiApiKey": "batch-rotated"}),
+            ("runtime.configure", {"openaiApiKey": "batch-rotated"}),
         ])
         batch_slow = worker.wait_response(batch_slow_id, timeout=30)
         batch_configure = worker.wait_response(batch_configure_id, timeout=30)
@@ -164,7 +164,7 @@ def main() -> None:
         configure_done = threading.Event()
 
         def reconfigure() -> None:
-            worker.request("runtime.configure", {"kimiApiKey": "rotated"}, timeout=30)
+            worker.request("runtime.configure", {"openaiApiKey": "rotated"}, timeout=30)
             done_times["configure"] = time.time()
             configure_done.set()
 

@@ -1,7 +1,8 @@
 import { createStore } from "zustand/vanilla";
 
-import { api, extractStyleDna as extractStyleDnaApi } from "./api";
+import { api, apiGet, extractStyleDna as extractStyleDnaApi } from "./api";
 import type {
+  BlockParseJobResp,
   BlockParseResp,
   GenerateResp,
   MixResp,
@@ -40,6 +41,7 @@ import type {
   LegacyView,
   MixNodeData,
   PageNodeData,
+  NodeProvider,
   NodeType,
   ReskinNodeData,
   DesignSystemNodeData,
@@ -60,6 +62,118 @@ function friendlyProviderError(error: unknown) {
     return "AI-аккаунт не подключён. Откройте Agents → Connections.";
   }
   return detail || "AI не ответил. Повторите запуск.";
+}
+
+/* Провайдер ноды: поддерживаемый выбор проходит как есть, ретро-значения из
+ * старых проектов мигрируют на Sol (тот же контракт, что в serialize.ts и
+ * desktop/services/provider-router.mjs). */
+const NODE_PROVIDERS = new Set<NodeProvider>(["openai", "codex", "claude"]);
+function nodeProvider(value: unknown): NodeProvider {
+  return NODE_PROVIDERS.has(value as NodeProvider) ? (value as NodeProvider) : "openai";
+}
+const PROVIDER_LABELS: Record<NodeProvider, string> = {
+  openai: "GPT-5.6 Sol",
+  codex: "Codex",
+  claude: "Claude Opus",
+};
+type NodeEffort = "medium" | "high" | "max";
+function nodeEffort(value: unknown): NodeEffort {
+  return value === "high" || value === "max" ? value : "medium";
+}
+/* Codex — text-only контракт без reasoning; модель выбирает сам транспорт. */
+function chatRoute(provider: NodeProvider, effort: unknown) {
+  if (provider === "codex") return { provider, model: null };
+  const reasoning = { effort: nodeEffort(effort) };
+  if (provider === "claude") return { provider, model: "opus", reasoning };
+  return { provider, model: "gpt-5.6-sol", reasoning };
+}
+
+/* AI-уточнение разбора Source.
+ *
+ * Модель видит только компактную сводку структуры (роли, имена, размеры) и
+ * список того, чего не решили эвристики, — не весь IR: он весит мегабайты.
+ * Ответ жёстко ограничен переименованиями и сменой роли блока; применяет их
+ * сервер (blockparse.apply_refinements) с собственной валидацией. */
+const REFINE_ROLES = [
+  "header", "footer", "carousel", "categories", "product-grid", "services-grid",
+  "journal", "how-it-works", "faq", "cta", "trust", "pricing", "testimonials",
+  "gallery", "navigation", "status", "toolbar", "profile", "panel", "section",
+];
+
+function sourceStructureDigest(response: BlockParseResp) {
+  return (response.blocks || []).map((block) => {
+    const boundaries: Array<{ sourceKey: string; role: string; label: string }> = [];
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== "object") return;
+      const record = node as Record<string, unknown>;
+      const meta = record.sourceMeta as Record<string, unknown> | undefined;
+      if (meta?.componentBoundary && boundaries.length < 30) {
+        boundaries.push({
+          sourceKey: String(record.sourceKey || ""),
+          role: String(meta.componentRole || ""),
+          label: String(meta.componentLabel || ""),
+        });
+      }
+      for (const child of (record.children as unknown[]) || []) walk(child);
+    };
+    for (const root of ((block.ir as Record<string, unknown> | undefined)?.tree as unknown[]) || []) walk(root);
+    return {
+      name: block.name,
+      label: block.label,
+      kind: block.kind,
+      size: block.size,
+      components: boundaries,
+    };
+  });
+}
+
+async function refineSourceWithAi(
+  response: BlockParseResp,
+  provider: NodeProvider,
+  setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
+  id: number,
+): Promise<BlockParseResp | null> {
+  const desktop = window.designDNA;
+  if (!desktop) return null;
+  setStatus(id, "AI-уточнение структуры…");
+  const instruction = [
+    "Ты уточняешь результат автоматического разбора веб-страницы на компоненты.",
+    "Дай человекочитаемые названия компонентам и уточни роли блоков.",
+    `Допустимые роли блока: ${REFINE_ROLES.join(", ")}.`,
+    "Ответь СТРОГО одним JSON-объектом вида",
+    '{"operations":[{"op":"rename-block","block":"<name>","label":"<текст>"},',
+    '{"op":"set-block-role","block":"<name>","role":"<роль>"},',
+    '{"op":"rename-component","block":"<name>","sourceKey":"<ключ>","label":"<текст>"}]}',
+    "Не добавляй пояснений. Не выдумывай блоки и sourceKey, которых нет во входных данных.",
+  ].join(" ");
+  const answer = await desktop.providers.chatRequest({
+    ...chatRoute(provider, "medium"),
+    messages: [
+      { role: "system", content: instruction },
+      {
+        role: "user",
+        content: JSON.stringify({
+          structure: sourceStructureDigest(response),
+          ambiguities: response.ambiguities || [],
+        }),
+      },
+    ],
+  });
+  const match = String(answer.content || "").match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  let operations: unknown;
+  try {
+    operations = (JSON.parse(match[0]) as { operations?: unknown }).operations;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(operations) || !operations.length) return null;
+  const applied = await api<{ blocks: BlockParseResp["blocks"]; sourceArtifact: unknown; appliedCount: number }>(
+    "/api/block-parse/refine", { blocks: response.blocks, operations },
+  );
+  if (!applied?.appliedCount) return null;
+  setStatus(id, `AI-уточнение: ${applied.appliedCount} правок`);
+  return { ...response, blocks: applied.blocks, sourceArtifact: applied.sourceArtifact as never };
 }
 
 const DESIGN_SYSTEM_SECTION_TYPES = new Set([
@@ -108,10 +222,11 @@ export interface FlowStoreState {
   channels: Record<string, IRObject | null>;
   designSystems: DesignSystemsRegistry;
   designSystemPicker: DesignSystemPickerConfig;
+  projectHydrated: boolean;
   statuses: Record<number, NodeStatus>;
   /* run-based ноды в полёте запроса (спиннер на ноде); runtime-поле, в сейв не попадает */
   busy: Record<number, boolean>;
-  progresses: Record<number, { startedAt: number; expectedMs: number; label: string }>;
+  progresses: Record<number, { startedAt: number; expectedMs: number; label: string; percent?: number }>;
 
   addNode: (
     type: NodeType,
@@ -130,7 +245,7 @@ export interface FlowStoreState {
   commitEditorDraft: (id: number, expectedRevision: number, ir: IRObject) => boolean;
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void;
   setBusy: (id: number, v: boolean) => void;
-  setProgress: (id: number, progress: { expectedMs: number; label: string } | null) => void;
+  setProgress: (id: number, progress: { expectedMs: number; label: string; percent?: number } | null) => void;
   propagate: (startId: number, visited?: Set<number>) => void;
   runNode: (id: number) => void;
   runGenerator: (id: number) => Promise<void>;
@@ -363,6 +478,9 @@ let localDirtySinceInit = false;
 export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   designSystems: initialDesignSystems,
   designSystemPicker: emptyPicker,
+  // A clean desktop profile has no localStorage snapshot. Until SQLite has
+  // answered, the empty canvas must not sync over the canonical project.
+  projectHydrated: Boolean(projectSaved),
   nodes: hydratePageBridgeNodes(initialActiveGraph.nodes, initialChannels),
   edges: initialActiveGraph.edges,
   view: initialActiveGraph.view,
@@ -382,11 +500,6 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const rx = Math.round(x);
     const ry = Math.round(y);
     const data = defaultData(type);
-    if (type === "generator" && typeof window !== "undefined" && window.designDNA) {
-      // GLM-5.3-first: новая нода генератора идёт через GLM (Zhipu),
-      // а не через Codex; пользователь меняет выбор в селекторе ноды.
-      (data as { provider: string }).provider = "glm";
-    }
     const node = {
       id: String(id),
       type,
@@ -564,12 +677,17 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     set((state) => ({ busy: { ...state.busy, [id]: v } }));
   },
 
-  /* Прогресс длинной операции: startedAt фиксируется здесь, UI сам тикает
-   * elapsed и асимптотические проценты; null снимает полосу. */
+  /* Backend stages can supply a measured percent. Updates preserve startedAt so
+   * elapsed time remains the duration of the whole operation. */
   setProgress: (id, progress) => {
     set((state) => ({
       progresses: progress
-        ? { ...state.progresses, [id]: { startedAt: Date.now(), expectedMs: Math.max(1_000, progress.expectedMs), label: progress.label } }
+        ? { ...state.progresses, [id]: {
+            startedAt: state.progresses[id]?.startedAt ?? Date.now(),
+            expectedMs: Math.max(1_000, progress.expectedMs),
+            label: progress.label,
+            ...(Number.isFinite(progress.percent) ? { percent: Math.max(0, Math.min(100, Number(progress.percent))) } : {}),
+          } }
         : Object.fromEntries(Object.entries(state.progresses).filter(([key]) => Number(key) !== id)),
     }));
   },
@@ -594,6 +712,19 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           get().setNodeData(consId, { ir: deepClone(ir) });
           get().setStatus(consId, "IR получен — можно разбить на компоненты", "ok");
           get().propagate(consId, visited);
+        }
+      } else if (cons.type === "designui") {
+        const artifact = pullInput(nodes, edges, cons, "artifact");
+        if (artifact && typeof artifact === "object") {
+          get().setNodeData(consId, { artifact: deepClone(artifact), selectedComponent: 0 });
+          get().setStatus(consId, "Design UI synchronized", "ok");
+          get().propagate(consId, visited);
+        }
+      } else if (cons.type === "designsystem") {
+        const artifact = pullInput(nodes, edges, cons, "artifact");
+        if (artifact && typeof artifact === "object") {
+          get().setNodeData(consId, { sourceUpdate: true });
+          get().setStatus(consId, "Source changed — review and Sync before publishing", "ok");
         }
       } else if (cons.type === "mix") {
         get().setStatus(consId, "Входы обновлены — нажмите «Смешать»");
@@ -679,22 +810,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const styleHint = styleRaw ? String(styleRaw) : undefined;
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
     const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as Record<string, unknown>) : undefined;
-    const selectedProvider: "auto" | "codex" | "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode" = ["codex", "kimi", "openai", "glm", "zai", "grok", "zcode"].includes(data.provider)
-      ? (data.provider as "codex" | "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode")
-      : data.provider === "auto" ? "auto" : "glm";
     const desktop = window.designDNA;
-    const provider = desktop
-      ? selectedProvider
-      : selectedProvider === "codex" ? "auto" : selectedProvider;
+    const effort: "medium" | "high" | "max" = ["medium", "high", "max"].includes(data.effort)
+      ? data.effort
+      : "medium";
+    const provider = nodeProvider(data.provider);
     const count = Math.max(1, Math.min(2, Number(data.count) || 1));
-    const providerLabel = provider === "kimi"
-      ? "Kimi K3"
-      : provider === "openai" ? "GPT-5.6-sol"
-      : provider === "glm" ? "GLM-5.3 · Zhipu"
-      : provider === "zai" ? "GLM-5.3 · Z.AI"
-      : provider === "grok" ? "Grok 4.6 · xAI"
-      : provider === "zcode" ? "ZCode GLM"
-      : provider === "auto" ? "Auto route" : "GPT Codex";
+    const providerLabel = provider === "codex"
+      ? PROVIDER_LABELS.codex
+      : `${PROVIDER_LABELS[provider]} · ${effort}`;
     get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
     get().setBusy(id, true);
     const startedAt = Date.now();
@@ -709,6 +833,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         brief,
         count,
         provider,
+        effort,
         styleHint,
         tokens,
         preset: data.preset || undefined,
@@ -718,12 +843,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       if (!desktop) {
         res = await api<GenerateResp>("/api/generate", request);
       } else {
-        const desktopProvider: "auto" | "codex" | "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode" = provider;
         const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true });
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы генератора");
         const rawOutputs: string[] = [];
         for (const prompt of prepared.prompts) {
-          const answer = await desktop.providers.chat(desktopProvider, prompt.messages, styleHint ? 0.3 : 0.8);
+          const answer = await desktop.providers.chatRequest({
+            ...chatRoute(provider, effort),
+            messages: prompt.messages,
+          });
           rawOutputs.push(answer.content);
         }
         res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs });
@@ -857,7 +984,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
               lit: true,
             }]
           : [];
-        get().setNodeData(id, { blocks, tokens: dna.tokens });
+        get().setNodeData(id, { blocks, tokens: dna.tokens, sourceArtifact: null });
         const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
         get().setStatus(id, ir ? `Готово: capture + Style DNA · ${secs}с` : "Не удалось получить IR из скриншота", ir ? "ok" : "err");
       } else {
@@ -880,8 +1007,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         if (url !== data.url) get().setNodeData(id, { url });
         get().setStatus(id, `Импортирую ${url.slice(0, 30)}…`);
         const desktop = window.designDNA;
-        const res = await api<BlockParseResp>("/api/block-parse", {
+        const initial = await api<BlockParseResp | BlockParseJobResp>("/api/block-parse", {
           url,
+          asyncJob: true,
           fullResolutionEvidence: !!desktop,
           useAuthenticatedSession: !!data.authenticatedSession && !!window.designDNA?.sourceAuth,
           viewports: [
@@ -890,18 +1018,73 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             { name: "mobile", width: 390, height: 844 },
           ],
         });
+        let res: BlockParseResp;
+        if ("jobId" in initial) {
+          let job = initial;
+          const started = Date.now();
+          const deadline = started + 12 * 60_000;
+          while (job.status === "queued" || job.status === "running") {
+            get().setProgress(id, {
+              expectedMs: 90_000,
+              label: job.stageLabel || "Source Import",
+              percent: job.progress,
+            });
+            get().setStatus(id, `${job.stageLabel || "Source Import"} · ${Math.round(job.progress)}%`);
+            if (Date.now() >= deadline) throw new Error("Source Import превысил лимит 12 минут");
+            // Бэкофф: первые 10 с опрашиваем часто (стадии сменяются быстро),
+            // дальше реже — импорт идёт минутами, а каждый опрос это полный
+            // IPC → stdio → ASGI round-trip.
+            const elapsed = Date.now() - started;
+            const delay = elapsed < 10_000 ? 400 : elapsed < 60_000 ? 1_000 : 2_000;
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            job = await apiGet<BlockParseJobResp>(`/api/block-parse/job/${encodeURIComponent(job.jobId)}`);
+          }
+          if (job.status === "error") throw new Error(job.error || "Source Import завершился с ошибкой");
+          if (!job.result) throw new Error("Source Import завершился без результата");
+          res = job.result;
+        } else {
+          // Compatibility with web/dev servers and intercepted UI fixtures.
+          res = initial;
+        }
         // Source screenshots are comparison evidence. Persist them before the
         // large editable IR enters state; the generic autosave traversal is
         // intentionally time-boxed and may otherwise reach these fields too
         // late, leaving Compare empty after a restart.
         await offloadSourceEvidenceInPlace(res.blocks || []);
+        // AI-уточнение: детерминированный разбор перечислил, чего не смог
+        // решить сам; модель переименовывает компоненты и уточняет роли блоков.
+        // IR не меняется — fidelity-гейт этим путём обойти нельзя.
+        if (data.aiRefine && res.ambiguities?.length && window.designDNA) {
+          try {
+            const refined = await refineSourceWithAi(
+              res, nodeProvider(data.aiProvider), get().setStatus, id,
+            );
+            if (refined) res = refined;
+          } catch (error) {
+            // Уточнение опционально: детерминированный результат остаётся в силе.
+            get().setStatus(id, `AI-уточнение пропущено: ${friendlyProviderError(error)}`);
+          }
+        }
         const litBefore = new Set(data.blocks.filter((b) => b.lit).map((b) => b.name));
         const blocks = (res.blocks || []).map((b) => ({
           ...b,
           cached: !!res.cached || !!b.cached,
           lit: litBefore.has(b.name),
         }));
-        get().setNodeData(id, { blocks, tokens: res.tokens || null, importedUrl: url });
+        const timingsMs = res.diagnostics?.timingsMs || {};
+        const measuredTotalMs = Number(timingsMs.total);
+        get().setNodeData(id, {
+          blocks,
+          tokens: res.tokens || null,
+          sourceArtifact: res.sourceArtifact || null,
+          importedUrl: url,
+          lastRun: {
+            cached: !!res.cached,
+            pipelineVersion: res.diagnostics?.pipelineVersion,
+            totalMs: Number.isFinite(measuredTotalMs) ? measuredTotalMs : Date.now() - startedAt,
+            timingsMs,
+          },
+        });
         const sid = String(id);
         const alive = new Set<string>(["tokens", ...blocks.map((b) => b.name)]);
         set((state) => ({
@@ -910,7 +1093,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         const errCount = blocks.filter((b) => b.error).length;
         const authNote = res.authWarning ? ` · ${res.authWarning}` : "";
         const cacheNote = res.cached ? " · локальный кэш" : "";
-        const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
+        const secs = ((Number.isFinite(measuredTotalMs) ? measuredTotalMs : Date.now() - startedAt) / 1000).toFixed(1);
         get().setStatus(id, `${blocks.length} блоков (${errCount} ошибок) · Source Import${cacheNote}${authNote} · ${secs}с`, errCount ? "err" : "ok");
       }
       get().propagate(id);
@@ -1001,7 +1184,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы Derive");
         const rawOutputs: string[] = [];
         for (const p of prepared.prompts) {
-          const answer = await desktop.providers.chat("auto", p.messages, 0.8);
+          const answer = await desktop.providers.chatRequest({
+            provider: "openai",
+            model: "gpt-5.6-sol",
+            messages: p.messages,
+            reasoning: { effort: "medium" },
+          });
           rawOutputs.push(answer.content);
         }
         res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs });
@@ -1044,7 +1232,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       const payload: Record<string, unknown> = {
         ir,
         prompt: data.prompt || "",
-        provider: data.provider || "auto",
+        provider: nodeProvider(data.provider),
+        effort: ["medium", "high", "max"].includes(data.effort) ? data.effort : "medium",
         mask: data.mask,
         designSystem: pinnedDesignSystemRef(
           data as unknown as Record<string, unknown>,
@@ -1060,12 +1249,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       } else {
         // desktop: сервер готовит reskin-промпт, аккаунт отвечает, сервер
         // делает merge-back/валидацию — креденшелы не покидают main-процесс
-        const prepared = await api<{ prompts: Array<{ messages: Array<{ role: string; content: string }> }> }>(
+        const prepared = await api<{ prompts: Array<{ messages: import("./api").ApiChatMessage[] }> }>(
           "/api/reskin", { ...payload, prepareOnly: true },
         );
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить промпт рестайла");
-        const reskinProvider = ["kimi", "openai", "glm", "zai", "grok", "zcode"].includes(String(data.provider)) ? data.provider as "kimi" | "openai" | "glm" | "zai" | "grok" | "zcode" : "auto";
-        const answer = await desktop.providers.chat(reskinProvider, prepared.prompts[0].messages, 0.7);
+        const effort = ["medium", "high", "max"].includes(data.effort) ? data.effort : "medium";
+        const answer = await desktop.providers.chatRequest({
+          ...chatRoute(nodeProvider(data.provider), effort),
+          messages: prepared.prompts[0].messages,
+        });
         res = await api<ReskinResp>("/api/reskin", { ...payload, rawOutput: answer.content });
       }
       const log = Array.isArray(res.log) ? res.log : [];
@@ -1120,9 +1312,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           }
           seen.add(pending.stage);
           get().setStatus(id, `Quality Pass: ${pending.stage} через подключённый аккаунт…`);
-          const answer = await desktop.providers.chat(
-            "auto", pending.messages, pending.stage === "repair" ? 0.25 : 0.2, pending.profile,
-          );
+          const answer = await desktop.providers.chatRequest({
+            provider: "openai",
+            model: "gpt-5.6-sol",
+            messages: pending.messages,
+            reasoning: { effort: "high" },
+          });
           outputs[pending.stage] = answer.content;
         }
       }
@@ -1497,6 +1692,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     }
     const node = get().addNode("designsystem", source.position.x + 380, source.position.y);
     const dsId = Number(node.id);
+    get().connect({ node: sourceId, port: "artifact" }, { node: dsId, port: "artifact" });
     get().setStatus(dsId, "Собираю UI Kit из Source…");
     get().setBusy(dsId, true);
     try {
@@ -1506,6 +1702,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         body: JSON.stringify({
           sourceNodeId: String(sourceId), sourceUrl: data.url || "",
           blocks: data.blocks, tokens: data.tokens || {},
+          sourceArtifact: data.sourceArtifact || null,
           name: options?.name || `UI Kit · ${data.url || "Source"}`,
           capturedAt: String((data as SourceImportNodeData & { capturedAt?: string }).capturedAt || ""),
         }),
@@ -1742,6 +1939,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           sourceNodeId: data.sourceNodeId, sourceUrl: (sourceNode.data as SourceImportNodeData).url || "",
           blocks: (sourceNode.data as SourceImportNodeData).blocks || [],
           tokens: (sourceNode.data as SourceImportNodeData).tokens || {},
+          sourceArtifact: (sourceNode.data as SourceImportNodeData).sourceArtifact || null,
           name: data.name,
           capturedAt: String((sourceNode.data as SourceImportNodeData & { capturedAt?: string }).capturedAt || ""),
         }),
@@ -1915,17 +2113,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   /* Параллельная видео-ветка — отдельной страницей, не трогая текущий граф:
    * Source Import (url, по умолчанию rsale.net) → Generator → Interaction
-   * Recorder → Motion Editor (MP4). AI-звено цепочки — генератор: на десктопе
-   * по умолчанию zcode (локальный ZCode CLI, login Z.AI, без API-ключа),
-   * в web — auto (серверная цепочка доходит до zcode/GLM-5.3 последней). */
+   * Recorder → Motion Editor (MP4). AI-звено использует фиксированный
+   * gpt-5.6-sol; effort задаётся самой Generator-нодой. */
   addVideoChainPage: (options) => {
     const rawUrl = (options?.url || "rsale.net").trim() || "rsale.net";
     const url = /^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl)
       ? rawUrl
       : rawUrl.startsWith("//") ? `https:${rawUrl}` : `https://${rawUrl}`;
     const host = url.replace(/^https?:\/\//, "").replace(/\/.*$/, "") || "source";
-    const desktop = typeof window !== "undefined" && !!window.designDNA;
-    const provider = options?.provider || (desktop ? "zcode" : "auto");
+    const provider = "openai";
     let nextId = 1;
     const mkNode = (type: NodeType, x: number, y: number, patch: Record<string, unknown> = {}) => ({
       id: String(nextId++),
@@ -2037,16 +2233,28 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   loadPersistedProject: async () => {
     void get().refreshDesignSystems(); // registry не блокирует загрузку проекта
     const project = await loadPagesProjectFromDb();
-    if (!project) return;
+    if (!project) {
+      set({ projectHydrated: true });
+      return;
+    }
     // Гонка гидратации: пока шёл fetch, локальный граф мог измениться (пользователь
     // или GraphDev.add в тестах уже добавил ноды) — применять загруженный проект
     // поверх нельзя, он затёр бы локальные правки пустым/устаревшим состоянием.
-    if (localDirtySinceInit) return;
+    if (localDirtySinceInit) {
+      set({ projectHydrated: true });
+      return;
+    }
     const current = get();
     const dbNodeCount = project.pages.reduce((sum, page) => sum + page.nodes.length, 0);
-    if (dbNodeCount === 0 && (current.nodes.length > 0 || current.edges.length > 0)) return;
+    if (dbNodeCount === 0 && (current.nodes.length > 0 || current.edges.length > 0)) {
+      set({ projectHydrated: true });
+      return;
+    }
     const activePage = project.pages.find((page) => page.id === project.activePageId) || project.pages[0];
-    if (!activePage) return;
+    if (!activePage) {
+      set({ projectHydrated: true });
+      return;
+    }
     set({
       pages: project.pages,
       activePageId: activePage.id,
@@ -2059,6 +2267,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       busy: {},
       progresses: {},
     });
+    // Keep the canvas->store mirror closed for one task after publishing the
+    // loaded arrays. Svelte effects may otherwise observe `projectHydrated`
+    // before their local bound nodes receive the same snapshot and mirror the
+    // temporary empty canvas back over the freshly loaded project.
+    setTimeout(() => {
+      set({ projectHydrated: true });
+      fitFlowView();
+      setTimeout(fitFlowView, 350);
+    }, 0);
   },
 }));
 

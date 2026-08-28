@@ -181,6 +181,30 @@ def main() -> None:
     ))
     check("publish validation accepts verified registry while review pool stays isolated", not dsdoc.validate_document(mixed), json.dumps(dsdoc.validate_document(mixed), ensure_ascii=False))
     check("quality keeps all observed masters in fidelity denominator", mixed["quality"]["fidelityCoverage"] == 50, json.dumps(mixed["quality"]))
+
+    review_only_block = source_block(True)
+    review_only_block["ir"]["tree"][0]["children"][0]["style"]["background"] = "#111827"
+    for metrics in review_only_block["fidelityReport"]["viewports"].values():
+        metrics["pixel_similarity"] = 70.0
+        metrics["gate"] = {"passed": False, "reasons": ["pixel similarity below release threshold"]}
+    review_pack = builder.build_source_pack(
+        {"blocks": [review_only_block], "tokens": tokens, "mode": "url", "url": "https://example.com/review"},
+        source_node_id=32,
+    )
+    review_pack["_raw_blocks"] = [review_only_block]
+    review_doc = builder.build_draft(review_pack, name="UI Kit · review catalog")
+    check("failed exact master remains in visual review catalog",
+          set(review_doc["reviewComponents"]) == {"button"},
+          json.dumps(list(review_doc["reviewComponents"]), ensure_ascii=False))
+    prepared_review = dsdoc.prepare_for_publish(review_doc)
+    check("observed review catalog survives publish preparation",
+          not prepared_review["suggestions"] and set(prepared_review["reviewComponents"]) == {"button"})
+    review_summary = dsdoc.summary(prepared_review)
+    check("summary separates visible catalog from accepted registry",
+          review_summary["catalogComponents"] == 1
+          and review_summary["reviewMasters"] == 1
+          and review_summary["components"] == 0,
+          json.dumps(review_summary, ensure_ascii=False))
     raster_metrics = {
         "pixelSimilarity": 90.11, "paintCoverage": 100.0, "bboxP95": 1.0,
         "originError": 0.09, "unexplainedLosses": 0, "sizeMatch": True,
@@ -702,6 +726,65 @@ def main() -> None:
     missing_doc, missing_err = store.resolve_ref({"systemId": "ds-does-not-exist", "revision": 0})
     check("missing system still fails loudly",
           missing_doc is None and "не найдена" in str(missing_err))
+
+    # Пак записывает SOURCE_COMPILER_DEFAULT, когда нода не передала свою
+    # версию. Расхождение с реальным конвейером (было dom-v31 против dom-v39)
+    # помечало свежие захваты устаревшим парсером.
+    import blockparse
+    check("source compiler default matches the pipeline version",
+          builder.SOURCE_COMPILER_DEFAULT == blockparse.SOURCE_COMPILER_VERSION,
+          f"{builder.SOURCE_COMPILER_DEFAULT} != {blockparse.SOURCE_COMPILER_VERSION}")
+
+    # Классификатор обязан работать на вёрстке, чьи имена классов ничего не
+    # значат (Tailwind/CSS-modules/хеши): семейство выводится из роли, состава
+    # содержимого и повторяемости, а не из componentLabel.
+    def boundary(role, label, children=(), repeat=None, **extra):
+        meta = {"componentBoundary": True, "componentRole": role, "componentLabel": label}
+        if repeat:
+            meta["repeatGroup"] = repeat
+        return {"type": extra.pop("type", "card"), "sourceKey": extra.pop("key", label),
+                "sourceMeta": meta, "children": list(children), **extra}
+
+    hashed = source_block(True)
+    hashed["name"] = "hashed"
+    hashed["kind"] = "product-grid"
+    hashed_cards = [
+        boundary("article", "css-1x2y3z", repeat="g", key=f"c{i}", children=[
+            {"type": "image", "sourceKey": f"c{i}-img"},
+            {"type": "heading", "text": "Item", "sourceKey": f"c{i}-h"},
+        ]) for i in range(3)
+    ]
+    hashed["ir"]["tree"] = [{"type": "source-block", "sourceKey": "root", "children": hashed_cards}]
+    hashed["fidelityReport"]["components"] = {f"c{i}": fidelity_report() for i in range(3)}
+    hashed_pack = builder.build_source_pack(
+        {"blocks": [hashed], "tokens": tokens, "url": "https://example.com"}, source_node_id=90)
+    hashed_pack["_raw_blocks"] = [hashed]
+    hashed_doc = builder.build_draft(hashed_pack, name="UI Kit · hashed classes")
+    check("hashed class names still classify as a card family",
+          "service-card" in hashed_doc["components"],
+          json.dumps(sorted(hashed_doc["components"])))
+
+    # Вложенная поверхность раньше возвращала None и молча исчезала из кита.
+    nested_surface = source_block(True)
+    nested_surface["name"] = "nested-surface"
+    nested_surface["kind"] = "section"
+    nested_surface["ir"]["tree"] = [{
+        "type": "source-block", "sourceKey": "root", "children": [
+            boundary("region", "outer", key="outer", children=[
+                boundary("panel", "inner", key="inner",
+                         children=[{"type": "text", "text": "Inner surface copy", "sourceKey": "inner-t"}]),
+            ]),
+        ],
+    }]
+    nested_surface["fidelityReport"]["components"] = {
+        "outer": fidelity_report(), "inner": fidelity_report()}
+    nested_pack2 = builder.build_source_pack(
+        {"blocks": [nested_surface], "tokens": tokens, "url": "https://example.com"}, source_node_id=91)
+    nested_pack2["_raw_blocks"] = [nested_surface]
+    nested_doc2 = builder.build_draft(nested_pack2, name="UI Kit · nested surface")
+    check("a nested surface becomes its own component instead of vanishing",
+          "nested-surface" in nested_doc2["components"],
+          json.dumps(sorted(nested_doc2["components"])))
 
     if FAILS:
         print("FAILURES:", len(FAILS), "-", ", ".join(FAILS))

@@ -2,6 +2,7 @@
   import type { Snippet } from "svelte";
   import { NODE_DEFS } from "../flow/ports";
   import { flow, flowProgresses } from "../flow/state";
+  import { subscribeTick } from "../flow/ticker";
   import type { NodeType } from "../flow/types";
   import { cn } from "../lib/utils";
 
@@ -22,18 +23,20 @@
 
   let def = $derived(NODE_DEFS[type]);
 
-  /* Тонкая полоса прогресса длинных операций (импорт/генерация):
-   * elapsed тикает локально, проценты — асимптотическая кривая к expectedMs,
-   * до реального завершения 100% не показываем. */
+  /* Source Import supplies measured backend stages; legacy operations retain
+   * the asymptotic elapsed-time fallback until they expose stage events. */
   let progress = $derived($flowProgresses[Number(id)]);
   let now = $state(Date.now());
+  // Подписка живёт только пока у ноды есть прогресс; сам интервал — один на все
+  // ноды приложения (см. flow/ticker.ts).
   $effect(() => {
     if (!progress) return;
-    const timer = setInterval(() => (now = Date.now()), 500);
-    return () => clearInterval(timer);
+    return subscribeTick((value) => (now = value));
   });
   const elapsedMs = $derived(progress ? Math.max(0, now - progress.startedAt) : 0);
-  const percent = $derived(progress ? Math.min(97, 100 * (1 - Math.exp((-1.7 * elapsedMs) / progress.expectedMs))) : 0);
+  const percent = $derived(progress
+    ? progress.percent ?? Math.min(97, 100 * (1 - Math.exp((-1.7 * elapsedMs) / progress.expectedMs)))
+    : 0);
   const clock = $derived((() => {
     const total = Math.floor(elapsedMs / 1000);
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;

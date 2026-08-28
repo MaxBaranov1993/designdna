@@ -5,7 +5,7 @@ const ALLOWED_MCP_TRANSPORTS = new Set(["stdio"]);
 // Credential references mirror the CredentialStore provider set: an MCP stdio
 // server may reference any storable provider credential (by name only — the
 // secret itself never enters settings.json).
-const ALLOWED_CREDENTIALS = new Set(["openai", "kimi", "glm", "zai", "grok"]);
+const ALLOWED_CREDENTIALS = new Set(["openai"]);
 const serverId = (value) => String(value).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
 
 export class SettingsStore {

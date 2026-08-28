@@ -241,6 +241,13 @@ def new_document(name: str, *, project_id: str = "default", source_refs: list | 
         "foundations": {"colors": {"primitives": {}, "semantic": {}}, "typography": {"families": [], "scale": {}, "weights": []},
                         "spacing": {}, "radii": [], "shadows": [], "breakpoints": {}, "containers": {}},
         "components": {},
+        # Exact observed masters that are useful in the UI catalog but have not
+        # passed the release-grade fidelity gate. They remain visible after
+        # publish, while `components` stays the strict AI/runtime registry.
+        "reviewComponents": {},
+        # Semantic ordering only. Exact component masters and fidelity evidence
+        # remain authoritative and are never embedded or rewritten here.
+        "catalog": {},
         "suggestions": {},
         "extraction": {"boundaryCount": 0, "extractedBoundaryCount": 0,
                        "observedComponentCount": 0, "suggestionCount": 0},
@@ -273,8 +280,9 @@ def prepare_for_publish(document: dict) -> dict:
                 key: state for key, state in states.items()
                 if not (isinstance(state, dict) and state.get("origin") == "generated" and not state.get("confirmed"))
             }
-    # Suggestions are an editor-only gap-analysis pool. A promoted suggestion
-    # becomes a confirmed registry component; unpromoted suggestions never ship.
+    # Semantic suggestions are an editor-only gap-analysis pool. Exact observed
+    # review masters live in reviewComponents and remain inspectable after
+    # publish, but never enter the strict runtime registry until verified.
     prepared["suggestions"] = {}
     if isinstance(prepared.get("extraction"), dict):
         prepared["extraction"]["suggestionCount"] = 0
@@ -463,7 +471,12 @@ def validate_document(document: dict) -> list[dict]:
 def summary(document: dict) -> dict:
     """Компактная карточка для ноды и picker-списка (§11.2, §15.4)."""
     components = [c for c in (document.get("components") or {}).values() if isinstance(c, dict)]
+    review_components = [
+        c for c in (document.get("reviewComponents") or {}).values()
+        if isinstance(c, dict)
+    ]
     variants = sum(len(c.get("variants") or {}) for c in components)
+    catalog_variants = variants + sum(len(c.get("variants") or {}) for c in review_components)
     states_total = sum(len(c.get("states") or {}) for c in components)
     coverage = round(100 * sum(1 for c in components if c.get("states")) / max(1, len(components)))
     suggestions = [c for c in (document.get("suggestions") or {}).values() if isinstance(c, dict)]
@@ -479,9 +492,12 @@ def summary(document: dict) -> dict:
         "revision": document.get("revision"),
         "contentHash": document.get("contentHash"),
         "components": len(components),
+        "catalogComponents": len(components) + len(review_components),
+        "reviewMasters": len(review_components),
         "suggestions": len(suggestions),
         "verifiedMasters": sum(1 for c in components if c.get("status") == "verified"),
         "variants": variants,
+        "catalogVariants": catalog_variants,
         "stateCoverage": coverage,
         "states": states_total,
         "mockSchemas": len((document.get("mockData") or {}).get("schemas") or {}),

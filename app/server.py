@@ -61,7 +61,10 @@ from ir import sanitize_generated_ir
 from config import FEATURE_FLAGS
 
 EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+SOURCE_IMPORT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 RENDER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+SOURCE_IMPORT_JOBS: dict[str, dict] = {}
+SOURCE_IMPORT_JOBS_LOCK = threading.Lock()
 RENDER_JOBS: dict[str, dict] = {}
 RENDER_JOBS_LOCK = threading.Lock()
 RENDER_DIR = DATA_ROOT / "renders"
@@ -71,6 +74,7 @@ RENDER_DIR = DATA_ROOT / "renders"
 async def lifespan(app: FastAPI):
     yield
     EXECUTOR.shutdown(wait=True)
+    SOURCE_IMPORT_EXECUTOR.shutdown(wait=True)
     RENDER_EXECUTOR.shutdown(wait=True)
 
 
@@ -166,13 +170,15 @@ def parse_ir_response(raw: str):
         return None, f"невалидный JSON от модели: {e}"
 
 
-def call_llm_ir(provider: str, user_content: str, temperature: float = 0.8, mode: str = "generate"):
+def call_llm_ir(provider: str, user_content: str, temperature: float = 0.8,
+                mode: str = "generate", effort: str = "medium"):
     """Вызов LLM с системным промптом генератора -> (ir, error)."""
     try:
         raw = llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt(mode)},
             {"role": "user", "content": user_content},
-        ], temperature, role="generator" if mode == "generate" else "edit")
+        ], temperature, role="generator" if mode == "generate" else "edit",
+            reasoning_effort=effort)
     except Exception as e:
         return None, str(e)
     return parse_ir_response(raw)
@@ -192,7 +198,8 @@ def err(status: int, message: str) -> JSONResponse:
 class GenerateReq(BaseModel):
     brief: str = ""
     count: int = 3
-    provider: str = "auto"
+    provider: str = "openai"
+    effort: str = "medium"
     styleHint: str | None = None
     seedTag: str | None = None
     tokens: dict | None = None  # Style DNA: залоченные design-токены
@@ -211,7 +218,7 @@ class MixReq(BaseModel):
 class CloneReq(BaseModel):
     url: str = ""
     component: str = ""
-    provider: str = "auto"
+    provider: str = "openai"
 
 
 class BlockParseReq(BaseModel):
@@ -221,6 +228,13 @@ class BlockParseReq(BaseModel):
     authCookies: list[dict] | None = None
     authSessionFallback: bool = False
     fullResolutionEvidence: bool = False
+    asyncJob: bool = False
+
+
+class BlockParseRefineReq(BaseModel):
+    """AI-уточнение разбора: только подписи и роли блоков, IR неприкосновенен."""
+    blocks: list
+    operations: list = []
 
 
 class ReskinReq(BaseModel):
@@ -228,7 +242,8 @@ class ReskinReq(BaseModel):
     prompt: str = ""
     tokens: dict | None = None  # источник нового стиля (design-токены)
     mask: dict = {}             # чекбоксы: colors/fonts/radii/shadows/texts/images
-    provider: str = "auto"      # фильтр цепочки ROUTING: auto | openai | kimi | glm | zai | grok | zcode
+    provider: str = "openai"    # legacy values migrate to the fixed Sol route
+    effort: str = "medium"
     prepareOnly: bool = False     # desktop: вернуть промпты вместо LLM-вызова
     rawOutput: str | None = None  # desktop: ответ подключённого аккаунта
     designSystem: dict | None = None
@@ -371,7 +386,8 @@ class TasteOutcomeReq(BaseModel):
 def generate(req: GenerateReq):
     # Browser mode may explicitly select a direct API account. Codex is a
     # desktop-only transport, so unknown/desktop values fall back to ROUTING.
-    provider = req.provider if req.provider in ("openai", "kimi", "glm", "zai", "grok", "zcode") else "auto"
+    provider = "openai"
+    effort = req.effort if req.effort in ("medium", "high", "max") else "medium"
     brief = req.brief.strip()
     if not brief:
         return err(422, "Пустой бриф: опишите, что нужно сгенерировать.")
@@ -408,7 +424,7 @@ def generate(req: GenerateReq):
             return err(422, f"Design System: {ds_error}")
         ds_usage_mode = str(req.designSystem.get("usageMode") or "strict")
         ds_context = ds_resolver.resolve_context(ds_doc, brief, usage_mode=ds_usage_mode)
-        provider_budget = 4000 if ds_usage_mode == "strict" else (1000 if provider in ("glm", "zai", "zcode") else 1200)
+        provider_budget = 4000 if ds_usage_mode == "strict" else 1200
         ds_compiled = ds_resolver.compiled_context(
             ds_context, brief=brief,
             archetype_id=str(req.designSystem.get("archetypeId") or ""),
@@ -478,7 +494,7 @@ def generate(req: GenerateReq):
         if req.rawOutputs is not None:
             ir, error = parse_ir_response(req.rawOutputs[n - 1])
         else:
-            ir, error = call_llm_ir(provider, user, 0.8 if mode == "generate" else 0.3, mode)
+            ir, error = call_llm_ir(provider, user, 0.8 if mode == "generate" else 0.3, mode, effort)
         qa = None
         if ir is not None:
             ir = sanitize_generated_ir(ir)
@@ -726,7 +742,7 @@ def clone(req: CloneReq):
             raw2 = llm.chat(provider, [
                 {"role": "system", "content": llm.build_system_prompt("edit")},
                 {"role": "user", "content": repair},
-            ], 0.2, role="repair")
+            ], 0.2, role="repair", reasoning_effort=effort)
             ir2, _ = parse_ir_response(raw2)
             if ir2 and not validate_ir(ir2):
                 ir = ir2
@@ -749,9 +765,67 @@ _MASK_LABELS = {
 }
 
 
+_SOURCE_STAGE_PROGRESS = {
+    "prepare": (3, "Подготовка"),
+    "cacheLookup": (7, "Проверка кэша"),
+    "renderDom": (22, "Загрузка DOM"),
+    "detectBlocks": (30, "Детекция блоков"),
+    "semanticRefine": (34, "Разметка секций"),
+    "captureCompile": (72, "Слои и responsive"),
+    "assemble": (80, "Сборка Design IR"),
+    "fidelity": (95, "Проверка fidelity"),
+    "cacheWrite": (99, "Сохранение кэша"),
+}
+
+
+def _execute_block_parse(values: dict, on_stage=None) -> dict:
+    result = blockparse.parse_blocks(
+        values["url"],
+        blocks=values.get("blocks"),
+        viewports=values.get("viewports"),
+        auth_cookies=values.get("authCookies"),
+        full_resolution_evidence=bool(values.get("fullResolutionEvidence")),
+        on_stage=on_stage,
+    )
+    if values.get("authSessionFallback"):
+        result["authWarning"] = "В сессии нет cookie для этого URL — выполнен публичный импорт"
+    return result
+
+
+def _run_source_import_job(job_id: str, values: dict) -> None:
+    def on_stage(stage: str, _duration: int, timings: dict[str, int]) -> None:
+        progress, label = _SOURCE_STAGE_PROGRESS.get(stage, (1, stage))
+        if stage.startswith("capture") and stage != "captureCompile":
+            viewport_index = max(1, int(timings.get("captureViewportIndex", 1)))
+            viewport_count = max(1, int(timings.get("captureViewportCount", 3)))
+            progress = min(68, 30 + round(38 * viewport_index / viewport_count))
+            label = stage.removeprefix("capture") + " layers"
+        with SOURCE_IMPORT_JOBS_LOCK:
+            job = SOURCE_IMPORT_JOBS.get(job_id)
+            if job:
+                job.update(status="running", progress=progress, stage=stage,
+                           stageLabel=label, timingsMs=timings)
+
+    try:
+        result = _execute_block_parse(values, on_stage=on_stage)
+        with SOURCE_IMPORT_JOBS_LOCK:
+            job = SOURCE_IMPORT_JOBS.get(job_id)
+            if job:
+                job.update(status="complete", progress=100, stage="complete",
+                           stageLabel="Готово", result=result,
+                           timingsMs=(result.get("diagnostics") or {}).get("timingsMs", {}))
+    except Exception as exc:
+        traceback.print_exc()
+        with SOURCE_IMPORT_JOBS_LOCK:
+            job = SOURCE_IMPORT_JOBS.get(job_id)
+            if job:
+                job.update(status="error", stage="error", stageLabel="Ошибка",
+                           error=str(exc)[:500])
+
+
 @app.post("/api/block-parse")
 def block_parse(req: BlockParseReq):
-    """BlockParse: детекция блоков страницы + параллельный clone каждого в IR."""
+    """BlockParse: детекция блоков страницы + clone каждого в editable Design IR."""
     url = req.url.strip()
     if not url:
         return err(422, "Укажите URL сайта.")
@@ -759,22 +833,79 @@ def block_parse(req: BlockParseReq):
         validate_public_url(url)  # SSRF-гард (422, а не 502)
     except ValueError as e:
         return err(422, str(e))
+
+    values = {
+        "url": url,
+        "blocks": copy.deepcopy(req.blocks),
+        "viewports": copy.deepcopy(req.viewports),
+        "authCookies": copy.deepcopy(req.authCookies),
+        "authSessionFallback": req.authSessionFallback,
+        "fullResolutionEvidence": req.fullResolutionEvidence,
+    }
+    if req.asyncJob:
+        job_id = uuid.uuid4().hex
+        job = {
+            "jobId": job_id,
+            "status": "queued",
+            "progress": 1,
+            "stage": "queued",
+            "stageLabel": "В очереди",
+            "timingsMs": {},
+        }
+        with SOURCE_IMPORT_JOBS_LOCK:
+            # Keep bounded diagnostics; completed payloads can be large.
+            completed = [key for key, value in SOURCE_IMPORT_JOBS.items()
+                         if value.get("status") in {"complete", "error"}]
+            for stale_id in completed[:-9]:
+                SOURCE_IMPORT_JOBS.pop(stale_id, None)
+            SOURCE_IMPORT_JOBS[job_id] = job
+        SOURCE_IMPORT_EXECUTOR.submit(_run_source_import_job, job_id, values)
+        return job
+
     try:
-        result = blockparse.parse_blocks(
-            url,
-            blocks=req.blocks,
-            viewports=req.viewports,
-            auth_cookies=req.authCookies,
-            full_resolution_evidence=req.fullResolutionEvidence,
-        )
-        if req.authSessionFallback:
-            result["authWarning"] = "В сессии нет cookie для этого URL — выполнен публичный импорт"
-        return result
+        return _execute_block_parse(values)
     except ValueError as e:  # кривой список блоков
         return err(422, str(e))
     except Exception as e:
         traceback.print_exc()
         return err(502, f"Ошибка block-parse: {e}")
+
+
+@app.get("/api/block-parse/job/{job_id}")
+def block_parse_job(job_id: str):
+    with SOURCE_IMPORT_JOBS_LOCK:
+        job = SOURCE_IMPORT_JOBS.get(job_id)
+        if not job:
+            return err(404, "Source Import job не найден.")
+        return copy.deepcopy(job)
+
+
+@app.post("/api/block-parse/refine")
+def block_parse_refine(req: BlockParseRefineReq):
+    """Применить AI-уточнения к уже разобранным блокам.
+
+    Разрешены только переименования и смена роли блока (см.
+    blockparse.apply_refinements): геометрия и IR не меняются, поэтому
+    fidelity-гейт нельзя обойти через этот маршрут. Артефакт пересобирается
+    из обновлённых блоков, чтобы UI Kit увидел новые имена и роли.
+    """
+    if not isinstance(req.blocks, list) or not req.blocks:
+        return err(422, "Нет блоков для уточнения.")
+    try:
+        blocks, applied = blockparse.apply_refinements(
+            copy.deepcopy(req.blocks), req.operations)
+    except Exception as e:
+        traceback.print_exc()
+        return err(502, f"Ошибка уточнения: {e}")
+    tokens = None
+    for block in blocks:
+        if isinstance(block, dict) and isinstance(block.get("ir"), dict):
+            tokens = block["ir"].get("tokens")
+            if tokens:
+                break
+    artifact = blockparse._build_source_artifact("", blocks, tokens, False)
+    return {"ok": True, "blocks": blocks, "sourceArtifact": artifact,
+            "applied": applied, "appliedCount": len(applied)}
 
 
 @app.post("/api/reskin")
@@ -830,18 +961,18 @@ def reskin(req: ReskinReq):
             return err(422, "Design System Strict: exact master не помещается в выбранный context budget")
         user += "\n\n" + ds_compiled["promptBlock"]
 
-    # выбор пользователя в ноде — фильтр цепочки ROUTING, auto = вся цепочка
-    provider = req.provider if req.provider in ("openai", "kimi", "glm", "zai", "grok", "zcode") else "auto"
+    provider = "openai"
+    effort = req.effort if req.effort in ("medium", "high", "max") else "medium"
     reskin_messages = [
         {"role": "system", "content": llm.build_system_prompt("edit")},
         {"role": "user", "content": user},
     ]
-    # desktop-транспорт: LLM гоняет main-процесс через подключённый аккаунт
-    # (codex/kimi/openai); сервер готовит промпт и валидирует результат
+    # Desktop executes the prepared prompt through the fixed Sol route.
     if req.prepareOnly:
         return {"prompts": [{"messages": reskin_messages}]}
     try:
-        raw = req.rawOutput if req.rawOutput else llm.chat(provider, reskin_messages, 0.7, role="reskin")
+        raw = req.rawOutput if req.rawOutput else llm.chat(
+            provider, reskin_messages, 0.7, role="reskin", reasoning_effort=effort)
     except Exception as e:
         return err(502, str(e))
     model_ir, parse_error = parse_ir_response(raw)

@@ -106,15 +106,18 @@ export async function expandBlobRefs(body: string): Promise<string> {
     .map((ref) => ref.slice(BLOB_PREFIX.length));
   if (!names.length) return body;
   const map = await window.designDNA!.blobs.getMany(names);
-  let expanded = body;
   for (const name of names) {
     const dataUrl = map[name];
     if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
       throw new Error(`Desktop blob is missing or corrupt: ${name}`);
     }
-    expanded = expanded.split(BLOB_PREFIX + name).join(dataUrl);
   }
-  return expanded;
+  // Один проход вместо split().join() на каждый блоб: тело бывает многомегабайтным,
+  // и пере-сборка всей строки N раз подряд подвешивала UI-поток внутри patched fetch.
+  return body.replace(/ddna:\/\/blobs\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/g, (ref) => {
+    const dataUrl = map[ref.slice(BLOB_PREFIX.length)];
+    return typeof dataUrl === "string" ? dataUrl : ref;
+  });
 }
 
 /** Обходит payload и выносит все длинные data:-URL (мутирует объекты на месте:

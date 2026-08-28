@@ -1,4 +1,6 @@
-import type { IRObject, ParserSourceEnvelope, SourceViewport } from "./types";
+import type { IRObject, ParserSourceEnvelope, SourceArtifact, SourceViewport } from "./types";
+
+export type ApiChatMessage = { role: "system" | "user" | "assistant" | "tool"; content: string };
 
 /* Зеркало api() (nodes.js:61-71): JSON-вызов к бэкенду, Error с data.detail при !ok */
 export async function api<T>(path: string, body: unknown): Promise<T> {
@@ -35,7 +37,7 @@ export type GenerateResp = {
   errors?: string[];
   qa?: { index: number; fixed: number; violations: string[] }[];
   design?: { type: string; label: string };
-  prompts?: Array<{ messages: Array<{ role: string; content: string }> }>;
+  prompts?: Array<{ messages: ApiChatMessage[] }>;
   designSystem?: Record<string, unknown>;
 };
 export type MixResp = { ir?: IRObject | null };
@@ -83,7 +85,24 @@ export type BlockParseResp = {
   tokens: Record<string, unknown> | null;
   cached?: boolean;
   authenticated?: boolean;
+  sourceArtifact?: SourceArtifact;
   authWarning?: string;
+  /** Чего не решил детерминированный разбор — вход опционального AI-уточнения. */
+  ambiguities?: Array<{ type: string; block?: string; reason?: string; [key: string]: unknown }>;
+  diagnostics?: {
+    pipelineVersion?: string;
+    timingsMs?: Record<string, number>;
+  };
+};
+export type BlockParseJobResp = {
+  jobId: string;
+  status: "queued" | "running" | "complete" | "error";
+  progress: number;
+  stage: string;
+  stageLabel: string;
+  timingsMs?: Record<string, number>;
+  result?: BlockParseResp;
+  error?: string;
 };
 export type ReskinResp = { ir?: IRObject | null; log?: string[]; designSystem?: Record<string, unknown> };
 export type QualityPassResp = {
@@ -97,7 +116,7 @@ export type QualityPassResp = {
   pending?: {
     stage: "judge" | "repair" | "rejudge";
     profile: "quality_judge" | "quality_repair";
-    messages: Array<{ role: string; content: string }>;
+    messages: ApiChatMessage[];
   };
 };
 export type ProjectLoadResp = { project?: unknown | null; updated_at?: string | null; revision?: string | null };

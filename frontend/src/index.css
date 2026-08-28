@@ -252,6 +252,9 @@
 .port-dot.port-tokens.svelte-flow__handle {
   border-color: var(--flow-wire-tokens);
 }
+.port-dot.port-artifact.svelte-flow__handle {
+  border-color: #35b8a0;
+}
 .port-dot.port-interaction.svelte-flow__handle {
   border-color: #2fbf9f;
 }
@@ -1388,6 +1391,57 @@
   color: var(--flow-muted);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
+}
+.source-run-diagnostics {
+  display: grid;
+  gap: 5px;
+  margin-top: 7px;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--flow-border), transparent 16%);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--flow-panel), transparent 18%);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.source-run-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--flow-text);
+}
+.source-run-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--flow-muted);
+}
+.source-run-stages span {
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--flow-border), transparent 62%);
+}
+.source-artifact-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--flow-accent), transparent 58%);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--flow-accent), transparent 91%);
+  color: var(--flow-muted);
+  font-size: 9px;
+}
+.source-artifact-summary strong {
+  width: 100%;
+  color: var(--flow-text);
+  font-size: 10px;
+}
+.source-artifact-summary span {
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--flow-border), transparent 58%);
 }
 .source-warning {
   color: #d9b65b;

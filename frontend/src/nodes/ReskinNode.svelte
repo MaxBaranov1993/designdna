@@ -4,6 +4,7 @@
   import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
 import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
+  import ProviderPicker from "../components/ProviderPicker.svelte";
   import type { ReskinFlowNode, ReskinMask } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -60,20 +61,11 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   </div>
   <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} usageMode={(data as any).designSystemUsageMode || "strict"} fixtureProfile={(data as any).designSystemFixture || "typical"} onChange={(v, meta) => $flow.setNodeData(Number(id), { designSystemSelection: v, designSystemUsageMode: meta?.usageMode, designSystemFixture: meta?.fixtureProfile } as any)} />
   <div class="ctl-row">
-    <select
-      class="f-provider-select nodrag"
-      value={data.provider || "auto"}
-      onchange={(e) => $flow.setNodeData(Number(id), { provider: e.currentTarget.value })}
-      aria-label="Модель рестайла"
-    >
-      <option value="auto">Auto · аккаунт</option>
-      <option value="kimi">Kimi K3</option>
-      <option value="openai">GPT-5.6-sol</option>
-      <option value="glm">GLM-5.3 · Zhipu</option>
-      <option value="zai">GLM-5.3 · Z.AI</option>
-      <option value="grok">Grok 4.6 · xAI</option>
-      <option value="zcode">GLM · ZCode (явный ZCODE_CLI)</option>
-    </select>
+    <ProviderPicker
+      provider={data.provider || "openai"}
+      effort={data.effort || "medium"}
+      onChange={(next) => $flow.setNodeData(Number(id), next)}
+    />
     <button
       class="btn-node primary small f-run nodrag"
       style="margin-left: auto"

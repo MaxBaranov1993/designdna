@@ -215,23 +215,45 @@ def main():
         for sel in (".n-prompt", ".n-sourceimport", ".n-styledna", ".n-derive", ".n-edit", ".n-mix", ".n-qualitypass"):
             pg.wait_for_selector(sel)
         check("created 8 nodes", pg.evaluate("window.GraphDev.state().nodes.length === 8"))
-        check("Browser Generator shows automatic server route",
-              pg.locator(".n-generator .f-provider-select option:checked").inner_text().strip() == "Auto · server routing")
-        check("Browser Generator offers only portable routes",
+        check("Browser Generator defaults to Sol",
+              pg.locator(".n-generator .f-provider-select option:checked").inner_text().strip() == "GPT-5.6 Sol")
+        check("Browser Generator offers Sol, Codex and Claude",
               pg.locator(".n-generator .f-provider-select option").evaluate_all(
-                  "els => els.map(e => e.value)") == ["auto", "kimi", "openai", "glm", "zai", "grok", "zcode"])
-        check("New browser Generator stores auto",
+                  "els => els.map(e => e.value)") == ["openai", "codex", "claude"])
+        check("Browser Generator offers only the closed effort contract",
+              pg.locator(".n-generator .f-effort-select option").evaluate_all(
+                  "els => els.map(e => e.value)") == ["medium", "high", "max"])
+        check("New browser Generator stores OpenAI and medium",
               pg.evaluate("""(() => {
                   const n = window.GraphDev.state().nodes.find(x => x.type === 'generator');
-                  return window.GraphDev.node(n.id).data.provider;
-              })()""") == "auto")
-        pg.select_option(".n-generator .f-provider-select", "kimi")
+                  const data = window.GraphDev.node(n.id).data;
+                  return data.provider + ':' + data.effort;
+              })()""") == "openai:medium")
+        pg.select_option(".n-generator .f-effort-select", "high")
+        pg.wait_for_timeout(500)
+        pg.reload()
+        pg.wait_for_selector(".n-generator .f-effort-select")
+        check("Generator effort survives reload",
+              pg.locator(".n-generator .f-effort-select").input_value() == "high")
+        # Провайдер по подписке должен переживать перезагрузку так же, как усилие:
+        # односторонняя миграция раньше молча возвращала выбор к Sol.
+        pg.select_option(".n-generator .f-provider-select", "claude")
         pg.wait_for_timeout(500)
         pg.reload()
         pg.wait_for_selector(".n-generator .f-provider-select")
         check("Generator provider survives reload",
-              pg.locator(".n-generator .f-provider-select").input_value() == "kimi")
-        pg.select_option(".n-generator .f-provider-select", "auto")
+              pg.locator(".n-generator .f-provider-select").input_value() == "claude")
+        check("Codex hides the effort control it does not support",
+              pg.evaluate("""(() => {
+                  const sel = document.querySelector('.n-generator .f-provider-select');
+                  sel.value = 'codex';
+                  sel.dispatchEvent(new Event('change', { bubbles: true }));
+                  return true;
+              })()""") and (pg.wait_for_timeout(300) or
+                            pg.locator(".n-generator .f-effort-select").count() == 0))
+        pg.select_option(".n-generator .f-provider-select", "openai")
+        pg.wait_for_timeout(300)
+        pg.select_option(".n-generator .f-effort-select", "medium")
 
         old_add_rejected = pg.evaluate("""(() => {
             const before = window.GraphDev.state().nodes.length;

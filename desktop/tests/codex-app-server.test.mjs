@@ -35,6 +35,7 @@ test("generator chat collects the authoritative Codex agent message", async () =
   assert.equal(await server.chat([{ role: "user", content: "Generate IR" }]), '{"version":"1.0"}');
   assert.equal(threadParams.sandbox, "read-only");
   assert.equal(threadParams.approvalPolicy, "never");
+  assert.equal(threadParams.ephemeral, true);
 });
 
 test("quality judge uses a neutral read-only Codex profile", async () => {

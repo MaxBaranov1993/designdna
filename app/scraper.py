@@ -21,10 +21,11 @@ import math
 import os
 import re
 import tempfile
+import time
 from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from bs4 import BeautifulSoup, Tag
 from PIL import Image
@@ -91,8 +92,9 @@ def extract_text_content(html: str) -> str:
 
 # Контентные семантические теги — кандидаты в блоки; шапка/подвал — отдельно
 _BLOCK_TAGS = ("main", "section", "aside")
-# clone каждого блока = LLM-вызов; ограничиваем расход
-_MAX_BLOCKS = 16
+# Верхняя граница выдачи. Раньше лишние блоки отсекались молча — теперь
+# усечение попадает в diagnostics импорта (см. parse_blocks).
+_MAX_BLOCKS = 28
 _SAFE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 
 _SEMANTIC_PATTERNS = (
@@ -215,6 +217,44 @@ def _identity_role(el: Tag) -> str:
     return "section"
 
 
+def _structural_role(el: Tag) -> str:
+    """Роль по структуре содержимого — без имён классов и языковых литералов.
+
+    Регэкспы по id/class и по тексту заголовков работают только на сайтах, чью
+    вёрстку и язык мы заранее знаем. Здесь роль выводится из того, из чего блок
+    состоит: повторяющиеся однотипные потомки — сетка, форма — CTA, длинный
+    список ссылок — навигация. Возвращает "section", если структура ничего
+    определённого не говорит.
+    """
+    if el.find(["input", "select", "textarea"]) and el.find(["button", "form"]):
+        return "cta"
+
+    # Повтор: ≥3 потомка одного тега с сопоставимым составом содержимого.
+    for container in [el, *el.find_all(["ul", "ol", "div"], recursive=True, limit=12)]:
+        children = [child for child in container.find_all(recursive=False) if isinstance(child, Tag)]
+        if len(children) < 3:
+            continue
+        tags = [child.name for child in children]
+        dominant = max(set(tags), key=tags.count)
+        repeated = [child for child in children if child.name == dominant]
+        if len(repeated) < 3:
+            continue
+        with_media = sum(1 for child in repeated if child.find(["img", "svg", "picture", "video"]))
+        with_heading = sum(1 for child in repeated if child.find(["h1", "h2", "h3", "h4", "h5", "h6"]))
+        if with_media >= len(repeated) // 2 and with_heading:
+            return "product-grid"
+        if with_media >= len(repeated) // 2:
+            return "gallery"
+        if with_heading:
+            return "journal"
+
+    links = el.find_all("a", href=True)
+    text_length = len(el.get_text(" ", strip=True))
+    if len(links) >= 6 and text_length and text_length < 40 * len(links):
+        return "navigation"
+    return "section"
+
+
 def _semantic_role(el: Tag) -> str:
     """Best-effort semantic role without treating repeated cards as page sections."""
     identity_role = _identity_role(el)
@@ -223,10 +263,17 @@ def _semantic_role(el: Tag) -> str:
             return "services-grid"
         return identity_role
 
+    # Языковые подсказки по заголовку остаются, но только как подсказки:
+    # на сайте на неизвестном языке решает структура, а не словарь.
     heading = _block_heading(el)
     for role, pattern in _HEADING_PATTERNS:
         if pattern.search(heading):
             return role
+
+    structural_role = _structural_role(el)
+    if structural_role != "section":
+        return structural_role
+
     if el.find("h1"):
         return "carousel"
     return "section"
@@ -255,8 +302,11 @@ def detect_blocks(html: str) -> list:
         if el is not None and el not in candidates:
             candidates.append(el)
 
-    # Global chrome is one block each. Nested section headers never become outputs.
-    add(body.find("header"))
+    # Все верхнеуровневые header/footer, а не только первые: страницы с
+    # несколькими шапками (языковая полоса + основная навигация) теряли их.
+    for el in body.find_all("header"):
+        if not any(parent.name in ("header", "footer") for parent in el.parents):
+            add(el)
 
     # A semantic container is the unit of output. Repeated <article> cards/slides are
     # intentionally not candidates: their parent carousel/grid becomes one block.
@@ -277,7 +327,9 @@ def detect_blocks(html: str) -> list:
         if _identity_role(el) != "section":
             add(el)
 
-    add(body.find("footer"))
+    for el in body.find_all("footer"):
+        if not any(parent.name in ("header", "footer") for parent in el.parents):
+            add(el)
 
     # Drop page-wide main and nested aliases of the same semantic block.
     meaningful = []
@@ -317,6 +369,7 @@ def detect_blocks(html: str) -> list:
 
     blocks = []
     names: set[str] = set()
+    truncated = max(0, len(meaningful) - _MAX_BLOCKS)
     for el in meaningful[:_MAX_BLOCKS]:
         role = _semantic_role(el)
         name, n = role, 1
@@ -332,6 +385,10 @@ def detect_blocks(html: str) -> list:
             "tag": el.name,
             "heading": _block_heading(el),
         })
+    # Усечение больше не молчаливое: помечаем последний блок, чтобы pipeline
+    # мог доложить о потере в diagnostics вместо вида «всё импортировано».
+    if truncated and blocks:
+        blocks[-1]["truncatedAfter"] = truncated
     return blocks
 
 
@@ -492,6 +549,8 @@ def image_dimensions(data_url: str) -> tuple[int, int]:
 # (live residual: Z.AI/arena section-2 mobile 84.86 vs the 85.0 gate).
 
 SOURCE_CAPTURE_VERSION = "asset-blob-v2"
+BLOCK_LAZY_SETTLE_MS = 1200
+MATERIALIZED_IMAGE_SETTLE_MS = 1500
 _MAX_ASSET_BYTES = 8_000_000
 _MAX_ASSET_EDGE = 4096
 BLOB_REF_PREFIX = "ddna://blobs/"
@@ -995,7 +1054,8 @@ def build_capture_provenance(*, compiler_sha256: str, browser: dict, viewport: d
 
 
 def _materialize_capture_assets(page, item: dict, block_selector: str,
-                                asset_bodies: dict[str, bytes]) -> list[dict]:
+                                asset_bodies: dict[str, bytes],
+                                memo: dict[tuple, tuple[bytes, str, str, str]] | None = None) -> list[dict]:
     """Rewrite raster IR srcs AND the live DOM to one lossless PNG per asset.
 
     Editable image/background layers stay image layers; only the bytes they
@@ -1010,7 +1070,7 @@ def _materialize_capture_assets(page, item: dict, block_selector: str,
         key = str(node.get("sourceKey") or "")
         if key:
             by_key[key] = node
-    memo: dict[tuple, tuple[bytes, str, str, str]] = {}
+    memo = memo if memo is not None else {}
     records: list[dict] = []
     ops: list[dict] = []
     for req in requests:
@@ -1704,7 +1764,8 @@ def _collect_used_font_weights(node, out: dict[str, set[int]]) -> None:
 
 
 def _resolve_font_faces(raw_faces: list, used: set,
-                        used_weights: dict[str, set[int]] | None = None) -> list:
+                        used_weights: dict[str, set[int]] | None = None,
+                        download_cache: dict[str, bytes | None] | None = None) -> list:
     """Из всех @font-face страницы оставляет только семьи, реально использованные
     в IR блока, скачивает файлы и отдаёт ссылки на локальную базу /fonts."""
     out: list = []
@@ -1731,7 +1792,13 @@ def _resolve_font_faces(raw_faces: list, used: set,
         if not pending:
             continue
         for url in face.get("urls") or []:
-            data = _download_font(str(url))
+            font_url = str(url)
+            if download_cache is not None and font_url in download_cache:
+                data = download_cache[font_url]
+            else:
+                data = _download_font(font_url)
+                if download_cache is not None:
+                    download_cache[font_url] = data
             if not data:
                 continue
             stored_url = "/fonts/" + _store_font(data)
@@ -1811,7 +1878,8 @@ def _qa_pixel_pass(nodes: list, root_frame: dict) -> list:
     return warnings
 
 
-def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) -> dict:
+def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None,
+                 font_download_cache: dict[str, bytes | None] | None = None) -> dict:
     """DOM-capture → валидный свободный Design IR.
 
     Это не попытка угадать, что такое «hero» или «footer». Блок остаётся
@@ -1949,7 +2017,9 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) ->
         _collect_used_font_weights(ch, used_font_weights)
     _collect_used_families({"style": root_style}, used_families)
     _collect_used_font_weights({"style": root_style}, used_font_weights)
-    font_faces = _resolve_font_faces(capture.get("fontFaces") or [], used_families, used_font_weights)
+    font_faces = _resolve_font_faces(
+        capture.get("fontFaces") or [], used_families, used_font_weights,
+        download_cache=font_download_cache)
 
     return {
         "version": "1.0",
@@ -1957,7 +2027,6 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) ->
                  "description": f"Rendered DOM capture · {semantic['role']}",
                  "qaWarnings": qa_warnings,
                  "fontFaces": font_faces},
-        "sourcePreview": source_preview,
         # The browser measures this block as its own artboard. Keeping the same
         # root frame prevents Editor from falling back to the generic 960px
         # design canvas and makes section coordinates true artboard coordinates.
@@ -1967,8 +2036,7 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None) ->
         "frame": {k: copy.deepcopy(v) for k, v in root_frame.items() if k != "padding"},
         "tokens": tokens,
         "tree": [{"id": "imported-block", "type": "source-block", "variant": "dom-capture",
-                  "semantic": semantic, "props": {"sourcePreview": source_preview},
-                  "preview": source_preview,
+                  "semantic": semantic, "props": {},
                   "sourceKey": capture.get("sourceKey", "root"),
                   "style": {k: v for k, v in root_style.items() if v is not None},
                   "frame": copy.deepcopy(root_frame),
@@ -2173,10 +2241,12 @@ def _dismiss_cookie_overlays(page) -> int:
         return 0
 
 
-def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
+def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 1440,
                       viewport_h: int = 900, timeout_ms: int = 20000,
                       return_tokens: bool = False, viewports: list[dict] | None = None,
-                      cookies: list[dict] | None = None):
+                      cookies: list[dict] | None = None,
+                      return_blocks: bool = False,
+                      on_progress: Callable[[str, int, int, int], None] | None = None):
     """Compile rendered DOM into compact responsive Design IR.
 
     Text is collected from direct text nodes, so it always remains inside its
@@ -2187,12 +2257,15 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
 
     validate_public_url(url)
     viewport_defs = _normalize_source_viewports(viewports)
+    resolved_blocks = blocks
     captures: dict[str, dict[str, dict]] = {}
     token_signals = None
     compiler_js = (Path(__file__).resolve().parent / "source_import_compiler.js").read_text(encoding="utf-8")
     compiler_sha256 = hashlib.sha256(compiler_js.encode("utf-8")).hexdigest()
     browser_info = {"name": "chromium", "version": ""}
     asset_bodies: dict[str, bytes] = {}
+    asset_memo: dict[tuple, tuple[bytes, str, str, str]] = {}
+    capture_started = time.perf_counter()
     with sync_playwright() as p:
         browser = None
         context = None
@@ -2223,7 +2296,15 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
               html { scroll-behavior:auto !important; }
             """)
             _dismiss_cookie_overlays(page)
+            if resolved_blocks is None:
+                # Fast path: detect selectors from the exact hydrated DOM that
+                # will be compiled below. This removes a second navigation and
+                # guarantees selector/capture consistency on dynamic pages.
+                resolved_blocks = detect_blocks(page.content())
+                if not resolved_blocks:
+                    raise RuntimeError("no visible source blocks detected")
             for index, viewport in enumerate(viewport_defs):
+                viewport_started = time.perf_counter()
                 if index:
                     page.set_viewport_size({"width": viewport["width"], "height": viewport["height"]})
                     # после resize могут догрузиться responsive images/шрифты
@@ -2242,7 +2323,7 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                     except Exception:
                         token_signals = None
                 by_selector: dict[str, dict] = {}
-                for block in blocks:
+                for block in resolved_blocks:
                     # Показ блока и ожидание его картинок — ДО компиляции.
                     # Раньше 4-секундное ожидание стояло МЕЖДУ замером IR и
                     # эталонным скриншотом: поздняя гидрация/ленивый контент
@@ -2251,17 +2332,15 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                     ref_locator = page.locator(block["selector"]).first
                     try:
                         ref_locator.scroll_into_view_if_needed(timeout=5000)
-                        ref_locator.evaluate("""el => new Promise(resolve => {
-                          const imgs = Array.from(el.querySelectorAll('img'));
-                          const pending = imgs.filter(img => !img.complete);
-                          if (!pending.length) { resolve(); return; }
-                          const done = () => resolve();
-                          pending.forEach(img => {
-                            img.addEventListener('load', done, {once:true});
-                            img.addEventListener('error', done, {once:true});
-                          });
-                          setTimeout(done, 4000);
-                        })""")
+                        ref_locator.evaluate("""(el, budgetMs) => Promise.race([
+                          Promise.all(Array.from(el.querySelectorAll('img'))
+                            .filter(img => !img.complete)
+                            .map(img => img.decode ? img.decode().catch(() => {}) : new Promise(resolve => {
+                              img.addEventListener('load', resolve, {once:true});
+                              img.addEventListener('error', resolve, {once:true});
+                            }))),
+                          new Promise(resolve => setTimeout(resolve, budgetMs))
+                        ])""", BLOCK_LAZY_SETTLE_MS)
                     except Exception:
                         pass
                     # scroll_into_view ставит блок под fixed/sticky-шапку сайта:
@@ -2353,14 +2432,14 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                         # AND in the IR so the reference screenshot and replay
                         # share bytes. Do this before the element screenshot.
                         item["assets"] = _materialize_capture_assets(
-                            page, item, block["selector"], asset_bodies)
+                            page, item, block["selector"], asset_bodies, asset_memo)
                         try:
                             # Replacing an already-complete WebP/JPEG <img> with
                             # the deterministic PNG starts a new asynchronous
                             # decode. Two rAFs alone can still screenshot the old
                             # decoder surface. Wait for the materialized images,
                             # then cross the same two-paint barrier as replay.
-                            ref_locator.evaluate("""el => Promise.race([
+                            ref_locator.evaluate("""(el, budgetMs) => Promise.race([
                               Promise.all(Array.from(el.querySelectorAll('img')).map(img =>
                                 img.complete && img.naturalWidth > 0
                                   ? (img.decode ? img.decode().catch(() => {}) : Promise.resolve())
@@ -2370,8 +2449,8 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                                     })
                               )).then(() => new Promise(resolve =>
                                 requestAnimationFrame(() => requestAnimationFrame(resolve)))),
-                              new Promise(resolve => setTimeout(resolve, 8000))
-                            ])""")
+                              new Promise(resolve => setTimeout(resolve, budgetMs))
+                            ])""", MATERIALIZED_IMAGE_SETTLE_MS)
                         except Exception:
                             pass
                         shot = ref_locator.screenshot(type="png")
@@ -2428,6 +2507,20 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                     _namespace_block_keys(item, re.sub(r"[^A-Za-z0-9_-]+", "-", str(block.get("name") or "block")))
                     by_selector[block["selector"]] = item
                 captures[viewport["name"]] = by_selector
+                viewport_ms = max(0, round((time.perf_counter() - viewport_started) * 1000))
+                elapsed_ms = max(0, round((time.perf_counter() - capture_started) * 1000))
+                print(json.dumps({
+                    "event": "source_capture.viewport",
+                    "viewport": viewport["name"],
+                    "viewportIndex": index + 1,
+                    "viewportCount": len(viewport_defs),
+                    "blockCount": len(resolved_blocks or []),
+                    "capturedCount": len(by_selector),
+                    "durationMs": viewport_ms,
+                    "elapsedMs": elapsed_ms,
+                }, ensure_ascii=False, separators=(",", ":")), flush=True)
+                if on_progress is not None:
+                    on_progress(viewport["name"], index + 1, len(viewport_defs), elapsed_ms)
         finally:
             if context is not None:
                 with contextlib.suppress(Exception):
@@ -2436,9 +2529,11 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                 with contextlib.suppress(Exception):
                     browser.close()
 
+    postprocess_started = time.perf_counter()
     page_tokens = _page_tokens_from_signals(token_signals)
+    font_download_cache: dict[str, bytes | None] = {}
     result: dict[str, dict] = {}
-    for block in blocks:
+    for block in resolved_blocks or []:
         selector = block["selector"]
         variants = {}
         meta = {}
@@ -2453,6 +2548,7 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
         coverage: dict[str, int] = {}
         leaf_boxes_by_viewport: dict[str, list] = {}
         assets_by_viewport: dict[str, list] = {}
+        previews_by_viewport: dict[str, str] = {}
         for viewport in viewport_defs:
             name = viewport["name"]
             item = captures.get(name, {}).get(selector)
@@ -2462,10 +2558,13 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                 not item.get("nodes") and not str(item.get("preview") or "").startswith("data:image")
             ):
                 continue
-            ir = _captured_ir(block, item, page_tokens)
+            ir = _captured_ir(block, item, page_tokens, font_download_cache)
             variants[name] = ir
-            meta[name] = {"width": item["root"]["width"], "height": item["root"]["height"],
-                          "preview": item.get("preview", "")}
+            # Evidence screenshots belong to the Source response, not canonical
+            # Design IR. Keeping three base64 PNGs inside responsive.viewports
+            # caused a second decode/hash/fsync pass during IR blob persistence.
+            meta[name] = {"width": item["root"]["width"], "height": item["root"]["height"]}
+            previews_by_viewport[name] = item.get("preview", "")
             warnings.update(item.get("warnings") or [])
             editable_layers_by_viewport[name] = int(item.get("emitted") or 0)
             component_boundaries_by_viewport[name] = int(item.get("componentBoundaries") or 0)
@@ -2524,8 +2623,8 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
             "coverage": coverage,
             "leaf_boxes_by_viewport": leaf_boxes_by_viewport,
             "width": meta[base_name]["width"], "height": meta[base_name]["height"],
-            "preview": meta[base_name].get("preview", ""),
-            "previews": {name: value.get("preview", "") for name, value in meta.items()},
+            "preview": previews_by_viewport.get(base_name, ""),
+            "previews": previews_by_viewport,
             "sizes": {name: {"width": value["width"], "height": value["height"]} for name, value in meta.items()},
             "warnings": sorted(warnings),
             "provenance": build_capture_provenance(
@@ -2543,10 +2642,16 @@ def capture_block_irs(url: str, blocks: list[dict], viewport_w: int = 1440,
                 device_scale_factor=1.0,
             ),
         }
-    try:
-        _attach_block_fidelity(result)
-    except Exception:
-        pass  # fidelity — честная диагностика, но не должна ронять импорт
+    print(json.dumps({
+        "event": "source_capture.postprocess",
+        "blockCount": len(resolved_blocks or []),
+        "durationMs": max(0, round((time.perf_counter() - postprocess_started) * 1000)),
+        "elapsedMs": max(0, round((time.perf_counter() - capture_started) * 1000)),
+    }, ensure_ascii=False, separators=(",", ":")), flush=True)
+    if return_blocks and return_tokens:
+        return result, page_tokens, list(resolved_blocks or [])
+    if return_blocks:
+        return result, list(resolved_blocks or [])
     return (result, page_tokens) if return_tokens else result
 
 

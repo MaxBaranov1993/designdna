@@ -33,6 +33,7 @@ export const NODE_TYPES: NodeType[] = [
   "mix",
   "page",
   "sourceimport",
+  "designui",
   "styledna",
   "derive",
   "reskin",
@@ -390,7 +391,7 @@ export function payloadToRf(payload: LegacyGraphPayload): {
   view: LegacyView;
   nextId: number;
 } {
-  const nodes: FlowNode[] = (payload.nodes || []).map(
+  let nodes: FlowNode[] = (payload.nodes || []).map(
     (raw) =>
       ({
         id: String(raw.id),
@@ -403,10 +404,39 @@ export function payloadToRf(payload: LegacyGraphPayload): {
         data: dataForRuntime(raw.type, raw.data),
       }) as FlowNode,
   );
-  const ids = new Set(nodes.map((n) => n.id));
-  const edges = (payload.edges || [])
+  let edges = (payload.edges || [])
     .map((e) => makeRfEdge(nodes, e.from, e.to))
-    .filter((e) => ids.has(e.source) && ids.has(e.target));
+    .filter((e) => nodes.some((node) => node.id === e.source) && nodes.some((node) => node.id === e.target));
+
+  // One-way visual migration: Design UI used to be a large pass-through node
+  // beside the Design System created from the same Source. Fold only paired
+  // nodes; an unpaired legacy inspector remains readable instead of losing data.
+  for (const legacyUi of nodes.filter((node) => node.type === "designui")) {
+    const incoming = edges.find((edge) => edge.target === legacyUi.id && edge.targetHandle === "artifact");
+    if (!incoming) continue;
+    const system = nodes.find((node) => node.type === "designsystem"
+      && Number((node.data as { sourceNodeId?: unknown }).sourceNodeId) === Number(incoming.source));
+    if (!system) continue;
+
+    const outgoing = edges.filter((edge) => edge.source === legacyUi.id && edge.sourceHandle === "artifact");
+    nodes = nodes.filter((node) => node.id !== legacyUi.id);
+    edges = edges.filter((edge) => edge.source !== legacyUi.id && edge.target !== legacyUi.id);
+
+    if (!edges.some((edge) => edge.source === incoming.source && edge.target === system.id
+      && edge.sourceHandle === "artifact" && edge.targetHandle === "artifact")) {
+      edges.push(makeRfEdge(nodes,
+        { node: Number(incoming.source), port: "artifact" },
+        { node: Number(system.id), port: "artifact" }));
+    }
+    for (const edge of outgoing) {
+      if (edge.target === system.id) continue;
+      const replacement = makeRfEdge(nodes,
+        { node: Number(incoming.source), port: "artifact" },
+        { node: Number(edge.target), port: edge.targetHandle || "artifact" });
+      if (!edges.some((candidate) => candidate.id === replacement.id)) edges.push(replacement);
+    }
+  }
+
   const maxId = nodes.reduce((m, n) => Math.max(m, Number(n.id) || 0), 0);
   return {
     nodes,
@@ -437,12 +467,15 @@ export function parseLegacyPayload(input: unknown): LegacyGraphPayload {
     autoId = Math.max(autoId, id) + 1;
     let data =
       r.data && typeof r.data === "object" ? (r.data as AnyNodeData) : defaultData(r.type as NodeType);
-    // Сохраняем поддерживаемый выбор аккаунта. Неизвестные значения из старых
-    // графов возвращаем к переносимому auto-маршруту.
-    if (r.type === "generator") {
-      const saved = String((data as { provider?: unknown }).provider || "");
-      const provider = new Set(["auto", "codex", "kimi", "openai", "glm", "zai", "grok", "zcode"]).has(saved) ? saved : "auto";
-      data = { ...data, provider } as AnyNodeData;
+    // Поддерживаемый выбор провайдера (Sol / Codex / Claude) сохраняется;
+    // ретро-провайдеры (kimi/glm/zai/grok/zcode/auto) мигрируют на Sol.
+    // Усилие переживает загрузку только если входит в продуктовый контракт.
+    if (r.type === "generator" || r.type === "reskin") {
+      const savedEffort = String((data as { effort?: unknown }).effort || "");
+      const effort = new Set(["medium", "high", "max"]).has(savedEffort) ? savedEffort : "medium";
+      const savedProvider = String((data as { provider?: unknown }).provider || "");
+      const provider = new Set(["openai", "codex", "claude"]).has(savedProvider) ? savedProvider : "openai";
+      data = { ...data, provider, effort } as AnyNodeData;
     }
     data = dataForRuntime(r.type as NodeType, data);
     nodes.push({ id, type: r.type as NodeType, x: Number(r.x) || 0, y: Number(r.y) || 0, data });

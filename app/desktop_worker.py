@@ -134,31 +134,13 @@ async def dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "transport": "stdio", "backend": "asgi"}
     if method == "runtime.configure":
         openai_key = str(params.get("openaiApiKey") or "").strip()
-        kimi_key = str(params.get("kimiApiKey") or "").strip()
         if openai_key:
             os.environ["OPENAI_API_KEY"] = openai_key
         else:
             os.environ.pop("OPENAI_API_KEY", None)
-        if kimi_key:
-            os.environ["KIMI_API_KEY"] = kimi_key
-        else:
-            os.environ.pop("KIMI_API_KEY", None)
-        glm_key = str(params.get("glmApiKey") or "").strip()
-        if glm_key:
-            os.environ["GLM_API_KEY"] = glm_key
-        else:
-            os.environ.pop("GLM_API_KEY", None)
-        zai_key = str(params.get("zaiApiKey") or "").strip()
-        if zai_key:
-            os.environ["ZAI_API_KEY"] = zai_key
-        else:
-            os.environ.pop("ZAI_API_KEY", None)
-        grok_key = str(params.get("grokApiKey") or "").strip()
-        if grok_key:
-            os.environ["XAI_API_KEY"] = grok_key
-        else:
-            os.environ.pop("XAI_API_KEY", None)
-        return {"ok": True, "openaiConfigured": bool(openai_key), "kimiConfigured": bool(kimi_key), "glmConfigured": bool(glm_key), "zaiConfigured": bool(zai_key), "grokConfigured": bool(grok_key)}
+        for retired in ("KIMI_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "XAI_API_KEY"):
+            os.environ.pop(retired, None)
+        return {"ok": True, "openaiConfigured": bool(openai_key)}
     if method == "http.request":
         return await asgi_request(params)
     if method == "debug.sleep":
@@ -214,11 +196,23 @@ def main() -> int:
 
     write_lock = threading.Lock()
 
+    # Персистентный event loop на поток пула: asyncio.run на каждый запрос
+    # создавал/закрывал loop (плюс shutdown_asyncgens), что добавляло
+    # латентность каждому вызову и мешало переиспользованию ресурсов ASGI.
+    thread_loops = threading.local()
+
+    def run_async(coro: Any) -> Any:
+        loop = getattr(thread_loops, "loop", None)
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            thread_loops.loop = loop
+        return loop.run_until_complete(coro)
+
     def process(message: dict[str, Any]) -> None:
         method = str(message.get("method", ""))
         params = message.get("params") or {}
         try:
-            result = asyncio.run(dispatch(method, params))
+            result = run_async(dispatch(method, params))
             with write_lock:
                 write_frame({"id": message.get("id"), "result": result})
             if result.get("shutdown"):

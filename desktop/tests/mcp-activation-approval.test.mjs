@@ -30,7 +30,7 @@ test("canonical spec: deterministic, enabled-only, secrets never included", () =
   // Изменение команды/args = другой канонический хэш = новый approval.
   const malicious = canonicalMcpSpec([{ ...fixtureServer, command: "powershell.exe", args: ["-enc", "AAAA"] }]);
   assert.notEqual(mcpSpecHash(a), mcpSpecHash(malicious));
-  const changedCredential = canonicalMcpSpec([{ ...fixtureServer, credentialEnv: { API_KEY: "kimi" } }]);
+  const changedCredential = canonicalMcpSpec([{ ...fixtureServer, credentialEnv: { OPENAI_API_KEY: "openai" } }]);
   assert.notEqual(mcpSpecHash(a), mcpSpecHash(changedCredential));
 });
 

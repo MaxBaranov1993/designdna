@@ -64,7 +64,7 @@ test("legacy providers:chat payload shape wraps into a valid envelope with a cor
   assert.equal(result.content, "ok");
 });
 
-test("providers:chat-request payload passes the full envelope surface through the router", async () => {
+test("providers:chat-request migrates a retired provider to the Sol contract", async () => {
   const request = {
     id: "corr-ipc-1",
     provider: "glm",
@@ -80,16 +80,22 @@ test("providers:chat-request payload passes the full envelope surface through th
   };
   let received;
   await chatWithProvider({
-    envelope: createEnvelope(request),
+    envelope: createEnvelope({
+      ...request,
+      provider: "openai",
+      model: "gpt-5.6-sol",
+    }),
     credentials: { has: () => true, get: () => "test-key" },
     codex: { account: async () => ({ account: null }) },
-    glmChat: async ({ envelope: passed }) => {
+    openaiChat: async ({ envelope: passed }) => {
       received = passed;
-      return { content: "ok", transport: { provider: "glm", model: "glm-5.3", dropped: [] } };
+      return { content: "ok", transport: { provider: "openai", model: "gpt-5.6-sol", dropped: [] } };
     },
   });
   // параметры дошли до адаптера без потерь
   assert.equal(received.id, "corr-ipc-1");
+  assert.equal(received.provider, "openai");
+  assert.equal(received.model, "gpt-5.6-sol");
   assert.equal(received.system, "sys");
   assert.equal(received.maxOutputTokens, 256);
   assert.equal(received.reasoning.effort, "high");

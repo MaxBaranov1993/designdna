@@ -37,8 +37,8 @@ export interface AssistRequest {
   action: AssistAction;
   scopeMode: AssistScopeMode;
   constraints: AssistConstraints;
-  /** модель/аккаунт: auto | codex | kimi | openai | glm | zai | grok | zcode (desktop передаёт в providers.chat) */
-  provider?: string;
+  provider?: "openai";
+  effort?: "medium" | "high" | "max";
   designSystemSelection?: string;
   designSystemUsageMode?: string;
 }

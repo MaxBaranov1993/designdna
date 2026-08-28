@@ -350,11 +350,11 @@ def test_browser_assist_calls_the_supported_llm_interface(monkeypatch):
     ))
 
     assert isinstance(result, dict), getattr(result, "body", result)
-    assert seen["provider"] == "auto" and seen["role"] == "edit"
+    assert seen["provider"] == "openai" and seen["role"] == "edit"
     assert result["ops"][0]["after"] == 0.85
 
 
-def test_browser_assist_passes_through_every_supported_provider(monkeypatch):
+def test_browser_assist_migrates_every_saved_provider_to_openai(monkeypatch):
     """zai/grok/zcode — явные серверные маршруты наряду с openai/kimi/glm;
     неизвестные/desktop-значения отображаются в auto."""
     base = _base()
@@ -372,17 +372,14 @@ def test_browser_assist_passes_through_every_supported_provider(monkeypatch):
         })
 
     monkeypatch.setattr("editor_assist.llm.chat", fake_chat)
-    for requested, expected in (
-        ("zai", "zai"), ("grok", "grok"), ("zcode", "zcode"),
-        ("glm", "glm"), ("codex", "auto"), ("mystery", "auto"),
-    ):
+    for requested in ("zai", "grok", "zcode", "glm", "codex", "mystery"):
         result = editor_assist(AssistRequest(
             ir=base, prompt="Сделай немного прозрачнее", action="custom",
             scope={"sourceKeys": [target["sourceKey"]], "viewport": "desktop"}, constraints={},
             provider=requested,
         ))
         assert isinstance(result, dict), getattr(result, "body", result)
-        assert seen.pop() == expected
+        assert seen.pop() == "openai"
 
 
 def test_locked_raster_layers_refuse_ai_mutations_but_stay_inspectable():

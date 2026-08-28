@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld("designDNA", Object.freeze({
   }),
   api: Object.freeze({
     request: (request) => ipcRenderer.invoke("api:request", request),
-    cancel: () => ipcRenderer.invoke("api:cancel"),
+    cancel: (scope = "long") => ipcRenderer.invoke("api:cancel", { scope }),
   }),
   blobs: Object.freeze({
     put: (mime, base64) => ipcRenderer.invoke("blobs:put", { mime, base64 }),
@@ -48,13 +48,15 @@ contextBridge.exposeInMainWorld("designDNA", Object.freeze({
     credentials: () => ipcRenderer.invoke("providers:credentials"),
     setCredential: (provider, value) => ipcRenderer.invoke("providers:set-credential", { provider, value }),
     deleteCredential: (provider) => ipcRenderer.invoke("providers:delete-credential", { provider }),
-    importKimiCli: () => ipcRenderer.invoke("providers:import-kimi-cli"),
     chat: (provider, messages, temperature = 0.8, profile = "generator", tools = null) =>
       ipcRenderer.invoke("providers:chat", { provider, messages, temperature, profile, tools }),
     // Типизированный envelope (provider-envelope.mjs): полный контракт параметров
     // + requestId, transport.dropped и структурные ошибки валидации/возможностей.
     chatRequest: (request) => ipcRenderer.invoke("providers:chat-request", request),
     cancel: (requestId) => ipcRenderer.invoke("providers:cancel", { requestId }),
+  }),
+  claude: Object.freeze({
+    status: () => ipcRenderer.invoke("claude:status"),
   }),
   codex: Object.freeze({
     account: () => ipcRenderer.invoke("codex:account"),

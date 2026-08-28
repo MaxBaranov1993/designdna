@@ -10,12 +10,13 @@ import { SerialRequestQueue } from "./lib/serial-request-queue.mjs";
 import { CredentialStore } from "./services/credential-store.mjs";
 import { SettingsStore } from "./services/settings-store.mjs";
 import { getProviderStatus } from "./services/provider-status.mjs";
-import { chatWithProvider } from "./services/provider-router.mjs";
+import { chatWithProvider, resolveProvider } from "./services/provider-router.mjs";
+import { ClaudeAgentServer } from "./services/claude-agent-server.mjs";
 import { createEnvelope, EnvelopeValidationError, redactForLog, UnsupportedCapabilityError } from "./services/provider-envelope.mjs";
-import { getValidToken, importFromCli, kimiAccountStatus } from "./services/kimi-account.mjs";
 import { CodexAppServer } from "./services/codex-app-server.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
 import { canonicalMcpSpec, createMcpActivationApprover } from "./services/mcp-activation-approval.mjs";
+import { ApiScheduler } from "./services/api-scheduler.mjs";
 import { attachSourceAuthCookies, sourceAuthIntent, validateSourceAuthUrl } from "./services/source-auth.mjs";
 import { putContentAddressedBlob, readBlobBatch, readBlobObject, safeBlobName } from "./services/blob-store.mjs";
 import { LiveCommandRegistry } from "./services/live-command-registry.mjs";
@@ -38,6 +39,7 @@ let pythonWorker;
 let pythonInteractiveWorker;
 let repoCanvasWorker;
 let codex;
+let claude;
 let credentials;
 let settings;
 let mcp;
@@ -77,6 +79,27 @@ let quitting = false;
 /* Кэш runtime.configure: одинаковые credentials не гоняем лишним JSONL-раундтрипом
  * перед каждым API-вызовом; spawnCount отличает перезапущенный воркер. */
 const configureFingerprints = new Map();
+
+/* Keep provider credentials inside the trusted main/sidecar boundary.
+ * Reconfigure only when the fingerprint (credentials + worker restart)
+ * changed. Fingerprint несёт ВЕРСИЮ ключа (короткий sha256), а не только
+ * наличие: ротация credentials без смены набора провайдеров обязана
+ * переконфигурировать воркер, иначе он останется со старым ключом. */
+async function ensureWorkerConfigured(worker) {
+  let queue = configureQueues.get(worker);
+  if (!queue) {
+    queue = new SerialRequestQueue();
+    configureQueues.set(worker, queue);
+  }
+  await queue.run(async () => {
+    const key = credentials.get("openai");
+    const keyTag = key ? createHash("sha256").update(String(key)).digest("hex").slice(0, 12) : "-";
+    const fingerprint = `${worker.spawnCount}:${keyTag}`;
+    if (configureFingerprints.get(worker) === fingerprint) return;
+    await worker.request("runtime.configure", { openaiApiKey: key || "" });
+    configureFingerprints.set(worker, fingerprint);
+  });
+}
 const LIVE_COMMAND_TOOL_NAME = "designdna_live_command";
 const LIVE_COMMAND_TOOL = Object.freeze({
   serverId: "designdna-live",
@@ -133,7 +156,14 @@ async function callLiveCommandTool(arguments_, { source = "agent" } = {}) {
 const EXCLUSIVE_API_PATHS = new Set([
   "/api/block-parse",
 ]);
-const pythonConfigureMutex = new SerialRequestQueue();
+/* Три полосы вместо одного мьютекса: exclusive (block-parse) и /api/project/*
+ * серийные, остальной трафик — параллельно с семафором на воркер. Раньше все
+ * не-exclusive запросы шли через один SerialRequestQueue, и любой долгий
+ * запрос замораживал весь API-трафик UI. */
+const apiScheduler = new ApiScheduler({ exclusivePaths: EXCLUSIVE_API_PATHS });
+/* runtime.configure под маленьким мьютексом на воркер: параллельные запросы
+ * не гоняют configure наперегонки; сам http.request идёт вне мьютекса. */
+const configureQueues = new Map();
 
 const INTERACTIVE_API_PATHS = new Set([
   "/api/editor/assist",
@@ -364,6 +394,10 @@ function createWorkers() {
     env: pythonWorkerEnvironment({ isPackaged: app.isPackaged, runtimeRoot, userDataPath: app.getPath("userData") }),
     timeoutMs: 120_000,
   });
+  // Лимиты параллельной полосы = размер ThreadPoolExecutor воркера (3);
+  // интерактивному оставляем слот под серийную project-полосу.
+  apiScheduler.registerWorker(pythonWorker, 3);
+  apiScheduler.registerWorker(pythonInteractiveWorker, 2);
   repoCanvasWorker = new JsonlProcess({
     name: "Repo Canvas runtime",
     command: process.execPath,
@@ -372,6 +406,9 @@ function createWorkers() {
     env: { DESIGNDNA_PROJECT_ROOT: repositoryRoot, ELECTRON_RUN_AS_NODE: "1" },
     timeoutMs: 180_000,
   });
+  // Claude — headless-запуск Claude Code CLI. Подписочный OAuth живёт внутри
+  // самого CLI, приложение секрета не видит и не хранит.
+  claude = new ClaudeAgentServer({ cwd: repositoryRoot });
   codex = new CodexAppServer({ cwd: repositoryRoot });
   codex.on("notification", (message) => broadcast("codex:event", message));
   codex.on("request", async (message) => {
@@ -488,9 +525,17 @@ function registerIpc() {
   // ожидающие запросы длинной очереди отклоняются как cancelled, кэш и проект
   // живут в SQLite/файлах и переживают рестарт. configure-фингерпринт
   // сбрасывается автоматически через spawnCount.
-  handleTrusted("api:cancel", () => {
-    pythonWorker.abort("cancelled by user");
-    return { cancelled: true };
+  handleTrusted("api:cancel", (_event, payload) => {
+    // scope "long" (по умолчанию) рестартует длинный воркер; "interactive"
+    // трогает интерактивный только по явной просьбе — он держит project-полосу
+    // и не должен рестартоваться заодно с отменой импорта.
+    const scope = String(payload?.scope || "long");
+    if (scope === "interactive") {
+      pythonInteractiveWorker.abort("cancelled by user");
+    } else {
+      pythonWorker.abort("cancelled by user");
+    }
+    return { cancelled: true, scope };
   });
   // Вынос inline-блобов из localStorage: рендерер кладёт содержимое, LS хранит
   // только ddna://blobs/<name>. getMany возвращает ПОЛНЫЕ data:-URL обратно —
@@ -537,50 +582,20 @@ function registerIpc() {
         encoding: "utf8",
       };
     }
-    const interactive = INTERACTIVE_API_PATHS.has(validatedRequest.path.split("?", 1)[0]);
-    const queue = interactive ? pythonInteractiveQueue : pythonApiQueue;
+    const requestPath = validatedRequest.path.split("?", 1)[0];
+    const interactive = INTERACTIVE_API_PATHS.has(requestPath);
     const worker = interactive ? pythonInteractiveWorker : pythonWorker;
-    const exclusive = EXCLUSIVE_API_PATHS.has(validatedRequest.path.split("?", 1)[0]);
-    // эксклюзивный путь — серийная полоса (как раньше); лёгкий запрос идёт
-    // мимо очереди под мьютексом конфигурации провайдеров и выполняется
-    // воркером параллельно с идущим импортом
-    const run = (operation) => (exclusive ? queue.run(operation) : pythonConfigureMutex.run(operation));
-    return run(async () => {
+    // Полосы: exclusive (block-parse) и /api/project/* — серийные (Chromium
+    // дорог; projects.db single-writer + монотонные ревизии Live Project
+    // Session), остальное — параллельно с семафором на воркер.
+    return apiScheduler.run(requestPath, worker, async () => {
       let preparedRequest = validatedRequest;
       const authIntent = sourceAuthIntent(validatedRequest);
       if (authIntent) {
         const cookies = await sourceAuthSession().cookies.get({ url: authIntent.url });
         preparedRequest = attachSourceAuthCookies(validatedRequest, cookies, authIntent.url);
       }
-      // Keep provider credentials inside the trusted main/sidecar boundary.
-      // Reconfigure only when the fingerprint (credentials + worker restart)
-      // changed: identical configure round-trips before every call added ~30ms
-      // of latency to each request.
-      let kimiApiKey = "";
-      if (credentials.has("kimi")) {
-        // Best-effort: a token refresh failure must not break the API request;
-        // the worker just runs without a Kimi key until re-import/re-login.
-        try {
-          kimiApiKey = await getValidToken(credentials);
-        } catch (error) {
-          console.warn(`Kimi token unavailable for api:request: ${error.message}`);
-        }
-      }
-      // Fingerprint несёт ВЕРСИЮ ключа (короткий sha256), а не только наличие:
-      // ротация credentials без смены набора провайдеров обязана
-      // переконфигурировать воркер, иначе он останется со старым ключом.
-      const keyTag = (value) => (value ? createHash("sha256").update(String(value)).digest("hex").slice(0, 12) : "-");
-      const fingerprint = `${worker.spawnCount}:${keyTag(kimiApiKey)}:${keyTag(credentials.get("openai"))}:${keyTag(credentials.get("glm"))}:${keyTag(credentials.get("zai"))}:${keyTag(credentials.get("grok"))}`;
-      if (configureFingerprints.get(worker) !== fingerprint) {
-        await worker.request("runtime.configure", {
-          openaiApiKey: credentials.get("openai") || "",
-          kimiApiKey,
-          glmApiKey: credentials.get("glm") || "",
-          zaiApiKey: credentials.get("zai") || "",
-          grokApiKey: credentials.get("grok") || "",
-        });
-        configureFingerprints.set(worker, fingerprint);
-      }
+      await ensureWorkerConfigured(worker);
       // Source Import / generation pipelines legitimately take minutes
       // (Playwright captures multiple viewports, font downloads, LLM steps),
       // so the HTTP call gets a wider budget than the default worker timeout.
@@ -612,14 +627,11 @@ function registerIpc() {
   handleTrusted("providers:status", async () => ({
     runtimes: await getProviderStatus(),
     credentials: credentials.status(),
-    kimiAccount: kimiAccountStatus(credentials),
     encryptedStorage: credentials.available(),
   }));
   handleTrusted("providers:credentials", () => ({ configured: credentials.status(), encryptedStorage: credentials.available() }));
   handleTrusted("providers:set-credential", (_event, { provider, value }) => credentials.set(provider, value));
   handleTrusted("providers:delete-credential", (_event, { provider }) => credentials.delete(provider));
-  // Import OAuth tokens from the Kimi CLI; returns account status only, never the tokens.
-  handleTrusted("providers:import-kimi-cli", (_event) => importFromCli(credentials));
   // Provider chat: единый типизированный envelope (см. provider-envelope.mjs).
   // Legacy-форма {provider, messages, temperature, profile, tools} продолжает
   // работать: поля собираются в envelope с correlation id. Все отказы
@@ -638,19 +650,30 @@ function registerIpc() {
   };
   const runProviderChat = async (payload) => {
     const request = payload?.request && typeof payload.request === "object" ? payload.request : payload;
+    const requestedEffort = typeof request?.reasoning === "string"
+      ? request.reasoning
+      : request?.reasoning?.effort;
+    // Провайдер выбирается пользователем в ноде; ретро-значения мигрируют
+    // на дефолт внутри resolveProvider. Envelope остаётся Sol-типизированным:
+    // Codex и Claude — текстовые CLI-транспорты и читают из него messages.
+    const provider = resolveProvider(request?.provider);
     const envelope = createEnvelope({
       ...request,
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      reasoning: { effort: new Set(["medium", "high", "max"]).has(requestedEffort) ? requestedEffort : "medium" },
       id: request?.id || `chat-${++approvalSequence}-${Date.now().toString(36)}`,
     });
     const abort = new AbortController();
     providerChats.set(envelope.id, abort);
     try {
       const result = await chatWithProvider({
-        provider: envelope.provider,
-        envelope,
+        provider,
+        envelope: { ...envelope, provider },
         profile: payload?.profile,
         signal: abort.signal,
         codex,
+        claude,
         credentials,
       });
       return { ...result, requestId: envelope.id };
@@ -672,6 +695,9 @@ function registerIpc() {
     providerChats.delete(id);
     return { cancelled: true, requestId: id };
   });
+  // Claude: только проба состояния. Интерактивный /login ведёт сам CLI —
+  // приложение не участвует в OAuth и не касается секрета.
+  handleTrusted("claude:status", () => claude.account());
   handleTrusted("codex:account", () => codex.account());
   handleTrusted("codex:login", async (_event, { type }) => {
     const result = await codex.login({ type, apiKey: type === "apiKey" ? credentials.get("openai") : undefined });

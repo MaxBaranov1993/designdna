@@ -33,8 +33,8 @@ try {
   if (health?.ok !== true || health?.transport !== "stdio") {
     throw new Error(`Unexpected runtime health payload: ${JSON.stringify(health)}`);
   }
-  const configured = await worker.request("runtime.configure", { openaiApiKey: "runtime-smoke-only", kimiApiKey: "runtime-smoke-only" });
-  if (configured?.openaiConfigured !== true || configured?.kimiConfigured !== true || JSON.stringify(configured).includes("runtime-smoke-only")) {
+  const configured = await worker.request("runtime.configure", { openaiApiKey: "runtime-smoke-only" });
+  if (configured?.openaiConfigured !== true || JSON.stringify(configured).includes("runtime-smoke-only")) {
     throw new Error(`Packaged credential configuration failed: ${JSON.stringify(configured)}`);
   }
   const config = await worker.request("http.request", {

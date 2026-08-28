@@ -45,6 +45,10 @@ function strictUtc(value, fallback = EMPTY_UPDATED_AT) {
   return date.toISOString();
 }
 
+function isLiveCapacityError(error) {
+  return error?.code === "STATE_TOO_LARGE";
+}
+
 export class LiveProjectApiSync {
   constructor({ registry = null, onEvent = null, maxProjectBytes } = {}) {
     this.registry = registry;
@@ -65,7 +69,18 @@ export class LiveProjectApiSync {
       if (payload.project === null || typeof payload.project !== "object" || Array.isArray(payload.project)) {
         throw new TypeError("project must be a JSON object");
       }
-      session.validateProject(payload.project);
+      try {
+        // Канонизация проекта считается один раз и переиспользуется в
+        // synchronize() — раньше 8-МБ проект канонизировался дважды на сейв.
+        context.canonicalProject = session.validateProject(payload.project);
+      } catch (error) {
+        // The live-command bridge deliberately has a bounded in-memory state,
+        // while the canonical SQLite project may be larger. Capacity of the
+        // optional bridge must never block the ordinary project save path.
+        if (!isLiveCapacityError(error)) throw error;
+        this.#resetSession(userId, projectId);
+        return { ...context, session: null, wasHydrated: false, bypassReason: error.code };
+      }
       const expectedRevision = assertSha256Revision(payload.expectedRevision, "expectedRevision");
       if (context.wasHydrated && expectedRevision !== session.currentRevision()) {
         const error = new Error("Project save does not match the authoritative desktop revision");
@@ -80,11 +95,20 @@ export class LiveProjectApiSync {
 
   synchronize(context, response) {
     if (!context) return null;
+    if (context.bypassReason) return null;
     const body = responseJson(response);
     if (!body) return null;
     if (context.path === PROJECT_LOAD_PATH) {
       const project = body.project && typeof body.project === "object" && !Array.isArray(body.project) ? body.project : {};
-      return context.session.hydrateFromLoad(project, body.revision, strictUtc(body.updated_at));
+      try {
+        return context.session.hydrateFromLoad(project, body.revision, strictUtc(body.updated_at));
+      } catch (error) {
+        // A large canonical project remains fully usable in the editor; only
+        // bounded live commands are unavailable until the state fits again.
+        if (!isLiveCapacityError(error)) throw error;
+        this.#resetSession(context.userId, context.projectId);
+        return null;
+      }
     }
     if (body.ok !== true) return null;
     const updatedAt = strictUtc(body.updated_at);
@@ -94,9 +118,12 @@ export class LiveProjectApiSync {
         context.expectedRevision,
         body.revision,
         updatedAt,
+        { precomputed: context.canonicalProject || null },
       );
     }
-    return context.session.hydrateFromLoad(context.payload.project, body.revision, updatedAt);
+    return context.session.hydrateFromLoad(context.payload.project, body.revision, updatedAt, {
+      precomputed: context.canonicalProject || null,
+    });
   }
 
   get(userId = DEFAULT_USER_ID, projectId = DEFAULT_PROJECT_ID) {
@@ -127,6 +154,13 @@ export class LiveProjectApiSync {
     if (this.onEvent) session.subscribe(this.onEvent);
     this.sessions.set(key, session);
     return session;
+  }
+
+  #resetSession(userId, projectId) {
+    const key = `${userId}:${projectId}`;
+    const session = this.sessions.get(key);
+    if (session) session.dispose();
+    this.sessions.delete(key);
   }
 
   #isHydrated(session) {

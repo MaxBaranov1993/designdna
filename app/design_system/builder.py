@@ -1,4 +1,4 @@
-"""Builder: Source Pack → reference-faithful draft Design System.
+﻿"""Builder: Source Pack → reference-faithful draft Design System.
 
 Observed masters are exact deep copies of Source component boundaries. Canonical
 taxonomy is metadata only: it may name/classify a captured component, but it must
@@ -22,7 +22,11 @@ from .document import content_hash as _content_hash
 from .document import new_document
 from .identity import extract_identity
 
-SOURCE_COMPILER_DEFAULT = "dom-v31"
+# Должен совпадать с blockparse.SOURCE_COMPILER_VERSION: пак записывает эту
+# версию, когда нода не передала свою. Расхождение (было "dom-v31" против
+# "dom-v39") помечало свежие захваты устаревшим парсером. Синхронность
+# проверяется тестом test_source_compiler_default_matches_pipeline.
+SOURCE_COMPILER_DEFAULT = "dom-v40"
 _GEN_STATES = ("hover", "loading", "error", "empty", "disabled")
 
 # ---------- Style DNA нормализация ----------
@@ -712,19 +716,6 @@ def _build_library(dna: dict, content: dict) -> list[dict]:
 
 # ---------- маппинг наблюдений Source на канонические ключи ----------
 
-_ROLE_TO_KEY = {
-    "button": ("button",), "btn": ("button",),
-    "form": ("input", "button"), "input": ("input",), "search": ("search",),
-    "nav": ("navbar",), "navigation": ("navbar",), "menu": ("navbar",),
-    "toolbar": ("navbar",), "header": ("navbar",), "banner": ("cta-banner",),
-    "footer": ("footer",),
-    "card": ("card",), "panel": ("card",), "section": ("card",), "region": ("card",),
-    "complementary": ("card",), "status": ("badge",), "profile": ("avatar",),
-    "widget": ("card",), "module": ("card",), "tile": ("category-tile",),
-    "item": ("product-card",), "rail": ("carousel",), "action": ("button",),
-    "component": ("card",),
-}
-
 _KIND_TO_KEY = {
     "header": ("navbar",), "navigation": ("navbar",), "footer": ("footer",),
     "carousel": ("carousel",), "categories": ("category-tile",),
@@ -741,85 +732,6 @@ _TYPE_TO_KEY = {
     "badge": ("badge",), "avatar": ("avatar",), "rating": ("rating",),
     "list": ("list",), "icon": ("icon-button",),
 }
-
-_BUTTON_STYLE_CLASSIFIERS = (
-    ("outline", lambda s: (s.get("borderWidth") or 0) > 0 and not s.get("background")),
-    ("ghost", lambda s: not s.get("background") and (s.get("borderWidth") or 0) == 0),
-)
-
-
-def _classify_button(style: dict) -> str:
-    for name, test in _BUTTON_STYLE_CLASSIFIERS:
-        try:
-            if test(style):
-                return name
-        except Exception:
-            continue
-    return "primary"
-
-
-def _observe_blocks(blocks: list) -> tuple[dict[str, dict], list[str]]:
-    """Source → ({canonicalKey: {sources, variants, repeated}}, стили кнопок).
-
-    Стили кнопок (filled/outline/ghost по классификации computed-стилей)
-    возвращаются отдельным списком — таксономия вариантов Button.
-    """
-    observed: dict[str, dict] = {}
-    button_styles: Counter = Counter()
-
-    def record(key: str, block_name: str, source_key: str, *, variant_hint: str = "", repeated: bool = False) -> None:
-        entry = observed.setdefault(key, {"sources": Counter(), "variants": Counter(), "repeated": False})
-        entry["sources"][f"{block_name}·{source_key}"[:120]] += 1
-        if variant_hint:
-            entry["variants"][variant_hint[:40]] += 1
-        if repeated:
-            entry["repeated"] = True
-
-    for block in blocks:
-        if not isinstance(block, dict) or not isinstance(block.get("ir"), dict):
-            continue
-        block_name = str(block.get("name") or "block")
-        kind_keys = _KIND_TO_KEY.get(str(block.get("kind") or "").lower(), ())
-
-        def visit(node: dict, depth: int = 0) -> None:
-            if not isinstance(node, dict):
-                return
-            meta = node.get("sourceMeta") if isinstance(node.get("sourceMeta"), dict) else {}
-            ntype = str(node.get("type") or "").lower()
-            role = str(meta.get("componentRole") or "").lower()
-            boundary = bool(meta.get("componentBoundary"))
-            repeated = bool(meta.get("repeatGroup"))
-            keys: tuple[str, ...] = ()
-            if boundary:
-                keys = _ROLE_TO_KEY.get(role, ())
-            if not keys and depth == 0 and kind_keys:
-                # семантика блока относится к его корню, а не к каждому тексту внутри
-                keys = kind_keys
-            if not keys and not boundary:
-                keys = _TYPE_TO_KEY.get(ntype, ())
-            label = str(meta.get("componentLabel") or "").strip()
-            variant_hint = ""
-            if ntype == "button":
-                style = node.get("style") if isinstance(node.get("style"), dict) else {}
-                variant_hint = _classify_button(style)
-                button_styles[variant_hint] += 1
-            elif repeated and label:
-                variant_hint = label
-            for key in keys:
-                record(key, block_name, str(node.get("sourceKey") or ntype or role or "node"),
-                       variant_hint=variant_hint, repeated=repeated)
-            for child in node.get("children") or []:
-                visit(child, depth + 1)
-
-        for root in (block["ir"].get("tree") or []):
-            visit(root)
-
-    for entry in observed.values():
-        entry["sources"] = _top(entry["sources"], limit=6)
-        entry["variants"] = _top(entry["variants"], limit=6)
-    styles = [name for name, _ in button_styles.most_common() if name]
-    return observed, styles
-
 
 # ---------- сборка документа ----------
 
@@ -976,10 +888,13 @@ def build_source_pack(source_node_data: dict, *, source_node_id: Any = 0) -> dic
             ).hexdigest(),
         }
         pack_blocks.append(packed)
+    source_artifact = source_node_data.get("sourceArtifact") if isinstance(source_node_data.get("sourceArtifact"), dict) else None
+    revision_basis = ({"sourceArtifact": source_artifact, "tokens": source_node_data.get("tokens") or {}}
+                      if source_artifact else {"blocks": pack_blocks, "tokens": source_node_data.get("tokens") or {}})
     return {
         "schemaVersion": "source-pack/1.0",
         "sourceNodeId": str(source_node_id),
-        "sourceRevisionHash": _content_hash({"blocks": pack_blocks, "tokens": source_node_data.get("tokens") or {}}),
+        "sourceRevisionHash": _content_hash(revision_basis),
         "source": {
             "kind": "url" if (source_node_data.get("mode") or "url") == "url" else "screenshot",
             "url": source_node_data.get("url"),
@@ -987,6 +902,7 @@ def build_source_pack(source_node_data: dict, *, source_node_id: Any = 0) -> dic
             "parserVersion": source_node_data.get("parserVersion") or SOURCE_COMPILER_DEFAULT,
         },
         "blocks": pack_blocks,
+        "sourceArtifact": copy.deepcopy(source_artifact),
         "tokens": source_node_data.get("tokens") or {},
         "viewports": ["desktop", "tablet", "mobile"],
     }
@@ -1238,10 +1154,10 @@ _SEMANTIC_COMPONENTS = {
     "mobile-navigation-item": ("Mobile navigation item", "navigation", "Observed mobile navigation action"),
     "navigation-group": ("Navigation group", "navigation", "Observed navigation composition"),
     "content-card": ("Content card", "surfaces", "Observed content surface"),
-}
-
-_SUPPRESSED_BOUNDARY_LABELS = {
-    "action-label", "meta-item", "icon-tile", "support-status", "more-tile", "li",
+    "form-group": ("Form group", "forms", "Observed multi-field form composition"),
+    "form-field": ("Form field", "forms", "Observed single input control"),
+    "list-item": ("List item", "content", "Observed repeated list row"),
+    "nested-surface": ("Nested surface", "surfaces", "Observed surface inside another component"),
 }
 
 
@@ -1258,101 +1174,116 @@ def _node_text(node: dict) -> str:
     return " | ".join(values)
 
 
-def _has_boundary_label(node: dict, label: str) -> bool:
-    wanted = label.lower()
-    for child in node.get("children") or []:
-        for item in _walk_nodes(child):
-            meta = _node_meta(item)
-            if meta.get("componentBoundary") and str(meta.get("componentLabel") or "").lower() == wanted:
-                return True
-    return False
+def _node_composition(node: dict) -> dict:
+    """Из чего состоит компонент: типы и количество потомков, наличие текста.
+
+    Основа классификации вместо имён CSS-классов: состав содержимого одинаков
+    на любом сайте, а `card`/`item`/`tile` в классах — соглашение конкретной
+    команды (и вовсе отсутствует при Tailwind, CSS-modules и хешах).
+    """
+    types: dict[str, int] = {}
+    depth = 0
+
+    def walk(current: dict, level: int) -> None:
+        nonlocal depth
+        depth = max(depth, level)
+        for child in current.get("children") or []:
+            if not isinstance(child, dict):
+                continue
+            node_type = str(child.get("type") or "").lower()
+            types[node_type] = types.get(node_type, 0) + 1
+            walk(child, level + 1)
+
+    walk(node, 0)
+    return {
+        "types": types,
+        "depth": depth,
+        "total": sum(types.values()),
+        "text": _node_text(node).strip(),
+        "media": types.get("image", 0) + types.get("icon", 0) + types.get("avatar", 0),
+        "headings": types.get("heading", 0),
+        "actions": types.get("button", 0),
+        "fields": types.get("input", 0),
+    }
 
 
 def _semantic_component_key(node: dict, block: dict, ancestor_key: str = "") -> str | None:
     """Map measured Source semantics to a small, stable UI-kit taxonomy.
 
-    The classifier is deliberately Source-specific only through captured
-    roles/labels/kinds. It does not infer visual styles or invent components.
-    Nested decorative boundaries are absorbed by their owning component.
+    Классификация идёт по признакам, а не по литералам конкретного сайта:
+    ARIA-роль и тег (переносимая семантика HTML), состав содержимого и факт
+    повторяемости. Прежняя версия сравнивала componentLabel с именами классов
+    одного маркетплейса, поэтому на любом другом сайте всё падало в
+    generic-хвост и схлопывалось в один `content-card`.
     """
     meta = _node_meta(node)
     role = str(meta.get("componentRole") or "").lower()
-    label = str(meta.get("componentLabel") or "").strip().lower()
     node_type = str(node.get("type") or "").lower()
     kind = str(block.get("kind") or block.get("name") or "").lower()
+    repeated = bool(meta.get("repeatGroup"))
+    composition = _node_composition(node)
 
-    if label in _SUPPRESSED_BOUNDARY_LABELS:
-        return None
-    if label == "search-bar" and _has_boundary_label(node, "search-main"):
-        return None
-    if kind == "footer" and role == "li":
-        return None
-
-    # Domain components come before primitive type mapping because captured
-    # anchors are often represented as `button` or `card` nodes.
-    if kind in ("panel", "carousel") and role == "group":
-        return "hero-slide"
-    if kind.startswith("categories"):
-        if label in ("grid-item", "slide-item") or (node_type == "button" and label in ("još", "jos")):
-            return "category-tile"
-    if kind.startswith("product-grid"):
-        if role == "header" and label == "section-header":
-            return "listing-section-header"
-        if role == "radiogroup":
-            return "filter-bar"
-        if role == "article" and label == "card":
-            return "service-card"
-    if kind == "trust":
-        if role == "article" and label == "card":
-            return "trust-card"
-        if role == "header" or label == "head":
-            return "section-header"
-    if kind == "journal":
-        if role == "section":
-            return "article-section"
-        if label == "card":
-            return "article-card"
-        if role == "header" or label == "head":
-            return "section-header"
-    if kind == "section":
-        if label == "step" or role == "li":
-            return "process-step"
-        if role == "header" or label == "head":
-            return "section-header"
-    if kind == "faq":
-        if role == "details" or label == "faq2-item":
-            return "accordion-item"
-        if role == "a":
-            return "text-link"
-    if kind == "footer":
-        if label == "support-card":
-            return "support-card"
-        if role == "nav":
-            return "footer-navigation"
-        if role == "a" and ancestor_key == "footer-navigation" and label not in ("footer-city-link",):
-            return None
-    if kind == "navigation" and role == "a":
-        return "mobile-navigation-item"
-    if kind == "header":
-        if role == "form":
-            return "search-field"
-        if role == "nav":
-            return "header-actions"
-
-    button_labels = {
-        "action-btn", "meni", "omiljeno", "pill", "search-pill-action",
-        "instagram", "youtube", "footer-city-link",
-    }
-    if node_type == "button" or role in ("button", "radio", "action") or label in button_labels:
+    # Интерактивные примитивы — по роли/типу, они однозначны.
+    if node_type == "button" or role in ("button", "radio", "action", "menuitem", "tab"):
         return "button"
+    if role in ("details", "disclosure") or node_type == "details":
+        return "accordion-item"
+    if role == "form" or composition["fields"] >= 1 and composition["actions"] >= 1:
+        return "search-field" if composition["fields"] == 1 else "form-group"
+    if node_type == "input" or role in ("textbox", "searchbox", "combobox"):
+        return "form-field"
+
+    # Навигация: явная роль либо плотная группа ссылок без длинного текста.
+    if role in ("nav", "navigation", "menu", "menubar", "toolbar", "tablist"):
+        return "footer-navigation" if kind == "footer" else "navigation-group"
     if role == "a":
-        return "text-link"
-    if role in ("header",) or label in ("head", "section-header"):
+        if repeated and composition["media"]:
+            return "category-tile"
+        return "mobile-navigation-item" if kind == "navigation" else "text-link"
+
+    # Заголовок секции: заголовочная роль или блок из заголовка и короткого текста.
+    if role in ("header", "heading") or node_type == "heading":
+        return "listing-section-header" if kind.startswith("product-grid") else "section-header"
+    if composition["headings"] and composition["total"] <= 3 and not composition["media"]:
         return "section-header"
-    if role in ("nav", "navigation", "menu", "toolbar"):
-        return "navigation-group"
-    if role in ("card", "panel", "section", "region", "group", "widget", "module", "component"):
-        return None if ancestor_key else "content-card"
+
+    # Повторяющаяся единица. Вид блока (kind) теперь выводится структурно
+    # (scraper._structural_role), поэтому опираться на него безопасно: это
+    # свойство раскладки страницы, а не имя класса конкретного сайта.
+    if repeated or role in ("li", "listitem", "article", "option"):
+        by_kind = {
+            "product-grid": "service-card",
+            "services-grid": "service-card",
+            "journal": "article-card",
+            "categories": "category-tile",
+            "faq": "accordion-item",
+            "trust": "trust-card",
+            "testimonials": "trust-card",
+            "how-it-works": "process-step",
+            "gallery": "category-tile",
+        }
+        if kind in by_kind:
+            return by_kind[kind]
+        if composition["media"] and composition["headings"]:
+            return "service-card"
+        if composition["media"]:
+            return "category-tile"
+        if composition["headings"] or len(composition["text"]) >= 24:
+            return "process-step" if kind == "section" else "list-item"
+        return "list-item"
+
+    # Поверхность-контейнер: раньше вложенные возвращали None и молча исчезали
+    # из UI Kit. Теперь вложенная поверхность — самостоятельное семейство.
+    if role in ("card", "panel", "section", "region", "group", "widget", "module", "component", "complementary"):
+        if kind in ("panel", "carousel") and composition["media"]:
+            return "hero-slide"
+        if kind == "trust":
+            return "trust-card"
+        if kind == "footer":
+            return "support-card"
+        if composition["media"] and composition["headings"]:
+            return "content-card"
+        return "nested-surface" if ancestor_key else "content-card"
     return None
 
 
@@ -1413,14 +1344,14 @@ def _rounded_visual(value: Any) -> Any:
 
 
 def _visual_signature(node: dict, family: str, variant_key: str = "") -> str:
-    semantic_variant_families = {
-        "hero-slide", "category-tile", "service-card", "trust-card", "article-card",
-        "section-header", "process-step", "accordion-item", "mobile-navigation-item",
-        "footer-navigation", "listing-section-header", "filter-bar", "article-section",
-        "search-field", "header-actions", "support-card",
-    }
-    if family in semantic_variant_families:
-        return hashlib.sha256(f"{family}|{variant_key}".encode("utf-8")).hexdigest()
+    """Отпечаток внешнего вида компонента: стиль, геометрия и структура.
+
+    Раньше 16 из 20 семейств хэшировали только `family|variantKey`, то есть
+    визуал вообще не участвовал: два по-разному оформленных набора карточек
+    с одинаковым variantKey схлопывались в один мастер, и второй дизайн
+    терялся как простой инкремент observedCount. Теперь стиль хэшируется для
+    всех семейств.
+    """
     style = copy.deepcopy(node.get("style") or {}) if isinstance(node.get("style"), dict) else {}
     frame = copy.deepcopy(node.get("frame") or {}) if isinstance(node.get("frame"), dict) else {}
     for key in ("x", "y", "absolute"):
@@ -1450,12 +1381,17 @@ def _visual_signature(node: dict, family: str, variant_key: str = "") -> str:
         "frame": frame,
         "responsive": responsive,
     }
-    if family == "button":
-        def skeleton(value: dict) -> Any:
-            if not isinstance(value, dict):
-                return None
-            return [str(value.get("type") or ""), [skeleton(child) for child in value.get("children") or []]]
-        payload["structure"] = skeleton(node)
+    # Структурный скелет — для всех семейств: карточка «картинка + заголовок»
+    # и карточка «заголовок + список» визуально разные компоненты, даже когда
+    # их стилевые токены совпадают.
+    def skeleton(value: dict, depth: int = 0) -> Any:
+        if not isinstance(value, dict) or depth > 3:
+            return None
+        return [
+            str(value.get("type") or ""),
+            [skeleton(child, depth + 1) for child in (value.get("children") or [])[:8]],
+        ]
+    payload["structure"] = skeleton(node)
     payload = _rounded_visual(payload)
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -1484,29 +1420,42 @@ def _observed_style(node: dict) -> dict:
     }
 
 
-def _variant_identity(node: dict, family: str, dna: dict) -> tuple[str, str]:
+def _variant_identity(node: dict, family: str, dna: dict, scale: dict | None = None) -> tuple[str, str]:
+    """Вариант компонента. Пороги — доли ширины страницы, а не абсолютные
+    пиксели: прежние 90/600/300 px были замерами одного макета на 1440 и на
+    сайте с другим масштабом переворачивали классификацию."""
     style = node.get("style") if isinstance(node.get("style"), dict) else {}
     frame = node.get("frame") if isinstance(node.get("frame"), dict) else {}
     text = _node_text(node)
     width = frame.get("width") if isinstance(frame.get("width"), (int, float)) else None
     height = frame.get("height") if isinstance(frame.get("height"), (int, float)) else None
+    page_width = float((scale or {}).get("pageWidth") or 1440) or 1440
+    narrow = page_width * 0.0625   # ≈90px на 1440
+    wide = page_width * 0.4167     # ≈600px на 1440
 
-    if family == "service-card":
-        return ("sale", "Sale") if "%" in text else ("standard", "Standard")
+    # Процентная нотация универсальна (не привязана к языку): карточка со
+    # скидочным токеном — отдельный промо-вариант семейства.
+    if family in ("service-card", "article-card", "trust-card", "content-card") and "%" in text:
+        return "sale", "Sale"
+    if family in ("service-card", "content-card"):
+        return "standard", "Standard"
     if family == "category-tile":
         if str(node.get("type") or "").lower() == "button":
             return "more", "More"
-        return ("compact", "Compact") if width is not None and width <= 90 else ("standard", "Standard")
+        return ("compact", "Compact") if width is not None and width <= narrow else ("standard", "Standard")
     if family == "article-card":
-        return ("featured", "Featured") if width is not None and width >= 600 else ("compact", "Compact")
+        return ("featured", "Featured") if width is not None and width >= wide else ("compact", "Compact")
     if family == "accordion-item":
-        return ("open", "Open") if height is not None and height > 90 else ("closed", "Closed")
+        # Раскрытая строка выше своей же типовой высоты — сравниваем с медианой
+        # семейства, а не с константой 90px.
+        typical = float((scale or {}).get("accordionMedian") or 0) or 90.0
+        return ("open", "Open") if height is not None and height > typical * 1.4 else ("closed", "Closed")
     if family == "hero-slide":
         background = _hex(style.get("background"))
         if background:
             return f"background-{background[1:]}", f"Background {background.upper()}"
     if family == "mobile-navigation-item":
-        return ("primary", "Primary") if width is not None and width < 70 else ("standard", "Standard")
+        return ("primary", "Primary") if width is not None and width < narrow * 0.78 else ("standard", "Standard")
 
     if family == "button":
         background = _hex(style.get("background"))
@@ -1542,9 +1491,9 @@ def _variant_identity(node: dict, family: str, dna: dict) -> tuple[str, str]:
         return key, (tone + shape).replace("-", " ").title()
 
     if width is not None and height is not None:
-        if width <= 100 or height <= 48:
+        if width <= narrow * 1.11 or height <= 48:
             return "compact", "Compact"
-        if width >= 600 or height >= 300:
+        if width >= wide or height >= 300:
             return "expanded", "Expanded"
     return "standard", "Standard"
 
@@ -1608,6 +1557,14 @@ def _components_from_blocks(blocks: list, source_revision_hash: str, dna: dict,
     variant still points to an exact Source subtree and evidence crop.
     """
     specs = _canonical_spec_map(dna, content)
+    # Масштаб захвата: пороги вариантов считаются в долях ширины страницы,
+    # чтобы сайт с другой шириной макета не переклассифицировался.
+    page_widths = [
+        size.get("width") for block in blocks or []
+        if isinstance(block, dict) and isinstance(size := block.get("size"), dict)
+        and isinstance(size.get("width"), (int, float)) and size.get("width")
+    ]
+    scale = {"pageWidth": max(page_widths) if page_widths else 1440}
     components: dict[str, dict] = {}
     suggestions: dict[str, dict] = {}
     candidates: dict[str, list[dict]] = {}
@@ -1663,7 +1620,7 @@ def _components_from_blocks(blocks: list, source_revision_hash: str, dna: dict,
                         "boundsByViewport": bounds_by_viewport,
                         "evidenceKey": evidence_key,
                     }
-                    variant_key, variant_label = _variant_identity(node, family, dna)
+                    variant_key, variant_label = _variant_identity(node, family, dna, scale)
                     fidelity = _component_fidelity(block, source_ref["sourceKey"], node, family)
                     candidates.setdefault(family, []).append({
                         "family": family,
@@ -1933,7 +1890,17 @@ def build_draft(pack: dict, *, name: str | None = None, locale: str = "ru",
         for comp in components.values():
             comp["states"] = {}
     doc["components"] = components
+    # Fidelity is a publish gate, not a visibility gate. Keep every exact
+    # observed master in the Design System catalog so Source import produces a
+    # Figma-like component sheet even while some masters still need review.
+    doc["reviewComponents"] = {
+        key: copy.deepcopy(component)
+        for key, component in suggestions.items()
+        if isinstance(component, dict) and component.get("origin") == "observed"
+    }
     doc["suggestions"] = suggestions
+    from .organizer import deterministic_catalog
+    doc["catalog"] = deterministic_catalog(doc)
     doc["extraction"] = extraction
     doc["referenceAssets"] = _reference_assets(blocks)
 

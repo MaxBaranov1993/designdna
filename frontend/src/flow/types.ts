@@ -4,7 +4,7 @@ import type { Edge, Node } from "@xyflow/svelte";
  * Runtime-поля legacy (el/geo/history) в React Flow state не переносятся. */
 
 /* kind tokens: design-токены из Source Import/Style DNA в Reskin/Derive. */
-export type PortKind = "text" | "ir" | "tokens" | "interaction" | "motion";
+export type PortKind = "text" | "ir" | "tokens" | "artifact" | "interaction" | "motion";
 
 export type NodeType =
   | "prompt"
@@ -14,6 +14,7 @@ export type NodeType =
   | "mix"
   | "page"
   | "sourceimport"
+  | "designui"
   | "styledna"
   | "derive"
   | "reskin"
@@ -76,8 +77,12 @@ export type ReferenceNodeData = {
   // IR, полученный по проводу через propagate (runtime-поле legacy, nodes.js:957-963)
   ir?: IRObject | null;
 };
+/** Провайдер, выбираемый в ноде. Sol — по API-ключу, Codex и Claude — по
+ *  подписке через локальный CLI (OAuth живёт внутри самого CLI). */
+export type NodeProvider = "openai" | "codex" | "claude";
 export type GeneratorNodeData = {
-  provider: string;
+  provider: NodeProvider;
+  effort: "medium" | "high" | "max";
   count: number;
   ownPrompt: string;
   preset: string;
@@ -165,6 +170,81 @@ export type BlockParseBlock = {
   parserContract?: ParserSourceEnvelope;
   lit: boolean;
 };
+export type SourceArtifactViewport = {
+  size?: { width?: number; height?: number };
+  layers?: number;
+  editableLayers?: number;
+  coverage?: number;
+  paintCoverage?: number;
+  fidelity?: number;
+  p95LayoutError?: number;
+};
+export type SourceArtifactComponent = {
+  componentKey: string;
+  name: string;
+  role: string;
+  master: { blockIndex: number; selector: string; irContentHash: string };
+  states: Record<string, { observed: boolean; basis: "measured" | "inferred"; viewports: string[] }>;
+  stateCoverage: { observed: string[]; inferred: string[] };
+  responsive: Record<string, SourceArtifactViewport>;
+  quality: { gate?: { passed?: boolean; reasons?: string[] }; warnings: string[] };
+  provenance: { sourceRecord?: Record<string, unknown>; parserContractVersion?: string; nodeStateCount: number };
+};
+export type SourceArtifactFoundationGroup = {
+  key: string;
+  name: string;
+  tokenCount: number;
+};
+export type SourceArtifactScreen = {
+  screenKey: string;
+  name: string;
+  viewport: string;
+  theme?: string;
+  basis: "assembled-from-source-blocks";
+  size: { width?: number; height?: number };
+  componentKeys: string[];
+  hierarchy: Array<{
+    componentKey: string;
+    name: string;
+    role: string;
+    blockIndex: number;
+    selector: string;
+  }>;
+  metrics: {
+    layers?: number;
+    editableLayers?: number;
+    fidelityMean?: number;
+    fidelityMin?: number;
+    p95LayoutErrorMax?: number;
+  };
+};
+export type SourceArtifactLibrary = {
+  componentSetCount: number;
+  variantCount: number;
+  observedStateCount: number;
+};
+export type SourceArtifact = {
+  version: "source-artifact/1.0";
+  source: { url: string; authenticated: boolean; pipelineVersion: string };
+  foundations: {
+    tokens: Record<string, unknown> | null;
+    groups?: SourceArtifactFoundationGroup[];
+  };
+  /** Additive fields are optional so persisted v1.0 projects remain readable. */
+  screens?: SourceArtifactScreen[];
+  library?: SourceArtifactLibrary;
+  components: SourceArtifactComponent[];
+  summary: {
+    screenCount?: number;
+    componentCount: number;
+    componentSetCount?: number;
+    variantCount?: number;
+    observedStateCount: number;
+    viewportCount: number;
+    tokenGroupCount?: number;
+    tokenCount?: number;
+  };
+};
 export type SourceImportNodeData = {
   mode: "url" | "screenshot";
   url: string;
@@ -178,6 +258,20 @@ export type SourceImportNodeData = {
   importedUrl?: string | null;
   blocks: BlockParseBlock[];
   tokens: Record<string, unknown> | null;
+  sourceArtifact?: SourceArtifact | null;
+  /** Опциональный AI-проход: уточняет имена компонентов и роли блоков. */
+  aiRefine?: boolean;
+  aiProvider?: NodeProvider;
+  lastRun?: {
+    cached: boolean;
+    pipelineVersion?: string;
+    totalMs: number;
+    timingsMs: Record<string, number>;
+  } | null;
+};
+export type DesignUiNodeData = {
+  artifact: SourceArtifact | null;
+  selectedComponent: number;
 };
 export type StyleDnaNodeData = {
   tokens: Record<string, unknown> | null;
@@ -201,7 +295,8 @@ export type ReskinMask = {
 };
 export type ReskinNodeData = {
   prompt: string;
-  provider: string;
+  provider: NodeProvider;
+  effort: "medium" | "high" | "max";
   mask: ReskinMask;
   ir: IRObject | null;
   log: string[];
@@ -315,6 +410,7 @@ export type AnyNodeData =
   | MixNodeData
   | PageNodeData
   | SourceImportNodeData
+  | DesignUiNodeData
   | StyleDnaNodeData
   | DeriveNodeData
   | ReskinNodeData
@@ -331,6 +427,7 @@ export type EditFlowNode = Node<EditNodeData, "edit">;
 export type MixFlowNode = Node<MixNodeData, "mix">;
 export type PageFlowNode = Node<PageNodeData, "page">;
 export type SourceImportFlowNode = Node<SourceImportNodeData, "sourceimport">;
+export type DesignUiFlowNode = Node<DesignUiNodeData, "designui">;
 export type StyleDnaFlowNode = Node<StyleDnaNodeData, "styledna">;
 export type DeriveFlowNode = Node<DeriveNodeData, "derive">;
 export type ReskinFlowNode = Node<ReskinNodeData, "reskin">;
@@ -348,6 +445,7 @@ export type FlowNode =
   | MixFlowNode
   | PageFlowNode
   | SourceImportFlowNode
+  | DesignUiFlowNode
   | StyleDnaFlowNode
   | DeriveFlowNode
   | ReskinFlowNode

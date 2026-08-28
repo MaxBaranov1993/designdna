@@ -59,3 +59,38 @@ test("unrelated API requests are ignored", () => {
   const sync = new LiveProjectApiSync();
   assert.equal(sync.prepare(request("/api/config", {})), null);
 });
+
+test("oversized canonical projects bypass the bounded live bridge without failing load or save", () => {
+  const sync = new LiveProjectApiSync({ maxProjectBytes: 96 });
+  const largeProject = { pages: [{ graph: { nodes: [{ data: { text: "x".repeat(160) } }] } }] };
+
+  const loadContext = sync.prepare(request("/api/project/load", {}));
+  assert.equal(sync.synchronize(loadContext, response(200, {
+    project: largeProject,
+    revision: A,
+    updated_at: "2026-08-25T12:00:00Z",
+  })), null);
+  assert.equal(sync.getSnapshot(), null);
+
+  const saveContext = sync.prepare(request("/api/project/save", {
+    project: largeProject,
+    expectedRevision: A,
+  }));
+  assert.equal(saveContext.bypassReason, "STATE_TOO_LARGE");
+  assert.equal(sync.synchronize(saveContext, response(200, {
+    ok: true,
+    revision: B,
+    updated_at: "2026-08-25T12:01:00Z",
+  })), null);
+
+  const recovered = sync.prepare(request("/api/project/save", {
+    project: { pages: [] },
+    expectedRevision: B,
+  }));
+  sync.synchronize(recovered, response(200, {
+    ok: true,
+    revision: C,
+    updated_at: "2026-08-25T12:02:00Z",
+  }));
+  assert.equal(sync.getSnapshot().revision, C);
+});

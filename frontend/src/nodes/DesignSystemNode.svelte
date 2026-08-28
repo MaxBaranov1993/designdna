@@ -1,23 +1,37 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
-  import { flow, flowBusy } from "../flow/state";
-    import type { DesignSystemFlowNode } from "../flow/types";
+  import { flow, flowBusy, flowNodes } from "../flow/state";
+  import type { DesignSystemFlowNode, SourceArtifact } from "../flow/types";
+  import InPorts from "./InPorts.svelte";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
 
-  /* Design System-нода (ТЗ §11): карточка системы + действия. Портов нет —
-   * использование через registry и DesignSystemPicker, не через провода. */
   let { id, data, selected }: NodeProps<DesignSystemFlowNode> = $props();
 
   let busy = $derived(!!$flowBusy[Number(id)]);
-  let busyAction = $derived(String((data as { busyAction?: string }).busyAction || ""));
-  const summary = $derived((data.summary || {}) as Record<string, any>);
-  const originLabel = $derived((summary.origins || {}) as Record<string, number>);
-  const lastError = $derived(String((data as { lastError?: string }).lastError || ""));
-  const canPublish = $derived(!!data.systemId && !busy);
-  const canDefault = $derived(!!data.systemId && data.status === "published" && !data.defaultSet && !busy);
-  const canSync = $derived(!!data.sourceNodeId && !busy);
-  const canOpen = $derived(!!data.systemId);
+  let busyAction = $derived(String(data.busyAction || ""));
+  let summary = $derived((data.summary || {}) as Record<string, any>);
+  let lastError = $derived(String(data.lastError || ""));
+  let sourceArtifact = $derived.by((): SourceArtifact | null => {
+    const source = $flowNodes.find((node) => Number(node.id) === Number(data.sourceNodeId));
+    if (source?.type === "sourceimport") return source.data.sourceArtifact || null;
+    const document = (data.document || {}) as { sourceArtifact?: SourceArtifact | null };
+    return document.sourceArtifact || null;
+  });
+  /* Обе стороны воронки считают одно и то же — компоненты каталога против
+   * принятых мастеров. Прежний фолбэк на sourceArtifact.componentSetCount
+   * подставлял ЧИСЛО БЛОКОВ страницы, поэтому воронка всегда выглядела
+   * дырявой. Пока каталог не построен, показываем «—», а не чужую метрику. */
+  let detectedComponents = $derived(
+    summary.catalogComponents == null ? null : Number(summary.catalogComponents));
+  let detectedVariants = $derived(
+    summary.catalogVariants == null ? null : Number(summary.catalogVariants));
+  let acceptedMasters = $derived(Number(summary.components || 0));
+  let acceptedVariants = $derived(Number(summary.variants || 0));
+  let canPublish = $derived(!!data.systemId && !busy);
+  let canDefault = $derived(!!data.systemId && data.status === "published" && !data.defaultSet && !busy);
+  let canSync = $derived(!!data.sourceNodeId && !busy);
+  let canOpen = $derived(!!data.systemId);
 
   const run = (action: "publish" | "default" | "sync") => {
     if (action === "publish") void $flow.publishDesignSystem(Number(id));
@@ -32,77 +46,65 @@
 </script>
 
 <NodeShell {id} type="designsystem" {selected}>
+  <InPorts type="designsystem" />
   <div class="ds-head">
     <span class="ds-icon" aria-hidden="true">◈</span>
     <div class="ds-title">
-      <strong>{data.name || "Design System"}</strong>
-      <small>{data.status === "published" ? `Published · v${data.revision}` : data.status === "draft" ? "Draft" : data.status}{data.defaultSet ? " · проект по умолчанию" : ""}</small>
+      <strong>{data.name || "Design System / UI Kit"}</strong>
+      <small>
+        {data.status === "published" ? `Published · v${data.revision}` : data.status === "draft" ? "Draft" : data.status}
+        {data.defaultSet ? " · project default" : ""}
+      </small>
     </div>
   </div>
-  {#if data.systemId && summary.components}
-    <div class="ds-stats" aria-label="Сводка дизайн-системы">
-      <span>{summary.components} masters</span>
-      <span>{summary.verifiedMasters || 0} verified</span>
-      <span>{summary.suggestions || 0} suggestions</span>
-      <span>{summary.variants} вариантов</span>
-      <span>{Math.round(summary.stateCoverage || 0)}% states</span>
-      <span>{summary.mockSchemas} mock-схем</span>
-      <span>Quality {Math.round(summary.qualityScore || 0)}/100</span>
-      <span class="ds-origins" title="observed / suggested / user / generated">
-        {originLabel.observed || 0}⬤ {originLabel.suggested || 0}◐ {originLabel.user || 0}◆ {originLabel.generated || 0}◇
-      </span>
+
+  {#if data.systemId}
+    <div class="ds-funnel" aria-label="Source detected to system accepted">
+      <div class="source-side">
+        <span>Source detected</span>
+        <strong>{detectedComponents ?? "—"}</strong>
+        <small>{detectedVariants ?? "—"} variants</small>
+      </div>
+      <div class="funnel-arrow" aria-hidden="true"><i></i><b>→</b></div>
+      <div class="system-side">
+        <span>System accepted</span>
+        <strong>{acceptedMasters}</strong>
+        <small>{acceptedVariants} variants</small>
+      </div>
     </div>
-  {:else if !data.systemId}
-    <div class="ds-empty">Создайте из Source-ноды: «UI Kit & Design System»</div>
+    <div class="ds-metrics">
+      <span>{sourceArtifact?.summary.screenCount ?? sourceArtifact?.screens?.length ?? 0} screens</span>
+      <span>{sourceArtifact?.summary.viewportCount ?? 0} viewports</span>
+      {#if Number(summary.reviewMasters || 0)}<span>{Number(summary.reviewMasters)} review</span>{/if}
+      <span>{Math.round(Number(summary.stateCoverage || 0))}% states</span>
+      <span>Quality {Math.round(Number(summary.qualityScore || 0))}/100</span>
+    </div>
+  {:else}
+    <div class="ds-empty">Create this UI Kit from a completed Source import.</div>
   {/if}
+
   {#if data.sourceUpdate}
-    <div class="ds-update" role="status">Source изменился — доступна синхронизация</div>
+    <div class="ds-update" role="status"><strong>Source changed.</strong> Review and Sync before publishing.</div>
   {/if}
   {#if lastError}
     <div class="ds-error" role="alert">{lastError}</div>
   {/if}
+
   <div class="ds-actions">
-    <button
-      type="button"
-      class="btn-node primary small nodrag"
-      data-ds-action="open"
-      aria-label="Открыть редактор дизайн-системы"
-      disabled={!canOpen}
-      onclick={openEditor}
-    >Открыть</button>
+    <button type="button" class="btn-node primary small nodrag" data-ds-action="open"
+      aria-label="Open Design System and Source UI editor" disabled={!canOpen} onclick={openEditor}>Открыть</button>
     {#if data.systemId}
-      <button
-        type="button"
-        class="btn-node small nodrag"
-        data-ds-action="publish"
-        aria-label="Опубликовать immutable-ревизию дизайн-системы"
-        aria-busy={busyAction === "publish"}
-        onclick={() => run("publish")}
-        disabled={!canPublish}
-      >
+      <button type="button" class="btn-node small nodrag" data-ds-action="publish"
+        aria-busy={busyAction === "publish"} onclick={() => run("publish")} disabled={!canPublish}>
         {busyAction === "publish" ? "Публикация…" : "Опубликовать"}
       </button>
-      <button
-        type="button"
-        class="btn-node small nodrag"
-        data-ds-action="default"
-        aria-label="Назначить дизайн-систему проектом по умолчанию"
-        aria-busy={busyAction === "default"}
-        onclick={() => run("default")}
-        disabled={!canDefault}
-      >
+      <button type="button" class="btn-node small nodrag" data-ds-action="default"
+        aria-busy={busyAction === "default"} onclick={() => run("default")} disabled={!canDefault}>
         {busyAction === "default" ? "Назначаю…" : "По умолчанию"}
       </button>
       {#if data.sourceNodeId}
-        <button
-          type="button"
-          class="btn-node small nodrag"
-          data-ds-action="sync"
-          aria-label="Пересобрать черновик из Source"
-          aria-busy={busyAction === "sync"}
-          onclick={() => run("sync")}
-          disabled={!canSync}
-        >
+        <button type="button" class="btn-node small nodrag" data-ds-action="sync"
+          aria-busy={busyAction === "sync"} onclick={() => run("sync")} disabled={!canSync}>
           {busyAction === "sync" ? "Сборка…" : "Sync"}
         </button>
       {/if}
@@ -112,16 +114,38 @@
 </NodeShell>
 
 <style>
-  .ds-head { display: flex; gap: 10px; align-items: center; }
-  .ds-icon { font-size: 18px; color: #7c6cf0; }
-  .ds-title { display: flex; flex-direction: column; min-width: 0; }
-  .ds-title strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ds-title small { font-size: 10px; color: #8b8fa3; }
-  .ds-stats { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10.5px; color: #aab0c0; margin-top: 8px; }
-  .ds-origins { margin-left: auto; letter-spacing: 1px; }
-  .ds-empty { font-size: 11px; color: #8b8fa3; padding: 8px 0; }
-  .ds-update { font-size: 10.5px; color: #d9a441; margin-top: 6px; }
-  .ds-error { font-size: 10.5px; color: #f87171; margin-top: 6px; }
-  .ds-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-  .ds-actions button:disabled { opacity: .5; cursor: not-allowed; }
+  .ds-head { display: flex; gap: 9px; align-items: center; }
+  .ds-icon { color: #8b7cf6; font-size: 18px; }
+  .ds-title { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+  .ds-title strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-title small { margin-top: 2px; color: #8b8fa3; font-size: 9px; }
+  .ds-funnel {
+    display: grid;
+    grid-template-columns: 1fr 36px 1fr;
+    align-items: stretch;
+    margin-top: 9px;
+    border: 1px solid var(--flow-border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--flow-surface-2), transparent 8%);
+  }
+  .ds-funnel > div:not(.funnel-arrow) { padding: 8px 9px; }
+  .ds-funnel span, .ds-funnel small { display: block; font-size: 8px; }
+  .ds-funnel span { color: #9096a8; font-weight: 650; letter-spacing: .03em; }
+  .ds-funnel strong { display: block; margin: 2px 0 1px; font-size: 18px; line-height: 1; }
+  .ds-funnel small { color: #747b8d; }
+  .source-side { box-shadow: inset 2px 0 #32b6a0; }
+  .source-side strong { color: #58d1bc; }
+  .system-side { box-shadow: inset -2px 0 #8b7cf6; text-align: right; }
+  .system-side strong { color: #a99cff; }
+  .funnel-arrow { position: relative; display: grid; place-items: center; color: #777f91; }
+  .funnel-arrow i { position: absolute; width: 100%; height: 1px; background: linear-gradient(90deg, #32b6a0, #8b7cf6); opacity: .55; }
+  .funnel-arrow b { position: relative; padding: 0 3px; background: var(--flow-surface-2); font-size: 12px; }
+  .ds-metrics { display: flex; flex-wrap: wrap; gap: 4px 9px; margin-top: 7px; color: #9da3b3; font-size: 9px; }
+  .ds-empty { padding: 9px 0; color: #8b8fa3; font-size: 10px; }
+  .ds-update, .ds-error { margin-top: 7px; border-radius: 7px; padding: 6px 7px; font-size: 9px; }
+  .ds-update { background: color-mix(in srgb, #d9a441, transparent 87%); color: #e2b85e; }
+  .ds-error { background: color-mix(in srgb, #f87171, transparent 88%); color: #f87171; }
+  .ds-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .ds-actions button:disabled { cursor: not-allowed; opacity: .5; }
 </style>

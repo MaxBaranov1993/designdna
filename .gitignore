@@ -22,3 +22,7 @@ desktop/dist/
 desktop/out/
 desktop/.runtime-build/
 desktop/runtime/
+.tmp/
+tmp/
+_ref_*.png
+_rend_*.png

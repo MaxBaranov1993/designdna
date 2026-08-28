@@ -429,38 +429,120 @@
                       paintRects.push({x,y,width:w,height:h});
                       leafBoxes.push({sourceKey,x,y,width:w,height:h});
                     };
+                    /* Структурный отпечаток элемента: тег, раскладка, состав
+                     * содержимого и бакеты размеров. Имена CSS-классов сюда не
+                     * входят намеренно — Tailwind, CSS-modules и хешированные
+                     * классы (css-1x2y3z, sc-hKgILt) делали прежнюю сигнатуру
+                     * по первым двум классам бесполезной на большинстве сайтов.
+                     * Отпечаток считается по 2 уровням потомков. */
+                    const sizeBucket=(value)=>{
+                      const v=Math.max(0,Number(value)||0);
+                      if(v<=0) return 0;
+                      return Math.round(Math.log2(v+1)*2);
+                    };
+                    const fingerprintCache=new WeakMap();
+                    const contentFlags=(el)=>{
+                      const flags=[];
+                      if(el.querySelector?.('img,svg,picture,video,canvas')) flags.push('m');
+                      if(el.querySelector?.('h1,h2,h3,h4,h5,h6')) flags.push('h');
+                      if(el.querySelector?.('a[href]')) flags.push('l');
+                      if(el.querySelector?.('button,[role="button"],input[type="submit"]')) flags.push('b');
+                      if(el.querySelector?.('input,select,textarea')) flags.push('f');
+                      const text=String(el.textContent||'').trim();
+                      if(text) flags.push('t'+Math.min(4,Math.round(Math.log10(text.length+1))));
+                      return flags.join('');
+                    };
+                    const fingerprintOf=(el,depth)=>{
+                      if(!el||!el.tagName) return '';
+                      if(depth<=0) return String(el.tagName).toLowerCase();
+                      const cached=depth===2?fingerprintCache.get(el):null;
+                      if(cached) return cached;
+                      let cs=null;
+                      try{ cs=getComputedStyle(el); }catch{ cs=null; }
+                      const rect=el.getBoundingClientRect?.()||{width:0,height:0};
+                      const parts=[
+                        String(el.tagName).toLowerCase(),
+                        cs?String(cs.display||'').slice(0,10):'',
+                        cs?String(cs.flexDirection||'').slice(0,6):'',
+                        contentFlags(el),
+                        'c'+Math.min(9,el.children?.length||0),
+                        'w'+sizeBucket(rect.width),
+                        'h'+sizeBucket(rect.height),
+                      ];
+                      const children=Array.from(el.children||[]).slice(0,6)
+                        .map(child=>fingerprintOf(child,depth-1));
+                      const value=parts.join('|')+'('+children.join(',')+')';
+                      if(depth===2) fingerprintCache.set(el,value);
+                      return value;
+                    };
+                    /* Имя компонента из содержимого, а не из классов: сырые
+                     * class-токены раньше утекали в UI Kit как названия семейств
+                     * и привязывали таксономию к вёрстке одного сайта. */
+                    const labelFrom=(el,role,visualFlags)=>{
+                      const aria=String(el.getAttribute?.('aria-label')||el.getAttribute?.('data-component')||'').trim();
+                      if(aria) return aria;
+                      const heading=el.querySelector?.('h1,h2,h3,h4,h5,h6');
+                      const headingText=heading?String(heading.textContent||'').trim():'';
+                      if(headingText) return headingText.replace(/\s+/g,' ').slice(0,60);
+                      const shape=[];
+                      if(visualFlags.includes('m')) shape.push('image');
+                      if(visualFlags.includes('t')) shape.push('text');
+                      if(visualFlags.includes('b')) shape.push('action');
+                      if(visualFlags.includes('f')) shape.push('field');
+                      return shape.length?`${role}: ${shape.join(' + ')}`:role;
+                    };
                     const componentMetaOf=(el)=>{
                       const tag=String(el.tagName||'').toLowerCase();
                       const ariaRole=String(el.getAttribute?.('role')||'').toLowerCase();
                       const semanticTags=new Set(['nav','form','header','footer','main','section','article','aside']);
                       const semanticRoles=new Set(['navigation','status','toolbar','region','complementary','form']);
-                      const identity=[String(el.id||''),...Array.from(el.classList||[])].join(' ');
-                      const named=/(^|[\s_-])(card|panel|widget|module|item|tile|rail|nav|menu|action|status|profile)([\s_-]|$)/i.test(identity);
-                      const classes=Array.from(el.classList||[])
-                        .map(value=>String(value)).filter(value=>/^[a-z][a-z0-9_-]{1,63}$/i.test(value)).slice(0,2);
-                      const signature=tag+(classes.length?'.'+classes.join('.'):'');
                       const parent=el.parentElement;
-                      const repeatCandidate=!!parent && (['li','button','a','article'].includes(tag)||named);
-                      const siblings=repeatCandidate ? Array.from(parent.children).filter(candidate=>{
-                        const candidateClasses=Array.from(candidate.classList||[])
-                          .map(value=>String(value)).filter(value=>/^[a-z][a-z0-9_-]{1,63}$/i.test(value)).slice(0,2);
-                        return String(candidate.tagName||'').toLowerCase()+(candidateClasses.length?'.'+candidateClasses.join('.'):'')===signature;
-                      }) : [];
-                      const repeatedBoundary=siblings.length>=2;
+                      // Повтор по структурному отпечатку: минимум 3 совпадающих
+                      // соседа. Порог выше прежних 2 — отпечаток куда менее
+                      // строгий, чем совпадение имён классов.
+                      let repeatedBoundary=false, repeatIndex=-1, fingerprint='';
+                      if(parent && parent.children && parent.children.length>=3){
+                        fingerprint=fingerprintOf(el,2);
+                        const matching=Array.from(parent.children)
+                          .filter(candidate=>fingerprintOf(candidate,2)===fingerprint);
+                        if(matching.length>=3){
+                          repeatedBoundary=true;
+                          repeatIndex=matching.indexOf(el);
+                        }
+                      }
                       const hasInput=!!el.querySelector?.('input,select,textarea');
                       const hasAction=!!el.querySelector?.('button,[role="button"],input[type="submit"]');
                       const childAlreadyGroupsForm=[...el.children].some(child=>
                         !!child.querySelector?.('input,select,textarea') &&
                         !!child.querySelector?.('button,[role="button"],input[type="submit"]'));
                       const syntheticForm=tag!=='form' && hasInput && hasAction && !childAlreadyGroupsForm;
-                      if(!semanticTags.has(tag) && !semanticRoles.has(ariaRole) && !named && !repeatedBoundary && !syntheticForm) return null;
+                      // Визуально обособленный контейнер: собственный фон, рамка
+                      // или тень + разнородное содержимое. Так карточка находится
+                      // по оформлению, а не по тому, назвал ли её автор «card».
+                      let visualCard=false;
+                      const flags=contentFlags(el);
+                      if(!semanticTags.has(tag) && !repeatedBoundary){
+                        let cs=null;
+                        try{ cs=getComputedStyle(el); }catch{ cs=null; }
+                        if(cs){
+                          const painted=!!hex(cs.backgroundColor)
+                            || num(cs.borderTopWidth)>0 || num(cs.borderBottomWidth)>0
+                            || (cs.boxShadow && cs.boxShadow!=='none')
+                            || num(cs.borderTopLeftRadius)>3;
+                          const rect=el.getBoundingClientRect?.()||{width:0,height:0};
+                          const composite=(flags.match(/[mhlbf]/g)||[]).length>=2;
+                          visualCard=painted && composite && rect.width>=48 && rect.height>=32;
+                        }
+                      }
+                      if(!semanticTags.has(tag) && !semanticRoles.has(ariaRole)
+                        && !repeatedBoundary && !syntheticForm && !visualCard) return null;
                       const componentRole=syntheticForm?'form':(ariaRole||tag||'component');
-                      const rawLabel=String(el.getAttribute?.('aria-label')||el.getAttribute?.('data-component')||el.id||classes[0]||componentRole);
                       const meta={kind:'dom',componentBoundary:true,
-                        componentRole:componentRole.slice(0,100),componentLabel:rawLabel.slice(0,100)};
+                        componentRole:componentRole.slice(0,100),
+                        componentLabel:labelFrom(el,componentRole,flags).slice(0,100)};
                       if(repeatedBoundary){
-                        meta.repeatGroup=(pathOf(parent,root)+'>'+signature).slice(0,500);
-                        meta.repeatIndex=siblings.indexOf(el);
+                        meta.repeatGroup=(pathOf(parent,root)+'>'+fingerprint).slice(0,500);
+                        meta.repeatIndex=repeatIndex;
                       }
                       return meta;
                     };

@@ -106,8 +106,8 @@ def main() -> None:
           str(frame))
     semantic = ir["tree"][0]["semantic"]
     check("source-block semantic metadata", semantic["role"] == "product-grid" and semantic["repeatCount"] == 3, str(semantic))
-    check("source preview is embedded for downstream pixel reference",
-          ir["sourcePreview"] == capture["preview"] and ir["tree"][0]["props"]["sourcePreview"] == capture["preview"],
+    check("source preview stays outside canonical IR and is attached by the Source output",
+          "sourcePreview" not in ir and "sourcePreview" not in ir["tree"][0]["props"],
           str(ir.get("sourcePreview")))
 
     button_capture = {
@@ -349,12 +349,9 @@ def main() -> None:
           _tokens["color"]["primary"] in ("#ff6b20", "#7715ed") and
           _tokens["font"]["body"]["family"] == "Arial",
           str(_tokens))
-    fidelity = responsive_ir["responsive"]["viewports"]["desktop"].get("fidelity")
-    check("desktop fidelity is an honest 0-100 metric",
-          fidelity is None or 0 <= fidelity <= 100, str(fidelity))
-    check("fidelity is mirrored to the capture result",
-          isinstance(captured.get("fidelity"), dict) and captured["fidelity"].get("desktop") == fidelity,
-          str(captured.get("fidelity")))
+    check("capture defers fidelity to the single certified harness pass",
+          "fidelity" not in captured and "p95_layout_error" not in captured,
+          str({"fidelity": captured.get("fidelity"), "p95": captured.get("p95_layout_error")}))
     # Honest metrics: coverage is never 100 when a visual layer was dropped, and
     # the new capture contract carries visited/emitted/dropped/extras/paint coverage.
     check("coverage is reported per viewport",
@@ -371,11 +368,6 @@ def main() -> None:
     check("coverage never reads 100% when a visual layer is dropped",
           len(dropped_visual) == 0 or all(v < 100 for v in captured["coverage"].values()),
           f"dropped_visual={len(dropped_visual)}, coverage={captured.get('coverage')}")
-    check("p95 layout error is computed for the base viewport",
-          isinstance(captured.get("p95_layout_error"), dict) and captured["p95_layout_error"].get("desktop") is not None,
-          str(captured.get("p95_layout_error")))
-
-
     # Hidden blocks (display:none / zero box) are omitted, not surfaced as import errors.
     hidden_server = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(fixture_dir)))
     hidden_thread = threading.Thread(target=hidden_server.serve_forever, daemon=True)

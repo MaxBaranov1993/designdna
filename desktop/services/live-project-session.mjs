@@ -12,7 +12,6 @@ const DEFAULT_MAX_UNDO_ENTRIES = 256;
 const SHA256_REVISION = /^[a-f0-9]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const POLLUTION_KEYS = new Set(["__proto__", "prototype", "constructor"]);
-const UTF8 = new TextEncoder();
 
 function sessionError(code, message, field = "$", { retryable = false } = {}) {
   return new LiveCommandContractError(code, message, [{ field, code, message }], { retryable });
@@ -79,13 +78,29 @@ function positiveBound(value, fallback, field) {
   return value;
 }
 
-function canonicalState(value, maxBytes, field = "project") {
-  const canonical = stableJson(value, field);
-  const bytes = UTF8.encode(canonical).length;
+function canonicalState(value, maxBytes, field = "project", precomputed = null) {
+  // precomputed — результат canonicalOnly() для ТОГО ЖЕ объекта из этого же
+  // запроса (prepare → synchronize): канонизация 8-МБ проекта дорога, и
+  // считать её дважды на каждый автосейв нельзя.
+  const canonical = precomputed && precomputed.value === value
+    ? precomputed.canonical
+    : stableJson(value, field);
+  const bytes = Buffer.byteLength(canonical, "utf8");
   if (bytes > maxBytes) {
     throw sessionError("STATE_TOO_LARGE", `${field} exceeds ${maxBytes} UTF-8 bytes`, field);
   }
   return { canonical, value: clone(value), bytes };
+}
+
+/** Канонизация без клонирования — для валидации и переиспользования в рамках
+ *  одного запроса. Результат привязан к идентичности объекта. */
+function canonicalOnly(value, maxBytes, field = "project") {
+  const canonical = stableJson(value, field);
+  const bytes = Buffer.byteLength(canonical, "utf8");
+  if (bytes > maxBytes) {
+    throw sessionError("STATE_TOO_LARGE", `${field} exceeds ${maxBytes} UTF-8 bytes`, field);
+  }
+  return { canonical, bytes, value };
 }
 
 function applyFingerprint(input, projectCanonical) {
@@ -141,11 +156,11 @@ export class LiveProjectSession {
     return `${this.userId}:${this.projectId}`;
   }
 
-  hydrateFromLoad(project, revision, updatedAt) {
+  hydrateFromLoad(project, revision, updatedAt, { precomputed = null } = {}) {
     this.#assertActive();
     const nextRevision = assertSha256Revision(revision);
     const nextUpdatedAtMs = parseTimestamp(updatedAt);
-    const next = canonicalState(project, this.maxProjectBytes);
+    const next = canonicalState(project, this.maxProjectBytes, "project", precomputed);
     if (this.revision !== null) {
       if (nextRevision === this.revision) {
         if (next.canonical !== this.projectCanonical) {
@@ -180,12 +195,12 @@ export class LiveProjectSession {
     return this.getSnapshot();
   }
 
-  notePersistedSave(project, baseRevision, newRevision, updatedAt) {
+  notePersistedSave(project, baseRevision, newRevision, updatedAt, { precomputed = null } = {}) {
     this.#assertInitialized();
     const base = assertSha256Revision(baseRevision, "baseRevision");
     const nextRevision = assertSha256Revision(newRevision, "newRevision");
     const nextUpdatedAtMs = parseTimestamp(updatedAt);
-    const next = canonicalState(project, this.maxProjectBytes);
+    const next = canonicalState(project, this.maxProjectBytes, "project", precomputed);
     if (nextUpdatedAtMs < this.updatedAtMs) {
       throw sessionError("STALE_SAVE", "Persisted save timestamp is older than the live session", "updatedAt", { retryable: true });
     }
@@ -234,8 +249,10 @@ export class LiveProjectSession {
 
   validateProject(project) {
     this.#assertActive();
-    const validated = canonicalState(project, this.maxProjectBytes);
-    return { bytes: validated.bytes };
+    // canonicalOnly: валидация не хранит состояние — клонировать проект незачем.
+    // Возвращаем canonical, чтобы save-путь переиспользовал его в
+    // notePersistedSave/hydrateFromLoad вместо повторной канонизации.
+    return canonicalOnly(project, this.maxProjectBytes);
   }
 
   async beginPreview(request, { approvalContext = {} } = {}) {

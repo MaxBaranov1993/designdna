@@ -7,6 +7,7 @@ export const WIRE_COLORS: Record<PortKind, string> = {
   text: "#7a7a8c",
   ir: "#5b5bd6",
   tokens: "#d6a13b",
+  artifact: "#35b8a0",
   interaction: "#2fbf9f",
   motion: "#e05fb0",
 };
@@ -64,12 +65,15 @@ export function outValue(n: FlowNode, port?: string): unknown {
       return { ...ir, meta: { ...meta, activeViewport: n.data.activeViewport } };
     }
     case "sourceimport":
+      if (port === "artifact") return n.data.sourceArtifact || null;
       if (port === "tokens") return n.data.tokens || null;
       {
         const block = n.data.blocks.find((b) => b.name === port && b.lit);
         const preview = block?.previews?.[n.data.activeViewport] || block?.preview;
         return block ? withSourcePreview(block.ir || null, preview, n.data.activeViewport) : null;
       }
+    case "designui":
+      return n.data.artifact || null;
     case "styledna":
       if (port === "summary") return n.data.summary || "";
       return n.data.tokens || null;

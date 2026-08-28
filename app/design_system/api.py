@@ -17,6 +17,7 @@ class BuildRequest(BaseModel):
     capturedAt: str = ""
     blocks: list = Field(default_factory=list)
     tokens: dict = Field(default_factory=dict)
+    sourceArtifact: dict | None = None
     locale: str = "ru"
     includeGeneratedStates: bool = True
     createMock: bool = True
@@ -24,6 +25,11 @@ class BuildRequest(BaseModel):
 
 class DocumentRequest(BaseModel):
     document: dict
+
+
+class OrganizeRequest(BaseModel):
+    document: dict
+    reasoningEffort: str = "high"
 
 
 class RefRequest(BaseModel):
@@ -82,6 +88,7 @@ def build_design_system(req: BuildRequest):
     if not any(isinstance(b, dict) and b.get("ir") for b in req.blocks):
         return _err(422, "Source не содержит валидных блоков — запустите импорт заново")
     node_data = {"blocks": req.blocks, "tokens": req.tokens,
+                 "sourceArtifact": req.sourceArtifact,
                  "mode": "url" if req.sourceUrl else "screenshot", "url": req.sourceUrl,
                  "capturedAt": req.capturedAt}
     pack = builder.build_source_pack(node_data, source_node_id=req.sourceNodeId)
@@ -102,6 +109,26 @@ def save_design_system_draft(req: DocumentRequest):
     from .document import summary
     document = saved.get("document") or req.document
     return {"document": document, "summary": summary(document)}
+
+
+@router.post("/api/design-system/organize")
+def organize_design_system(req: OrganizeRequest):
+    """Use Sol to organize catalog metadata without touching exact masters."""
+    if not isinstance(req.document, dict) or not req.document.get("id"):
+        return _err(422, "No Design System document")
+    try:
+        from .organizer import apply_catalog, organize_with_ai
+        catalog = organize_with_ai(req.document, reasoning_effort=req.reasoningEffort)
+        updated = apply_catalog(req.document, catalog)
+        saved = store.save_draft(updated)
+    except (ValueError, RuntimeError) as exc:
+        return _err(422, str(exc))
+    except Exception as exc:
+        return _err(502, f"AI catalog organizer failed: {exc}")
+    from .document import summary
+    document = saved.get("document") or updated
+    return {"document": document, "catalog": document.get("catalog") or catalog,
+            "summary": summary(document)}
 
 
 @router.post("/api/design-system/publish")
@@ -133,13 +160,17 @@ def preview_design_system(req: PreviewRequest):
         if not document:
             return _err(404, f"Ревизия {req.systemId}@{req.revision} не найдена")
     if (not isinstance(document, dict)
-            or not (document.get("components") or document.get("suggestions"))):
+            or not (document.get("components") or document.get("reviewComponents")
+                    or document.get("suggestions"))):
         return _err(422, "Нет документа для предпросмотра")
     components = document.get("components") or {}
+    review_components = document.get("reviewComponents") or {}
     suggestions = document.get("suggestions") or {}
     comp = None
     if req.componentKey:
-        comp = components.get(req.componentKey) or suggestions.get(req.componentKey)
+        comp = (components.get(req.componentKey)
+                or review_components.get(req.componentKey)
+                or suggestions.get(req.componentKey))
         if not isinstance(comp, dict):
             return _err(404, f"Компонент {req.componentKey} не найден")
     elif isinstance(components, dict) and components:
