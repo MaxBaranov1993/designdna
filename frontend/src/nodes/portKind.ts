@@ -5,6 +5,7 @@ export function kindClass(kind: string): string {
   if (kind === "artifact") return "port-artifact";
   if (kind === "interaction") return "port-interaction";
   if (kind === "motion") return "port-motion";
+  if (kind === "timeline") return "port-timeline";
   return "";
 }
 
@@ -15,6 +16,7 @@ export const KIND_COLORS: Record<string, string> = {
   artifact: "#35B8A0",
   interaction: "#2FBF9F",
   motion: "#E05FB0",
+  timeline: "#FF5F56",
   text: "#8A8A93",
 };
 

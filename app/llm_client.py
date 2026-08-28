@@ -23,7 +23,7 @@ OPENAI_URL = "https://api.openai.com/v1/responses"
 PROVIDERS = {"openai": {"url": OPENAI_URL, "env": "OPENAI_API_KEY"}}
 
 _ROLES = (
-    "prompt_enhancer", "planner", "motion_director", "generator", "reskin",
+    "prompt_enhancer", "planner", "motion_director", "timeline_director", "generator", "reskin",
     "repair", "style_analysis", "vision", "vision_fast", "vision_pixel_qa",
     "judge", "quality_judge", "quality_repair", "edit", "derive", "optimizer",
     "tokens", "components", "clone", "blockparse", "source_semantics",

@@ -63,6 +63,18 @@ from .motion import (
     build as build_motion,
     validate as validate_motion,
 )
+from .timeline import (
+    TIMELINE_VERSION,
+    CHANGE_SET_VERSION as TIMELINE_CHANGE_SET_VERSION,
+    build as build_timeline,
+    validate as validate_timeline,
+    extract_layers as extract_timeline_layers,
+    validate_change_set as validate_timeline_change_set,
+    build_change_set as build_timeline_change_set,
+    apply_change_set as apply_timeline_change_set,
+    revert_change_set as revert_timeline_change_set,
+    preset_operations as timeline_preset_operations,
+)
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
@@ -122,4 +134,14 @@ __all__ = [
     "MOTION_VERSION",
     "build_motion",
     "validate_motion",
+    "TIMELINE_VERSION",
+    "TIMELINE_CHANGE_SET_VERSION",
+    "build_timeline",
+    "validate_timeline",
+    "extract_timeline_layers",
+    "validate_timeline_change_set",
+    "build_timeline_change_set",
+    "apply_timeline_change_set",
+    "revert_timeline_change_set",
+    "timeline_preset_operations",
 ]

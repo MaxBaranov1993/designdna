@@ -925,7 +925,10 @@ import { isLockedNode } from "./locked";
       styleEl.rel = "stylesheet";
       document.head.appendChild(styleEl);
     }
-    const href = tokens.font ? fontsUrl(tokens, ir) : "";
+    // offline-рендер (timeline_render.py) детерминирован: шрифты берутся только
+    // из локальных @font-face ниже, внешний каталог не запрашивается вовсе
+    const offline = !!(options && options.offline);
+    const href = tokens.font && !offline ? fontsUrl(tokens, ir) : "";
     if (href) styleEl.href = href;
     else styleEl.removeAttribute("href");
 

@@ -22,6 +22,8 @@ DEFAULT_FLAGS = {
     "videoRender": True,
     # Stage 7: AI director for motion.
     "aiDirector": False,
+    # Stage 8: authored video timeline (Video Editor node).
+    "videoEditor": True,
 }
 
 

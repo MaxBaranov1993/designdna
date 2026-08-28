@@ -19,6 +19,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   qualitypass: { title: "Quality Pass", icon: "✓", w: 310, sub: "judge + repair + scorecard", accent: "#22C55E" },
   recorder: { title: "Interaction Recorder", icon: "REC", w: 334, sub: "IR actions → Interaction IR", accent: "#22C55E" },
   motion: { title: "Motion Editor", icon: "M", w: 322, sub: "Interaction IR → editable timeline", accent: "#E05FB0" },
+  timeline: { title: "Video Editor", icon: "▶", w: 322, sub: "слои и кейфреймы → локальный ролик", accent: "#FF5F56" },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300, sub: "передать компонент между страницами", accent: "#35B8A0" },
   designsystem: { title: "Design System / UI Kit", icon: "◈", w: 300, sub: "Source → published DS", accent: "#9B5CFF" },
 };
@@ -91,6 +92,10 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
       { name: "interaction", label: "Interaction IR", kind: "interaction" },
     ],
     out: [{ name: "motion", label: "Motion IR", kind: "motion" }],
+  },
+  timeline: {
+    in: [{ name: "ir", label: "Design IR", kind: "ir" }],
+    out: [{ name: "timeline", label: "Timeline IR", kind: "timeline" }],
   },
   pagebridge: {
     in: [{ name: "ir", label: "component", kind: "ir" }],
@@ -188,6 +193,12 @@ export function defaultData(type: NodeType): AnyNodeData {
         composition: { width: 1920, height: 1080, fps: 30 },
         renderSettings: { format: "mp4", quality: "high" }, renderJob: null, sceneSettings: {},
       };
+    case "timeline":
+      return {
+        ir: null, timeline: null,
+        settings: { width: 1920, height: 1080, fps: 30, duration: 8000 },
+        renderJob: null,
+      };
     case "designsystem":
       return ({ systemId: null, name: "", status: "draft", revision: 0, summary: null,
                sourceNodeId: null, defaultSet: false, sourceUpdate: false } as unknown as AnyNodeData);
@@ -234,6 +245,7 @@ export const CTX_GROUPS: { label: string; color: string; items: { type: NodeType
       { type: "qualitypass", note: "judge + repair + scorecard" },
       { type: "recorder", note: "IR actions → Interaction IR" },
       { type: "motion", note: "Interaction IR → editable timeline" },
+      { type: "timeline", note: "компоненты → слои, кейфреймы и локальный ролик" },
       { type: "designsystem", note: "Source → UI Kit → published Design System" },
     ],
   },
@@ -253,6 +265,7 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "qualitypass", note: "judge + repair + scorecard" },
   { type: "recorder", note: "IR actions -> Interaction IR" },
   { type: "motion", note: "Interaction IR -> editable timeline" },
+  { type: "timeline", note: "компоненты -> ролик: слои и кейфреймы" },
   { type: "pagebridge", note: "передать компонент между страницами" },
   { type: "designsystem", note: "Source → UI Kit → published Design System" },
 ];

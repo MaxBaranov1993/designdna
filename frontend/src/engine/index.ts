@@ -6,6 +6,7 @@ import { IRRenderer } from "./renderer";
 import { GeoEdit } from "./geoedit";
 import { IRHistory } from "./irhistory";
 import { DesignAIFontCatalog } from "./fontCatalog";
+import { TimelineEngine, Timeline } from "./timeline";
 
 declare global {
   interface Window {
@@ -13,6 +14,8 @@ declare global {
     GeoEdit: typeof GeoEdit;
     IRHistory: typeof IRHistory;
     DesignAIFontCatalog: typeof DesignAIFontCatalog;
+    TimelineEngine: typeof TimelineEngine;
+    Timeline: typeof Timeline;
   }
 }
 
@@ -21,6 +24,8 @@ if (typeof window !== "undefined") {
   window.GeoEdit = GeoEdit;
   window.IRHistory = IRHistory;
   window.DesignAIFontCatalog = DesignAIFontCatalog;
+  window.TimelineEngine = TimelineEngine;
+  window.Timeline = Timeline;
 }
 
-export { IRRenderer, GeoEdit, IRHistory, DesignAIFontCatalog };
+export { IRRenderer, GeoEdit, IRHistory, DesignAIFontCatalog, TimelineEngine, Timeline };

@@ -10,6 +10,7 @@ export const WIRE_COLORS: Record<PortKind, string> = {
   artifact: "#35B8A0",
   interaction: "#2FBF9F",
   motion: "#E05FB0",
+  timeline: "#FF5F56",
 };
 
 /* Глубокое копирование значения между нодами. */
@@ -97,6 +98,8 @@ export function outValue(n: FlowNode, port?: string): unknown {
       return n.data.interaction || null;
     case "motion":
       return n.data.motion || null;
+    case "timeline":
+      return n.data.timeline || null;
     case "pagebridge":
       return n.data.ir || null;
   }

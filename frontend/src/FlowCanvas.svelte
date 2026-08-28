@@ -33,6 +33,7 @@
   import QualityPassNode from "./nodes/QualityPassNode.svelte";
   import RecorderNode from "./nodes/RecorderNode.svelte";
   import MotionNode from "./nodes/MotionNode.svelte";
+  import TimelineNode from "./nodes/TimelineNode.svelte";
   import PageBridgeNode from "./nodes/PageBridgeNode.svelte";
   import DnaEdge from "./flow/DnaEdge.svelte";
 
@@ -52,6 +53,7 @@
     qualitypass: QualityPassNode,
     recorder: RecorderNode,
     motion: MotionNode,
+    timeline: TimelineNode,
     pagebridge: PageBridgeNode,
   };
   const edgeTypes = { default: DnaEdge };
