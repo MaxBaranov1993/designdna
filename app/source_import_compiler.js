@@ -154,6 +154,9 @@
                         ?bw.map((w,i)=>({width:w,color:bc[i]||'#e0e0e0'})):null,
                       borderRadius:Math.min(1000,Math.max(0,num(cs.borderTopLeftRadius))),
                       boxShadow:cs.boxShadow && cs.boxShadow!=='none' ? cs.boxShadow.slice(0,300) : null,
+                      // text-shadow не захватывался вовсе: подсвеченные заголовки
+                      // («свечение» акцентного слова) приезжали плоскими.
+                      textShadow:cs.textShadow && cs.textShadow!=='none' ? cs.textShadow.slice(0,300) : null,
                       textDecoration:safeEnum(deco,['none','underline','line-through','overline'],'none'),
                       whiteSpace:safeEnum(cs.whiteSpace,['normal','nowrap','pre','pre-wrap','pre-line','break-spaces'],'normal'),
                       overflow:safeEnum(cs.overflow,['visible','hidden','clip','scroll','auto'],'visible'),
@@ -184,6 +187,15 @@
                     // clip-path сериализуем в style (renderer применяет обратно);
                     // url()-mask уходит в raster fallback на уровне compile()
                     // (editable:false слой + element-screenshot), здесь — warning.
+                    // Градиентный текст (background-clip:text + color:transparent):
+                    // раньше цвет уезжал прозрачным, а градиент срезался как фон —
+                    // акцентное слово исчезало. Сохраняем связку целиком.
+                    const bgClip=String(cs.backgroundClip||cs.webkitBackgroundClip||'');
+                    if(bgClip==='text' && cs.backgroundImage && cs.backgroundImage!=='none'
+                        && !/url\s*\(/.test(cs.backgroundImage)){
+                      style.backgroundClip='text';
+                      style.backgroundImage=cs.backgroundImage.slice(0,800);
+                    }
                     const mask=cs.maskImage||cs.webkitMaskImage||'';
                     if(mask && mask!=='none'){
                       if(/url\s*\(/.test(mask)) warnings.add('url mask: raster fallback');
@@ -196,6 +208,10 @@
                     const out = Object.assign({}, s);
                     delete out.background; delete out.borderColor; delete out.borderWidth;
                     delete out.borderRadius; delete out.boxShadow;
+                    // textShadow и градиентная заливка текста — типографика, а не
+                    // «краска контейнера»: их вычищать нельзя, иначе подсветка
+                    // акцентного слова теряется.
+                    if (out.backgroundClip !== 'text') delete out.backgroundImage;
                     return out;
                   };
                   const pathOf = (el,root) => {
@@ -778,7 +794,11 @@
                           sourceKey:skey,sourceMeta:{kind},style:{},frame}];
                         return [];
                       };
-                      const bgLayers=parseBackground(cs.backgroundImage);
+                      // background-clip:text — это заливка глифов, а не фон блока:
+                      // синтетический слой нарисовал бы градиентный прямоугольник
+                      // поверх текста. Градиент уже уехал в style (styleOf).
+                      const clipsTextFill=String(cs.backgroundClip||cs.webkitBackgroundClip||'')==='text';
+                      const bgLayers=clipsTextFill?[]:parseBackground(cs.backgroundImage);
                       const beforeLayers=pseudoLayers('::before','pseudo-before');
                       const afterLayers=pseudoLayers('::after','pseudo-after');
                       const bgLayerFor=(bg,i)=>{
@@ -828,9 +848,14 @@
                             }
                           }catch(_){}
                         }
+                        // textShadow и background-clip:text — самостоятельные
+                        // визуальные каналы акцентного слова: без них подсвеченный
+                        // спан молча сливался с текстом родителя.
+                        const clipsText=String(ccs.backgroundClip||ccs.webkitBackgroundClip||'')==='text';
                         const typographyDiff=ccs.fontFamily!==cs.fontFamily || ccs.fontSize!==cs.fontSize ||
                           ccs.fontWeight!==cs.fontWeight || ccs.color!==cs.color ||
-                          ccs.letterSpacing!==cs.letterSpacing || ccs.textTransform!==cs.textTransform;
+                          ccs.letterSpacing!==cs.letterSpacing || ccs.textTransform!==cs.textTransform ||
+                          ccs.textShadow!==cs.textShadow || clipsText;
                         return ownPaint || pseudoPaint || typographyDiff;
                         });
                       };
@@ -1034,9 +1059,14 @@
                         beforeLayers.forEach(addSynth);
                         allChildren.push(...rawChildren);
                         afterLayers.forEach(addSynth);
-                      } else if(bgLayers.length || beforeLayers.length || afterLayers.length){
-                        // неконтейнерный тип (image/heading) не может нести детей —
-                        // синтетический канал теряется, журналируем честно
+                      } else {
+                        // Отделённые inline-акценты (подсвеченное слово внутри
+                        // заголовка) обязаны доехать: без этого они исчезали
+                        // молча — текст родителя их уже не содержал, а своего
+                        // слоя они не получали.
+                        if(splitInlineKids) allChildren.push(...rawChildren);
+                        // Синтетические каналы неконтейнерный тип нести не может —
+                        // журналируем честно.
                         if(bgLayers.length) recordExtra(key,'background-image',r,true);
                         beforeLayers.forEach(l=>recordExtra(l.sourceKey,'pseudo',r,true));
                         afterLayers.forEach(l=>recordExtra(l.sourceKey,'pseudo',r,true));

@@ -162,6 +162,18 @@ import { isLockedNode } from "./locked";
     if (style.fontVariantNumeric === "tabular-nums") s.push(`font-variant-numeric:tabular-nums`);
     if (["none", "underline", "line-through", "overline"].includes(style.textDecoration)) s.push(`text-decoration:${style.textDecoration}`);
     if (["none", "uppercase", "lowercase", "capitalize"].includes(style.textTransform)) s.push(`text-transform:${style.textTransform}`);
+    // Свечение акцентного слова. Charset тот же, что у boxShadow: только
+    // числа, единицы, цвета и запятые — без url()/expression().
+    const ts = style.textShadow;
+    if (typeof ts === "string" && ts.length <= 300 && /^[a-zA-Z0-9\s(),.%#-]+$/.test(ts)) s.push(`text-shadow:${ts}`);
+    // Градиентная заливка текста: цвет глифов задаёт background-clip, поэтому
+    // color обязан стать прозрачным — иначе градиент не виден.
+    const bgImage = style.backgroundImage;
+    if (style.backgroundClip === "text" && typeof bgImage === "string"
+      && bgImage.length <= 800 && !/url\s*\(|expression/i.test(bgImage)) {
+      s.push(`background-image:${bgImage}`, "-webkit-background-clip:text",
+        "background-clip:text", "color:transparent");
+    }
     return s.join(";");
   }
   function styleAttr(style, extra) {

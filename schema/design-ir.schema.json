@@ -1651,6 +1651,15 @@
           "type": "string",
           "maxLength": 300
         },
+        "textShadow": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "CSS text-shadow источника (свечение акцентного текста) — Source Import"
+        },
+        "backgroundClip": {
+          "enum": ["text"],
+          "description": "background-clip:text — градиентная заливка глифов; парно с backgroundImage (Source Import)"
+        },
         "textDecoration": {
           "enum": [
             "none",
