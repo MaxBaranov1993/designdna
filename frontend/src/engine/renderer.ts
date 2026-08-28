@@ -147,7 +147,37 @@ import { isLockedNode } from "./locked";
     if (typeof mask === "string" && mask.length <= 800 && !/[;{}<>"'\\\r\n]/.test(mask) && !/url\s*\(/i.test(mask)) s.push(`mask-image:${mask}`, `-webkit-mask-image:${mask}`);
     const cp = style.clipPath;
     if (typeof cp === "string" && cp.length <= 300 && /^[a-zA-Z0-9\s(),.%#-]+$/.test(cp)) s.push(`clip-path:${cp}`);
+    // Свечение текста. Узлы text/heading рендерятся именно этой функцией, а не
+    // visualTextCss (она обслуживает только подписи кнопок), поэтому канал
+    // обязан быть здесь — иначе подсветка акцентного слова не доезжает.
+    const ts = style.textShadow;
+    if (typeof ts === "string" && ts.length <= 300 && !/[;{}<>"'\\\r\n]/.test(ts) && !/url\s*\(/i.test(ts)) s.push(`text-shadow:${ts}`);
+    // Градиентная заливка глифов: идёт ПОСЛЕ background-image и color выше —
+    // последнее правило побеждает, поэтому цвет становится прозрачным, а
+    // градиент обрезается по буквам, а не красит прямоугольник.
+    if (style.backgroundClip === "text" && typeof bgImg === "string") {
+      s.push("-webkit-background-clip:text", "background-clip:text", "color:transparent");
+    }
     return s.join(";");
+  }
+  /** Inline-акценты внутри text/heading: свой стиль, свой измеренный кадр.
+   *  Возвращает готовый HTML или "" — узлы без кадра сюда не попадают, их
+   *  текст уже поглощён родителем (компилятор помечает такие merged-into-text). */
+  function accentChildren(el) {
+    const kids = Array.isArray(el.children) ? el.children : [];
+    const placed = kids.filter((c) => c && c.type === "text" && c.frame
+      && typeof c.frame.x === "number" && typeof c.frame.y === "number");
+    if (!placed.length) return "";
+    return placed.map((c) => {
+      const css = [
+        "position:absolute",
+        `left:${c.frame.x}px`,
+        `top:${c.frame.y}px`,
+        typeof c.frame.width === "number" ? `width:${c.frame.width}px` : "",
+        visualCss(c.style),
+      ].filter(Boolean).join(";");
+      return `<span style="${css}">${esc(c.text || "")}</span>`;
+    }).join("");
   }
   function visualTextCss(style) {
     if (!style || typeof style !== "object") return "";
@@ -420,26 +450,31 @@ import { isLockedNode } from "./locked";
     // data-ir-path НЕ ставится здесь — он добавляется на withFrame-обёртку в renderElement
     // или на card-корень. Исключение: props-элементы секций ставят path сами.
     switch (el.type) {
+      /* Акцентные inline-дети (подсвеченное слово, градиентная заливка) —
+       * самостоятельные слои со своим стилем и измеренным кадром. Раньше они
+       * схлопывались в голый текст: компилятор их отдавал, а рендер терял,
+       * поэтому подсветка не доезжала до картинки. */
       case "heading": {
         const lvl = Math.min(4, Math.max(1, el.level || 2));
         const a = safeAlign(el.align);
-        const textCss = visualCss(el.style);
         const alignCss = a ? `text-align:${a}` : "";
-        const css = [textCss, alignCss].filter(Boolean).join(";");
+        const placed = accentChildren(el);
+        const css = [visualCss(el.style), alignCss, placed ? "position:relative" : ""].filter(Boolean).join(";");
         const sa = css ? ` style="${css}"` : "";
         const childText = Array.isArray(el.children)
           ? el.children.map((c) => c && (c.text || c.title || "")).filter(Boolean).join(" ")
           : "";
-        return `<h${lvl}${sa}>${esc(el.text || el.title || childText || "")}</h${lvl}>`;
+        const own = esc(el.text || el.title || (placed ? "" : childText) || "");
+        return `<h${lvl}${sa}>${own}${placed || ""}</h${lvl}>`;
       }
       case "text": {
         const a = safeAlign(el.align);
-        const textCss = visualCss(el.style);
         const alignCss = a ? `text-align:${a}` : "";
-        const css = [textCss, alignCss].filter(Boolean).join(";");
+        const placed = accentChildren(el);
+        const css = [visualCss(el.style), alignCss, placed ? "position:relative" : ""].filter(Boolean).join(";");
         const sa = css ? ` style="${css}"` : "";
         const cls = el.size === "sm" || el.size === "xs" ? ' class="muted"' : "";
-        return `<p${cls}${sa}>${esc(el.text || "")}</p>`;
+        return `<p${cls}${sa}>${esc(el.text || "")}${placed || ""}</p>`;
       }
       case "button": {
         const free = el.frame && el.frame.layout === "free";
