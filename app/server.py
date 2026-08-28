@@ -237,6 +237,17 @@ class BlockParseRefineReq(BaseModel):
     operations: list = []
 
 
+class FidelityRepairReq(BaseModel):
+    """Цикл AI-починки захвата. prepareOnly отдаёт задания на диагностику
+    (регион + узлы), rawOutputs — ответы провайдера; сервер применяет их только
+    если пиксельное сходство выросло."""
+    blocks: list
+    viewport: str = "desktop"
+    prepareOnly: bool = False
+    rawOutputs: list = []
+    maxRegions: int = 3
+
+
 class ReskinReq(BaseModel):
     ir: dict
     prompt: str = ""
@@ -908,6 +919,105 @@ def block_parse_refine(req: BlockParseRefineReq):
     artifact = blockparse._build_source_artifact("", blocks, tokens, False)
     return {"ok": True, "blocks": blocks, "sourceArtifact": artifact,
             "applied": applied, "appliedCount": len(applied)}
+
+
+@app.post("/api/block-parse/repair")
+def block_parse_repair(req: FidelityRepairReq):
+    """AI-починка расхождений захвата с детерминированным судьёй.
+
+    prepareOnly → задания диагностики (худшие регионы + узлы в них) для
+    выбранного пользователем провайдера. С rawOutputs сервер валидирует
+    предложения, применяет каждое к копии IR, ПЕРЕМЕРЯЕТ сходство тем же
+    harness и оставляет только те, что реально улучшили картинку.
+    """
+    import fidelity_repair
+
+    blocks = [b for b in (req.blocks or [])
+              if isinstance(b, dict) and isinstance(b.get("ir"), dict) and not b.get("error")]
+    if not blocks:
+        return err(422, "Нет разобранных блоков для починки.")
+    viewport = str(req.viewport or "desktop")
+
+    def viewport_report(block: dict) -> dict:
+        report = block.get("fidelityReport") if isinstance(block.get("fidelityReport"), dict) else {}
+        viewports = report.get("viewports") if isinstance(report.get("viewports"), dict) else {}
+        return viewports.get(viewport) if isinstance(viewports.get(viewport), dict) else {}
+
+    if req.prepareOnly:
+        tasks = []
+        for index, block in enumerate(blocks):
+            metrics = viewport_report(block)
+            for rect in fidelity_repair.region_rects(metrics, limit=max(1, min(6, req.maxRegions))):
+                nodes = fidelity_repair.nodes_in_region(block["ir"], rect)
+                if not nodes:
+                    continue
+                tasks.append({
+                    "blockIndex": index,
+                    "block": block.get("name"),
+                    "region": rect,
+                    "messages": fidelity_repair.build_repair_prompt(
+                        str(block.get("name") or f"block-{index}"), viewport, rect, nodes, metrics),
+                })
+        return {"tasks": tasks, "viewport": viewport}
+
+    try:
+        import fidelity_harness
+        import scraper
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:  # pragma: no cover - окружение без Playwright
+        return err(502, f"Harness недоступен: {exc}")
+
+    outputs: dict[int, list[str]] = {}
+    for item in req.rawOutputs or []:
+        if isinstance(item, dict) and isinstance(item.get("blockIndex"), int):
+            outputs.setdefault(int(item["blockIndex"]), []).append(str(item.get("content") or ""))
+
+    results = []
+    try:
+        with sync_playwright() as playwright:
+            browser = scraper.launch_chromium(playwright)
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 900},
+                                        device_scale_factor=1)
+                for index, block in enumerate(blocks):
+                    answers = list(outputs.get(index) or [])
+                    if not answers:
+                        continue
+                    metrics = viewport_report(block)
+                    reference = block.get("previews", {}).get(viewport) or block.get("preview")
+                    size = (block.get("sizes") or {}).get(viewport) or block.get("size") or {}
+                    width = int(size.get("width") or 1440)
+                    height = int(size.get("height") or 900)
+                    if not isinstance(reference, str) or not reference.startswith("data:"):
+                        continue
+                    reference_png = fidelity_harness._decode_data_url(reference)
+                    measure = fidelity_repair.make_browser_measurer(
+                        page, reference_png, viewport, width, height)
+                    pending = iter(answers)
+                    outcome = fidelity_repair.repair_block(
+                        block["ir"], block_name=str(block.get("name") or index),
+                        viewport=viewport, report_viewport=metrics,
+                        measure=measure,
+                        propose=lambda _messages: next(pending, ""),
+                        max_regions=max(1, min(6, req.maxRegions)))
+                    if outcome.get("ir"):
+                        block["ir"] = outcome["ir"]
+                    results.append({
+                        "blockIndex": index, "block": block.get("name"),
+                        "baseline": outcome.get("baseline"), "similarity": outcome.get("similarity"),
+                        "gain": outcome.get("gain"),
+                        "appliedCount": len(outcome.get("applied") or []),
+                        "rejectedCount": len(outcome.get("rejected") or []),
+                        "applied": outcome.get("applied") or [],
+                    })
+            finally:
+                browser.close()
+    except Exception as exc:
+        traceback.print_exc()
+        return err(502, f"Ошибка починки: {exc}")
+
+    return {"ok": True, "viewport": viewport, "blocks": blocks, "results": results,
+            "totalGain": round(sum(float(r.get("gain") or 0) for r in results), 2)}
 
 
 @app.post("/api/reskin")

@@ -143,7 +143,16 @@
         />
         AI-уточнение компонентов
       </label>
-      {#if data.aiRefine}
+      <label class="bp-mine nodrag" title="Модель объясняет расхождения рендера с оригиналом. Правка применяется, только если измеренное сходство выросло — ухудшить результат она не может.">
+        <input
+          type="checkbox"
+          class="f-ai-repair"
+          checked={!!data.aiRepair}
+          onchange={(e) => $flow.setNodeData(Number(id), { aiRepair: e.currentTarget.checked })}
+        />
+        AI-починка расхождений
+      </label>
+      {#if data.aiRefine || data.aiRepair}
         <ProviderPicker
           provider={data.aiProvider || "openai"}
           effort="medium"

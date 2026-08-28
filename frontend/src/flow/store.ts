@@ -176,6 +176,60 @@ async function refineSourceWithAi(
   return { ...response, blocks: applied.blocks, sourceArtifact: applied.sourceArtifact as never };
 }
 
+/* Цикл AI-починки захвата.
+ *
+ * Судья — тот же fidelity-harness, что решает публикуемость: сервер применяет
+ * предложение к КОПИИ IR, перемеряет пиксельное сходство и оставляет правку,
+ * только если она реально улучшила картинку. Поэтому неудачная гипотеза
+ * модели не может ухудшить результат — худший исход это откат. */
+type RepairTask = { blockIndex: number; block?: string; region: Record<string, number>; messages: import("./api").ApiChatMessage[] };
+
+async function repairSourceWithAi(
+  response: BlockParseResp,
+  provider: NodeProvider,
+  viewport: string,
+  setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
+  id: number,
+): Promise<BlockParseResp | null> {
+  const desktop = window.designDNA;
+  if (!desktop) return null;
+  const prepared = await api<{ tasks: RepairTask[] }>("/api/block-parse/repair", {
+    blocks: response.blocks, viewport, prepareOnly: true,
+  });
+  const tasks = prepared?.tasks || [];
+  if (!tasks.length) return null;
+
+  const rawOutputs: Array<{ blockIndex: number; content: string }> = [];
+  for (const [index, task] of tasks.entries()) {
+    setStatus(id, `AI-починка: диагностика ${index + 1}/${tasks.length}…`);
+    try {
+      const answer = await desktop.providers.chatRequest({
+        ...chatRoute(provider, "high"),
+        messages: task.messages,
+      });
+      rawOutputs.push({ blockIndex: task.blockIndex, content: answer.content });
+    } catch {
+      // Один неудачный диагноз не отменяет остальные.
+    }
+  }
+  if (!rawOutputs.length) return null;
+
+  setStatus(id, "AI-починка: перепроверяю сходство…");
+  const applied = await api<{
+    blocks: BlockParseResp["blocks"];
+    totalGain: number;
+    results: Array<{ appliedCount: number; rejectedCount: number }>;
+  }>("/api/block-parse/repair", { blocks: response.blocks, viewport, rawOutputs });
+  const acceptedCount = (applied?.results || []).reduce((sum, r) => sum + (r.appliedCount || 0), 0);
+  const rejectedCount = (applied?.results || []).reduce((sum, r) => sum + (r.rejectedCount || 0), 0);
+  if (!acceptedCount) {
+    setStatus(id, `AI-починка: улучшений не найдено (${rejectedCount} отклонено замером)`);
+    return null;
+  }
+  setStatus(id, `AI-починка: +${applied.totalGain}% сходства, ${acceptedCount} правок`, "ok");
+  return { ...response, blocks: applied.blocks };
+}
+
 const DESIGN_SYSTEM_SECTION_TYPES = new Set([
   "navbar", "hero", "logo-cloud", "feature-grid", "feature-alternating", "stats", "steps",
   "gallery", "testimonials", "pricing", "comparison", "team", "blog-grid", "faq", "cta",
@@ -1046,6 +1100,19 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           } catch (error) {
             // Уточнение опционально: детерминированный результат остаётся в силе.
             get().setStatus(id, `AI-уточнение пропущено: ${friendlyProviderError(error)}`);
+          }
+        }
+        // AI-починка расхождений: судья — fidelity-harness, правка принимается
+        // только при росте измеренного сходства.
+        if (data.aiRepair && window.designDNA) {
+          try {
+            const repaired = await repairSourceWithAi(
+              res, nodeProvider(data.aiProvider), data.activeViewport || "desktop",
+              get().setStatus, id,
+            );
+            if (repaired) res = repaired;
+          } catch (error) {
+            get().setStatus(id, `AI-починка пропущена: ${friendlyProviderError(error)}`);
           }
         }
         const litBefore = new Set(data.blocks.filter((b) => b.lit).map((b) => b.name));
