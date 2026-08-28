@@ -196,7 +196,7 @@ def main():
 
         pg.click(".svelte-flow__pane", button="right", position={"x": 520, "y": 100})
         pg.wait_for_selector("#ctx-menu")
-        check("menu has 15 current node types", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 15"))
+        check("menu has 16 current node types", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 16"))
         check("old nodes are removed from menu", pg.locator("#ctx-menu .ctx-item[data-type='clone']").count() == 0
               and pg.locator("#ctx-menu .ctx-item[data-type='reproduce']").count() == 0
               and pg.locator("#ctx-menu .ctx-item[data-type='blockparse']").count() == 0)
@@ -206,13 +206,13 @@ def main():
         pg.evaluate("""(() => {
             window.GraphDev.add('prompt', 80, 60);
             window.GraphDev.add('sourceimport', 80, 360);
-            window.GraphDev.add('styledna', 500, 360);
+            window.GraphDev.add('designsystem', 500, 360);
             window.GraphDev.add('derive', 900, 360);
             window.GraphDev.add('edit', 830, 60);
             window.GraphDev.add('mix', 500, 690);
             window.GraphDev.add('qualitypass', 1240, 60);
         })()""")
-        for sel in (".n-prompt", ".n-sourceimport", ".n-styledna", ".n-derive", ".n-edit", ".n-mix", ".n-qualitypass"):
+        for sel in (".n-prompt", ".n-sourceimport", ".n-designsystem", ".n-derive", ".n-edit", ".n-mix", ".n-qualitypass"):
             pg.wait_for_selector(sel)
         check("created 8 nodes", pg.evaluate("window.GraphDev.state().nodes.length === 8"))
         check("Browser Generator defaults to Sol",
@@ -277,8 +277,16 @@ def main():
 
         check("connect prompt → generator", connect_types(pg, "prompt", "out", "generator", "prompt"))
         check("connect generator → edit", connect_types(pg, "generator", "ir", "edit", "a"))
-        check("connect Source Import tokens → Style DNA", connect_types(pg, "sourceimport", "tokens", "styledna", "tokens"))
-        check("connect Style DNA → Derive", connect_types(pg, "styledna", "tokens", "derive", "tokens"))
+        check("connect Source Artifact → Design System", connect_types(pg, "sourceimport", "artifact", "designsystem", "artifact"))
+        pg.evaluate("""(() => {
+            const source = window.GraphDev.state().nodes.find(x => x.type === 'sourceimport');
+            const system = window.GraphDev.state().nodes.find(x => x.type === 'designsystem');
+            window.GraphDev.patchData(system.id, {
+                sourceNodeId: source.id,
+                document: { styleGuide: { tokens: window.GraphDev.node(source.id).data.tokens } }
+            });
+        })()""")
+        check("connect Design System → Derive", connect_types(pg, "designsystem", "tokens", "derive", "tokens"))
         check("connect prompt → Derive", connect_types(pg, "prompt", "out", "derive", "prompt"))
         # дроп в неперекрытую точку Derive: ноды выросли и центр часто перекрыт
         _sx, _sy = center(pg.query_selector(".n-sourceimport .pp-out-hero").bounding_box())
@@ -301,10 +309,9 @@ def main():
         check("Generator uses auto provider", CAPTURED.get("generate", [{}])[0].get("provider") == "auto")
         pg.wait_for_selector('.n-edit .f-preview .ir-preview-inner div[class^="ir-"]', timeout=5000)
 
-        run_node_type(pg, "styledna")
-        check("Style DNA extracts tokens", pg.evaluate("""(() => {
-            const n = window.GraphDev.state().nodes.find(x => x.type === 'styledna');
-            return !!window.GraphDev.node(n.id).data.tokens.color;
+        check("Design System exposes Source style DNA", pg.evaluate("""(() => {
+            const n = window.GraphDev.state().nodes.find(x => x.type === 'designsystem');
+            return !!window.GraphDev.node(n.id).data.document?.styleGuide?.tokens?.color;
         })()"""))
 
         run_node_type(pg, "derive")
@@ -332,7 +339,7 @@ def main():
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
         check("after reload: current graph persists", pg.evaluate("window.GraphDev.state().nodes.length === 8"))
         check("after reload: old node types absent", pg.evaluate("""(() => {
-            return window.GraphDev.state().nodes.every(n => !['clone','reproduce','blockparse'].includes(n.type));
+            return window.GraphDev.state().nodes.every(n => !['clone','reproduce','blockparse','styledna'].includes(n.type));
         })()"""))
 
         browser.close()

@@ -123,6 +123,7 @@
         job = await apiGet<MotionRenderJob>(`/api/motion/render/${job.id}`);
         $flow.setNodeData(nodeId, { renderJob: job });
       }
+      if (job.status === "complete") $flow.propagate(nodeId);
     } catch (error) {
       $flow.setNodeData(nodeId, {
         renderJob: {

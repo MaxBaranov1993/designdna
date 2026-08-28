@@ -93,10 +93,17 @@ async function ensureWorkerConfigured(worker) {
   }
   await queue.run(async () => {
     const key = credentials.get("openai");
+    const openrouterKey = credentials.get("openrouter");
     const keyTag = key ? createHash("sha256").update(String(key)).digest("hex").slice(0, 12) : "-";
-    const fingerprint = `${worker.spawnCount}:${keyTag}`;
+    const openrouterTag = openrouterKey
+      ? createHash("sha256").update(String(openrouterKey)).digest("hex").slice(0, 12)
+      : "-";
+    const fingerprint = `${worker.spawnCount}:${keyTag}:${openrouterTag}`;
     if (configureFingerprints.get(worker) === fingerprint) return;
-    await worker.request("runtime.configure", { openaiApiKey: key || "" });
+    await worker.request("runtime.configure", {
+      openaiApiKey: key || "",
+      openrouterApiKey: openrouterKey || "",
+    });
     configureFingerprints.set(worker, fingerprint);
   });
 }

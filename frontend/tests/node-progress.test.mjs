@@ -70,7 +70,7 @@ test("video chain page lays nodes in a single row and auto-fits the view", async
     xs.push(Number(m[1]));
     ys.push(Number(m[1 + 1]));
   }
-  assert.equal(xs.length, 5, "five nodes in the preset");
+  assert.equal(xs.length, 6, "six nodes in the preset, including Motion Design");
   assert.ok(ys.every((y) => y === ys[0]), "single row — no vertical overlap");
   for (let i = 1; i < xs.length; i++) {
     assert.ok(xs[i] > xs[i - 1], "left-to-right order");

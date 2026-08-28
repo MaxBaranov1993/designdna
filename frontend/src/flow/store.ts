@@ -53,8 +53,11 @@ import type {
   RecorderNodeData,
   InteractionLiveAction,
   MotionNodeData,
+  MotionDesignNodeData,
+  SeedanceVideoJob,
   SourceArtifact,
   TimelineNodeData,
+  VideoArtifact,
 } from "./types";
 
 function friendlyProviderError(error: unknown) {
@@ -88,6 +91,78 @@ function chatRoute(provider: NodeProvider, effort: unknown) {
   const reasoning = { effort: nodeEffort(effort) };
   if (provider === "claude") return { provider, model: "opus", reasoning };
   return { provider, model: "gpt-5.6-sol", reasoning };
+}
+
+const MOTION_DESIGN_TERMINAL = new Set(["completed", "failed", "cancelled", "expired"]);
+const motionDesignPollTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+function motionDesignDigest(motion: IRObject | null, timeline: IRObject | null, video: VideoArtifact | null) {
+  const motionScenes = Array.isArray(motion?.scenes) ? motion.scenes.slice(0, 16) : [];
+  const timelineLayers = Array.isArray(timeline?.layers) ? timeline.layers.slice(0, 24) : [];
+  return {
+    video: video ? {
+      origin: video.origin,
+      filename: video.filename,
+      width: video.width,
+      height: video.height,
+      fps: video.fps,
+      duration: video.duration,
+      parameters: JSON.stringify(video.parameters || {}).slice(0, 2_000),
+    } : null,
+    motion: motion ? {
+      version: motion.version,
+      composition: motion.composition,
+      scenes: motionScenes.map((scene) => {
+        const item = scene as Record<string, unknown>;
+        return {
+          id: item.id,
+          duration: item.duration,
+          transition: item.transition,
+          tracks: Array.isArray(item.tracks) ? item.tracks.length : undefined,
+        };
+      }),
+    } : null,
+    timeline: timeline ? {
+      version: timeline.version,
+      composition: timeline.composition,
+      layers: timelineLayers.map((layer) => {
+        const item = layer as Record<string, unknown>;
+        return {
+          id: item.id,
+          name: item.name,
+          type: item.type,
+          in: item.in,
+          out: item.out,
+          keyframes: Array.isArray(item.keyframes) ? item.keyframes.length : undefined,
+        };
+      }),
+    } : null,
+  };
+}
+
+function directMotionDesignPrompt(brief: string, video: VideoArtifact | null) {
+  const clean = brief.trim();
+  if (!video) return clean;
+  const instruction = [
+    "Use the supplied video as the exact visual and motion reference.",
+    "Preserve product identity, UI legibility, layout, timing continuity, and original camera direction.",
+    "Apply only the requested motion-design change; avoid invented text, warped interfaces, cuts, or style drift.",
+  ].join(" ");
+  return clean ? `${clean}\n\n${instruction}` : `${instruction} Extend and polish the motion naturally.`;
+}
+
+async function videoReferenceUrl(video: VideoArtifact): Promise<string> {
+  if (/^https:\/\//i.test(video.downloadUrl)) return video.downloadUrl;
+  const response = await fetch(video.downloadUrl);
+  if (!response.ok) throw new Error(`Не удалось прочитать готовое видео: HTTP ${response.status}`);
+  const blob = await response.blob();
+  if (blob.size > 48 * 1024 * 1024) throw new Error("Готовое видео больше лимита reference 48 MiB");
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return `data:${blob.type || video.mime || "video/mp4"};base64,${btoa(binary)}`;
 }
 
 /* AI-уточнение разбора Source.
@@ -391,6 +466,7 @@ export interface FlowStoreState {
   connect: (from: LegacyEdgeEndpoint, to: LegacyEdgeEndpoint) => boolean;
   deleteNode: (id: number) => void;
   deleteEdge: (edgeId: string) => void;
+  disconnectNode: (id: number) => number;
   setNodeData: (id: number, patch: Record<string, unknown>) => void;
   getNodeIrRevision: (id: number) => number;
   persistEditorDraft: (id: number, draft: PersistedEditorDraft) => void;
@@ -412,6 +488,9 @@ export interface FlowStoreState {
   runRecorder: (id: number) => Promise<void>;
   runLiveRecorder: (id: number, actions: InteractionLiveAction[]) => Promise<boolean>;
   runMotion: (id: number) => Promise<void>;
+  planMotionDesign: (id: number) => Promise<string | null>;
+  runMotionDesign: (id: number, confirmedPaid: boolean) => Promise<void>;
+  refreshMotionDesign: (id: number) => Promise<void>;
   runTimeline: (id: number) => Promise<void>;
   runPageBridge: (id: number) => void;
   sendToNode: (id: number, targetType: "edit" | "reference") => void;
@@ -749,6 +828,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     }
   },
 
+  disconnectNode: (id) => {
+    const sid = String(id);
+    const connected = get().edges.filter((edge) => edge.source === sid || edge.target === sid);
+    for (const edge of connected) get().deleteEdge(edge.id);
+    if (connected.length) get().setStatus(id, `Разорвано связей: ${connected.length}`, "ok");
+    return connected.length;
+  },
+
   /* Точечное обновление data ноды (аналог записи n.data.* в legacy + save()) */
   setNodeData: (id, patch) => {
     const sid = String(id);
@@ -905,6 +992,25 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           sceneIrs: [],
         });
         get().setStatus(consId, designIr && interaction ? "Motion inputs ready" : "Connect Design IR and Interaction IR");
+      } else if (cons.type === "motiondesign") {
+        const sourceMotion = pullInput(nodes, edges, cons, "motion") as IRObject | null;
+        const sourceTimeline = pullInput(nodes, edges, cons, "timeline") as IRObject | null;
+        const sourceVideo = pullInput(nodes, edges, cons, "video") as VideoArtifact | null;
+        const connectedPrompt = pullInput(nodes, edges, cons, "prompt");
+        get().setNodeData(consId, {
+          sourceMotion: sourceMotion ? deepClone(sourceMotion) : null,
+          sourceTimeline: sourceTimeline ? deepClone(sourceTimeline) : null,
+          sourceVideo: sourceVideo ? deepClone(sourceVideo) : null,
+          plannedPrompt: "",
+        });
+        get().setStatus(
+          consId,
+          sourceVideo
+            ? "Готовое видео и параметры подключены — подготовьте Seedance prompt"
+            : (sourceMotion || sourceTimeline || String(connectedPrompt || "").trim())
+              ? "Параметры движения получены — подготовьте Seedance prompt"
+              : "Подключите видео/IR или введите отдельный prompt",
+        );
       } else if (cons.type === "timeline") {
         const designIr = pullInput(nodes, edges, cons, "ir") as IRObject | null;
         get().setNodeData(consId, { ir: designIr ? deepClone(designIr) : null, timeline: null });
@@ -929,6 +1035,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     else if (n.type === "qualitypass") void get().runQualityPass(id);
     else if (n.type === "recorder") void get().runRecorder(id);
     else if (n.type === "motion") void get().runMotion(id);
+    else if (n.type === "motiondesign") void get().planMotionDesign(id);
     else if (n.type === "timeline") void get().runTimeline(id);
     else if (n.type === "pagebridge") get().runPageBridge(id);
   },
@@ -1588,6 +1695,214 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       const message = error instanceof Error ? error.message : String(error);
       get().setStatus(id, "Motion: " + message, "err");
       toast("Motion: " + message, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  planMotionDesign: async (id) => {
+    const st = get();
+    const n = st.nodes.find((node) => Number(node.id) === id);
+    if (!n || n.type !== "motiondesign" || st.busy[id]) return null;
+    const data = n.data as MotionDesignNodeData;
+    const connectedPrompt = String(pullInput(st.nodes, st.edges, n, "prompt") || "").trim();
+    const brief = connectedPrompt || String(data.prompt || "").trim();
+    const connectedMotion = pullInput(st.nodes, st.edges, n, "motion") as IRObject | null;
+    const connectedTimeline = pullInput(st.nodes, st.edges, n, "timeline") as IRObject | null;
+    const connectedVideo = pullInput(st.nodes, st.edges, n, "video") as VideoArtifact | null;
+    const sourceMotion = connectedMotion || data.sourceMotion;
+    const sourceTimeline = connectedTimeline || data.sourceTimeline;
+    const sourceVideo = connectedVideo || data.sourceVideo;
+    const useReference = data.inputMode !== "prompt";
+
+    if (data.inputMode === "reference" && !sourceVideo) {
+      get().setStatus(id, "Режим reference требует готовое видео из Motion/Video Editor", "err");
+      return null;
+    }
+    if (!brief && !sourceVideo && !sourceMotion && !sourceTimeline) {
+      get().setStatus(id, "Введите prompt или подключите Motion/Timeline/video", "err");
+      return null;
+    }
+
+    get().setBusy(id, true);
+    get().setStatus(id, data.planner === "direct" ? "Собираем Seedance prompt…" : `Планировщик ${PROVIDER_LABELS[data.planner]} готовит prompt…`);
+    try {
+      let planned = directMotionDesignPrompt(brief, useReference ? sourceVideo : null);
+      if (!planned && (sourceMotion || sourceTimeline)) {
+        planned = "Create a polished motion-design video that follows the supplied timing, scene order, keyframes, and composition metadata. Preserve UI legibility and visual identity; avoid invented text or layout drift.";
+      }
+      if (data.planner !== "direct") {
+        const desktop = window.designDNA;
+        if (!desktop) throw new Error("GPT/Claude planner доступен в desktop-приложении");
+        const digest = motionDesignDigest(
+          useReference ? sourceMotion : null,
+          useReference ? sourceTimeline : null,
+          useReference ? sourceVideo : null,
+        );
+        const answer = await desktop.providers.chatRequest({
+          ...chatRoute(data.planner, data.effort),
+          messages: [
+            {
+              role: "system",
+              content: [
+                "You are a prompt planner for ByteDance Seedance 2.5 video generation and editing.",
+                "Return only one production-ready English prompt, no Markdown, maximum 1400 characters.",
+                "You receive only compact timeline metadata, never the video pixels; do not claim that you watched the clip.",
+                "When a source video exists, preserve its identity, UI text legibility, composition and motion continuity.",
+                "Describe requested changes, camera, subject motion, timing, continuity, audio intent and explicit negative constraints.",
+              ].join(" "),
+            },
+            {
+              role: "user",
+              content: JSON.stringify({
+                brief: planned || brief,
+                inputMode: data.inputMode,
+                target: data.settings,
+                source: digest,
+              }),
+            },
+          ],
+          maxOutputTokens: 700,
+        });
+        planned = String(answer.content || "")
+          .trim()
+          .replace(/^```(?:text)?\s*/i, "")
+          .replace(/\s*```$/, "")
+          .replace(/^['\"]|['\"]$/g, "")
+          .trim();
+      }
+      if (!planned) throw new Error("Планировщик вернул пустой prompt");
+      if (planned.length > 5_000) planned = planned.slice(0, 5_000);
+      get().setNodeData(id, {
+        plannedPrompt: planned,
+        sourceMotion: sourceMotion ? deepClone(sourceMotion) : null,
+        sourceTimeline: sourceTimeline ? deepClone(sourceTimeline) : null,
+        sourceVideo: sourceVideo ? deepClone(sourceVideo) : null,
+      });
+      get().setStatus(id, `${data.planner === "direct" ? "Direct" : PROVIDER_LABELS[data.planner]} prompt готов · ${planned.length} chars`, "ok");
+      return planned;
+    } catch (error) {
+      const message = friendlyProviderError(error);
+      get().setStatus(id, "Motion Design planner: " + message, "err");
+      toast("Motion Design planner: " + message, "error");
+      return null;
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  runMotionDesign: async (id, confirmedPaid) => {
+    if (!confirmedPaid) {
+      get().setStatus(id, "Подтвердите платный запрос Seedance 2.5", "err");
+      return;
+    }
+    let st = get();
+    let n = st.nodes.find((node) => Number(node.id) === id);
+    if (!n || n.type !== "motiondesign" || st.busy[id]) return;
+    let data = n.data as MotionDesignNodeData;
+    let planned = String(data.plannedPrompt || "").trim();
+    if (!planned) {
+      planned = String(await get().planMotionDesign(id) || "").trim();
+      if (!planned) return;
+      st = get();
+      n = st.nodes.find((node) => Number(node.id) === id);
+      if (!n || n.type !== "motiondesign") return;
+      data = n.data as MotionDesignNodeData;
+    }
+
+    const connectedVideo = pullInput(st.nodes, st.edges, n, "video") as VideoArtifact | null;
+    const sourceVideo = connectedVideo || data.sourceVideo;
+    if (data.inputMode === "reference" && !sourceVideo) {
+      get().setStatus(id, "Режим reference требует готовое видео", "err");
+      return;
+    }
+
+    get().setBusy(id, true);
+    try {
+      const config = await apiGet<{ configured?: boolean; model?: string }>("/api/video/seedance/config");
+      if (!config.configured) throw new Error("OpenRouter key не подключён. Откройте Agents → Connections.");
+      const references: Array<Record<string, unknown>> = [];
+      if (sourceVideo && data.inputMode !== "prompt") {
+        get().setStatus(id, "Подготавливаем готовое видео как Seedance reference…");
+        references.push({
+          type: "video_url",
+          video_url: { url: await videoReferenceUrl(sourceVideo) },
+        });
+      }
+      get().setStatus(id, `Отправляем подтверждённый запрос в ${config.model || "Seedance 2.5"}…`);
+      const response = await api<SeedanceVideoJob>("/api/video/seedance/submit", {
+        prompt: planned,
+        duration: data.settings.duration,
+        aspect_ratio: data.settings.aspectRatio,
+        resolution: data.settings.resolution,
+        generate_audio: data.settings.generateAudio,
+        seed: data.settings.seed,
+        input_references: references,
+        confirmed_paid: true,
+      });
+      const job = { ...response, model: "bytedance/seedance-2.5" as const };
+      get().setNodeData(id, { job, video: null, sourceVideo: sourceVideo ? deepClone(sourceVideo) : null });
+      get().setStatus(id, `Seedance job ${job.id} · ${job.status}`, "ok");
+      const oldTimer = motionDesignPollTimers.get(id);
+      if (oldTimer) clearTimeout(oldTimer);
+      motionDesignPollTimers.set(id, setTimeout(() => void get().refreshMotionDesign(id), 30_000));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      get().setStatus(id, "Seedance: " + message, "err");
+      toast("Seedance: " + message, "error");
+    } finally {
+      get().setBusy(id, false);
+    }
+  },
+
+  refreshMotionDesign: async (id) => {
+    const st = get();
+    const n = st.nodes.find((node) => Number(node.id) === id);
+    if (!n || n.type !== "motiondesign" || st.busy[id]) return;
+    const data = n.data as MotionDesignNodeData;
+    if (!data.job?.id || (MOTION_DESIGN_TERMINAL.has(data.job.status) && data.video)) return;
+    get().setBusy(id, true);
+    try {
+      const response = await apiGet<SeedanceVideoJob>(`/api/video/seedance/${encodeURIComponent(data.job.id)}`);
+      const job = { ...data.job, ...response, id: data.job.id, model: "bytedance/seedance-2.5" as const };
+      if (job.status === "completed") {
+        const cost = Number(job.usage?.cost);
+        const video: VideoArtifact = {
+          version: "video-artifact/1.0",
+          origin: "motion-design",
+          jobId: job.id,
+          downloadUrl: `/api/video/seedance/${encodeURIComponent(job.id)}/content`,
+          filename: `seedance-${job.id.slice(0, 12)}.mp4`,
+          mime: "video/mp4",
+          parameters: {
+            model: job.model,
+            planner: data.planner,
+            inputMode: data.inputMode,
+            settings: data.settings,
+            sourceOrigin: data.sourceVideo?.origin || null,
+          },
+        };
+        get().setNodeData(id, { job, video });
+        get().setStatus(id, `Seedance video готов${Number.isFinite(cost) ? ` · cost ${cost}` : ""}`, "ok");
+        get().propagate(id);
+      } else if (MOTION_DESIGN_TERMINAL.has(job.status)) {
+        get().setNodeData(id, { job });
+        get().setStatus(id, `Seedance ${job.status}: ${String(job.error || "job завершён без видео")}`, "err");
+      } else {
+        get().setNodeData(id, { job });
+        get().setStatus(id, `Seedance job ${job.id} · ${job.status}`);
+        const oldTimer = motionDesignPollTimers.get(id);
+        if (oldTimer) clearTimeout(oldTimer);
+        motionDesignPollTimers.set(id, setTimeout(() => void get().refreshMotionDesign(id), 30_000));
+      }
+    } catch (error) {
+      // A failed poll must never resubmit the paid generation. Keep the job id
+      // and retry status later, as recommended by OpenRouter's async contract.
+      const message = error instanceof Error ? error.message : String(error);
+      get().setStatus(id, `Seedance status: ${message} · job сохранён`, "err");
+      const oldTimer = motionDesignPollTimers.get(id);
+      if (oldTimer) clearTimeout(oldTimer);
+      motionDesignPollTimers.set(id, setTimeout(() => void get().refreshMotionDesign(id), 30_000));
     } finally {
       get().setBusy(id, false);
     }
@@ -2324,7 +2639,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const generator = mkNode("generator", 760, 120, { provider, count: 1 });
     const recorder = mkNode("recorder", 1110, 120);
     const motion = mkNode("motion", 1580, 120);
-    const nodes = [source, prompt, generator, recorder, motion];
+    const motionDesign = mkNode("motiondesign", 1950, 120, {
+      prompt: "Продолжи готовый ролик, сохрани структуру интерфейса и добавь цельное кинематографичное движение камеры.",
+      inputMode: "auto",
+    });
+    const nodes = [source, prompt, generator, recorder, motion, motionDesign];
     const edge = (fromNode: number, fromPort: string, toNode: number, toPort: string) =>
       makeRfEdge(nodes, { node: fromNode, port: fromPort }, { node: toNode, port: toPort });
     const edges = [
@@ -2333,6 +2652,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       edge(Number(generator.id), "ir", Number(recorder.id), "ir"),
       edge(Number(generator.id), "ir", Number(motion.id), "ir"),
       edge(Number(recorder.id), "interaction", Number(motion.id), "interaction"),
+      edge(Number(prompt.id), "out", Number(motionDesign.id), "prompt"),
+      edge(Number(motion.id), "motion", Number(motionDesign.id), "motion"),
+      edge(Number(motion.id), "video", Number(motionDesign.id), "video"),
     ];
     const id = pageId();
     const page: FlowPage = {

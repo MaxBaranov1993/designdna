@@ -33,6 +33,7 @@
   import QualityPassNode from "./nodes/QualityPassNode.svelte";
   import RecorderNode from "./nodes/RecorderNode.svelte";
   import MotionNode from "./nodes/MotionNode.svelte";
+  import MotionDesignNode from "./nodes/MotionDesignNode.svelte";
   import TimelineNode from "./nodes/TimelineNode.svelte";
   import PageBridgeNode from "./nodes/PageBridgeNode.svelte";
   import DnaEdge from "./flow/DnaEdge.svelte";
@@ -53,12 +54,14 @@
     qualitypass: QualityPassNode,
     recorder: RecorderNode,
     motion: MotionNode,
+    motiondesign: MotionDesignNode,
     timeline: TimelineNode,
     pagebridge: PageBridgeNode,
   };
   const edgeTypes = { default: DnaEdge };
 
   type CtxMenuState = { x: number; y: number; flowX: number; flowY: number };
+  type NodeMenuState = { x: number; y: number; nodeId: string };
 
   // сейвовый вьюпорт читаем один раз; дальше SF управляет пан/зумом сам
   const initialViewport = useFlowStore.getState().view;
@@ -66,6 +69,7 @@
   let nodes = $state.raw<FlowNode[]>(useFlowStore.getState().nodes);
   let edges = $state.raw<FlowEdge[]>(useFlowStore.getState().edges);
   let menu = $state<CtxMenuState | null>(null);
+  let nodeMenu = $state<NodeMenuState | null>(null);
   let pendingConnection = $state<{ nodeId: string; handleId: string } | null>(null);
   let menuSearch = $state("");
   let canvasHost: HTMLDivElement | null = null;
@@ -90,6 +94,7 @@
       const y = rect.top + Math.min(rect.height * 0.34, rect.height - 260);
       const point = rf.screenToFlowPosition({ x, y });
       menuSearch = "";
+      nodeMenu = null;
       menu = { x, y, flowX: point.x, flowY: point.y };
     };
     window.addEventListener(OPEN_NODE_MENU_EVENT, openNodeMenu);
@@ -257,8 +262,12 @@
 
   const closeMenu = () => {
     menu = null;
+    nodeMenu = null;
     menuSearch = "";
   };
+
+  const connectionCount = (nodeId: string) =>
+    edges.filter((edge) => edge.source === nodeId || edge.target === nodeId).length;
 
   let visibleGroups = $derived.by(() => {
     const query = menuSearch.trim().toLocaleLowerCase("ru");
@@ -275,7 +284,7 @@
 
 <svelte:window
   onkeydown={(e) => {
-    if (menu && e.key === "Escape") closeMenu();
+    if ((menu || nodeMenu) && e.key === "Escape") closeMenu();
   }}
 />
 
@@ -347,9 +356,17 @@
     {initialViewport}
     onmoveend={(_event, vp) => useFlowStore.getState().setView(vp)}
     onpaneclick={closeMenu}
+    onnodecontextmenu={({ event, node }) => {
+      event.preventDefault();
+      event.stopPropagation();
+      menu = null;
+      menuSearch = "";
+      nodeMenu = { x: event.clientX, y: event.clientY, nodeId: node.id };
+    }}
     onpanecontextmenu={({ event }) => {
       event.preventDefault();
       const pt = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      nodeMenu = null;
       menu = { x: event.clientX, y: event.clientY, flowX: pt.x, flowY: pt.y };
     }}
     /* SF сам гасит клавиши в полях ввода (isInputDOMNode) — зеркало гарда nodes.js:1147-1151 */
@@ -408,6 +425,31 @@
         {/each}
         {#if !visibleGroups.length}<div class="ctx-none">Ничего не найдено</div>{/if}
       </div>
+    </div>
+  {/if}
+  {#if nodeMenu}
+    {@const selectedNode = nodes.find((node) => node.id === nodeMenu!.nodeId)}
+    {@const links = connectionCount(nodeMenu.nodeId)}
+    <div
+      id="node-ctx-menu"
+      style="left: {Math.max(12, Math.min(nodeMenu.x, window.innerWidth - 252))}px; top: {Math.max(12, Math.min(nodeMenu.y, window.innerHeight - 132))}px;"
+    >
+      <div class="node-ctx-head">
+        <span>{selectedNode?.type ? NODE_DEFS[selectedNode.type as NodeType].title : "Нода"}</span>
+        <small>{links} {links === 1 ? "связь" : "связей"}</small>
+      </div>
+      <button
+        type="button"
+        data-act="disconnect-node"
+        disabled={!links}
+        onclick={() => {
+          $flow.disconnectNode(Number(nodeMenu!.nodeId));
+          closeMenu();
+        }}
+      >
+        <span aria-hidden="true">⌁</span>
+        <span><strong>Разорвать связи</strong><small>Нода и её данные сохранятся</small></span>
+      </button>
     </div>
   {/if}
 </div>

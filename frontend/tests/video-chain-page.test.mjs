@@ -21,11 +21,31 @@ test("addVideoChainPage builds the parallel rsale.net to video chain", async () 
     /edge\(Number\(generator\.id\), "ir", Number\(recorder\.id\), "ir"\)/,
     /edge\(Number\(generator\.id\), "ir", Number\(motion\.id\), "ir"\)/,
     /edge\(Number\(recorder\.id\), "interaction", Number\(motion\.id\), "interaction"\)/,
+    /edge\(Number\(prompt\.id\), "out", Number\(motionDesign\.id\), "prompt"\)/,
+    /edge\(Number\(motion\.id\), "motion", Number\(motionDesign\.id\), "motion"\)/,
+    /edge\(Number\(motion\.id\), "video", Number\(motionDesign\.id\), "video"\)/,
   ]) {
     assert.match(body, wiring);
   }
 
   assert.match(body, /withCurrentPageSaved\(state\), page/);
+});
+
+test("Motion Design keeps planning separate from the confirmed paid Seedance call", async () => {
+  const store = await readFile(storeUrl, "utf-8");
+  const node = await readFile(new URL("../src/nodes/MotionDesignNode.svelte", import.meta.url), "utf-8");
+  const ports = await readFile(new URL("../src/flow/ports.ts", import.meta.url), "utf-8");
+
+  assert.match(ports, /motiondesign: \{ title: "Motion Design"/);
+  assert.match(ports, /\{ name: "video", label: "готовое видео", kind: "video" \}/);
+  assert.match(store, /planMotionDesign:/);
+  assert.match(store, /runMotionDesign: async \(id, confirmedPaid\)/);
+  assert.match(store, /confirmed_paid: true/);
+  assert.match(store, /type: "video_url"/);
+  assert.match(store, /job сохранён/);
+  assert.match(node, /Подтверждаю платный вызов/);
+  assert.match(node, /Claude Code/);
+  assert.match(node, /GPT-5\.6 Sol/);
 });
 
 test("PagesPanel exposes the video-branch button next to + Page", async () => {

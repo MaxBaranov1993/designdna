@@ -134,8 +134,9 @@ def main():
         assert page.locator('.fe-layer.selected[data-key="0:props.submit"]').count() == 1
         assert page.evaluate("document.activeElement?.tagName !== 'A'")
         page.locator(".manual-controls summary").click()
-        page.locator('[data-el-prop="text"]').fill("Опубликовать товар")
-        page.locator('[data-el-prop="text"]').press("Tab")
+        submit_text = page.locator('.field-content [data-el-prop="text"]')
+        submit_text.fill("Опубликовать товар")
+        submit_text.press("Tab")
         page.locator('.fe-layer[data-key="0:props.submit"]').dispatch_event("click")
         page.locator(".manual-controls summary").click()
         page.locator('[data-style-color="background"]').evaluate(

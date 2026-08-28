@@ -4,7 +4,7 @@ import type { Edge, Node } from "@xyflow/svelte";
  * Runtime-поля legacy (el/geo/history) в React Flow state не переносятся. */
 
 /* kind tokens: design-токены из Source Import/Style DNA в Reskin/Derive. */
-export type PortKind = "text" | "ir" | "tokens" | "artifact" | "interaction" | "motion" | "timeline";
+export type PortKind = "text" | "ir" | "tokens" | "artifact" | "interaction" | "motion" | "timeline" | "video";
 
 export type NodeType =
   | "prompt"
@@ -20,6 +20,7 @@ export type NodeType =
   | "qualitypass"
   | "recorder"
   | "motion"
+  | "motiondesign"
   | "pagebridge"
   | "designsystem"
   | "timeline";
@@ -65,6 +66,7 @@ export type FeatureFlags = {
   interactionRecorder?: boolean;
   motionEditor?: boolean;
   videoRender?: boolean;
+  videoEditor?: boolean;
   aiDirector?: boolean;
 };
 
@@ -408,6 +410,51 @@ export type TimelineNodeData = {
   renderJob: MotionRenderJob | null;
 };
 
+export type VideoArtifact = {
+  version: "video-artifact/1.0";
+  origin: "motion-editor" | "video-editor" | "motion-design";
+  jobId: string;
+  downloadUrl: string;
+  filename: string;
+  mime: "video/mp4" | "video/webm";
+  width?: number;
+  height?: number;
+  fps?: number;
+  duration?: number;
+  bytes?: number;
+  parameters?: Record<string, unknown>;
+};
+
+export type MotionDesignPlanner = "direct" | "openai" | "claude";
+export type SeedanceVideoJob = {
+  id: string;
+  status: "pending" | "queued" | "processing" | "running" | "completed" | "failed" | "cancelled" | "expired";
+  model: "bytedance/seedance-2.5";
+  created_at?: number | string;
+  usage?: { cost?: number; [key: string]: unknown };
+  error?: unknown;
+  [key: string]: unknown;
+};
+export type MotionDesignNodeData = {
+  prompt: string;
+  plannedPrompt: string;
+  planner: MotionDesignPlanner;
+  effort: "medium" | "high" | "max";
+  inputMode: "auto" | "prompt" | "reference";
+  settings: {
+    duration: number;
+    aspectRatio: "16:9" | "4:3" | "1:1" | "3:4" | "9:16" | "21:9";
+    resolution: "480p" | "720p";
+    generateAudio: boolean;
+    seed: number | null;
+  };
+  sourceMotion: IRObject | null;
+  sourceTimeline: IRObject | null;
+  sourceVideo: VideoArtifact | null;
+  job: SeedanceVideoJob | null;
+  video: VideoArtifact | null;
+};
+
 export type AnyNodeData =
   | PromptNodeData
   | ReferenceNodeData
@@ -422,6 +469,7 @@ export type AnyNodeData =
   | QualityPassNodeData
   | RecorderNodeData
   | MotionNodeData
+  | MotionDesignNodeData
   | TimelineNodeData
   | PageBridgeNodeData
   | DesignSystemNodeData;
@@ -439,6 +487,7 @@ export type ReskinFlowNode = Node<ReskinNodeData, "reskin">;
 export type QualityPassFlowNode = Node<QualityPassNodeData, "qualitypass">;
 export type RecorderFlowNode = Node<RecorderNodeData, "recorder">;
 export type MotionFlowNode = Node<MotionNodeData, "motion">;
+export type MotionDesignFlowNode = Node<MotionDesignNodeData, "motiondesign">;
 export type TimelineFlowNode = Node<TimelineNodeData, "timeline">;
 export type PageBridgeFlowNode = Node<PageBridgeNodeData, "pagebridge">;
 export type DesignSystemFlowNode = Node<DesignSystemNodeData, "designsystem">;
@@ -457,6 +506,7 @@ export type FlowNode =
   | QualityPassFlowNode
   | RecorderFlowNode
   | MotionFlowNode
+  | MotionDesignFlowNode
   | TimelineFlowNode
   | PageBridgeFlowNode
   | DesignSystemFlowNode;

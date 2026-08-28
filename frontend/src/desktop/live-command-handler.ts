@@ -20,7 +20,7 @@ type UndoMutation = UndoMove | StyleMutation | NodeCreateMutation | NodeDeleteMu
 const undoStack: Array<{ commandId: string; inverse: UndoMutation; forward: UndoMutation }> = [];
 const NODE_TYPES = new Set<NodeType>([
   "prompt", "reference", "generator", "edit", "mix", "page", "sourceimport", "designui", "derive",
-  "reskin", "qualitypass", "recorder", "motion", "pagebridge", "designsystem",
+  "reskin", "qualitypass", "recorder", "motion", "timeline", "motiondesign", "pagebridge", "designsystem",
 ]);
 const STYLE_KEYS = new Set([
   "color", "background", "backgroundColor", "borderColor", "borderRadius", "borderWidth", "borderStyle",

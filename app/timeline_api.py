@@ -234,7 +234,12 @@ def timeline_render(req: TimelineRenderRequest):
     if job is None:
         return _err(429, "Очередь рендера заполнена — отмените лишние задачи или дождитесь завершения текущих")
     submit_render(render_id, copy.deepcopy(req.timeline), copy.deepcopy(req.ir), output)
-    return {"renderId": render_id, "status": "queued", "framesTotal": total}
+    return {
+        "renderId": render_id,
+        "status": "queued",
+        "framesTotal": total,
+        "filename": job.get("filename"),
+    }
 
 
 _STATUS_MAP = {"queued": "queued", "running": "running", "complete": "done",
@@ -250,10 +255,12 @@ def timeline_render_status(render_id: str):
             return _err(404, "Render job not found.")
         status = _STATUS_MAP.get(str(job.get("status")), "queued")
         response = {
+            "renderId": render_id,
             "status": status,
             "progress": job.get("progress") or 0.0,
             "framesDone": job.get("framesDone") or 0,
             "framesTotal": job.get("framesTotal") or 0,
+            "filename": job.get("filename"),
         }
         if status == "done":
             response["downloadUrl"] = f"/api/timeline/render/{render_id}/download"

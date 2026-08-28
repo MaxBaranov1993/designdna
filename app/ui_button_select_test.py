@@ -110,10 +110,11 @@ def main():
             )
             check("publish button selected", bool(selected) and "button" in (selected or "").lower(), str(selected))
 
-        # also test the Find button (path children.2.children.2 from fixture IR)
+        # Also test the Find button without coupling the assertion to a mutable IR path.
         bbox_find = pg.evaluate(
             """() => {
-              const el = document.querySelector('.fe-canvas [data-ir-path="children.2.children.2"]');
+              const el = Array.from(document.querySelectorAll('.fe-canvas button[data-ir-path]'))
+                .find(node => /^find$/i.test((node.textContent || '').trim()));
               if (!el) return null;
               const r = el.getBoundingClientRect();
               return {x: r.left + r.width/2, y: r.top + r.height/2, w: r.width, h: r.height};

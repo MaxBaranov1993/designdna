@@ -93,6 +93,9 @@ app.include_router(design_system_router)
 from timeline_api import router as timeline_router  # noqa: E402
 app.include_router(timeline_router)
 
+from video_api import router as video_router  # noqa: E402
+app.include_router(video_router)
+
 COLOR_TOKEN_KEYS = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"]
 MAX_CLONE_HTML_BYTES = 2_000_000
 

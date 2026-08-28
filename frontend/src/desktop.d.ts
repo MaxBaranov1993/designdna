@@ -101,10 +101,10 @@ declare global {
       sourceAuth: { open(url: string): Promise<{ opened: boolean }>; clear(): Promise<{ cleared: boolean }> };
       repoCanvas: { snapshot(): Promise<RepoCanvasSnapshot>; check(): Promise<Record<string, unknown>>; refresh(options?: Record<string, unknown>): Promise<Record<string, unknown>> };
       providers: {
-        status(): Promise<{ runtimes: Array<Record<string, any>>; credentials: Record<"openai", boolean>; encryptedStorage: boolean }>;
+        status(): Promise<{ runtimes: Array<Record<string, any>>; credentials: Record<"openai" | "openrouter", boolean>; encryptedStorage: boolean }>;
         credentials(): Promise<{ configured: Record<string, boolean>; encryptedStorage: boolean }>;
-        setCredential(provider: "openai", value: string): Promise<{ provider: string; configured: boolean }>;
-        deleteCredential(provider: "openai"): Promise<{ provider: string; configured: boolean }>;
+        setCredential(provider: "openai" | "openrouter", value: string): Promise<{ provider: string; configured: boolean }>;
+        deleteCredential(provider: "openai" | "openrouter"): Promise<{ provider: string; configured: boolean }>;
         chat(provider: DesktopProvider, messages: Array<{ role: string; content: string }>, temperature?: number,
           profile?: "generator" | "quality_judge" | "quality_repair", tools?: Array<Record<string, unknown>> | null):
           Promise<{ content: string; toolCalls?: Array<{ id: string; name: string; arguments: string }> }>;

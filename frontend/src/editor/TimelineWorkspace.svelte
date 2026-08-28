@@ -428,6 +428,27 @@
     }
   }
 
+  function publishRenderJob(id: string, state: AnyDoc, format: string) {
+    const mapped = state.status === "done" ? "complete"
+      : state.status === "running" ? "rendering"
+        : state.status === "cancelled" ? "error"
+          : state.status === "error" ? "error" : "queued";
+    $flow.setNodeData(nodeId, {
+      renderJob: {
+        id,
+        status: mapped,
+        progress: Number(state.progress || 0),
+        framesDone: Number(state.framesDone || 0),
+        framesTotal: Number(state.framesTotal || 0),
+        filename: state.filename || `designdna-timeline-${id.slice(0, 8)}.${format === "webm" ? "webm" : "mp4"}`,
+        downloadUrl: state.downloadUrl,
+        result: state.result,
+        error: state.error || (state.status === "cancelled" ? "Render cancelled" : undefined),
+      },
+    });
+    if (mapped === "complete") $flow.propagate(nodeId);
+  }
+
   async function renderVideo(format: string) {
     if (!doc || busy) return;
     if (!designIr) { say("Нет входного Design IR для рендера"); return; }
@@ -440,11 +461,13 @@
         "/api/timeline/render", { timeline: doc, ir: designIr, format });
       if (resp.error || !resp.renderId) throw new Error(resp.error || "нет renderId");
       renderId = resp.renderId;
+      publishRenderJob(renderId, { status: "queued", progress: 0 }, format);
       for (let i = 0; i < 600 && !disposed; i++) {
         await new Promise((r) => setTimeout(r, 1500));
         if (disposed) break;
         const st = await apiGet<AnyDoc>(`/api/timeline/render/${renderId}`);
         renderState = st;
+        publishRenderJob(renderId, st, format);
         if (st.status === "done" || st.status === "error" || st.status === "cancelled") break;
       }
       if (renderState?.status === "done") say("Ролик готов — скачайте файл");
@@ -452,6 +475,7 @@
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       renderState = { status: "error", error: msg };
+      publishRenderJob(renderId || "failed", renderState, format);
       say("Рендер: " + msg);
     } finally {
       busy = false;

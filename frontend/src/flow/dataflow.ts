@@ -1,5 +1,5 @@
 import { portsOfNode } from "./ports";
-import type { FlowEdge, FlowNode, PortKind, SourceViewport } from "./types";
+import type { FlowEdge, FlowNode, PortKind, SourceViewport, VideoArtifact } from "./types";
 
 /* Цвета проводов — зеркало #wires path в nodes.html: text серый, ir акцентный;
  * tokens — янтарный (решение владельца 9) */
@@ -11,7 +11,32 @@ export const WIRE_COLORS: Record<PortKind, string> = {
   interaction: "#2FBF9F",
   motion: "#E05FB0",
   timeline: "#FF5F56",
+  video: "#4F7CFF",
 };
+
+function localRenderArtifact(
+  origin: "motion-editor" | "video-editor",
+  job: { id?: string; status?: string; filename?: string; downloadUrl?: string; result?: Record<string, unknown> } | null,
+  parameters: Record<string, unknown>,
+): VideoArtifact | null {
+  if (!job || job.status !== "complete" || !job.id || !job.downloadUrl) return null;
+  const result = job.result || {};
+  const filename = job.filename || `${origin}-${job.id.slice(0, 8)}.mp4`;
+  return {
+    version: "video-artifact/1.0",
+    origin,
+    jobId: job.id,
+    downloadUrl: job.downloadUrl,
+    filename,
+    mime: filename.toLowerCase().endsWith(".webm") ? "video/webm" : "video/mp4",
+    width: Number(result.width) || undefined,
+    height: Number(result.height) || undefined,
+    fps: Number(result.fps) || undefined,
+    duration: Number(result.duration) || undefined,
+    bytes: Number(result.bytes) || undefined,
+    parameters,
+  };
+}
 
 /* Глубокое копирование значения между нодами. */
 export function deepClone<T>(v: T): T {
@@ -97,8 +122,23 @@ export function outValue(n: FlowNode, port?: string): unknown {
     case "recorder":
       return n.data.interaction || null;
     case "motion":
+      if (port === "video") {
+        return localRenderArtifact("motion-editor", n.data.renderJob, {
+          composition: n.data.composition,
+          renderSettings: n.data.renderSettings,
+          motionVersion: (n.data.motion as Record<string, unknown> | null)?.version,
+        });
+      }
       return n.data.motion || null;
+    case "motiondesign":
+      return n.data.video || null;
     case "timeline":
+      if (port === "video") {
+        return localRenderArtifact("video-editor", n.data.renderJob, {
+          settings: n.data.settings,
+          timelineVersion: (n.data.timeline as Record<string, unknown> | null)?.version,
+        });
+      }
       return n.data.timeline || null;
     case "pagebridge":
       return n.data.ir || null;

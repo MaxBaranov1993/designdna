@@ -95,7 +95,7 @@ def main():
         # ---------- ctx-Р СР ВµР Р…РЎР‹: 14 РЎвЂљР С‘Р С—Р С•Р Р†, Р ВµРЎРѓРЎвЂљРЎРЉ Page ----------
         pg.click(".svelte-flow__pane", button="right")
         check("Р Р† Р СР ВµР Р…РЎР‹ 14 РЎвЂљР С‘Р С—Р С•Р Р† Р Р…Р С•Р Т‘",
-              pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
+              pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 16"))
         check("Р Р† Р СР ВµР Р…РЎР‹ Р ВµРЎРѓРЎвЂљРЎРЉ Р РЋРЎвЂљРЎР‚Р В°Р Р…Р С‘РЎвЂ Р В°",
               pg.evaluate("!!document.querySelector('#ctx-menu .ctx-item[data-type=\"page\"]')"))
         pg.click("#ctx-menu .ctx-item[data-type='page']")
@@ -150,11 +150,11 @@ def main():
 
         # ---------- style DNA РЎРѓ Р С—РЎР‚Р С•Р Р†Р С•Р Т‘Р В° Р С—Р С•Р В±Р ВµР В¶Р Т‘Р В°Р ВµРЎвЂљ ----------
         pg.evaluate("""(() => {
-            const sd = window.GraphDev.add('styledna', 60, 760);
+            const sd = window.GraphDev.add('designsystem', 60, 760);
             window.__sd = sd.id;
         })()""")
         sd = int(pg.evaluate("window.__sd"))
-        pg.evaluate("([id, t]) => window.GraphDev.patchData(id, { tokens: t })", [sd, TOKENS_DNA])
+        pg.evaluate("([id, t]) => window.GraphDev.patchData(id, { document: { styleGuide: { tokens: t } } })", [sd, TOKENS_DNA])
         check("connect styledna.tokens РІвЂ вЂ™ page.tokens",
               pg.evaluate("([f, t]) => window.GraphDev.connect(f, 'tokens', t, 'tokens')", [sd, page_id]))
         pg.evaluate("(id) => window.GraphDev.run(id)", page_id)

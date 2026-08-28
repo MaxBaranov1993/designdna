@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const PROVIDERS = new Set(["openai"]);
+// OpenRouter is a separate paid video boundary. It is intentionally not a
+// selectable text provider, but its key receives the same OS-encrypted storage
+// and main-process-only treatment as OpenAI.
+const PROVIDERS = new Set(["openai", "openrouter"]);
 
 export class CredentialStore {
   /* Расшифрованные креды кэшируются в памяти main-процесса: get() вызывается

@@ -19,6 +19,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   qualitypass: { title: "Quality Pass", icon: "✓", w: 310, sub: "judge + repair + scorecard", accent: "#22C55E" },
   recorder: { title: "Interaction Recorder", icon: "REC", w: 334, sub: "IR actions → Interaction IR", accent: "#22C55E" },
   motion: { title: "Motion Editor", icon: "M", w: 322, sub: "Interaction IR → editable timeline", accent: "#E05FB0" },
+  motiondesign: { title: "Motion Design", icon: "MD", w: 334, sub: "prompt / video → Seedance 2.5", accent: "#4F7CFF" },
   timeline: { title: "Video Editor", icon: "▶", w: 322, sub: "слои и кейфреймы → локальный ролик", accent: "#FF5F56" },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300, sub: "передать компонент между страницами", accent: "#35B8A0" },
   designsystem: { title: "Design System / UI Kit", icon: "◈", w: 300, sub: "Source → published DS", accent: "#9B5CFF" },
@@ -91,11 +92,26 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
       { name: "ir", label: "Design IR", kind: "ir" },
       { name: "interaction", label: "Interaction IR", kind: "interaction" },
     ],
-    out: [{ name: "motion", label: "Motion IR", kind: "motion" }],
+    out: [
+      { name: "motion", label: "Motion IR", kind: "motion" },
+      { name: "video", label: "готовое видео", kind: "video" },
+    ],
+  },
+  motiondesign: {
+    in: [
+      { name: "prompt", label: "промпт", kind: "text" },
+      { name: "motion", label: "Motion IR", kind: "motion" },
+      { name: "timeline", label: "Timeline IR", kind: "timeline" },
+      { name: "video", label: "готовое видео", kind: "video" },
+    ],
+    out: [{ name: "video", label: "Seedance video", kind: "video" }],
   },
   timeline: {
     in: [{ name: "ir", label: "Design IR", kind: "ir" }],
-    out: [{ name: "timeline", label: "Timeline IR", kind: "timeline" }],
+    out: [
+      { name: "timeline", label: "Timeline IR", kind: "timeline" },
+      { name: "video", label: "готовое видео", kind: "video" },
+    ],
   },
   pagebridge: {
     in: [{ name: "ir", label: "component", kind: "ir" }],
@@ -193,6 +209,12 @@ export function defaultData(type: NodeType): AnyNodeData {
         composition: { width: 1920, height: 1080, fps: 30 },
         renderSettings: { format: "mp4", quality: "high" }, renderJob: null, sceneSettings: {},
       };
+    case "motiondesign":
+      return {
+        prompt: "", plannedPrompt: "", planner: "direct", effort: "high", inputMode: "auto",
+        settings: { duration: 8, aspectRatio: "16:9", resolution: "720p", generateAudio: false, seed: null },
+        sourceMotion: null, sourceTimeline: null, sourceVideo: null, job: null, video: null,
+      };
     case "timeline":
       return {
         ir: null, timeline: null,
@@ -246,6 +268,7 @@ export const CTX_GROUPS: { label: string; color: string; items: { type: NodeType
       { type: "recorder", note: "IR actions → Interaction IR" },
       { type: "motion", note: "Interaction IR → editable timeline" },
       { type: "timeline", note: "компоненты → слои, кейфреймы и локальный ролик" },
+      { type: "motiondesign", note: "prompt / готовое видео → Seedance 2.5" },
       { type: "designsystem", note: "Source → UI Kit → published Design System" },
     ],
   },
@@ -266,6 +289,7 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "recorder", note: "IR actions -> Interaction IR" },
   { type: "motion", note: "Interaction IR -> editable timeline" },
   { type: "timeline", note: "компоненты -> ролик: слои и кейфреймы" },
+  { type: "motiondesign", note: "prompt / готовое видео -> Seedance 2.5" },
   { type: "pagebridge", note: "передать компонент между страницами" },
   { type: "designsystem", note: "Source → UI Kit → published Design System" },
 ];

@@ -22,6 +22,7 @@
   let tools = $state<Array<Record<string, any>>>([]);
   let providerState = $state<Record<string, any>>({});
   let openaiKey = $state("");
+  let openrouterKey = $state("");
   /* Claude подключается своим CLI (`claude` → /login): приложение только
    * читает статус, секрет к нам не попадает. */
   let claudeStatus = $state<{ installed: boolean; loggedIn: boolean; hint: string | null } | null>(null);
@@ -192,10 +193,11 @@
     }
   }
 
-  async function saveKey(provider: "openai", value: string) {
+  async function saveKey(provider: "openai" | "openrouter", value: string) {
     if (!desktop || !value.trim()) return;
     await desktop.providers.setCredential(provider, value.trim());
-    openaiKey = "";
+    if (provider === "openai") openaiKey = "";
+    else openrouterKey = "";
     providerState = await desktop.providers.status();
   }
 
@@ -217,6 +219,8 @@
         <h2>Connections</h2>
         <label><span>OpenAI API key {providerState.credentials?.openai ? "· saved" : ""}</span><input type="password" bind:value={openaiKey} placeholder="sk-…" /></label>
         <Button variant="outline" onclick={() => void saveKey("openai", openaiKey)}>Save OpenAI key</Button>
+        <label><span>OpenRouter video key {providerState.credentials?.openrouter ? "· saved" : ""}</span><input type="password" bind:value={openrouterKey} placeholder="sk-or-v1-…" /></label>
+        <Button variant="outline" onclick={() => void saveKey("openrouter", openrouterKey)}>Save OpenRouter key</Button>
         <div class="agent-runtime" data-provider="claude">
           <span class={claudeStatus?.loggedIn ? "ok" : "bad"}>
             Claude Opus: {claudeStatus === null

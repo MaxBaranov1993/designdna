@@ -90,8 +90,8 @@ def main():
         # правый клик по канвасу — контекстное меню создания ноды
         pg.click(".svelte-flow__pane", button="right", position={"x": 320, "y": 300})
         check("контекстное меню открыто", pg.is_visible("#ctx-menu"))
-        # 14 типов: AI-ноды + Interaction Recorder + Motion Editor + Page Bridge.
-        check("в меню 14 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
+        # 16 типов: AI-ноды + Interaction/Motion/Video + Motion Design + Page Bridge.
+        check("в меню 16 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 16"))
         check("в меню есть Page Bridge", pg.evaluate("!!document.querySelector('#ctx-menu .ctx-item[data-type=\"pagebridge\"]')"))
 
         # создать Промпт
@@ -132,6 +132,27 @@ def main():
             return has(pr, 'out', g, 'prompt') && has(ref, 'out', g, 'style');
         })()""")
         check("провода: prompt.out->generator.prompt и reference.out->generator.style", bool(edges_ok))
+
+        # Контекстное действие снимает только провода; нода и её data остаются.
+        pg.click(".n-generator", button="right")
+        pg.wait_for_selector("#node-ctx-menu")
+        check("контекстное меню ноды показывает 2 связи",
+              "2" in pg.locator("#node-ctx-menu .node-ctx-head small").inner_text())
+        pg.click('#node-ctx-menu [data-act="disconnect-node"]')
+        check("все связи генератора разорваны",
+              pg.evaluate("window.GraphDev.state().edges.length === 0"))
+        check("сама нода после разрыва сохранена",
+              pg.evaluate("window.GraphDev.state().nodes.some(n => n.type === 'generator')"))
+        pg.evaluate("""(() => {
+            const st = window.GraphDev.state();
+            const p = st.nodes.find(n => n.type === 'prompt');
+            const r = st.nodes.find(n => n.type === 'reference');
+            const g = st.nodes.find(n => n.type === 'generator');
+            window.GraphDev.connect(p.id, 'out', g.id, 'prompt');
+            window.GraphDev.connect(r.id, 'out', g.id, 'style');
+        })()""")
+        check("связи можно восстановить после разрыва",
+              pg.evaluate("window.GraphDev.state().edges.length === 2"))
 
         # правило 3 (совпадение kind, nodes.js:1055-1058): text->ir отклоняется
         rejected = pg.evaluate("""(() => {

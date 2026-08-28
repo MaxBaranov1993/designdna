@@ -370,26 +370,30 @@ def test_desktop_worker_configures_provider_keys_without_echoing_secrets(monkeyp
     import desktop_worker
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("KIMI_API_KEY", raising=False)
     configured = asyncio.run(desktop_worker.dispatch(
-        "runtime.configure", {"openaiApiKey": "test-openai-secret", "kimiApiKey": "test-kimi-secret", "glmApiKey": "test-glm-secret", "zaiApiKey": "test-zai-secret", "grokApiKey": "test-grok-secret"},
+        "runtime.configure", {"openaiApiKey": "test-openai-secret", "openrouterApiKey": "test-openrouter-secret", "kimiApiKey": "test-kimi-secret", "glmApiKey": "test-glm-secret", "zaiApiKey": "test-zai-secret", "grokApiKey": "test-grok-secret"},
     ))
-    assert configured == {"ok": True, "openaiConfigured": True}
+    assert configured == {"ok": True, "openaiConfigured": True, "openrouterConfigured": True}
     assert "test-glm-secret" not in str(configured)
     assert "test-openai-secret" not in str(configured)
+    assert "test-openrouter-secret" not in str(configured)
     assert "test-kimi-secret" not in str(configured)
     assert "test-zai-secret" not in str(configured)
     assert "test-grok-secret" not in str(configured)
     assert os.environ["OPENAI_API_KEY"] == "test-openai-secret"
+    assert os.environ["OPENROUTER_API_KEY"] == "test-openrouter-secret"
     assert "KIMI_API_KEY" not in os.environ
     assert "ZAI_API_KEY" not in os.environ
     assert "XAI_API_KEY" not in os.environ
 
     cleared = asyncio.run(desktop_worker.dispatch(
-        "runtime.configure", {"openaiApiKey": "", "kimiApiKey": ""},
+        "runtime.configure", {"openaiApiKey": "", "openrouterApiKey": "", "kimiApiKey": ""},
     ))
-    assert cleared == {"ok": True, "openaiConfigured": False}
+    assert cleared == {"ok": True, "openaiConfigured": False, "openrouterConfigured": False}
     assert "OPENAI_API_KEY" not in os.environ
+    assert "OPENROUTER_API_KEY" not in os.environ
     assert "KIMI_API_KEY" not in os.environ
     assert "ZAI_API_KEY" not in os.environ
     assert "XAI_API_KEY" not in os.environ

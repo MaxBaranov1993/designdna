@@ -134,13 +134,22 @@ async def dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "transport": "stdio", "backend": "asgi"}
     if method == "runtime.configure":
         openai_key = str(params.get("openaiApiKey") or "").strip()
+        openrouter_key = str(params.get("openrouterApiKey") or "").strip()
         if openai_key:
             os.environ["OPENAI_API_KEY"] = openai_key
         else:
             os.environ.pop("OPENAI_API_KEY", None)
+        if openrouter_key:
+            os.environ["OPENROUTER_API_KEY"] = openrouter_key
+        else:
+            os.environ.pop("OPENROUTER_API_KEY", None)
         for retired in ("KIMI_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "XAI_API_KEY"):
             os.environ.pop(retired, None)
-        return {"ok": True, "openaiConfigured": bool(openai_key)}
+        return {
+            "ok": True,
+            "openaiConfigured": bool(openai_key),
+            "openrouterConfigured": bool(openrouter_key),
+        }
     if method == "http.request":
         return await asgi_request(params)
     if method == "debug.sleep":

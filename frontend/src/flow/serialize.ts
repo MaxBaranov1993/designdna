@@ -39,6 +39,7 @@ export const NODE_TYPES: NodeType[] = [
   "qualitypass",
   "recorder",
   "motion",
+  "motiondesign",
   "timeline",
   "pagebridge",
   "designsystem",
@@ -301,6 +302,15 @@ function dataForStorage(type: NodeType, data: AnyNodeData): AnyNodeData {
 
 function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
   if (type === "motion") return { ...defaultData("motion"), ...data, renderJob: null } as AnyNodeData;
+  if (type === "motiondesign") {
+    const defaults = defaultData("motiondesign") as Record<string, unknown>;
+    const saved = data as Record<string, unknown>;
+    return {
+      ...defaults,
+      ...saved,
+      settings: { ...(defaults.settings as Record<string, unknown>), ...((saved.settings as Record<string, unknown>) || {}) },
+    } as AnyNodeData;
+  }
   if (type === "timeline") return { ...defaultData("timeline"), ...data, renderJob: null } as AnyNodeData;
   if (type === "sourceimport") {
     const source = { ...defaultData("sourceimport"), ...data } as SourceImportNodeData;
