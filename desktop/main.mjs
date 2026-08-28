@@ -802,6 +802,17 @@ function createWindow() {
     if (!window.isDestroyed()) window.webContents.reload();
   });
   window.webContents.on("unresponsive", () => console.warn("Renderer unresponsive"));
+  // Ошибки рендерера иначе не видны нигде: окно просто «ничего не делает».
+  // Warning/error уходят в stdout main-процесса и в лог запуска.
+  window.webContents.on("console-message", (event) => {
+    // Electron 43: единый объект события вместо позиционных аргументов.
+    const level = String(event?.level || "");
+    if (level !== "error" && level !== "warning") return;
+    const where = event?.sourceId ? ` (${event.sourceId}:${event.lineNumber})` : "";
+    console.error(`[renderer] ${event?.message || ""}${where}`);
+  });
+  // Devtools по требованию: DESIGNDNA_DEVTOOLS=1 npm start
+  if (process.env.DESIGNDNA_DEVTOOLS === "1") window.webContents.openDevTools({ mode: "detach" });
   window.on("closed", () => rendererCommands?.detach(rendererId));
   if (rendererDevUrl) void window.loadURL(rendererDevUrl);
   else void window.loadFile(rendererEntry);

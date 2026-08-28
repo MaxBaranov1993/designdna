@@ -135,6 +135,10 @@ def preview_ir_for_master(master: dict) -> dict:
     return {
         "version": master.get("version") or "1.1",
         "tokens": copy.deepcopy(master.get("tokens") or {}),
+        # Обёртка превью обязана донести meta.fontFaces: рендерер берёт
+        # @font-face только отсюда, иначе компонент рисуется системным шрифтом.
+        **({"meta": copy.deepcopy(master["meta"])}
+           if isinstance(master.get("meta"), dict) and master["meta"] else {}),
         "tree": [{
             "id": "ds-master-preview", "type": "source-block", "variant": "component-master", "props": {},
             **({"frame": wrapper_frame} if wrapper_frame else {}),

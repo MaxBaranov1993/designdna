@@ -931,11 +931,27 @@ import { isLockedNode } from "./locked";
     }).join("\n");
     if (customFaces.length) {
       try {
-        customFaces.forEach((f) => {
+        // Загрузку подтверждаем, а не выстреливаем вслепую: молчаливый отказ
+        // (404 протокола, битый файл) раньше выглядел как «шрифт не применился»
+        // без единого следа в логах.
+        const pending = customFaces.map((f) => {
           const w = parseInt(String(f.weight), 10) || 400;
-          document.fonts.load(w + ' 16px "' + f.family + '"');
+          const spec = w + ' 16px "' + f.family + '"';
+          return document.fonts.load(spec).then((faces) => ({ spec, ok: faces.length > 0 }))
+            .catch((error) => ({ spec, ok: false, error: String(error && error.message || error) }));
+        });
+        void Promise.all(pending).then((results) => {
+          const failed = results.filter((r) => !r.ok);
+          if (failed.length) {
+            console.error("[ir] source fonts failed to load: " +
+              failed.map((r) => r.spec + (r.error ? " — " + r.error : "")).join("; "));
+          }
         });
       } catch (_) { /* preload — best effort */ }
+    }
+    if (requestedFaces.length && !customFaces.length) {
+      console.error("[ir] every captured font face was rejected by validation: " +
+        JSON.stringify(requestedFaces.slice(0, 3)));
     }
 
     // артборд: корневой frame задаёт ширину холста и (опционально) free-позиционирование секций

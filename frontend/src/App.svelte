@@ -13,6 +13,7 @@
   import FlowCanvas from "./FlowCanvas.svelte";
   import ToastViewport from "./flow/ToastViewport.svelte";
   import { installGraphDev } from "./flow/graphdev";
+  import { toast } from "./flow/toast";
   import { useFlowStore } from "./flow/store";
   import { getConfig } from "./flow/api";
   import { installRendererLiveCommands } from "./desktop/live-command-handler";
@@ -60,7 +61,13 @@
     const onEditorRequest = () => ensureEditor();
     window.addEventListener("designdna:open-ds-editor", (event: Event) => {
       dsEditorNodeId = (event as CustomEvent).detail?.nodeId ?? null;
-      void ensureDsEditor();
+      // Без catch отказ динамического импорта был невидим: окно просто
+      // не открывалось, а причина тонула в unhandled rejection.
+      void ensureDsEditor().catch((error) => {
+        dsEditorNodeId = null;
+        console.error("Design System editor failed to load", error);
+        toast(`Не удалось открыть редактор дизайн-системы: ${error?.message || error}`);
+      });
     });
     window.addEventListener("designdna:ensure-editor", onEditorRequest);
     installGraphDev();

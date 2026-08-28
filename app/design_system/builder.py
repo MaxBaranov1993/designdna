@@ -1598,6 +1598,13 @@ def _components_from_blocks(blocks: list, source_revision_hash: str, dna: dict,
                         "tokens": copy.deepcopy(block_tokens),
                         "tree": [copy.deepcopy(node)],
                     }
+                    # meta.fontFaces — единственный источник @font-face для
+                    # рендерера. Без него КАЖДОЕ превью компонента рисовалось
+                    # системным шрифтом вместо шрифта сайта: мастер вырезается
+                    # из блока, а meta оставалась у блока.
+                    block_meta = ir.get("meta") if isinstance(ir.get("meta"), dict) else {}
+                    if block_meta.get("fontFaces"):
+                        master["meta"] = {"fontFaces": copy.deepcopy(block_meta["fontFaces"])}
                     bounds_by_viewport = {
                         viewport_name: frame
                         for viewport_name in ("desktop", "tablet", "mobile")
