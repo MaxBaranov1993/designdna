@@ -46,6 +46,7 @@
    * в desktop промпт готовит сервер, отвечает выбранный аккаунт, применяет
    * и валидирует снова сервер — креденшелы не покидают main-процесс. */
   let reviewing = $state(false);
+  let exportingKit = $state(false);
   let reviewProvider = $state<"openai" | "codex" | "claude">("openai");
   let reviewEffort = $state<"medium" | "high" | "max">("high");
   let actionError = $state("");
@@ -204,7 +205,7 @@
   });
 
   const dirty = $derived(!!snapshot && memoJson(data.document) !== snapshot);
-  const busy = $derived(publishing || validating || applying || saving || organizing || reviewing || !!$flowBusy[Number(nodeId)]);
+  const busy = $derived(publishing || validating || applying || saving || organizing || reviewing || exportingKit || !!$flowBusy[Number(nodeId)]);
 
   $effect(() => {
     if (activeTab === "components" && catalogEntries.length && !selectedComp) {
@@ -568,6 +569,49 @@
     }
   }
 
+  /* Выгрузка живого UI kit: сервер собирает самодостаточный HTML (шрифты,
+   * картинки и движок рендера внутри), клиент только сохраняет файл. */
+  async function exportStyleguide() {
+    if (!doc.id) return;
+    exportingKit = true;
+    actionError = "";
+    $flow.setNodeData(Number(nodeId), { busyAction: "styleguide", lastError: "" });
+    try {
+      const resp = await fetch("/api/design-system/styleguide", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: doc, includeProof: true }),
+      });
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => ({}));
+        throw new Error(detail.error || `HTTP ${resp.status}`);
+      }
+      const filename = resp.headers.get("X-DesignDNA-Filename") || "ui-kit.html";
+      const bytes = new Uint8Array(await resp.arrayBuffer());
+      const desktopFiles = window.designDNA?.files;
+      if (desktopFiles) {
+        // Кусками по 32 КБ: String.fromCharCode(...bytes) на мегабайтах
+        // упирается в лимит числа аргументов (образец MotionWorkspace).
+        let binary = "";
+        for (let offset = 0; offset < bytes.length; offset += 32_768) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+        }
+        await desktopFiles.save(filename, btoa(binary));
+      } else {
+        const url = URL.createObjectURL(new Blob([bytes], { type: "text/html" }));
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 5_000);
+      }
+    } catch (e) {
+      actionError = `UI Kit: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      exportingKit = false;
+      $flow.setNodeData(Number(nodeId), { busyAction: "" });
+    }
+  }
+
   async function publish() {
     publishing = true;
     actionError = "";
@@ -748,6 +792,10 @@
       </span>
     </div>
     <div class="ds-editor-actions">
+      <button type="button" data-ds-action="styleguide" aria-label="Выгрузить живой UI Kit одним HTML-файлом"
+              aria-busy={exportingKit} onclick={() => void exportStyleguide()} disabled={busy || !catalogEntries.length}>
+        {exportingKit ? "Сборка…" : "UI Kit (HTML)"}
+      </button>
       <button type="button" data-ds-action="validate" aria-label="Проверить документ" aria-busy={validating} onclick={validate} disabled={busy || !components.length}>
         {validating ? "Проверка…" : "Validate"}
       </button>

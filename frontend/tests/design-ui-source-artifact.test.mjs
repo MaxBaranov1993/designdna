@@ -35,8 +35,11 @@ test("Design System is the single new canvas surface for Source UI", async () =>
   assert.match(node, /<InPorts type="designsystem"/);
   assert.match(panel, /data-ds-tab="source"/);
   assert.match(panel, /<SourceArtifactPanel/);
-  for (const label of ["Foundations", "Screens", "Component Library", "exact masters", "needs review"]) {
-    assert.match(sourcePanel.toLowerCase(), new RegExp(label.toLowerCase()));
+  // Разделы кита названы по-русски и читаются от простого к составному;
+  // уровни атомарного дизайна — обязательная ось каталога.
+  for (const label of ["Основы", "Экраны", "Компоненты", "мастеров из источника",
+                       "Атомы", "Молекулы", "Организмы", "на ревью"]) {
+    assert.ok(sourcePanel.includes(label), `нет раздела: ${label}`);
   }
   assert.match(sourcePanel, /screen\.hierarchy/);
   assert.match(sourcePanel, /data-source-component-catalog/);

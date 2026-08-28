@@ -32,6 +32,16 @@ class OrganizeRequest(BaseModel):
     reasoningEffort: str = "high"
 
 
+class StyleguideRequest(BaseModel):
+    """Выгрузка живого UI kit одним самодостаточным HTML-файлом."""
+    document: dict | None = None
+    systemId: str = ""
+    revision: int = 0
+    includeProof: bool = True
+    includeReviewComponents: bool = True
+    viewport: str = "desktop"
+
+
 class StyleReviewRequest(BaseModel):
     """AI-ревью стилистики. prepareOnly → промпт; rawOutput → применить ответ
     внешнего провайдера (desktop); без обоих — серверный вызов Sol."""
@@ -165,6 +175,59 @@ def style_review_design_system(req: StyleReviewRequest):
     document = saved.get("document") or updated
     return {"document": document, "styleGuide": document.get("styleGuide") or {},
             "summary": summary(document)}
+
+
+@router.post("/api/design-system/styleguide")
+def export_styleguide(req: StyleguideRequest):
+    """Документ дизайн-системы → живой UI kit одним HTML-файлом.
+
+    Отдаём octet-stream, а не text/html: desktop-мост гонит любой text/* через
+    JSON-заголовок с экранированием (app/desktop_worker.py), а бинарный кадр
+    существует ровно для таких многомегабайтных ответов.
+    """
+    import datetime
+    import re as _re
+
+    from fastapi import Response
+
+    from . import styleguide
+
+    document = req.document
+    if not document and req.systemId:
+        document = store.get_revision(req.systemId, req.revision)
+        if not document:
+            return _err(404, f"Ревизия {req.systemId}@{req.revision} не найдена")
+    if not isinstance(document, dict):
+        return _err(422, "Нет документа дизайн-системы")
+    if not (document.get("components") or document.get("reviewComponents")):
+        return _err(422, "В системе нет мастеров — соберите UI Kit из Source")
+
+    try:
+        html_text, report = styleguide.render_styleguide(
+            document,
+            include_proof=req.includeProof,
+            include_review_components=req.includeReviewComponents,
+            viewport=req.viewport or "desktop",
+            generated_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        )
+    except (ValueError, RuntimeError) as exc:
+        return _err(422, str(exc))
+    except Exception as exc:
+        return _err(502, f"Сборка UI Kit не удалась: {exc}")
+
+    slug = _re.sub(r"[^A-Za-z0-9._-]+", "-", str(document.get("name") or "ui-kit")).strip("-") or "ui-kit"
+    filename = f"{slug}-rev{int(document.get('revision') or 0)}.html"
+    return Response(
+        content=html_text.encode("utf-8"),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-DesignDNA-Filename": filename,
+            "X-DesignDNA-Bytes": str(report["bytes"]),
+            "X-DesignDNA-Components": str(report["componentCount"]),
+            "X-DesignDNA-Warnings": str(len(report["warnings"])),
+        },
+    )
 
 
 @router.post("/api/design-system/publish")
