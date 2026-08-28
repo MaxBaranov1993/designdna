@@ -14,6 +14,7 @@ import time
 from playwright.sync_api import sync_playwright
 
 BASE = "http://127.0.0.1:8420"
+FLOW_PAGES_LS_KEY = "designai-flow-pages-v1"
 PROMPT_TEXT = "Generate a marketplace header"
 SOURCE_URL = "https://example.com/page"
 
@@ -59,6 +60,29 @@ def check(name, cond, extra=""):
     print(f"[{tag}] {name}" + (f" - {extra}" if extra and not cond else ""))
     if not cond:
         FAILS.append(name)
+
+
+def wait_for_saved_generator_value(pg, key, expected):
+    """Wait for the debounced + idle autosave instead of sleeping a fixed time."""
+    pg.wait_for_function(
+        """([storageKey, key, expected]) => {
+            const raw = localStorage.getItem(storageKey);
+            if (!raw) return false;
+            try {
+                const project = JSON.parse(raw);
+                const pages = Array.isArray(project.pages) ? project.pages : [];
+                const page = pages.find((item) => item.id === project.activePageId) || pages[0];
+                const nodes = page && page.graph && Array.isArray(page.graph.nodes)
+                    ? page.graph.nodes : [];
+                const generator = nodes.find((node) => node.type === 'generator');
+                return !!generator && !!generator.data && generator.data[key] === expected;
+            } catch {
+                return false;
+            }
+        }""",
+        arg=[FLOW_PAGES_LS_KEY, key, expected],
+        timeout=4000,
+    )
 
 
 def center(box):
@@ -230,7 +254,7 @@ def main():
                   return data.provider + ':' + data.effort;
               })()""") == "openai:medium")
         pg.select_option(".n-generator .f-effort-select", "high")
-        pg.wait_for_timeout(500)
+        wait_for_saved_generator_value(pg, "effort", "high")
         pg.reload()
         pg.wait_for_selector(".n-generator .f-effort-select")
         check("Generator effort survives reload",
@@ -238,7 +262,7 @@ def main():
         # Провайдер по подписке должен переживать перезагрузку так же, как усилие:
         # односторонняя миграция раньше молча возвращала выбор к Sol.
         pg.select_option(".n-generator .f-provider-select", "claude")
-        pg.wait_for_timeout(500)
+        wait_for_saved_generator_value(pg, "provider", "claude")
         pg.reload()
         pg.wait_for_selector(".n-generator .f-provider-select")
         check("Generator provider survives reload",
