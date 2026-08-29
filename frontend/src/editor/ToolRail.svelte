@@ -1,87 +1,26 @@
 <script lang="ts">
-  /* Левая рейка инструментов (модель pen.dev/Figma/OpenPencil): 5 кнопок,
-   * фигуры собраны в flyout-группу под Прямоугольником (R): rect/ellipse/line/image.
-   * data-tool на лидере группы — стабильный якорь тестов ([data-tool="rect"]);
-   * пункты flyout несут data-tool + data-fly-item. Активный инструмент — из store;
-   * если текущий инструмент из группы, лидер показывает его иконку (как в Figma). */
+  /* Левая рейка инструментов DNA-редактора: 8 плоских кнопок без flyout-группы
+   * (модель прототипа handoff). Хоткей — мелкой буквой в углу кнопки, активная —
+   * фиолетовая (--dna-violet-l). data-tool — стабильный якорь тестов;
+   * сами хоткеи обрабатывает controller.onKeydown. */
   import * as ctl from "./controller";
   import { editorUi } from "./state";
   import { cn } from "../lib/utils";
 
-  type ToolDef = { tool: string; title: string };
+  type ToolDef = { tool: string; title: string; key: string };
 
-  const SHAPE_GROUP: ToolDef[] = [
-    { tool: "rect", title: "Прямоугольник (R)" },
-    { tool: "ellipse", title: "Эллипс (O)" },
-    { tool: "line", title: "Линия (L)" },
-    { tool: "image", title: "Изображение (I)" },
-  ];
-  const SHAPE_TOOLS = SHAPE_GROUP.map((t) => t.tool);
-
-  const SINGLE_TOOLS: ToolDef[] = [
-    { tool: "select", title: "Выделение (V)" },
-    { tool: "hand", title: "Рука — панорама (H)" },
-    { tool: "frame", title: "Фрейм (F)" },
+  const TOOLS: ToolDef[] = [
+    { tool: "select", title: "Выделение", key: "V" },
+    { tool: "hand", title: "Рука — панорама", key: "H" },
+    { tool: "frame", title: "Фрейм", key: "F" },
+    { tool: "rect", title: "Прямоугольник", key: "R" },
+    { tool: "ellipse", title: "Эллипс", key: "O" },
+    { tool: "line", title: "Линия", key: "L" },
+    { tool: "image", title: "Изображение", key: "I" },
+    { tool: "text", title: "Текст", key: "T" },
   ];
 
   const tool = $derived($editorUi.tool);
-
-  let flyOpen = $state(false);
-  let lastShape = $state("rect");
-  let openTimer: ReturnType<typeof setTimeout> | null = null;
-  let closeTimer: ReturnType<typeof setTimeout> | null = null;
-
-  $effect(() => {
-    return () => {
-      if (openTimer) clearTimeout(openTimer);
-      if (closeTimer) clearTimeout(closeTimer);
-    };
-  });
-
-  /* хоткеи/внешние setTool синхронизируются: инструмент группы, включённый
-   * мимо flyout, становится и отображаемым на лидере, и lastShape */
-  $effect(() => {
-    if (SHAPE_TOOLS.includes(tool)) lastShape = tool;
-  });
-
-  function scheduleOpen() {
-    if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
-    if (openTimer) clearTimeout(openTimer);
-    openTimer = setTimeout(() => (flyOpen = true), 200);
-  }
-  function scheduleClose() {
-    if (openTimer) { clearTimeout(openTimer); openTimer = null; }
-    if (closeTimer) clearTimeout(closeTimer);
-    closeTimer = setTimeout(() => (flyOpen = false), 250);
-  }
-
-  function pickShape(t: string) {
-    ctl.setTool(t);
-    lastShape = t;
-    flyOpen = false;
-  }
-
-  function onLeaderClick(event: MouseEvent) {
-    const target = event.target as HTMLElement | null;
-    if (target?.closest(".fe-fly-arrow")) {
-      flyOpen = !flyOpen;
-      return;
-    }
-    ctl.setTool(displayShape);
-  }
-
-  function onLeaderKey(event: KeyboardEvent) {
-    if (event.key === "ArrowDown" || event.key === "Enter" && event.altKey) {
-      event.preventDefault();
-      flyOpen = true;
-    } else if (event.key === "Escape" && flyOpen) {
-      event.preventDefault();
-      flyOpen = false;
-    }
-  }
-
-  const displayShape = $derived(SHAPE_TOOLS.includes(tool) ? tool : lastShape);
-  const displayDef = $derived(SHAPE_GROUP.find((t) => t.tool === displayShape) || SHAPE_GROUP[0]);
 </script>
 
 {#snippet toolIcon(name: string)}
@@ -105,75 +44,17 @@
 {/snippet}
 
 <div class="fe-rail">
-  {#each SINGLE_TOOLS.slice(0, 3) as t (t.tool)}
+  {#each TOOLS as t (t.tool)}
     <button
       class={cn("fe-rail-btn", tool === t.tool && "active")}
       data-tool={t.tool}
-      data-tip={t.title}
-      aria-label={t.title}
+      data-tip={`${t.title} (${t.key})`}
+      aria-label={`${t.title} (${t.key})`}
       aria-pressed={tool === t.tool}
       onclick={() => ctl.setTool(t.tool)}
     >
       {@render toolIcon(t.tool)}
+      <span class="fe-key" aria-hidden="true">{t.key}</span>
     </button>
   {/each}
-
-  <div
-    class="fe-rail-group"
-    role="group"
-    onmouseenter={scheduleOpen}
-    onmouseleave={scheduleClose}
-  >
-    <button
-      class={cn("fe-rail-btn", SHAPE_TOOLS.includes(tool) && "active")}
-      data-tool="rect"
-      data-flyout="shapes"
-      data-tip={`${displayDef.title} — удерживайте/наведите для выбора фигуры`}
-      aria-label={displayDef.title}
-      aria-haspopup="menu"
-      aria-expanded={flyOpen}
-      aria-pressed={SHAPE_TOOLS.includes(tool)}
-      onclick={onLeaderClick}
-      onkeydown={onLeaderKey}
-    >
-      {@render toolIcon(displayDef.tool)}
-      <span class="fe-fly-arrow">▾</span>
-    </button>
-    {#if flyOpen}
-      <div
-        class="fe-rail-flyout"
-        role="group"
-        aria-label="Фигуры"
-        onmouseenter={() => {
-          if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
-        }}
-        onmouseleave={scheduleClose}
-      >
-        {#each SHAPE_GROUP as t (t.tool)}
-          <button
-            class={cn("fe-rail-btn", tool === t.tool && "active")}
-            data-tool={t.tool}
-            data-fly-item={t.tool}
-            data-tip={t.title}
-            aria-label={t.title}
-            aria-pressed={tool === t.tool}
-            onclick={() => pickShape(t.tool)}
-          >
-            {@render toolIcon(t.tool)}
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
-  <button
-    class={cn("fe-rail-btn", tool === "text" && "active")}
-    data-tool="text"
-    data-tip="Текст (T)"
-    aria-label="Текст (T)"
-    aria-pressed={tool === "text"}
-    onclick={() => ctl.setTool("text")}
-  >
-    {@render toolIcon("text")}
-  </button>
 </div>

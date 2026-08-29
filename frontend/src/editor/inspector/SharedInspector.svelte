@@ -161,7 +161,7 @@ import ColorPicker from "./ColorPicker.svelte";
       <label><input type="checkbox" bind:checked={allowColor} disabled={isScalarProp} onchange={() => ctl.setAiAssistFormState({ constraints: { allowColor } as any })} /> Цвета</label>
     </fieldset>
     {#if isScalarProp}<small>Для этого текстового свойства AI меняет только текст.</small>{:else}<div class="ai-quick-row">{#each QUICK as item (item.action)}<button disabled={busy || !!preview || (scopeMode !== "document" && !scope.items.length)} onclick={() => run(item.action, item.prompt)}>{item.label}</button>{/each}</div>{/if}
-    <button class="ai-run" data-ai-run aria-busy={busy} disabled={busy || !!preview || !prompt.trim() || (scopeMode !== "document" && !scope.items.length)} onclick={() => run("custom", prompt)}>{busy ? `AI работает · ${elapsedLabel(elapsedSeconds)}` : "Показать результат"}</button>
+    <button class="ai-run" data-ai-run aria-busy={busy} disabled={busy || !!preview || !prompt.trim() || (scopeMode !== "document" && !scope.items.length)} onclick={() => run("custom", prompt)}>{busy ? `AI работает · ${elapsedLabel(elapsedSeconds)}` : "Показать вариант"}</button>
     {#if busy && progress}
       <div class="ai-progress" data-ai-progress={progress.stage} role="status" aria-live="polite">
         <span class="ai-progress-spinner" aria-hidden="true"></span>
@@ -200,8 +200,8 @@ import ColorPicker from "./ColorPicker.svelte";
             <div class="pi-field"><label for="pi-frame-y" title="Тяни горизонтально — scrub; можно выражения: 100*2">Y</label><input id="pi-frame-y" type="text" inputMode="decimal" data-pi="y" value={frame.y ?? ""} disabled={isRootSel} /></div>
           </div>
           <div class="pi-row">
-            <div class="pi-field"><label for="pi-frame-width" title="Можно выражения: 960/3">W</label><input id="pi-frame-width" type="text" inputMode="decimal" data-pi="width" value={frame.width ?? ""} /></div>
-            <div class="pi-field"><label for="pi-frame-height" title="Можно выражения: 960/3">H</label><input id="pi-frame-height" type="text" inputMode="decimal" data-pi="height" value={frame.height ?? ""} /></div>
+            <div class="pi-field"><label for="pi-frame-width" title="Ширина. Можно выражения: 960/3">Ш</label><input id="pi-frame-width" type="text" inputMode="decimal" data-pi="width" value={frame.width ?? ""} /></div>
+            <div class="pi-field"><label for="pi-frame-height" title="Высота. Можно выражения: 960/3">В</label><input id="pi-frame-height" type="text" inputMode="decimal" data-pi="height" value={frame.height ?? ""} /></div>
           </div>
           <div class="pi-row">
             <div class="pi-field"><label for="pi-frame-rotation">R</label><input id="pi-frame-rotation" type="text" inputMode="decimal" data-pi="rotation" value={frame.rotation ?? ""} disabled={isRootSel} /></div>
@@ -245,4 +245,28 @@ import ColorPicker from "./ColorPicker.svelte";
     </details>
     {/if}
   {/if}
+
+  <!-- Привязка к сетке: тумблер + шаг; состояние в editor/store (зеркало controller) -->
+  <div class="fe-snap">
+    <div class="fe-snap-head">
+      <div class="fe-snap-copy"><strong>Привязка к сетке</strong><small>Шаг {$editorUi.snapStep}px · Alt — отключить</small></div>
+      <button
+        class={"fe-snap-toggle" + ($editorUi.snap ? " on" : "")}
+        role="switch"
+        aria-checked={$editorUi.snap}
+        aria-label="Привязка к сетке"
+        onclick={() => ctl.setSnap(!$editorUi.snap)}
+      ><i></i></button>
+    </div>
+    <div class="fe-snap-steps" role="group" aria-label="Шаг сетки">
+      {#each [4, 8, 12, 16] as s (s)}
+        <button
+          class:active={$editorUi.snapStep === s}
+          aria-pressed={$editorUi.snapStep === s}
+          disabled={!$editorUi.snap}
+          onclick={() => ctl.setSnapStep(s)}
+        >{s}px</button>
+      {/each}
+    </div>
+  </div>
 </div>

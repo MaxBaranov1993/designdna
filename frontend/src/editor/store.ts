@@ -12,6 +12,9 @@ interface EditorUIState {
   isOpen: boolean;
   nodeId: number | null;
   tool: string;
+  /* Привязка к сетке: источник истины — controller (setSnap/setSnapStep), тут зеркало для панелей */
+  snap: boolean;
+  snapStep: ctl.SnapStep;
   /* Тик инспектора: контроллер бампит при смене выделения/мутациях,
    * InspectorPanel перемонтирует дерево по key={tick} (аналог innerHTML-перестройки). */
   inspectorTick: number;
@@ -34,6 +37,8 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
   isOpen: false,
   nodeId: null,
   tool: "select",
+  snap: true,
+  snapStep: 8,
   inspectorTick: 0,
   sourceTick: 0,
   smartAxisProposal: null,
@@ -116,6 +121,8 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
 /* Связываем контроллер со стором (без циклического импорта controller → store) */
 ctl.bindUi({
   setTool: (t) => useEditorStore.setState({ tool: t }),
+  setSnap: (snap) => useEditorStore.setState({ snap }),
+  setSnapStep: (snapStep) => useEditorStore.setState({ snapStep }),
   setOpen: (v) => {
     if (ctl.dom.overlay) ctl.dom.overlay.style.display = v ? "flex" : "none";
     useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null, aiProgress: null }) });

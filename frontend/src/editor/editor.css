@@ -46,7 +46,12 @@
 .fe-lbtn:focus-visible, .ai-run:focus-visible, .align-grid button:focus-visible, .merge-row button:focus-visible {
   outline:2px solid hsl(var(--ring)); outline-offset:2px; }
 .fe-sep { width:1px; height:20px; background:hsl(var(--border)); margin:0 4px; }
-.fe-zoom { font-size:11px; color:hsl(var(--muted-foreground)); width:44px; text-align:center; font-variant-numeric:tabular-nums; }
+/* процент зума — кнопка: клик сбрасывает зум к 100% */
+.fe-zoom { font-size:11px; color:hsl(var(--muted-foreground)); width:44px; height:30px; text-align:center;
+  font-variant-numeric:tabular-nums; background:transparent; border:none; border-radius:6px;
+  padding:0; cursor:pointer; transition:.12s; }
+.fe-zoom:hover { background:hsl(var(--accent)); color:hsl(var(--foreground)); }
+.fe-zoom:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
 .fe-viewports { display:inline-flex; gap:2px; padding:2px; border:1px solid hsl(var(--border)); border-radius:6px; }
 .fe-viewports .fe-viewport-btn { width:auto; height:26px; gap:5px; padding:0 8px; font-size:10px; font-weight:700; }
 .fe-device-icon { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.75;
@@ -80,7 +85,7 @@
 .fe-body { display:flex; flex:1; overflow:hidden; }
 
 /* слои */
-.fe-layers { width:220px; flex:none; background:var(--fe-panel); border-right:1px solid hsl(var(--border));
+.fe-layers { width:256px; flex:none; background:var(--fe-panel); border-right:1px solid hsl(var(--border));
   overflow-y:auto; padding:8px 0; }
 .fe-layers-head { padding:4px 12px 8px; font-size:10px; font-weight:700; text-transform:uppercase;
   letter-spacing:.08em; color:hsl(var(--muted-foreground)); }
@@ -116,28 +121,31 @@
 .fe-canvas-inner { position:absolute; top:0; left:0; transform-origin:0 0; }
 .fe-canvas-inner [class^="ir-"] { box-shadow:0 4px 40px rgba(0,0,0,.5); }
 
-/* линейки (штрихи/подписи рисует canvas — цвета в controller.drawRulers) */
-.fe-ruler-h { position:absolute; top:0; left:24px; right:0; height:24px; background:var(--fe-panel);
+/* линейки 22px (штрихи/подписи рисует canvas — размер синхронен R в controller.drawRulers) */
+.fe-ruler-h { position:absolute; top:0; left:22px; right:0; height:22px; background:var(--fe-panel);
   border-bottom:1px solid hsl(var(--border)); z-index:10; overflow:hidden; }
-.fe-ruler-v { position:absolute; top:24px; left:0; bottom:0; width:24px; background:var(--fe-panel);
+.fe-ruler-v { position:absolute; top:22px; left:0; bottom:0; width:22px; background:var(--fe-panel);
   border-right:1px solid hsl(var(--border)); z-index:10; overflow:hidden; }
-.fe-ruler-corner { position:absolute; top:0; left:0; width:24px; height:24px; background:var(--fe-panel);
+.fe-ruler-corner { position:absolute; top:0; left:0; width:22px; height:22px; background:var(--fe-panel);
   border-right:1px solid hsl(var(--border)); border-bottom:1px solid hsl(var(--border)); z-index:11; }
 .fe-ruler-h canvas, .fe-ruler-v canvas { display:block; }
 
-/* левая панель инструментов как в pen.dev */
+/* левая рейка инструментов: 8 плоских кнопок, активная — фиолетовая (--dna-violet-l) */
 .fe-rail { position:absolute; left:34px; top:50%; transform:translateY(-50%); z-index:20;
   display:flex; flex-direction:column; gap:4px; background:var(--fe-panel);
   border:1px solid hsl(var(--border)); border-radius:10px; padding:6px;
   box-shadow:0 4px 16px rgba(0,0,0,.4);
   /* между кнопками клики уходят в канвас — рельс не создаёт мёртвую зону */
   pointer-events:none; }
-.fe-rail .fe-rail-btn, .fe-rail .fe-rail-group { pointer-events:auto; }
+.fe-rail .fe-rail-btn { pointer-events:auto; }
 .fe-rail-btn { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center;
   background:transparent; border:none; border-radius:8px; color:hsl(var(--foreground)); cursor:pointer;
   position:relative; transition:background .12s, color .12s; }
 .fe-rail-btn:hover { background:hsl(var(--accent)); }
-.fe-rail-btn.active { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); }
+.fe-rail-btn.active { background:var(--dna-violet-l, #9b5cff); color:#fff; }
+/* хоткей — мелкой буквой в углу кнопки */
+.fe-rail-btn .fe-key { position:absolute; right:2px; bottom:1px; font:700 8px/1 'Inter',sans-serif;
+  color:currentColor; opacity:.55; pointer-events:none; }
 /* быстрые CSS-тултипы с хоткеем (вместо медленного нативного title) */
 .fe-rail-btn::after { content:attr(data-tip); position:absolute; left:calc(100% + 10px); top:50%;
   transform:translateY(-50%) translateX(-4px); background:#18181b; border:1px solid #3f3f46;
@@ -145,15 +153,15 @@
   white-space:nowrap; opacity:0; pointer-events:none; transition:opacity .12s, transform .12s;
   z-index:60; box-shadow:0 4px 12px rgba(0,0,0,.45); }
 .fe-rail-btn:hover::after { opacity:1; transform:translateY(-50%) translateX(0); }
-/* flyout-группа фигур под Прямоугольником (паттерн Figma/OpenPencil) */
-.fe-rail-group { position:relative; }
-.fe-rail-btn .fe-fly-arrow { position:absolute; right:2px; bottom:1px; font-size:6px; line-height:1;
-  color:hsl(var(--muted-foreground)); pointer-events:none; }
-.fe-rail-btn.active .fe-fly-arrow { color:hsl(var(--primary-foreground)); }
-.fe-rail-flyout { position:absolute; left:calc(100% + 6px); top:50%; transform:translateY(-50%);
-  display:flex; flex-direction:column; gap:4px; background:var(--fe-panel);
-  border:1px solid hsl(var(--border)); border-radius:10px; padding:6px; z-index:70;
-  box-shadow:0 4px 16px rgba(0,0,0,.4); }
+
+/* статус-чип внизу канваса: активный инструмент + шаг сетки */
+.fe-status { position:absolute; left:34px; bottom:14px; z-index:20; display:flex; align-items:center;
+  gap:7px; padding:6px 12px; border-radius:999px; background:rgba(16,16,20,.94);
+  border:1px solid var(--dna-border, #26262d); font:600 11px/1 'Inter',sans-serif;
+  color:var(--dna-text-2, #c9c9d0); pointer-events:none; }
+.fe-status-tool { color:var(--dna-violet-text-2, #b98cff); font-weight:700; }
+.fe-status-sep { color:var(--dna-border-strong, #33333c); }
+.fe-status-grid { color:var(--dna-dim, #8a8a93); }
 
 /* инспектор */
 .fe-inspector { width:304px; flex:none; background:var(--fe-panel); border-left:1px solid hsl(var(--border));
@@ -386,6 +394,29 @@
 .fe-insp-empty span { color:var(--accent); font-size:20px; margin-bottom:8px; }
 .fe-insp-empty strong { color:var(--text); margin-bottom:4px; }
 .fe-insp-empty p { margin:0; line-height:1.45; }
+
+/* привязка к сетке: тумблер + сегмент шага (карточка по мотивам прототипа) */
+.fe-snap { padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--fe-input);
+  display:flex; flex-direction:column; gap:10px; }
+.fe-snap-head { display:flex; align-items:center; gap:10px; }
+.fe-snap-copy { flex:1; min-width:0; }
+.fe-snap-copy strong { display:block; font-size:12px; font-weight:700; color:var(--text); }
+.fe-snap-copy small { display:block; margin-top:2px; font-size:10px; color:var(--muted); }
+.fe-snap-toggle { width:34px; height:20px; flex:none; border:none; border-radius:999px; padding:2px;
+  display:flex; justify-content:flex-start; background:var(--dna-hover-2, #212127); cursor:pointer;
+  transition:background .15s ease; }
+.fe-snap-toggle i { width:16px; height:16px; border-radius:999px; background:#fff; }
+.fe-snap-toggle.on { justify-content:flex-end; background:var(--dna-action, #ff691d); }
+.fe-snap-toggle:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.fe-snap-steps { display:flex; gap:5px; }
+.fe-snap-steps button { flex:1; padding:6px 0; border-radius:7px; border:1px solid var(--border);
+  background:var(--dna-sunken, #0e0e11); color:var(--muted); font:600 11px 'Inter',sans-serif;
+  cursor:pointer; transition:.12s; }
+.fe-snap-steps button:hover { background:var(--dna-hover, #1f1f26); color:var(--text); }
+.fe-snap-steps button.active { background:rgba(255,105,29,.16); border-color:rgba(255,105,29,.42);
+  color:var(--dna-action-text, #ffb183); font-weight:700; }
+.fe-snap-steps button:disabled { opacity:.45; cursor:default; }
+.fe-snap-steps button:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
 
 /* ---------- color picker (по мотивам OpenPencil: SV-поле + hue + HEX + токены) ---------- */
 .pi-cp-native { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }

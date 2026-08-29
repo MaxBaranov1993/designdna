@@ -14,7 +14,7 @@ import { EDITOR_ACTION_GROUPS } from "./actionInventory";
 
 export const dom = {
   overlay: null as HTMLDivElement | null,
-  zoomLabel: null as HTMLSpanElement | null,
+  zoomLabel: null as HTMLElement | null,
   viewports: null as HTMLSpanElement | null,
   responsiveSep: null as HTMLSpanElement | null,
   viewportWidth: null as HTMLInputElement | null,
@@ -145,8 +145,10 @@ let aiAssistFormState: AssistRequest = {
 };
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void; setAiBusy: (busy: boolean) => void; setAiError: (error: string) => void; setAiPreview: (preview: AssistPreview | null) => void; setAiProgress: (progress: import("./aiTypes").AssistProgress | null) => void } = {
+let ui: { setTool: (t: string) => void; setSnap: (v: boolean) => void; setSnapStep: (v: SnapStep) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void; setAiBusy: (busy: boolean) => void; setAiError: (error: string) => void; setAiPreview: (preview: AssistPreview | null) => void; setAiProgress: (progress: import("./aiTypes").AssistProgress | null) => void } = {
   setTool: () => {},
+  setSnap: () => {},
+  setSnapStep: () => {},
   setOpen: () => {},
   bumpInspector: () => {},
   bumpSources: () => {},
@@ -477,13 +479,8 @@ export function setTool(tool: string) {
   if (!state) return;
   state.tool = tool;
   ui.setTool(tool);
-  const shapeTools = ["rect", "ellipse", "line", "image"];
   dom.overlay?.querySelectorAll<HTMLElement>(".fe-rail [data-tool]").forEach((button) => {
-    const buttonTool = button.dataset.tool;
-    button.classList.toggle(
-      "active",
-      buttonTool === tool || (buttonTool === "rect" && shapeTools.includes(tool)),
-    );
+    button.classList.toggle("active", button.dataset.tool === tool);
   });
   if (dom.canvas) dom.canvas.style.cursor = tool === "hand" ? "grab" : "default";
   // синхронизируем geoedit: создание rect/text/frame и hand-панорама
@@ -505,9 +502,24 @@ export function setTool(tool: string) {
   }
 }
 
+/* Привязка к сетке: источник истины здесь (нужен drag-коммиту), зеркалится
+ * в UI-стор через ui.setSnap/setSnapStep (панели читают $editorUi). */
+export type SnapStep = 4 | 8 | 12 | 16;
+let snapEnabled = true;
+let snapStepPx: SnapStep = 8;
+export function setSnap(v: boolean) {
+  snapEnabled = v;
+  ui.setSnap(v);
+}
+export function setSnapStep(v: number) {
+  snapStepPx = ([4, 8, 12, 16].includes(v) ? v : 8) as SnapStep;
+  ui.setSnapStep(snapStepPx);
+}
+
 export function setViewport(viewport: string) {
   if (!state || !["desktop", "tablet", "mobile"].includes(viewport)) return;
-  const widths: Record<string, number> = { desktop: 1440, tablet: 768, mobile: 390 };
+  // tablet 834 — только ширина превью в редакторе; responsive-материализация IR живёт на 768
+  const widths: Record<string, number> = { desktop: 1440, tablet: 834, mobile: 390 };
   activateViewport(viewport, widths[viewport]);
 }
 
@@ -2203,15 +2215,16 @@ export function drawRulers() {
   const cr = canvas.getBoundingClientRect();
   const rulerH = dom.rulerH;
   const rulerV = dom.rulerV;
-  const w = Math.ceil(cr.width - 24), h = Math.ceil(cr.height - 24);
+  const R = 22; // толщина линеек, синхронно с .fe-ruler-* в editor.css
+  const w = Math.ceil(cr.width - R), h = Math.ceil(cr.height - R);
   if (w <= 0 || h <= 0) return;
-  rulerH.width = w; rulerH.height = 24;
-  rulerV.width = 24; rulerV.height = h;
+  rulerH.width = w; rulerH.height = R;
+  rulerV.width = R; rulerV.height = h;
   const ctxH = rulerH.getContext("2d");
   const ctxV = rulerV.getContext("2d");
   if (!ctxH || !ctxV) return;
-  ctxH.clearRect(0, 0, w, 24);
-  ctxV.clearRect(0, 0, 24, h);
+  ctxH.clearRect(0, 0, w, R);
+  ctxV.clearRect(0, 0, R, h);
   ctxH.fillStyle = "#a1a1aa"; ctxH.font = "9px Inter, sans-serif"; ctxH.textBaseline = "top";
   ctxV.fillStyle = "#a1a1aa"; ctxV.font = "9px Inter, sans-serif"; ctxV.textBaseline = "middle";
 
@@ -2219,8 +2232,8 @@ export function drawRulers() {
   // адаптивный шаг: при малом зуме показываем только крупные деления
   const minorStep = z >= 0.5 ? 8 : z >= 0.25 ? 16 : 32;
   const majorStep = z >= 0.5 ? 100 : z >= 0.25 ? 200 : 400;
-  const offsetX = state.panX - 24; // сдвиг линейки относительно канваса (24px = ширина вертикальной линейки)
-  const offsetY = state.panY - 24;
+  const offsetX = state.panX - R; // сдвиг линейки относительно канваса (R = ширина вертикальной линейки)
+  const offsetY = state.panY - R;
 
   // горизонтальная линейка
   const startX = Math.floor(-offsetX / z / minorStep) * minorStep;
@@ -2231,8 +2244,8 @@ export function drawRulers() {
     const isMajor = px % majorStep === 0;
     ctxH.strokeStyle = isMajor ? "#a1a1aa" : "#3f3f46";
     ctxH.beginPath();
-    ctxH.moveTo(screenX, isMajor ? 0 : 16);
-    ctxH.lineTo(screenX, 24);
+    ctxH.moveTo(screenX, isMajor ? 0 : R - 8);
+    ctxH.lineTo(screenX, R);
     ctxH.stroke();
     if (isMajor) ctxH.fillText(String(px), screenX + 2, 2);
   }
@@ -2246,8 +2259,8 @@ export function drawRulers() {
     const isMajor = py % majorStep === 0;
     ctxV.strokeStyle = isMajor ? "#a1a1aa" : "#3f3f46";
     ctxV.beginPath();
-    ctxV.moveTo(isMajor ? 0 : 16, screenY);
-    ctxV.lineTo(24, screenY);
+    ctxV.moveTo(isMajor ? 0 : R - 8, screenY);
+    ctxV.lineTo(R, screenY);
     ctxV.stroke();
     if (isMajor) {
       ctxV.save();
@@ -2269,6 +2282,12 @@ function zoomBy(factor: number) {
   state.panY = cy - (cy - state.panY) * (z / state.zoom);
   state.zoom = z;
   applyTransform();
+}
+
+/** Клик по проценту в тулбаре — сброс зума к 100% (центр канваса). */
+export function zoomReset() {
+  if (!state || state.zoom === 1) return;
+  zoomBy(1 / state.zoom);
 }
 
 export function zoomFit() {
@@ -2331,6 +2350,65 @@ const panAdapter = {
   set scrollTop(v: number) { if (state) { state.panY = -v; applyTransform(); } },
 };
 
+/* ---------- привязка к сетке при drag ---------- */
+
+/* Move-drag отличаем от nudge/инспектора по последнему pointerup внутри канваса
+ * (commitMoveAll движка выполняется синхронно в этом же pointerup); Alt — без привязки. */
+let lastCanvasUp = { t: 0, alt: false };
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "pointerup",
+    (e) => {
+      if (dom.canvas && e.target instanceof Node && dom.canvas.contains(e.target)) {
+        lastCanvasUp = { t: performance.now(), alt: e.altKey };
+      }
+    },
+    true,
+  );
+}
+
+/** Живой frame по ref в переданном IR — зеркало geoedit.getFrame (props.* живут в sec._frames). */
+function frameAtRef(ir: any, ref: GeoRef): any {
+  if (!ir) return null;
+  if (ref.secIdx == null) return ir.frame;
+  const section = ir.tree && ir.tree[ref.secIdx];
+  if (!section) return null;
+  if (ref.path == null) return section.frame;
+  if (ref.path.startsWith("props.")) return section._frames && section._frames[ref.path];
+  const node = isSourceKeyPath(ref.path) ? findByKey(section, ref.path) : getByPath(section, ref.path);
+  return node && node.frame;
+}
+
+/* Снимок геометрии выделения на onCommit (до мутации): по нему onMutated отличает
+ * move (x/y изменились, размер прежний) от resize/rotate. */
+const moveSnapBase = new Map<string, { x: any; y: any; w: any; h: any }>();
+
+function captureMoveSnapBase() {
+  moveSnapBase.clear();
+  if (!state) return;
+  const ir = state.activeIR || state.ir;
+  state.sel.forEach((sel) => {
+    const f = frameAtRef(ir, sel.ref);
+    if (f) moveSnapBase.set(refKeyOf(sel.ref), { x: f.x, y: f.y, w: f.width, h: f.height });
+  });
+}
+
+/** Округление x/y move-коммита до шага сетки — ДО syncActiveIR/перерендера. */
+function applyMoveGridSnap() {
+  if (!state || !snapEnabled) return;
+  if (lastCanvasUp.alt || performance.now() - lastCanvasUp.t > 150) return;
+  const ir = state.activeIR || state.ir;
+  state.sel.forEach((sel) => {
+    const f = frameAtRef(ir, sel.ref);
+    const base = moveSnapBase.get(refKeyOf(sel.ref));
+    if (!f || !base || typeof f.x !== "number" || typeof f.y !== "number") return;
+    if (f.x === base.x && f.y === base.y) return; // не move
+    if (typeof base.w === "number" && (f.width !== base.w || f.height !== base.h)) return; // resize
+    f.x = Math.round(f.x / snapStepPx) * snapStepPx;
+    f.y = Math.round(f.y / snapStepPx) * snapStepPx;
+  });
+}
+
 function attachGeoEdit() {
   if (!state || !dom.canvasInner) return;
   if (state.geo) state.geo.destroy();
@@ -2351,7 +2429,10 @@ function attachGeoEdit() {
       const w = irEl.getBoundingClientRect().width;
       return w > 0 ? w / dw : 1;
     },
-    onCommit: () => pushHistory(),
+    onCommit: () => {
+      captureMoveSnapBase();
+      pushHistory();
+    },
     cancelCommit: () => {
       if (!state) return;
       state.history.cancelLast();
@@ -2359,6 +2440,7 @@ function attachGeoEdit() {
     },
     onMutated: () => {
       if (!state) return;
+      applyMoveGridSnap();
       syncActiveIR();
       syncSelectedActiveGeometry();
       persistDraft();

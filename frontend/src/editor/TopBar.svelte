@@ -5,7 +5,7 @@
    * контроллера, Svelte эти атрибуты не трогает. */
   import * as ctl from "./controller";
 
-  let zoomLabel: HTMLSpanElement | null = $state(null);
+  let zoomLabel: HTMLButtonElement | null = $state(null);
   let viewports: HTMLSpanElement | null = $state(null);
   let viewportWidth: HTMLInputElement | null = $state(null);
   let responsiveSep: HTMLSpanElement | null = $state(null);
@@ -22,7 +22,7 @@
 <div class="fe-toolbar">
   <span class="fe-logo">✦ DNA Editor</span>
   <button class="fe-tbtn" data-act="zoom-out" title="Уменьшить" aria-label="Уменьшить" onclick={() => ctl.handleAct("zoom-out")}>−</button>
-  <span class="fe-zoom" bind:this={zoomLabel} aria-live="polite">100%</span>
+  <button class="fe-zoom" bind:this={zoomLabel} aria-live="polite" title="Сбросить зум до 100%" aria-label="Сбросить зум до 100%" onclick={() => ctl.zoomReset()}>100%</button>
   <button class="fe-tbtn" data-act="zoom-in" title="Увеличить" aria-label="Увеличить" onclick={() => ctl.handleAct("zoom-in")}>+</button>
   <button class="fe-tbtn" data-act="zoom-fit" title="Вписать" aria-label="Вписать" onclick={() => ctl.handleAct("zoom-fit")}>⊡</button>
   <span class="fe-sep"></span>
@@ -31,7 +31,7 @@
       <svg class="fe-device-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>
       <span>Desktop</span>
     </button>
-    <button class="fe-tbtn fe-viewport-btn" data-viewport="tablet" title="Tablet 768 px" aria-pressed="false" onclick={() => ctl.setViewport("tablet")}>
+    <button class="fe-tbtn fe-viewport-btn" data-viewport="tablet" title="Tablet 834 px" aria-pressed="false" onclick={() => ctl.setViewport("tablet")}>
       <svg class="fe-device-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"></rect><path d="M10 18h4"></path></svg>
       <span>Tablet</span>
     </button>
