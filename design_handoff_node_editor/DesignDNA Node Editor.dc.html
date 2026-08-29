@@ -1,0 +1,2024 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/rsale-design-system-43982fc5-a0de-4323-819e-309ba60d33a5/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/rsale-design-system-43982fc5-a0de-4323-819e-309ba60d33a5/tokens/colors.css">
+<link rel="stylesheet" href="_ds/rsale-design-system-43982fc5-a0de-4323-819e-309ba60d33a5/tokens/typography.css">
+<link rel="stylesheet" href="_ds/rsale-design-system-43982fc5-a0de-4323-819e-309ba60d33a5/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/rsale-design-system-43982fc5-a0de-4323-819e-309ba60d33a5/tokens/base.css">
+<link rel="stylesheet" href="_ds/rsale-design-system-43982fc5-a0de-4323-819e-309ba60d33a5/styles.css">
+<script src="_ds/rsale-design-system-43982fc5-a0de-4323-819e-309ba60d33a5/_ds_bundle.js"></script>
+<style>
+  html, body { margin:0; padding:0; background:#0A0A0C; }
+  * { box-sizing:border-box; }
+  a { color:#9B5CFF; text-decoration:none; }
+  a:hover { color:#B98CFF; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:#2E2E37; border-radius:999px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  @keyframes dnaFlow { to { stroke-dashoffset:-24; } }
+  @keyframes dnaPulse { 0%,100% { opacity:.35; } 50% { opacity:1; } }
+  @keyframes dnaSheen { to { transform:translateX(260%); } }
+</style>
+</helmet>
+
+<div style="height:100vh; display:flex; flex-direction:column; background:#0A0A0C; color:#F5F5F6; font-family:Manrope, sans-serif; font-weight:500; overflow:auto; user-select:none; min-width:1180px;">
+
+<sc-if value="{{ isGraph }}" hint-placeholder-val="{{ true }}">
+<div style="height:100%; display:flex; flex-direction:column;">
+
+  <div style="height:56px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 20px; background:#101013; border-bottom:1px solid #1F1F26;">
+    <div style="flex:none; display:flex; align-items:center; gap:10px; white-space:nowrap;">
+      <div style="width:26px; height:26px; border-radius:8px; background:linear-gradient(140deg,#FF691D,#7018E6); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:#fff;">D</div>
+      <div style="font-size:15px; font-weight:700; letter-spacing:-0.02em;">DesignDNA</div>
+      <div style="margin-left:6px; padding:3px 9px; border-radius:999px; background:#17171B; border:1px solid #26262D; font-size:11px; font-weight:600; color:#8A8A93;">v2 · local</div>
+    </div>
+    <div style="flex:none; display:flex; gap:4px; padding:4px; background:#17171B; border:1px solid #26262D; border-radius:999px; white-space:nowrap;">
+      <div style="padding:7px 18px; border-radius:999px; background:#F5F5F6; color:#0A0A0C; font-size:13px; font-weight:700;">Design</div>
+      <div style="padding:7px 18px; border-radius:999px; color:#9A9AA3; font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:#212127; color:#F5F5F6;">Project Map</div>
+      <div style="padding:7px 18px; border-radius:999px; color:#9A9AA3; font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:#212127; color:#F5F5F6;">Agents</div>
+    </div>
+    <div style="flex:none; display:flex; align-items:center; gap:12px; white-space:nowrap;">
+      <x-import component-from-global-scope="RsaleDesignSystem_43982f.Badge" tone="#22C55E" label="Runner онлайн" hint-size="130px,24px"></x-import>
+      <div style="width:30px; height:30px; border-radius:999px; background:linear-gradient(140deg,#7018E6,#FF691D); font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center;">M</div>
+    </div>
+  </div>
+
+  <div style="height:52px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 20px; background:#0D0D10; border-bottom:1px solid #1F1F26;">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <div onClick="{{ toggleLeft }}" title="{{ leftTitle }}" style="width:28px; height:28px; flex:none; border-radius:8px; background:#151519; border:1px solid #26262D; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#9A9AA3; cursor:pointer;" style-hover="background:#1F1F26; color:#F5F5F6;">{{ leftIcon }}</div>
+      <div style="font-size:14px; font-weight:700; letter-spacing:-0.01em;">DNA · Web</div>
+      <div style="width:1px; height:18px; background:#26262D;"></div>
+      <div style="flex:none; display:flex; gap:6px; white-space:nowrap;">
+        <div style="padding:4px 10px; border-radius:6px; background:#151519; font-size:11px; font-weight:600; color:#7E7E88;">ПКМ — нода</div>
+        <div style="padding:4px 10px; border-radius:6px; background:#151519; font-size:11px; font-weight:600; color:#7E7E88;">Колесо — зум</div>
+        <div style="padding:4px 10px; border-radius:6px; background:#151519; font-size:11px; font-weight:600; color:#7E7E88;">Drag или СКМ — панорама</div>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div style="display:flex; align-items:center; gap:8px; padding:6px 12px; border-radius:999px; background:rgba(255,105,29,.10); border:1px solid rgba(255,105,29,.22); font-size:12px; font-weight:600; color:#FFB183;">Кэш сэкономил 13 вызовов</div>
+      <div style="display:flex; align-items:center; background:#151519; border:1px solid #26262D; border-radius:8px; overflow:hidden;">
+        <div onClick="{{ zoomOut }}" style="width:30px; height:32px; display:flex; align-items:center; justify-content:center; color:#9A9AA3; font-size:16px; font-weight:700; cursor:pointer;" style-hover="background:#1F1F26; color:#fff;">−</div>
+        <div style="min-width:52px; text-align:center; font-size:12px; font-weight:700; color:#D5D5DA;">{{ zoomPct }}</div>
+        <div onClick="{{ zoomIn }}" style="width:30px; height:32px; display:flex; align-items:center; justify-content:center; color:#9A9AA3; font-size:16px; font-weight:700; cursor:pointer;" style-hover="background:#1F1F26; color:#fff;">+</div>
+        <div onClick="{{ fitAll }}" style="padding:0 12px; height:32px; display:flex; align-items:center; border-left:1px solid #26262D; font-size:12px; font-weight:600; color:#9A9AA3; cursor:pointer;" style-hover="background:#1F1F26; color:#fff;">Всё</div>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <div style="padding:8px 14px; border-radius:8px; background:#151519; border:1px solid #26262D; font-size:12px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#1F1F26;">Импорт</div>
+        <div style="padding:8px 14px; border-radius:8px; background:#151519; border:1px solid #26262D; font-size:12px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#1F1F26;">Экспорт JSON</div>
+        <div onClick="{{ openMenuCenter }}" style="display:flex;"><x-import component-from-global-scope="RsaleDesignSystem_43982f.Button" variant="primary" size="sm" hint-size="98px,36px">+ Нода</x-import></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:1; display:flex; min-height:0;">
+
+    <div style="{{ leftStyle }}">
+      <div style="padding:18px 16px 12px; display:flex; align-items:center; justify-content:space-between;">
+        <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#6E6E78;">СТРАНИЦЫ</div>
+        <div style="flex:none; display:flex; gap:6px; white-space:nowrap;">
+          <div style="padding:4px 10px; border-radius:999px; background:#17171B; border:1px solid #26262D; font-size:11px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">+ Видео</div>
+          <div style="padding:4px 10px; border-radius:999px; background:#17171B; border:1px solid #26262D; font-size:11px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">+ Page</div>
+        </div>
+      </div>
+      <div style="padding:0 12px; display:flex; flex-direction:column; gap:6px;">
+        <div style="padding:11px 12px; border-radius:10px; background:#17171B; border:1px solid #26262D; cursor:pointer; display:flex; align-items:center; justify-content:space-between;" style-hover="background:#1D1D22;">
+          <div style="display:flex; align-items:center; gap:9px;">
+            <div style="width:6px; height:6px; border-radius:2px; background:#4A4A55;"></div>
+            <div style="font-size:13px; font-weight:600; color:#D5D5DA;">Page 1</div>
+          </div>
+          <div style="font-size:11px; font-weight:600; color:#6E6E78;">5</div>
+        </div>
+        <div style="padding:11px 12px; border-radius:10px; background:rgba(112,24,230,.14); border:1px solid rgba(155,92,255,.4); cursor:pointer; display:flex; align-items:center; justify-content:space-between;">
+          <div style="display:flex; align-items:center; gap:9px;">
+            <div style="width:6px; height:6px; border-radius:2px; background:#9B5CFF;"></div>
+            <div style="font-size:13px; font-weight:700; color:#F5F5F6;">rsale.net → видео</div>
+          </div>
+          <div style="font-size:11px; font-weight:700; color:#B98CFF;">4</div>
+        </div>
+      </div>
+
+      <div style="padding:22px 16px 10px; font-size:11px; font-weight:700; letter-spacing:0.08em; color:#6E6E78;">BRIDGE CHANNELS</div>
+      <div style="padding:0 12px; display:flex; flex-direction:column; gap:6px;">
+        <div style="padding:10px 12px; border-radius:10px; background:#121216; border:1px solid #1F1F26; display:flex; align-items:center; justify-content:space-between;">
+          <div style="display:flex; align-items:center; gap:8px;"><div style="width:14px; height:14px; border-radius:4px; background:rgba(255,105,29,.18); color:#FF9A5E; font-size:9px; font-weight:700; display:flex; align-items:center; justify-content:center;">S</div><div style="font-size:12px; font-weight:600; color:#C9C9D0;">hero-block</div></div>
+          <x-import component-from-global-scope="RsaleDesignSystem_43982f.Badge" tone="#22C55E" label="SEND" size="sm" hint-size="42px,16px"></x-import>
+        </div>
+        <div style="padding:10px 12px; border-radius:10px; background:#121216; border:1px solid #1F1F26; display:flex; align-items:center; justify-content:space-between;">
+          <div style="display:flex; align-items:center; gap:8px;"><div style="width:14px; height:14px; border-radius:4px; background:rgba(155,92,255,.18); color:#B98CFF; font-size:9px; font-weight:700; display:flex; align-items:center; justify-content:center;">R</div><div style="font-size:12px; font-weight:600; color:#C9C9D0;">card-grid</div></div>
+          <x-import component-from-global-scope="RsaleDesignSystem_43982f.Badge" tone="#9B5CFF" label="RECV" size="sm" hint-size="42px,16px"></x-import>
+        </div>
+      </div>
+
+      <div style="margin:auto 12px 14px; padding:13px 14px; border-radius:12px; background:linear-gradient(150deg, rgba(112,24,230,.20), rgba(255,105,29,.10)); border:1px solid #2A2233;">
+        <div style="font-size:12px; font-weight:700; color:#F5F5F6; margin-bottom:5px;">Design IR</div>
+        <div style="font-size:11.5px; font-weight:500; color:#9A9AA3; line-height:1.5; text-wrap:pretty;">Единый источник истины для графа, DNA-редактора и генерации.</div>
+      </div>
+    </div>
+
+    <div onWheel="{{ onWheel }}" onMouseDown="{{ onCanvasDown }}" onContextMenu="{{ onCanvasMenu }}" style="flex:1; position:relative; overflow:hidden; background:#0A0A0C; cursor:grab;">
+      <div style="{{ gridStyle }}"></div>
+
+      <div style="{{ canvasStyle }}">
+        <svg width="3000" height="2000" style="position:absolute; left:0; top:0; overflow:visible; pointer-events:none;">
+          <sc-for list="{{ edges }}" as="e" hint-placeholder-count="4">
+            <path d="{{ e.d }}" fill="none" stroke="{{ e.color }}" stroke-width="1.8" stroke-linecap="round" opacity="0.75"></path>
+            <path d="{{ e.d }}" fill="none" stroke="{{ e.color }}" stroke-width="2.4" stroke-dasharray="3 21" stroke-linecap="round" style="animation:dnaFlow 1.2s linear infinite;"></path>
+          </sc-for>
+        </svg>
+
+        <sc-for list="{{ nodes }}" as="n" hint-placeholder-count="4">
+          <div style="{{ n.wrapStyle }}" onMouseDown="{{ selectNode }}" data-id="{{ n.id }}">
+            <div onMouseDown="{{ startDrag }}" data-id="{{ n.id }}" style="display:flex; align-items:center; gap:9px; padding:12px 13px; border-bottom:1px solid #1F1F26; cursor:grab;">
+              <div style="{{ n.iconStyle }}">{{ n.glyph }}</div>
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:13px; font-weight:700; letter-spacing:-0.01em; color:#F5F5F6; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ n.title }}</div>
+                <div style="font-size:10.5px; font-weight:600; color:#6E6E78; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ n.sub }}</div>
+              </div>
+              <x-import component-from-global-scope="RsaleDesignSystem_43982f.Badge" tone="{{ n.tone }}" label="{{ n.statusText }}" size="sm" hint-size="46px,18px"></x-import>
+            </div>
+
+            <div style="padding:12px 13px; display:flex; flex-direction:column; gap:10px;">
+              <sc-for list="{{ n.rows }}" as="r" hint-placeholder-count="3">
+
+                <sc-if value="{{ r.isField }}">
+                  <div style="display:flex; flex-direction:column; gap:5px;">
+                    <div style="font-size:10px; font-weight:700; letter-spacing:0.06em; color:#8A8A93;">{{ r.label }}</div>
+                    <div style="padding:8px 10px; border-radius:8px; background:#0E0E11; border:1px solid #26262D; font-size:12px; font-weight:600; color:#C9C9D0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ r.value }}</div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ r.isToggles }}">
+                  <div style="display:flex; flex-direction:column; gap:7px;">
+                    <sc-for list="{{ r.items }}" as="t" hint-placeholder-count="3">
+                      <div style="display:flex; align-items:center; gap:8px;">
+                        <sc-if value="{{ t.on }}">
+                          <div style="width:14px; height:14px; border-radius:4px; background:#FF691D; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; color:#fff;">✓</div>
+                        </sc-if>
+                        <sc-if value="{{ t.off }}">
+                          <div style="width:14px; height:14px; border-radius:4px; background:#0E0E11; border:1px solid #33333C;"></div>
+                        </sc-if>
+                        <div style="font-size:11.5px; font-weight:600; color:#9A9AA3;">{{ t.label }}</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ r.isChips }}">
+                  <div style="display:flex; flex-direction:column; gap:6px;">
+                  <div style="font-size:10px; font-weight:700; letter-spacing:0.06em; color:#8A8A93;">{{ r.label }}</div>
+                  <div style="display:flex; flex-wrap:wrap; gap:5px;">
+                    <sc-for list="{{ r.items }}" as="c" hint-placeholder-count="4">
+                      <sc-if value="{{ c.on }}">
+                        <div style="padding:4px 10px; border-radius:999px; background:rgba(155,92,255,.18); border:1px solid rgba(155,92,255,.45); font-size:11px; font-weight:700; color:#C7A6FF;">{{ c.label }}</div>
+                      </sc-if>
+                      <sc-if value="{{ c.off }}">
+                        <div style="padding:4px 10px; border-radius:999px; background:#141418; border:1px solid #26262D; font-size:11px; font-weight:600; color:#8A8A93; cursor:pointer;" style-hover="background:#1D1D22; color:#D5D5DA;">{{ c.label }}</div>
+                      </sc-if>
+                    </sc-for>
+                  </div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ r.isStats }}">
+                  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
+                    <sc-for list="{{ r.items }}" as="s" hint-placeholder-count="3">
+                      <div style="padding:8px 9px; border-radius:8px; background:#0E0E11; border:1px solid #1F1F26;">
+                        <div style="font-size:14px; font-weight:700; letter-spacing:-0.02em; color:#F5F5F6;">{{ s.v }}</div>
+                        <div style="font-size:9.5px; font-weight:600; color:#8A8A93; letter-spacing:0.04em;">{{ s.k }}</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ r.isProgress }}">
+                  <div style="display:flex; flex-direction:column; gap:6px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between;">
+                      <div style="font-size:11px; font-weight:600; color:#9A9AA3;">{{ r.label }}</div>
+                      <div style="font-size:11px; font-weight:700; color:#D5D5DA;">{{ r.pctText }}</div>
+                    </div>
+                    <div style="height:5px; border-radius:999px; background:#1B1B21; overflow:hidden; position:relative;">
+                      <div style="{{ r.barStyle }}"></div>
+                    </div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ r.isPreview }}">
+                  <div style="border-radius:10px; border:1px solid #1F1F26; background:#0E0E11; overflow:hidden;">
+                    <div style="height:74px; background:linear-gradient(135deg,#191922 25%,transparent 25%) -8px 0/16px 16px, #121218;"></div>
+                    <div style="padding:8px 10px; display:flex; align-items:center; justify-content:space-between; border-top:1px solid #1F1F26;">
+                      <div style="font-size:11px; font-weight:600; color:#9A9AA3;">{{ r.label }}</div>
+                      <div style="font-size:10px; font-weight:700; color:#6E6E78;">{{ r.value }}</div>
+                    </div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ r.isActions }}">
+                  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <sc-for list="{{ r.items }}" as="a" hint-placeholder-count="2">
+                      <sc-if value="{{ a.primary }}">
+                        <div onClick="{{ openPrimary }}" data-node="{{ n.id }}" style="padding:7px 14px; border-radius:8px; background:#FF691D; font-size:11.5px; font-weight:700; color:#fff; cursor:pointer;" style-hover="background:#FF864D;">{{ a.label }}</div>
+                      </sc-if>
+                      <sc-if value="{{ a.add }}">
+                        <div onClick="{{ addInput }}" data-node="{{ n.id }}" style="padding:7px 13px; border-radius:8px; background:#0E0E11; border:1px dashed #3A3A45; font-size:11.5px; font-weight:700; color:#9A9AA3; cursor:pointer;" style-hover="border-color:#9B5CFF; color:#C7A6FF;">{{ a.label }}</div>
+                      </sc-if>
+                      <sc-if value="{{ a.ghost }}">
+                        <div style="padding:7px 14px; border-radius:8px; background:#17171B; border:1px solid #26262D; font-size:11.5px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">{{ a.label }}</div>
+                      </sc-if>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ r.isWeights }}">
+                  <div style="display:flex; flex-direction:column; gap:8px;">
+                    <div style="font-size:10px; font-weight:700; letter-spacing:0.06em; color:#8A8A93;">ВЕСА ВХОДОВ</div>
+                    <sc-for list="{{ r.weightItems }}" as="w" hint-placeholder-count="3">
+                      <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="width:52px; flex:none; font-size:11px; font-weight:600; color:#9A9AA3;">{{ w.label }}</div>
+                        <div style="position:relative; flex:1; height:6px; border-radius:999px; background:#1B1B21; overflow:hidden;">
+                          <div style="{{ w.barStyle }}"></div>
+                        </div>
+                        <div style="width:34px; flex:none; text-align:right; font-size:11px; font-weight:700; font-variant-numeric:tabular-nums;">{{ w.pctText }}</div>
+                        <div onClick="{{ bumpWeight }}" data-node="{{ n.id }}" data-wk="{{ w.key }}" data-d="-10" style="width:20px; height:20px; flex:none; border-radius:6px; background:#0E0E11; border:1px solid #33333C; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#C9C9D0; cursor:pointer;" style-hover="background:#1D1D22;">−</div>
+                        <div onClick="{{ bumpWeight }}" data-node="{{ n.id }}" data-wk="{{ w.key }}" data-d="10" style="width:20px; height:20px; flex:none; border-radius:6px; background:#0E0E11; border:1px solid #33333C; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#C9C9D0; cursor:pointer;" style-hover="background:#1D1D22;">+</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ r.isVariants }}">
+                  <div style="display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:9px; background:#0E0E11; border:1px solid #26262D;">
+                    <div style="flex:1; font-size:11.5px; font-weight:600; color:#9A9AA3;">Сколько вариантов собрать</div>
+                    <div onClick="{{ bumpVariants }}" data-node="{{ n.id }}" data-d="-1" style="width:24px; height:24px; flex:none; border-radius:7px; background:#151519; border:1px solid #33333C; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#C9C9D0; cursor:pointer;" style-hover="background:#1F1F26;">−</div>
+                    <div style="min-width:20px; text-align:center; font-size:14px; font-weight:700;">{{ r.variantsValue }}</div>
+                    <div onClick="{{ bumpVariants }}" data-node="{{ n.id }}" data-d="1" style="width:24px; height:24px; flex:none; border-radius:7px; background:#151519; border:1px solid #33333C; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#C9C9D0; cursor:pointer;" style-hover="background:#1F1F26;">+</div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ r.isNote2 }}">
+                  <div style="padding:9px 11px; border-radius:8px; background:rgba(155,92,255,.10); border:1px solid rgba(155,92,255,.26); font-size:11px; font-weight:600; color:#C7A6FF; line-height:1.45; text-wrap:pretty;">{{ r.value }}</div>
+                </sc-if>
+
+                <sc-if value="{{ r.isMerge }}">
+                  <div style="display:flex; flex-direction:column; gap:4px;">
+                    <sc-for list="{{ r.items }}" as="m" hint-placeholder-count="3">
+                      <div style="display:flex; align-items:center; gap:9px; padding:7px 9px; border-radius:8px; background:#0E0E11; border:1px solid #1F1F26;">
+                        <div style="width:18px; height:18px; flex:none; border-radius:5px; background:rgba(34,197,94,.16); color:#7EE2A4; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center;">{{ m.n }}</div>
+                        <div style="flex:1; min-width:0; font-size:11.5px; font-weight:700; color:#D5D5DA; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ m.name }}</div>
+                        <div style="font-size:10px; font-weight:600; color:#7E7E88; white-space:nowrap;">{{ m.src }}</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ r.isNote }}">
+                  <div style="padding:9px 11px; border-radius:8px; background:rgba(229,48,92,.10); border:1px solid rgba(229,48,92,.28); font-size:11px; font-weight:600; color:#F58BA5; line-height:1.45;">{{ r.value }}</div>
+                </sc-if>
+
+              </sc-for>
+            </div>
+
+            <sc-for list="{{ n.ins }}" as="p" hint-placeholder-count="1">
+              <div style="{{ p.style }}">
+                <div style="font-size:10px; font-weight:600; color:#8A8A93; white-space:nowrap;">{{ p.label }}</div>
+                <div style="{{ p.dotStyle }}"></div>
+              </div>
+            </sc-for>
+            <sc-for list="{{ n.outs }}" as="p" hint-placeholder-count="2">
+              <div style="{{ p.style }}">
+                <div style="font-size:10px; font-weight:600; color:#6E6E78; white-space:nowrap;">{{ p.label }}</div>
+                <div style="{{ p.dotStyle }}"></div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{ showMenu }}">
+        <div style="{{ menuStyle }}">
+          <div style="padding:11px 13px; border-bottom:1px solid #1F1F26; display:flex; align-items:center; gap:9px;">
+            <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#6E6E78;">СОЗДАТЬ НОДУ</div>
+            <div style="margin-left:auto; padding:2px 7px; border-radius:5px; background:#17171B; border:1px solid #26262D; font-size:10px; font-weight:700; color:#6E6E78;">ESC</div>
+          </div>
+          <div style="padding:10px 13px 6px;">
+            <div style="padding:8px 11px; border-radius:8px; background:#0E0E11; border:1px solid #26262D; font-size:12px; font-weight:600; color:#8A8A93;">Поиск по типам…</div>
+          </div>
+          <div style="max-height:432px; overflow-y:auto; padding:4px 8px 10px;">
+            <sc-for list="{{ menuGroups }}" as="g" hint-placeholder-count="4">
+              <div style="padding:11px 6px 5px; font-size:10px; font-weight:700; letter-spacing:0.08em; color:#7E7E88;">{{ g.label }}</div>
+              <sc-for list="{{ g.items }}" as="it" hint-placeholder-count="3">
+                <div onClick="{{ addNode }}" data-kind="{{ it.type }}" style="display:flex; align-items:center; gap:11px; padding:8px; border-radius:8px; cursor:pointer;" style-hover="background:#1B1B21;">
+                  <div style="{{ it.iconStyle }}">{{ it.icon }}</div>
+                  <div style="flex:1; min-width:0; font-size:12.5px; font-weight:700; color:#F5F5F6;">{{ it.title }}</div>
+                  <div style="max-width:136px; text-align:right; font-size:10.5px; font-weight:500; color:#8A8A93; line-height:1.35;">{{ it.note }}</div>
+                </div>
+              </sc-for>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showMinimap }}" hint-placeholder-val="{{ true }}">
+        <div style="position:absolute; right:16px; bottom:16px; width:190px; height:120px; border-radius:12px; background:rgba(13,13,16,.92); border:1px solid #26262D; box-shadow:0 8px 24px rgba(0,0,0,.4); overflow:hidden;">
+          <sc-for list="{{ mini }}" as="m" hint-placeholder-count="4">
+            <div style="{{ m.style }}"></div>
+          </sc-for>
+          <div style="position:absolute; left:8px; bottom:6px; font-size:9px; font-weight:700; letter-spacing:0.08em; color:#7E7E88;">MINIMAP</div>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="width:312px; flex:none; background:#0D0D10; border-left:1px solid #1F1F26; display:flex; flex-direction:column; overflow-y:auto;">
+      <div style="padding:16px 16px 13px; border-bottom:1px solid #1F1F26;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="{{ sel.iconStyle }}">{{ sel.glyph }}</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:14px; font-weight:700; letter-spacing:-0.01em;">{{ sel.title }}</div>
+            <div style="font-size:11px; font-weight:600; color:#6E6E78;">{{ sel.sub }}</div>
+          </div>
+          <x-import component-from-global-scope="RsaleDesignSystem_43982f.Badge" tone="{{ sel.tone }}" label="{{ sel.statusText }}" hint-size="52px,22px"></x-import>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:4px; padding:10px 12px; border-bottom:1px solid #1F1F26;">
+        <div style="flex:1; text-align:center; padding:6px 0; border-radius:7px; background:#1D1D22; font-size:11.5px; font-weight:700; color:#F5F5F6;">Параметры</div>
+        <div style="flex:1; text-align:center; padding:6px 0; border-radius:7px; font-size:11.5px; font-weight:600; color:#7E7E88; cursor:pointer;" style-hover="background:#17171B;">Выходы</div>
+        <div style="flex:1; text-align:center; padding:6px 0; border-radius:7px; font-size:11.5px; font-weight:600; color:#7E7E88; cursor:pointer;" style-hover="background:#17171B;">Логи</div>
+      </div>
+
+      <div style="padding:14px 16px; display:flex; flex-direction:column; gap:14px;">
+        <sc-for list="{{ sel.inspect }}" as="f" hint-placeholder-count="4">
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <div style="font-size:10px; font-weight:700; letter-spacing:0.06em; color:#8A8A93;">{{ f.k }}</div>
+            <div style="padding:9px 11px; border-radius:8px; background:#121216; border:1px solid #26262D; font-size:12.5px; font-weight:600; color:#D5D5DA; display:flex; align-items:center; justify-content:space-between;">
+              <span>{{ f.v }}</span>
+              <sc-if value="{{ f.chevron }}"><span style="color:#8A8A93; font-size:10px;">▾</span></sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="margin:0 16px 14px; padding:13px 14px; border-radius:12px; background:#121216; border:1px solid #1F1F26;">
+        <div style="font-size:11px; font-weight:700; letter-spacing:0.06em; color:#8A8A93; margin-bottom:9px;">ПОСЛЕДНИЙ ЗАПУСК</div>
+        <div style="display:flex; flex-direction:column; gap:7px;">
+          <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:600;"><span style="color:#8A8A93;">Длительность</span><span>63.0 с</span></div>
+          <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:600;"><span style="color:#8A8A93;">Fidelity</span><span style="color:#7EE2A4;">98%</span></div>
+          <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:600;"><span style="color:#8A8A93;">Кэш</span><span>0.81 с</span></div>
+        </div>
+      </div>
+
+      <div style="margin-top:auto; padding:14px 16px; border-top:1px solid #1F1F26; display:flex; gap:8px;">
+        <div onClick="{{ openEditor }}" style="flex:1; text-align:center; padding:11px 0; border-radius:9px; background:#17171B; border:1px solid #26262D; font-size:12.5px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">Открыть в DNA</div>
+        <div style="flex:1; display:flex;"><x-import component-from-global-scope="RsaleDesignSystem_43982f.Button" variant="primary" full-width="{{ true }}" hint-size="100%,42px">Запустить</x-import></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isMotion }}">
+<div style="height:100%; display:flex; flex-direction:column;">
+  <div style="height:52px; flex:none; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:0 18px; background:#101013; border-bottom:1px solid #1F1F26;">
+    <div style="flex:none; display:flex; align-items:center; gap:11px; white-space:nowrap;">
+      <div style="width:24px; height:24px; border-radius:7px; background:rgba(224,95,176,.18); color:#F191CE; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center;">M</div>
+      <div style="font-size:13.5px; font-weight:700; letter-spacing:-0.01em;">Motion Editor</div>
+      <div style="font-size:11px; font-weight:600; color:#8A8A93;">{{ moComp }}</div>
+    </div>
+    <div style="flex:none; display:flex; align-items:center; gap:9px; white-space:nowrap;">
+      <div onClick="{{ moStart }}" title="В начало" style="width:30px; height:30px; border-radius:8px; background:#17171B; border:1px solid #26262D; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">|◀</div>
+      <div onClick="{{ togglePlay }}" style="{{ moPlayStyle }}">{{ moPlayIcon }}</div>
+      <div style="font-size:12.5px; font-weight:700; font-variant-numeric:tabular-nums;">{{ moTimeText }}</div>
+    </div>
+    <div style="flex:none; display:flex; align-items:center; gap:8px; white-space:nowrap;">
+      <x-import component-from-global-scope="RsaleDesignSystem_43982f.Badge" tone="#35B8A0" label="{{ moSourceLabel }}" hint-size="180px,22px"></x-import>
+      <div onClick="{{ closeMotion }}" style="padding:8px 15px; border-radius:8px; background:#17171B; border:1px solid #26262D; font-size:12px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">Закрыть</div>
+      <div style="display:flex;"><x-import component-from-global-scope="RsaleDesignSystem_43982f.Button" variant="primary" size="sm" hint-size="140px,34px">{{ moExportLabel }}</x-import></div>
+    </div>
+  </div>
+
+  <div style="flex:1; display:flex; min-height:0;">
+
+    <div style="width:250px; flex:none; background:#0D0D10; border-right:1px solid #1F1F26; display:flex; flex-direction:column; overflow-y:auto;">
+      <div style="padding:13px 14px 9px; font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88;">ПРОЕКТ · ИЗ ПРЕДЫДУЩИХ НОД</div>
+      <div style="padding:0 10px 10px; display:flex; flex-direction:column; gap:12px;">
+        <sc-for list="{{ moAssets }}" as="ag" hint-placeholder-count="2">
+          <div>
+            <div style="display:flex; align-items:center; gap:7px; padding:0 4px 7px;">
+              <div style="{{ ag.dotStyle }}"></div>
+              <div style="font-size:10.5px; font-weight:700; letter-spacing:0.04em; color:#8A8A93; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ ag.label }}</div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:2px;">
+              <sc-for list="{{ ag.items }}" as="it" hint-placeholder-count="4">
+                <div onClick="{{ addAsset }}" data-name="{{ it.name }}" data-group="{{ it.group }}" title="Добавить слоем" style="display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:8px; cursor:pointer;" style-hover="background:#17171B;">
+                  <div style="{{ it.iconStyle }}">◈</div>
+                  <div style="flex:1; min-width:0; font-size:12px; font-weight:600; color:#C9C9D0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ it.name }}</div>
+                  <div style="font-size:10px; font-weight:600; color:#6E6E78;">{{ it.kind }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding:4px 10px 14px;">
+        <div onClick="{{ pickFile }}" style="padding:14px 12px; border-radius:11px; border:1.5px dashed #33333C; background:#0E0E11; text-align:center; cursor:pointer;" style-hover="border-color:#9B5CFF; background:#131318;">
+          <div style="font-size:17px; color:#7E7E88;">↥</div>
+          <div style="margin-top:4px; font-size:11.5px; font-weight:700;">Импорт изображений</div>
+          <div style="margin-top:3px; font-size:10.5px; font-weight:500; color:#8A8A93;">PNG, JPG, WebP → слой</div>
+        </div>
+        <input type="file" accept="image/*" multiple="{{ true }}" ref="{{ fileRef }}" onChange="{{ onUpload }}" style="display:none;">
+      </div>
+
+      <div style="margin:auto 10px 12px; padding:11px 12px; border-radius:11px; background:#121216; border:1px solid #1F1F26;">
+        <div style="font-size:11.5px; font-weight:700; margin-bottom:4px;">Группы слоёв</div>
+        <div style="font-size:11px; font-weight:500; color:#8A8A93; line-height:1.5; text-wrap:pretty;">Слои сгруппированы по источнику: Source Import, UI Kit, Генератор, Медиа.</div>
+      </div>
+    </div>
+
+    <div style="flex:1; min-width:0; display:flex; flex-direction:column; background:#0A0A0C;">
+      <div style="flex:none; display:flex; align-items:center; gap:3px; padding:8px 14px 0; border-bottom:1px solid #1F1F26; background:#0D0D10; overflow-x:auto;">
+        <sc-for list="{{ moCompTabs }}" as="ct" hint-placeholder-count="5">
+          <div onClick="{{ setMoScene }}" data-idx="{{ ct.idx }}" style="{{ ct.style }}">{{ ct.label }}</div>
+        </sc-for>
+      </div>
+
+      <div style="flex:none; display:flex; align-items:center; gap:6px; padding:9px 14px; border-bottom:1px solid #1F1F26; background:#0D0D10;">
+        <sc-for list="{{ moTools }}" as="tl" hint-placeholder-count="4">
+          <sc-if value="{{ tl.on }}">
+            <div style="display:flex; align-items:center; gap:7px; padding:6px 12px; border-radius:8px; background:#9B5CFF; font-size:11.5px; font-weight:700; color:#fff; white-space:nowrap;"><span style="font-size:13px;">{{ tl.icon }}</span>{{ tl.label }}</div>
+          </sc-if>
+          <sc-if value="{{ tl.off }}">
+            <div onClick="{{ setMoTool }}" data-v="{{ tl.value }}" style="display:flex; align-items:center; gap:7px; padding:6px 12px; border-radius:8px; background:#151519; border:1px solid #26262D; font-size:11.5px; font-weight:600; color:#9A9AA3; cursor:pointer; white-space:nowrap;" style-hover="background:#1F1F26; color:#F5F5F6;"><span style="font-size:13px;">{{ tl.icon }}</span>{{ tl.label }}</div>
+          </sc-if>
+        </sc-for>
+        <div style="margin-left:auto; font-size:11px; font-weight:600; color:#8A8A93; white-space:nowrap;">Тяните слой в кадре — правка пишется в кейфрейм</div>
+      </div>
+
+      <div style="flex:1; min-height:0; overflow:hidden; display:flex; align-items:center; justify-content:center; padding:18px;">
+        <div ref="{{ frameRef }}" style="{{ moFrameOuter }}">
+          <div style="{{ moStageStyle }}">
+            <div style="{{ moSceneStyle }}">
+
+              <sc-if value="{{ moIsSearch }}">
+                <div style="position:absolute; left:50%; top:430px; transform:translateX(-50%); width:1180px;">
+                  <div style="display:flex; align-items:center; gap:24px; padding:36px 44px; border-radius:999px; background:#fff; border:1px solid #E8E8EB; box-shadow:0 2px 12px rgba(0,0,0,.06);">
+                    <div style="width:34px; height:34px; flex:none; border-radius:999px; border:5px solid #888;"></div>
+                    <div style="font-size:36px; font-weight:600; color:#888;">Например, iPhone 13</div>
+                  </div>
+                  <div style="margin-top:34px; display:flex; gap:18px;">
+                    <div style="padding:20px 40px; border-radius:999px; background:#FF691D; font-size:30px; font-weight:700; color:#fff;">Электроника</div>
+                    <div style="padding:20px 40px; border-radius:999px; background:#F7F7F8; border:1px solid #E8E8EB; font-size:30px; font-weight:700; color:#2B2B2B;">Транспорт</div>
+                    <div style="padding:20px 40px; border-radius:999px; background:#F7F7F8; border:1px solid #E8E8EB; font-size:30px; font-weight:700; color:#2B2B2B;">Недвижимость</div>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ moIsCard }}">
+                <div style="position:absolute; left:340px; top:150px; width:520px;">
+                  <div style="position:relative; height:690px; border-radius:36px; background:#F7F7F8; border:1px solid #E8E8EB;">
+                    <div style="position:absolute; left:26px; top:26px; display:flex; gap:12px;">
+                      <div style="padding:10px 22px; border-radius:999px; background:#FF691D; font-size:24px; font-weight:700; color:#fff;">TOP</div>
+                      <div style="padding:10px 22px; border-radius:999px; background:#1A1A1A; font-size:24px; font-weight:700; color:#fff;">VIP</div>
+                    </div>
+                    <div style="position:absolute; right:26px; top:26px; width:66px; height:66px; border-radius:999px; background:rgba(255,255,255,.95); display:flex; align-items:center; justify-content:center; font-size:30px; color:#E5305C;">♥</div>
+                  </div>
+                  <div style="margin-top:26px; font-size:34px; font-weight:600; color:#2B2B2B;">Škoda Octavia 2018</div>
+                  <div style="margin-top:14px; font-size:30px; font-weight:600; color:#888;">Beograd · Today · 4.9★</div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ moIsForm }}">
+                <div style="position:absolute; left:50%; top:380px; transform:translateX(-50%); width:1080px; display:flex; flex-direction:column; gap:22px;">
+                  <div style="padding:32px 40px; border-radius:20px; background:#fff; border:1px solid #E8E8EB; font-size:34px; font-weight:600; color:#2B2B2B;">Заголовок объявления</div>
+                  <div style="padding:32px 40px; border-radius:20px; background:#fff; border:1px solid #E8E8EB; font-size:34px; font-weight:600; color:#888;">Цена, €</div>
+                  <div style="display:flex; gap:22px;">
+                    <div style="flex:1; padding:32px 40px; border-radius:20px; background:#fff; border:1px solid #E8E8EB; font-size:34px; font-weight:600; color:#888;">Beograd</div>
+                    <div style="padding:32px 64px; border-radius:20px; background:#7018E6; font-size:34px; font-weight:700; color:#fff; white-space:nowrap;">Опубликовать</div>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ moIsCta }}">
+                <div style="position:absolute; left:50%; top:120px; transform:translateX(-50%); display:flex; align-items:center; gap:30px; padding:22px 44px; border-radius:999px; background:#fff; border:1px solid #E8E8EB;">
+                  <div style="width:26px; height:26px; border-radius:8px; background:#FF691D;"></div>
+                  <div style="font-size:28px; font-weight:700; color:#000;">Rsale</div>
+                  <div style="font-size:26px; font-weight:600; color:#888;">Каталог</div>
+                  <div style="padding:14px 30px; border-radius:999px; background:#7018E6; font-size:24px; font-weight:700; color:#fff;">Подать объявление</div>
+                </div>
+              </sc-if>
+
+              <sc-for list="{{ moRects }}" as="ly" hint-placeholder-count="2">
+                <div onMouseDown="{{ startLayerDrag }}" data-id="{{ ly.id }}" style="{{ ly.style }}">
+                  <sc-if value="{{ ly.isText }}">{{ ly.text }}</sc-if>
+                  <sc-if value="{{ ly.isComp }}"><div style="{{ ly.compStyle }}">{{ ly.text }}</div></sc-if>
+                  <sc-if value="{{ ly.isImage }}"><div style="{{ ly.imgStyle }}"></div></sc-if>
+                </div>
+              </sc-for>
+
+            </div>
+          </div>
+          <div style="position:absolute; left:12px; top:12px; z-index:3; padding:4px 10px; border-radius:999px; background:rgba(10,10,12,.72); backdrop-filter:blur(6px); font-size:10.5px; font-weight:700; color:#fff;">{{ moSceneBadge }}</div>
+        </div>
+      </div>
+
+      <div style="flex:none; height:250px; border-top:1px solid #1F1F26; background:#0D0D10; display:flex; flex-direction:column;">
+        <div style="flex:none; display:flex; align-items:center; gap:10px; padding:9px 14px 0;">
+          <div style="width:216px; flex:none; font-size:10.5px; font-weight:700; letterSpacing:0.06em; color:#7E7E88;">СЛОИ И СВОЙСТВА</div>
+          <div onClick="{{ seek }}" style="position:relative; flex:1; min-width:0; height:16px; cursor:pointer;">
+            <sc-for list="{{ moTicks }}" as="tk" hint-placeholder-count="7">
+              <div style="{{ tk.style }}">{{ tk.label }}</div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:1; min-height:0; overflow-y:auto; padding:4px 14px 12px; display:flex; flex-direction:column; gap:3px;">
+          <sc-for list="{{ moRows }}" as="rw" hint-placeholder-count="6">
+
+            <sc-if value="{{ rw.isGroup }}">
+              <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
+                <div style="{{ rw.nameStyle }}">{{ rw.label }} · {{ rw.count }}</div>
+                <div style="{{ rw.laneStyle }}"><div style="{{ rw.barStyle }}"></div></div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ rw.isLayer }}">
+              <div style="display:flex; align-items:center; gap:10px;">
+                <div style="{{ rw.nameStyle }}">
+                  <span onClick="{{ toggleExpand }}" data-id="{{ rw.id }}" style="width:12px; flex:none; color:#7E7E88;">{{ rw.twirl }}</span>
+                  <span onClick="{{ selectLayer }}" data-id="{{ rw.id }}" style="flex:1; min-width:0; display:flex; align-items:center; gap:6px; overflow:hidden;">
+                    <span style="color:#6E6E78; font-size:10px;">{{ rw.typeLabel }}</span>
+                    <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ rw.label }}</span>
+                  </span>
+                </div>
+                <div onClick="{{ seek }}" style="{{ rw.laneStyle }}">
+                  <div style="{{ rw.spanStyle }}"></div>
+                  <sc-for list="{{ rw.keys }}" as="kf" hint-placeholder-count="2">
+                    <div onClick="{{ seekKey }}" data-gt="{{ kf.gt }}" style="{{ kf.style }}"></div>
+                  </sc-for>
+                  <div style="{{ moPlayhead }}"></div>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ rw.isProp }}">
+              <div style="display:flex; align-items:center; gap:10px;">
+                <div onClick="{{ selectProp }}" data-id="{{ rw.id }}" data-prop="{{ rw.prop }}" style="{{ rw.nameStyle }}">
+                  <div style="{{ rw.watchStyle }}"></div>
+                  <span style="flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ rw.label }}</span>
+                  <span style="font-variant-numeric:tabular-nums; color:#C9C9D0;">{{ rw.value }}</span>
+                </div>
+                <div onClick="{{ seek }}" style="{{ rw.laneStyle }}">
+                  <sc-for list="{{ rw.keys }}" as="kf" hint-placeholder-count="2">
+                    <div onClick="{{ seekKey }}" data-gt="{{ kf.gt }}" style="{{ kf.style }}"></div>
+                  </sc-for>
+                  <div style="{{ moPlayhead }}"></div>
+                </div>
+              </div>
+            </sc-if>
+
+          </sc-for>
+        </div>
+      </div>
+    </div>
+
+    <div style="width:318px; flex:none; background:#0D0D10; border-left:1px solid #1F1F26; overflow-y:auto; padding:15px; display:flex; flex-direction:column; gap:13px;">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88;">СЛОЙ</div>
+        <div onClick="{{ delLayer }}" style="font-size:11px; font-weight:700; color:#F58BA5; cursor:pointer;" style-hover="color:#FFB0C4;">Удалить</div>
+      </div>
+      <div style="padding:10px 12px; border-radius:9px; background:rgba(155,92,255,.12); border:1px solid rgba(155,92,255,.3); font-size:12.5px; font-weight:700; color:#C7A6FF;">{{ moLayerName }}</div>
+
+      <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88; margin-top:2px;">ТРАНСФОРМАЦИЯ</div>
+      <div style="display:flex; flex-direction:column; gap:6px;">
+        <sc-for list="{{ moTransform }}" as="tf" hint-placeholder-count="5">
+          <div style="display:flex; align-items:center; gap:8px; padding:7px 8px 7px 12px; border-radius:9px; background:#121216; border:1px solid #26262D;">
+            <div style="flex:1; font-size:11.5px; font-weight:600; color:#8A8A93;">{{ tf.k }}</div>
+            <div style="min-width:54px; text-align:right; font-size:12.5px; font-weight:700; font-variant-numeric:tabular-nums;">{{ tf.v }}</div>
+            <div onClick="{{ bump }}" data-f="{{ tf.f }}" data-d="{{ tf.d }}" data-sign="-1" style="width:26px; height:26px; flex:none; border-radius:7px; background:#0E0E11; border:1px solid #33333C; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:#C9C9D0; cursor:pointer;" style-hover="background:#1D1D22;">−</div>
+            <div onClick="{{ bump }}" data-f="{{ tf.f }}" data-d="{{ tf.d }}" data-sign="1" style="width:26px; height:26px; flex:none; border-radius:7px; background:#0E0E11; border:1px solid #33333C; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:#C9C9D0; cursor:pointer;" style-hover="background:#1D1D22;">+</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding:12px; border-radius:11px; background:#121216; border:1px solid #26262D;">
+        <div style="font-size:11.5px; font-weight:700; margin-bottom:4px;">Кейфреймы · {{ moPropName }}</div>
+        <div style="font-size:10.5px; font-weight:600; color:#8A8A93; margin-bottom:10px;">{{ moKeyInfo }}</div>
+        <div style="display:flex; gap:6px;">
+          <div onClick="{{ addKey }}" style="flex:1; text-align:center; padding:9px 0; border-radius:8px; background:rgba(255,105,29,.18); border:1px solid rgba(255,105,29,.45); font-size:11.5px; font-weight:700; color:#FFB183; cursor:pointer;" style-hover="background:rgba(255,105,29,.26);">◆ Добавить</div>
+          <div onClick="{{ delKey }}" style="flex:1; text-align:center; padding:9px 0; border-radius:8px; background:#0E0E11; border:1px solid #26262D; font-size:11.5px; font-weight:600; color:#9A9AA3; cursor:pointer;" style-hover="background:#1D1D22; color:#F5F5F6;">Убрать</div>
+        </div>
+      </div>
+
+      <div style="height:1px; background:#1F1F26;"></div>
+
+      <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88;">КОМПОЗИЦИЯ</div>
+      <sc-for list="{{ moGroups }}" as="g" hint-placeholder-count="4">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div style="font-size:10.5px; font-weight:600; color:#8A8A93;">{{ g.label }}</div>
+          <div style="display:flex; flex-wrap:wrap; gap:5px;">
+            <sc-for list="{{ g.items }}" as="o" hint-placeholder-count="3">
+              <sc-if value="{{ o.on }}">
+                <div style="flex:1; min-width:60px; text-align:center; padding:8px 10px; border-radius:8px; background:rgba(224,95,176,.16); border:1px solid rgba(224,95,176,.42); font-size:11.5px; font-weight:700; color:#F191CE; white-space:nowrap;">{{ o.label }}</div>
+              </sc-if>
+              <sc-if value="{{ o.off }}">
+                <div onClick="{{ setMo }}" data-k="{{ g.key }}" data-v="{{ o.value }}" style="flex:1; min-width:60px; text-align:center; padding:8px 10px; border-radius:8px; background:#0E0E11; border:1px solid #26262D; font-size:11.5px; font-weight:600; color:#8A8A93; cursor:pointer; white-space:nowrap;" style-hover="background:#1D1D22; color:#D5D5DA;">{{ o.label }}</div>
+              </sc-if>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+
+      <div style="height:1px; background:#1F1F26;"></div>
+
+      <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88;">{{ moSceneTitle }}</div>
+      <div style="display:flex; flex-direction:column; gap:6px;">
+        <div style="display:flex; justify-content:space-between; padding:10px 12px; border-radius:9px; background:#121216; border:1px solid #26262D; font-size:12px; font-weight:600;"><span style="color:#8A8A93;">Длительность, мс</span><span>{{ moSceneDur }}</span></div>
+        <div style="display:flex; justify-content:space-between; padding:10px 12px; border-radius:9px; background:#121216; border:1px solid #26262D; font-size:12px; font-weight:600;"><span style="color:#8A8A93;">Компоненты</span><span style="color:#7EE2A4;">{{ moComponents }}</span></div>
+      </div>
+      <sc-for list="{{ moSceneGroups }}" as="g" hint-placeholder-count="2">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div style="font-size:10.5px; font-weight:600; color:#8A8A93;">{{ g.label }}</div>
+          <div style="display:flex; flex-wrap:wrap; gap:5px;">
+            <sc-for list="{{ g.items }}" as="o" hint-placeholder-count="5">
+              <sc-if value="{{ o.on }}">
+                <div style="padding:7px 12px; border-radius:8px; background:rgba(155,92,255,.18); border:1px solid rgba(155,92,255,.45); font-size:11px; font-weight:700; color:#C7A6FF; white-space:nowrap;">{{ o.label }}</div>
+              </sc-if>
+              <sc-if value="{{ o.off }}">
+                <div onClick="{{ setMo }}" data-k="{{ g.key }}" data-v="{{ o.value }}" style="padding:7px 12px; border-radius:8px; background:#0E0E11; border:1px solid #26262D; font-size:11px; font-weight:600; color:#8A8A93; cursor:pointer; white-space:nowrap;" style-hover="background:#1D1D22; color:#D5D5DA;">{{ o.label }}</div>
+              </sc-if>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+
+      <div style="margin-top:auto; display:flex;"><x-import component-from-global-scope="RsaleDesignSystem_43982f.Button" variant="sell" full-width="{{ true }}" hint-size="100%,42px">Применить таймлайн</x-import></div>
+    </div>
+
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isDs }}">
+<div style="height:100%; display:flex; flex-direction:column;">
+  <div style="height:56px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 20px; background:#101013; border-bottom:1px solid #1F1F26;">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <div style="width:26px; height:26px; border-radius:8px; background:rgba(155,92,255,.18); color:#B98CFF; font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center;">◈</div>
+      <div>
+        <div style="font-size:14px; font-weight:700; letter-spacing:-0.01em;">Design System / UI Kit</div>
+        <div style="font-size:11px; font-weight:600; color:#8A8A93;">slsbmb.com · активна по умолчанию</div>
+      </div>
+    </div>
+    <div style="flex:none; display:flex; gap:4px; padding:4px; background:#17171B; border:1px solid #26262D; border-radius:999px; white-space:nowrap;">
+      <div onClick="{{ showKit }}" style="{{ dsTabKitStyle }}">Компоненты · 8</div>
+      <div onClick="{{ showTokens }}" style="{{ dsTabTokStyle }}">Стиль сайта</div>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div onClick="{{ closeDs }}" style="padding:9px 16px; border-radius:8px; background:#17171B; border:1px solid #26262D; font-size:12.5px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">Закрыть</div>
+      <div onClick="{{ closeDs }}" style="display:flex;"><x-import component-from-global-scope="RsaleDesignSystem_43982f.Button" variant="sell" size="sm" hint-size="190px,36px">Передать в Генератор</x-import></div>
+    </div>
+  </div>
+
+  <sc-if value="{{ dsKitTab }}">
+  <div style="flex:1; display:flex; min-height:0;">
+    <div style="width:214px; flex:none; background:#0D0D10; border-right:1px solid #1F1F26; padding:14px 10px; display:flex; flex-direction:column; gap:3px;">
+      <div style="display:flex; gap:4px; padding:3px; margin:0 2px 10px; background:#121216; border:1px solid #26262D; border-radius:9px;">
+        <div style="flex:1; text-align:center; padding:6px 0; border-radius:7px; background:#2A2A32; font-size:11.5px; font-weight:700;">Каталог</div>
+        <div style="flex:1; text-align:center; padding:6px 0; border-radius:7px; font-size:11.5px; font-weight:600; color:#8A8A93; cursor:pointer;" style-hover="color:#F5F5F6;">Живой UI Kit</div>
+      </div>
+      <div style="padding:0 8px 9px; font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88;">КАТЕГОРИИ</div>
+      <sc-for list="{{ catItems }}" as="c" hint-placeholder-count="4">
+        <div onClick="{{ setCat }}" data-idx="{{ c.idx }}" style="{{ c.style }}">
+          <span>{{ c.label }}</span>
+          <span style="font-size:11px; font-weight:700; color:#7E7E88;">{{ c.count }}</span>
+        </div>
+      </sc-for>
+      <div style="margin-top:auto; padding:12px; border-radius:11px; background:#121216; border:1px solid #1F1F26;">
+        <div style="font-size:11.5px; font-weight:700; margin-bottom:5px;">Strict-набор</div>
+        <div style="font-size:11px; font-weight:500; color:#8A8A93; line-height:1.5; text-wrap:pretty;">Генератор собирает страницы только из этих компонентов.</div>
+      </div>
+    </div>
+
+    <div style="flex:1; overflow-y:auto; padding:20px; background:#0A0A0C;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(232px, 1fr)); gap:14px;">
+        <sc-for list="{{ kitItems }}" as="k" hint-placeholder-count="8">
+          <div onClick="{{ setKit }}" data-idx="{{ k.idx }}" style="{{ k.style }}">
+            <div style="height:118px; display:flex; align-items:center; justify-content:center; padding:16px; background:#FDFDFD;">
+              <sc-if value="{{ k.isPill }}">
+                <div style="{{ k.fillStyle }}" style-hover="opacity:.9"><span style="display:block; padding:11px 22px; border-radius:999px; font-size:13px; font-weight:700; color:#fff;">Каталог</span></div>
+              </sc-if>
+              <sc-if value="{{ k.isChip }}">
+                <div style="display:flex; gap:6px;">
+                  <div style="{{ k.fillStyle }}"><span style="display:block; padding:5px 12px; border-radius:999px; font-size:11px; font-weight:700; color:#fff;">VIP</span></div>
+                  <div style="padding:5px 12px; border-radius:999px; background:#F7F7F8; border:1px solid #E8E8EB; font-size:11px; font-weight:700; color:#2B2B2B;">Доставка</div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ k.isField }}">
+                <div style="width:100%; display:flex; align-items:center; gap:8px; padding:11px 13px; border-radius:8px; background:#fff; border:1px solid #E8E8EB;">
+                  <div style="width:13px; height:13px; border-radius:999px; border:2px solid #888;"></div>
+                  <div style="font-size:12px; font-weight:600; color:#888;">Что вы ищете?</div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ k.isBlock }}">
+                <div style="width:96px;">
+                  <div style="height:58px; border-radius:12px; background:#F7F7F8; border:1px solid #E8E8EB; position:relative;">
+                    <div style="{{ k.fillStyle }}"><span style="display:block; position:absolute; left:7px; top:7px; padding:2px 7px; border-radius:999px; font-size:8px; font-weight:700; color:#fff;">TOP</span></div>
+                  </div>
+                  <div style="margin-top:7px; font-size:12px; font-weight:700; color:#000;">11 900 €</div>
+                  <div style="margin-top:3px; height:6px; width:70%; border-radius:999px; background:#E8E8EB;"></div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ k.isBar }}">
+                <div style="width:100%; display:flex; align-items:center; gap:9px; padding:10px 12px; border-radius:10px; background:#fff; border:1px solid #E8E8EB;">
+                  <div style="{{ k.fillStyle }}"><span style="display:block; width:16px; height:16px; border-radius:5px;"></span></div>
+                  <div style="height:6px; width:44px; border-radius:999px; background:#2B2B2B;"></div>
+                  <div style="margin-left:auto; display:flex; gap:5px;">
+                    <div style="height:6px; width:22px; border-radius:999px; background:#E8E8EB;"></div>
+                    <div style="height:6px; width:22px; border-radius:999px; background:#E8E8EB;"></div>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+            <div style="padding:11px 13px; border-top:1px solid #26262D;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                <div style="font-size:13px; font-weight:700; letter-spacing:-0.01em;">{{ k.name }}</div>
+                <div style="{{ k.accentStyle }}"><span style="font-size:11px; font-weight:700;">{{ k.quality }}</span></div>
+              </div>
+              <div style="margin-top:3px; font-size:10.5px; font-weight:600; color:#8A8A93;">{{ k.observed }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="width:300px; flex:none; background:#0D0D10; border-left:1px solid #1F1F26; overflow-y:auto; padding:16px;">
+      <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88; margin-bottom:10px;">КОМПОНЕНТ</div>
+      <div style="font-size:16px; font-weight:700; letter-spacing:-0.02em;">{{ kitSel.name }}</div>
+      <div style="margin-top:4px; font-size:11.5px; font-weight:600; color:#8A8A93;">{{ kitSel.cat }} · {{ kitSel.variants }}</div>
+      <div style="margin-top:14px; display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; justify-content:space-between; padding:10px 12px; border-radius:9px; background:#121216; border:1px solid #26262D; font-size:12px; font-weight:600;"><span style="color:#8A8A93;">Fidelity</span><span>{{ kitSel.quality }}%</span></div>
+        <div style="display:flex; justify-content:space-between; padding:10px 12px; border-radius:9px; background:#121216; border:1px solid #26262D; font-size:12px; font-weight:600;"><span style="color:#8A8A93;">Токены</span><span>наследует</span></div>
+        <div style="display:flex; justify-content:space-between; padding:10px 12px; border-radius:9px; background:#121216; border:1px solid #26262D; font-size:12px; font-weight:600;"><span style="color:#8A8A93;">В генерацию</span><span style="color:#7EE2A4;">включён</span></div>
+      </div>
+      <div style="margin-top:16px; padding:13px; border-radius:11px; background:linear-gradient(150deg, rgba(112,24,230,.18), rgba(255,105,29,.08)); border:1px solid #2A2233;">
+        <div style="font-size:12px; font-weight:700; margin-bottom:5px;">Как это попадёт в генерацию</div>
+        <div style="font-size:11.5px; font-weight:500; color:#9A9AA3; line-height:1.5; text-wrap:pretty;">Компонент уходит в Генератор как часть style DNA: разметка, состояния и токены — без переизобретения.</div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ dsTokTab }}">
+  <div style="flex:1; min-height:0; overflow-y:auto; padding:22px; background:#0A0A0C;">
+    <div style="max-width:1180px; margin:0 auto; display:grid; grid-template-columns:1.05fr 1fr; gap:16px; align-items:start;">
+
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <div style="padding:18px; border-radius:14px; background:#131317; border:1px solid #26262D;">
+          <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88;">ОПИСАНИЕ САЙТА</div>
+          <div style="margin-top:10px; font-size:15px; font-weight:700; letter-spacing:-0.01em;">Маркетплейс объявлений, тёплая двухцветная марка</div>
+          <div style="margin-top:9px; font-size:13px; font-weight:500; color:#A0A0A8; line-height:1.6; text-wrap:pretty;">Фото-ориентированные карточки на почти белом фоне, единый хайрлайн вместо теней, крупные радиусы и пилюли. Оранжевый — действие, фиолетовый — навигация и статусы. Тон копирайта: дружелюбный, второе лицо, короткие фразы, sentence case.</div>
+          <div style="margin-top:14px; display:flex; flex-wrap:wrap; gap:6px;">
+            <div style="padding:5px 11px; border-radius:999px; background:#17171B; border:1px solid #26262D; font-size:11px; font-weight:600; color:#C9C9D0;">фото-первый</div>
+            <div style="padding:5px 11px; border-radius:999px; background:#17171B; border:1px solid #26262D; font-size:11px; font-weight:600; color:#C9C9D0;">без градиентов</div>
+            <div style="padding:5px 11px; border-radius:999px; background:#17171B; border:1px solid #26262D; font-size:11px; font-weight:600; color:#C9C9D0;">крупные радиусы</div>
+            <div style="padding:5px 11px; border-radius:999px; background:#17171B; border:1px solid #26262D; font-size:11px; font-weight:600; color:#C9C9D0;">sentence case</div>
+          </div>
+        </div>
+
+        <div style="padding:18px; border-radius:14px; background:#131317; border:1px solid #26262D;">
+          <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88; margin-bottom:12px;">ТИПОГРАФИКА</div>
+          <div style="display:flex; flex-direction:column; gap:7px;">
+            <sc-for list="{{ typeTokens }}" as="t" hint-placeholder-count="6">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 11px; border-radius:9px; background:#0E0E11; border:1px solid #1F1F26;">
+                <span style="font-size:12px; font-weight:600; color:#8A8A93;">{{ t.k }}</span>
+                <span style="font-size:12px; font-weight:700; text-align:right;">{{ t.v }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="padding:18px; border-radius:14px; background:#131317; border:1px solid #26262D;">
+          <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88; margin-bottom:12px;">СЕТКА, РАДИУСЫ, ТЕНИ</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:7px;">
+            <sc-for list="{{ shapeTokens }}" as="t" hint-placeholder-count="6">
+              <div style="padding:10px 11px; border-radius:9px; background:#0E0E11; border:1px solid #1F1F26;">
+                <div style="font-size:10.5px; font-weight:600; color:#8A8A93;">{{ t.k }}</div>
+                <div style="margin-top:3px; font-size:12.5px; font-weight:700;">{{ t.v }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <div style="padding:18px; border-radius:14px; background:#131317; border:1px solid #26262D;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+            <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#7E7E88;">ЦВЕТОВЫЕ ТОКЕНЫ</div>
+            <div style="font-size:11px; font-weight:700; color:#8A8A93;">9</div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:7px;">
+            <sc-for list="{{ colorTokens }}" as="c" hint-placeholder-count="9">
+              <div style="display:flex; align-items:center; gap:11px; padding:8px 10px; border-radius:10px; background:#0E0E11; border:1px solid #1F1F26;">
+                <div style="{{ c.swatch }}"></div>
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:12px; font-weight:700; font-family:ui-monospace, monospace;">{{ c.name }}</div>
+                  <div style="font-size:10.5px; font-weight:500; color:#8A8A93;">{{ c.note }}</div>
+                </div>
+                <div style="font-size:11.5px; font-weight:700; color:#C9C9D0; font-family:ui-monospace, monospace;">{{ c.v }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="padding:18px; border-radius:14px; background:linear-gradient(150deg, rgba(112,24,230,.20), rgba(255,105,29,.10)); border:1px solid #2A2233;">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+            <div style="width:9px; height:9px; border-radius:999px; background:#FF691D; animation:dnaPulse 2s ease-in-out infinite;"></div>
+            <div style="font-size:13px; font-weight:700;">Уходит в Генератор как style DNA</div>
+          </div>
+          <div style="font-size:12.5px; font-weight:500; color:#A0A0A8; line-height:1.6; text-wrap:pretty;">Генератор строит варианты только на этих токенах и компонентах — стиль сайта сохраняется без отдельного промпта.</div>
+          <div style="margin-top:14px; display:grid; grid-template-columns:repeat(4,1fr); gap:7px;">
+            <div style="padding:10px 8px; border-radius:9px; background:rgba(0,0,0,.35); border:1px solid #2A2233; text-align:center;"><div style="font-size:16px; font-weight:700;">9</div><div style="font-size:9.5px; font-weight:600; color:#8A8A93;">ЦВЕТА</div></div>
+            <div style="padding:10px 8px; border-radius:9px; background:rgba(0,0,0,.35); border:1px solid #2A2233; text-align:center;"><div style="font-size:16px; font-weight:700;">3</div><div style="font-size:9.5px; font-weight:600; color:#8A8A93;">ВЕСА</div></div>
+            <div style="padding:10px 8px; border-radius:9px; background:rgba(0,0,0,.35); border:1px solid #2A2233; text-align:center;"><div style="font-size:16px; font-weight:700;">4</div><div style="font-size:9.5px; font-weight:600; color:#8A8A93;">РАДИУСЫ</div></div>
+            <div style="padding:10px 8px; border-radius:9px; background:rgba(0,0,0,.35); border:1px solid #2A2233; text-align:center;"><div style="font-size:16px; font-weight:700;">8</div><div style="font-size:9.5px; font-weight:600; color:#8A8A93;">КОМПОНЕНТЫ</div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+  </sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{ isEditor }}">
+<div style="height:100%; display:flex; flex-direction:column;">
+  <div style="height:56px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 20px; background:#101013; border-bottom:1px solid #1F1F26;">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <div onClick="{{ toggleLeft }}" title="{{ leftTitle }}" style="width:28px; height:28px; flex:none; border-radius:8px; background:#151519; border:1px solid #26262D; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#9A9AA3; cursor:pointer;" style-hover="background:#1F1F26; color:#F5F5F6;">{{ leftIcon }}</div>
+      <div style="display:flex; align-items:center; gap:8px; font-size:14px; font-weight:700; letter-spacing:-0.01em;"><span style="color:#9B5CFF;">✦</span> DNA Editor</div>
+      <div style="width:1px; height:18px; background:#26262D;"></div>
+      <div style="display:flex; align-items:center; background:#151519; border:1px solid #26262D; border-radius:8px; overflow:hidden;">
+        <div onClick="{{ edZoomOut }}" style="width:30px; height:30px; display:flex; align-items:center; justify-content:center; color:#9A9AA3; font-weight:700; cursor:pointer;" style-hover="background:#1F1F26; color:#fff;">−</div>
+        <div onClick="{{ edFit }}" title="Сбросить" style="min-width:52px; text-align:center; font-size:12px; font-weight:700; cursor:pointer;">{{ edZoomPct }}</div>
+        <div onClick="{{ edZoomIn }}" style="width:30px; height:30px; display:flex; align-items:center; justify-content:center; color:#9A9AA3; font-weight:700; cursor:pointer;" style-hover="background:#1F1F26; color:#fff;">+</div>
+      </div>
+      <div style="display:flex; gap:4px; padding:3px; background:#151519; border:1px solid #26262D; border-radius:9px;">
+        <sc-for list="{{ vpTabs }}" as="v" hint-placeholder-count="3">
+          <div onClick="{{ setVp }}" data-vp="{{ v.id }}" style="{{ v.style }}">{{ v.label }}</div>
+        </sc-for>
+      </div>
+      <div style="padding:6px 12px; border-radius:8px; background:#0E0E11; border:1px solid #26262D; font-size:12px; font-weight:600; color:#8A8A93;">{{ edVpWidth }}</div>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div style="display:flex; align-items:center; gap:8px; padding:6px 12px; border-radius:999px; background:rgba(155,92,255,.14); border:1px solid rgba(155,92,255,.3); font-size:11.5px; font-weight:700; color:#C7A6FF;">S6B · Header · linked</div>
+      <div onClick="{{ closeEditor }}" style="padding:9px 16px; border-radius:8px; background:#17171B; border:1px solid #26262D; font-size:12.5px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">Закрыть</div>
+      <div onClick="{{ closeEditor }}" style="display:flex;"><x-import component-from-global-scope="RsaleDesignSystem_43982f.Button" variant="primary" size="sm" hint-size="112px,36px">Сохранить</x-import></div>
+    </div>
+  </div>
+
+  <div style="flex:1; display:flex; min-height:0;">
+    <div style="{{ leftStyleEditor }}">
+      <div style="padding:14px 14px 10px;">
+        <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#6E6E78; margin-bottom:9px;">СЛОИ</div>
+        <div style="padding:8px 11px; border-radius:8px; background:#121216; border:1px solid #26262D; font-size:12px; font-weight:600; color:#8A8A93;">Поиск слоёв…</div>
+      </div>
+      <div style="flex:1; overflow-y:auto; padding:0 8px 12px; display:flex; flex-direction:column; gap:1px;">
+        <sc-for list="{{ layerItems }}" as="l" hint-placeholder-count="9">
+          <div onClick="{{ setLayer }}" data-idx="{{ l.idx }}" style="{{ l.style }}" style-hover="background:#17171B;">
+            <span style="{{ l.glyphStyle }}">{{ l.glyph }}</span>
+            <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ l.name }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="padding:11px 14px; border-top:1px solid #1F1F26; font-size:11px; font-weight:600; color:#8A8A93; line-height:1.5;">Клик — объект · Shift — группа</div>
+    </div>
+
+    <div onWheel="{{ onEdWheel }}" onMouseDown="{{ onArtDown }}" style="flex:1; position:relative; background:#0A0A0C; overflow:hidden;">
+      <div style="position:absolute; inset:0; background-image:radial-gradient(circle at 1px 1px, #1A1A20 1px, transparent 0); background-size:22px 22px;"></div>
+      <div style="{{ snapGridStyle }}"></div>
+
+      <div style="position:absolute; left:14px; top:50%; transform:translateY(-50%); z-index:20; display:flex; flex-direction:column; gap:3px; padding:6px; border-radius:14px; background:rgba(16,16,20,.94); border:1px solid #26262D; box-shadow:0 10px 30px rgba(0,0,0,.5);">
+        <sc-for list="{{ toolItems }}" as="t" hint-placeholder-count="8">
+          <div onClick="{{ setTool }}" data-tool="{{ t.id }}" title="{{ t.label }}" style="{{ t.style }}">
+            {{ t.icon }}
+            <div style="position:absolute; right:3px; bottom:2px; font-size:7.5px; font-weight:700; opacity:.55;">{{ t.hot }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="position:absolute; left:64px; bottom:16px; z-index:20; display:flex; align-items:center; gap:8px; padding:7px 12px; border-radius:999px; background:rgba(16,16,20,.94); border:1px solid #26262D; font-size:11.5px; font-weight:600; color:#C9C9D0;">
+        <span style="color:#B98CFF; font-weight:700;">{{ toolHint }}</span>
+        <span style="color:#3A3A45;">·</span>
+        <span style="color:#8A8A93;">сетка {{ snapStep }}</span>
+      </div>
+      <div style="position:absolute; top:0; left:0; right:0; height:22px; z-index:15; background:#0D0D10; border-bottom:1px solid #1F1F26; display:flex; align-items:flex-end; font-size:8.5px; font-weight:600; color:#7E7E88;">
+        <div style="width:16.66%; border-left:1px solid #26262D; padding-left:4px;">0</div>
+        <div style="width:16.66%; border-left:1px solid #26262D; padding-left:4px;">240</div>
+        <div style="width:16.66%; border-left:1px solid #26262D; padding-left:4px;">480</div>
+        <div style="width:16.66%; border-left:1px solid #26262D; padding-left:4px;">720</div>
+        <div style="width:16.66%; border-left:1px solid #26262D; padding-left:4px;">960</div>
+        <div style="width:16.66%; border-left:1px solid #26262D; padding-left:4px;">1200</div>
+      </div>
+
+      <div style="{{ artboardStyle }}">
+        <div style="position:absolute; left:0; top:-26px; font-size:11px; font-weight:700; color:#8A8A93;">Артборд · {{ edVpWidth }}</div>
+        <sc-for list="{{ elemRects }}" as="el" hint-placeholder-count="5">
+          <div onMouseDown="{{ startElDrag }}" data-idx="{{ el.idx }}" style="{{ el.style }}">
+            <sc-if value="{{ el.on }}">
+              <div style="{{ el.badgeStyle }}">{{ el.badgeText }}</div>
+              <div style="position:absolute; left:-4px; top:-4px; width:8px; height:8px; background:#fff; border-radius:2px;"></div>
+              <div style="position:absolute; right:-4px; top:-4px; width:8px; height:8px; background:#fff; border-radius:2px;"></div>
+              <div style="position:absolute; left:-4px; bottom:-4px; width:8px; height:8px; background:#fff; border-radius:2px;"></div>
+              <div style="position:absolute; right:-4px; bottom:-4px; width:8px; height:8px; background:#fff; border-radius:2px;"></div>
+            </sc-if>
+          </div>
+        </sc-for>
+
+        <div style="position:absolute; left:130px; top:96px; width:1180px; height:64px; border-radius:10px; background:#101016; display:flex; align-items:center; padding:0 20px; gap:18px; pointer-events:none;">
+          <div style="font-size:15px; font-weight:700; letter-spacing:-0.02em; color:#7EE2A4;">SLSBMB</div>
+          <div style="margin-left:auto; display:flex; align-items:center; gap:16px;">
+            <div style="padding:6px 14px; border-radius:999px; background:#7018E6; font-size:12px; font-weight:700; color:#fff;">Sales Automation</div>
+            <div style="font-size:12px; font-weight:600; color:#C9C9D0;">AI Contacts</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="width:320px; flex:none; background:#0D0D10; border-left:1px solid #1F1F26; overflow-y:auto; display:flex; flex-direction:column;">
+      <div style="padding:14px 16px; border-bottom:1px solid #1F1F26; display:flex; flex-wrap:wrap; gap:6px;">
+        <div style="padding:7px 12px; border-radius:8px; background:rgba(155,92,255,.14); border:1px solid rgba(155,92,255,.32); font-size:11.5px; font-weight:700; color:#C7A6FF; cursor:pointer;">✦ Умное выделение</div>
+        <div style="padding:7px 12px; border-radius:8px; background:#17171B; border:1px solid #26262D; font-size:11.5px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">Выровнять</div>
+        <div style="padding:7px 12px; border-radius:8px; background:#17171B; border:1px solid #26262D; font-size:11.5px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">AI-проверка</div>
+        <div style="padding:7px 12px; border-radius:8px; background:#17171B; border:1px solid #26262D; font-size:11.5px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">Адаптировать</div>
+        <div style="padding:7px 12px; border-radius:8px; background:#17171B; border:1px solid #26262D; font-size:11.5px; font-weight:600; color:#C9C9D0; cursor:pointer;" style-hover="background:#212127;">🔒 Не менять</div>
+      </div>
+
+      <div style="padding:14px 16px; display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div style="font-size:10px; font-weight:700; letter-spacing:0.06em; color:#8A8A93;">МОДЕЛЬ</div>
+          <div style="padding:10px 11px; border-radius:8px; background:#121216; border:1px solid #26262D; font-size:12.5px; font-weight:600; display:flex; justify-content:space-between;"><span>Claude Opus · Medium</span><span style="color:#8A8A93; font-size:10px;">▾</span></div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div style="font-size:10px; font-weight:700; letter-spacing:0.06em; color:#8A8A93;">DESIGN SYSTEM</div>
+          <div style="padding:10px 11px; border-radius:8px; background:#121216; border:1px solid #26262D; font-size:12.5px; font-weight:600; display:flex; justify-content:space-between; gap:8px;"><span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Project default — UI Kit</span><span style="color:#8A8A93; font-size:10px;">▾</span></div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:9px;">
+          <div style="font-size:10px; font-weight:700; letter-spacing:0.06em; color:#8A8A93;">ГЕОМЕТРИЯ</div>
+          <div style="display:flex; align-items:center; gap:8px; padding:8px 11px; border-radius:8px; background:rgba(155,92,255,.12); border:1px solid rgba(155,92,255,.3); font-size:12px; font-weight:700; color:#C7A6FF;">{{ edLayerName }}</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <sc-for list="{{ geoFields }}" as="g" hint-placeholder-count="4">
+              <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:8px; background:#121216; border:1px solid #26262D;"><span style="font-size:10px; font-weight:700; color:#7E7E88;">{{ g.k }}</span><span style="font-size:12.5px; font-weight:600;">{{ g.v }}</span></div>
+            </sc-for>
+          </div>
+
+          <div style="font-size:10px; font-weight:700; letter-spacing:0.06em; color:#8A8A93; margin-top:3px;">ВЫРАВНИВАНИЕ</div>
+          <div style="display:grid; grid-template-columns:repeat(6,1fr); gap:5px;">
+            <div style="height:32px; border-radius:7px; background:#121216; border:1px solid #26262D; display:flex; align-items:center; justify-content:center; font-size:13px; color:#C9C9D0; cursor:pointer;" style-hover="background:#1D1D22; border-color:#3A3A45;">⇤</div>
+            <div style="height:32px; border-radius:7px; background:#121216; border:1px solid #26262D; display:flex; align-items:center; justify-content:center; font-size:13px; color:#C9C9D0; cursor:pointer;" style-hover="background:#1D1D22; border-color:#3A3A45;">⇹</div>
+            <div style="height:32px; border-radius:7px; background:#121216; border:1px solid #26262D; display:flex; align-items:center; justify-content:center; font-size:13px; color:#C9C9D0; cursor:pointer;" style-hover="background:#1D1D22; border-color:#3A3A45;">⇥</div>
+            <div style="height:32px; border-radius:7px; background:#121216; border:1px solid #26262D; display:flex; align-items:center; justify-content:center; font-size:13px; color:#C9C9D0; cursor:pointer;" style-hover="background:#1D1D22; border-color:#3A3A45;">⤒</div>
+            <div style="height:32px; border-radius:7px; background:#121216; border:1px solid #26262D; display:flex; align-items:center; justify-content:center; font-size:13px; color:#C9C9D0; cursor:pointer;" style-hover="background:#1D1D22; border-color:#3A3A45;">⇳</div>
+            <div style="height:32px; border-radius:7px; background:#121216; border:1px solid #26262D; display:flex; align-items:center; justify-content:center; font-size:13px; color:#C9C9D0; cursor:pointer;" style-hover="background:#1D1D22; border-color:#3A3A45;">⤓</div>
+          </div>
+
+          <div style="font-size:10px; font-weight:700; letter-spacing:0.06em; color:#8A8A93; margin-top:3px;">ОТСТУПЫ</div>
+          <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:5px;">
+            <div style="padding:7px 0; border-radius:7px; background:#121216; border:1px solid #26262D; text-align:center;"><div style="font-size:9px; font-weight:700; color:#7E7E88;">T</div><div style="font-size:12px; font-weight:600;">0</div></div>
+            <div style="padding:7px 0; border-radius:7px; background:#121216; border:1px solid #26262D; text-align:center;"><div style="font-size:9px; font-weight:700; color:#7E7E88;">R</div><div style="font-size:12px; font-weight:600;">20</div></div>
+            <div style="padding:7px 0; border-radius:7px; background:#121216; border:1px solid #26262D; text-align:center;"><div style="font-size:9px; font-weight:700; color:#7E7E88;">B</div><div style="font-size:12px; font-weight:600;">0</div></div>
+            <div style="padding:7px 0; border-radius:7px; background:#121216; border:1px solid #26262D; text-align:center;"><div style="font-size:9px; font-weight:700; color:#7E7E88;">L</div><div style="font-size:12px; font-weight:600;">20</div></div>
+          </div>
+
+          <div style="margin-top:5px; padding:12px; border-radius:10px; background:#121216; border:1px solid #26262D; display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <div style="flex:1;">
+                <div style="font-size:12.5px; font-weight:700;">Привязка к сетке</div>
+                <div style="font-size:10.5px; font-weight:500; color:#8A8A93;">Шаг {{ snapStep }} · Alt — отключить</div>
+              </div>
+              <div onClick="{{ toggleSnap }}" style="{{ snapToggleStyle }}"><div style="width:16px; height:16px; border-radius:999px; background:#fff;"></div></div>
+            </div>
+            <div style="display:flex; gap:5px;">
+              <sc-for list="{{ stepItems }}" as="st" hint-placeholder-count="4">
+                <sc-if value="{{ st.on }}">
+                  <div style="flex:1; text-align:center; padding:6px 0; border-radius:7px; background:rgba(255,105,29,.16); border:1px solid rgba(255,105,29,.42); font-size:11.5px; font-weight:700; color:#FFB183;">{{ st.label }}</div>
+                </sc-if>
+                <sc-if value="{{ st.off }}">
+                  <div onClick="{{ setStep }}" data-step="{{ st.value }}" style="flex:1; text-align:center; padding:6px 0; border-radius:7px; background:#0E0E11; border:1px solid #26262D; font-size:11.5px; font-weight:600; color:#8A8A93; cursor:pointer;" style-hover="background:#1D1D22; color:#D5D5DA;">{{ st.label }}</div>
+                </sc-if>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin:0 16px 16px; padding:14px; border-radius:12px; background:linear-gradient(150deg, rgba(112,24,230,.18), rgba(255,105,29,.08)); border:1px solid #2A2233;">
+        <div style="font-size:12.5px; font-weight:700; margin-bottom:6px;">Что изменить?</div>
+        <div style="font-size:11.5px; font-weight:500; color:#9A9AA3; line-height:1.5; margin-bottom:11px; text-wrap:pretty;">Сначала покажу результат. Вы решаете, применять ли его.</div>
+        <div style="padding:10px 11px; border-radius:8px; background:rgba(0,0,0,.35); border:1px solid #2A2233; font-size:12px; font-weight:600; color:#8A8A93; margin-bottom:10px;">напр. сделать шапку компактнее</div>
+        <div style="padding:10px 0; border-radius:8px; background:#FF691D; text-align:center; font-size:12.5px; font-weight:700; color:#fff; cursor:pointer;" style-hover="background:#FF864D;">Показать вариант</div>
+      </div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1600,&quot;height&quot;:950},&quot;gridStyle&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dots&quot;,&quot;lines&quot;,&quot;none&quot;],&quot;default&quot;:&quot;dots&quot;,&quot;tsType&quot;:&quot;'dots'|'lines'|'none'&quot;,&quot;section&quot;:&quot;Canvas&quot;},&quot;edgeStyle&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;bezier&quot;,&quot;step&quot;],&quot;default&quot;:&quot;bezier&quot;,&quot;tsType&quot;:&quot;'bezier'|'step'&quot;,&quot;section&quot;:&quot;Canvas&quot;},&quot;showMinimap&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Canvas&quot;}}">
+class Component extends DCLogic {
+  C = { orange:'#FF691D', violet:'#9B5CFF', green:'#22C55E', amber:'#F5A623' };
+
+  state = {
+    screen: 'graph',
+    tool: 'select',
+    leftOpen: true,
+    edSel: 2,
+    edZoom: 0.63,
+    edVp: 'desktop',
+    edPan: { x: 0, y: 0 },
+    edGeo: {
+      2: { x:130, y:96, w:1180, h:64 },
+      3: { x:150, y:112, w:96, h:32 },
+      4: { x:790, y:114, w:158, h:28 },
+      5: { x:968, y:114, w:112, h:28 },
+      6: { x:1180, y:110, w:112, h:36 }
+    },
+    moT: 900,
+    moPlaying: false,
+    moFormat: 'mp4',
+    moQuality: 'high',
+    moRatio: '16:9',
+    moFps: 30,
+    moTransition: 'fade',
+    moEase: 'ease-in-out',
+    moTool: 'move',
+    moW: 900,
+    moBox: null,
+    moLayerSel: 'a1',
+    moPropSel: 'p',
+    moExpand: { a1: true },
+    moData: null,
+    dsTab: 'kit',
+    dsSel: 1,
+    dsCat: 0,
+    snap: true,
+    snapStep: 8,
+    zoom: 0.92,
+    pan: { x: 40, y: 20 },
+    selected: 'src',
+    menu: null,
+    nodes: [
+      { id:'src', x:40, y:70, w:322, h:360, accent:'#FF691D', glyph:'⌁', title:'Source Import', sub:'URL/скрин → блоки + DNA',
+        status:'run', statusText:'63%',
+        ins:[],
+        outs:[{label:'Header',kind:'ir'},{label:'Source Artifact',kind:'artifact'},{label:'style DNA',kind:'tokens'}],
+        rows:[
+          { type:'field', label:'ИСТОЧНИК', value:'https://slsbmb.com/' },
+          { type:'chips', label:'ВЬЮПОРТЫ — ВСЕ СРАЗУ', items:[{label:'Desktop',on:true},{label:'Tablet',on:true},{label:'Mobile',on:true}] },
+          { type:'stats', items:[{k:'КОМПОНЕНТЫ',v:'8'},{k:'СОСТОЯНИЯ',v:'8'},{k:'ВЬЮПОРТЫ',v:'3'}] },
+          { type:'progress', label:'Импорт слоёв', pct:0.63, pctText:'63.0 с' },
+          { type:'preview', label:'Header · 15 layers', value:'98% fidelity' }
+        ],
+        inspect:[{k:'ТИП НОДЫ',v:'Source Import'},{k:'МОДЕЛЬ',v:'Claude Opus · Medium',chevron:true},{k:'ВЬЮПОРТ',v:'Desktop · 1440',chevron:true},{k:'КЭШ',v:'Включён · 13 попаданий'}] },
+
+      { id:'ds', x:470, y:52, w:300, h:296, accent:'#9B5CFF', glyph:'◈', title:'Design System / UI Kit', sub:'Source → published DS',
+        status:'ok', statusText:'по умолчанию',
+        ins:[{label:'Source Artifact',kind:'artifact'}],
+        outs:[{label:'style DNA',kind:'tokens'}],
+        rows:[
+          { type:'field', label:'ИСТОЧНИК', value:'UI Kit · slsbmb.com' },
+          { type:'stats', items:[{k:'НАЙДЕНО',v:'11'},{k:'ПРИНЯТО',v:'1'},{k:'QUALITY',v:'58'}] },
+          { type:'progress', label:'Согласование вариантов', pct:0.36, pctText:'1 / 11' },
+          { type:'actions', items:[{label:'Открыть',primary:true}] }
+        ],
+        inspect:[{k:'ТИП НОДЫ',v:'Design System / UI Kit'},{k:'СТАТУС',v:'Активна по умолчанию'},{k:'ВАРИАНТОВ',v:'11 найдено · 1 принят'},{k:'РЕЖИМ',v:'Strict — только компоненты',chevron:true}] },
+
+      { id:'gen', x:870, y:118, w:322, h:318, accent:'#9B5CFF', glyph:'◈', title:'Генератор', sub:'LLM → варианты IR',
+        status:'run', statusText:'84%',
+        ins:[{label:'промт',kind:'text'},{label:'стиль',kind:'text'},{label:'style DNA',kind:'tokens'}],
+        outs:[{label:'варианты',kind:'ir'}],
+        rows:[
+          { type:'field', label:'ЗАДАЧА', value:'Стильная карточка товара с CTA' },
+          { type:'preview', label:'Вариант 1 из 4', value:'Claude Opus · medium' },
+          { type:'progress', label:'Генерация', pct:0.84, pctText:'84% · 1:37' },
+          { type:'actions', items:[{label:'→ Editor',primary:true},{label:'Reference',ghost:true},{label:'Принять',ghost:true}] }
+        ],
+        inspect:[{k:'ТИП НОДЫ',v:'Генератор'},{k:'МОДЕЛЬ',v:'Claude Opus · Medium',chevron:true},{k:'ВАРИАНТОВ',v:'4',chevron:true},{k:'СТИЛЬ',v:'из style DNA источника'}] },
+
+      { id:'mx', x:470, y:432, w:334, h:392, accent:'#9B5CFF', glyph:'⊕', title:'Микс', sub:'смешение вариантов по весам',
+        status:'ok', statusText:'3 → 3',
+        weights:{ a:45, b:35, c:20 },
+        variants:3,
+        ins:[{label:'a',kind:'ir'},{label:'b',kind:'ir'},{label:'c',kind:'ir'}],
+        outs:[{label:'варианты',kind:'ir'}],
+        rows:[
+          { type:'field', label:'ПРОМПТ МИКСА', value:'Лаконичность из a, цена и бейджи как в b' },
+          { type:'weights' },
+          { type:'variants' },
+          { type:'note2', value:'Результат — готовые компоненты для ноды Редактор (DNA).' },
+          { type:'actions', items:[{label:'Смешать',primary:true},{label:'+ Вход',add:true}] }
+        ],
+        inspect:[{k:'ТИП НОДЫ',v:'Микс'},{k:'ВХОДЫ',v:'a, b, c — динамические'},{k:'ВЕСА',v:'45 / 35 / 20'},{k:'ВАРИАНТОВ',v:'3'},{k:'МОДЕЛЬ',v:'Claude Opus · Medium',chevron:true}] },
+
+      { id:'mo', x:900, y:560, w:322, h:250, accent:'#E05FB0', glyph:'M', title:'Motion Editor', sub:'Interaction IR → editable timeline',
+        status:'ok', statusText:'5 сцен',
+        ins:[{label:'Design IR',kind:'ir'},{label:'Interaction IR',kind:'interaction'}],
+        outs:[{label:'Motion IR',kind:'motion'}],
+        rows:[
+          { type:'field', label:'СЦЕНАРИЙ ИЗ ПРОМПТА', value:'Видео-презентация сайта · 18 с' },
+          { type:'stats', items:[{k:'СЦЕНЫ',v:'5'},{k:'FPS',v:'30'},{k:'ФОРМАТ',v:'MP4'}] },
+          { type:'actions', items:[{label:'Открыть',primary:true}] }
+        ],
+        inspect:[{k:'ТИП НОДЫ',v:'Motion Editor'},{k:'СЛОЁВ В КОМПОЗИЦИИ',v:'3'},{k:'КОМПОЗИЦИЯ',v:'1920 × 1080 · 30 fps'},{k:'ДЛИТЕЛЬНОСТЬ',v:'18.0 с'},{k:'РЕНДЕР',v:'MP4 · high',chevron:true}] },
+
+      { id:'ed', x:1300, y:52, w:330, h:262, accent:'#35B8A0', glyph:'⬚', title:'Редактор (DNA)', sub:'DNA-редактор',
+        status:'ok', statusText:'IR',
+        ins:[{label:'a',kind:'ir'},{label:'b',kind:'ir'}],
+        outs:[{label:'IR',kind:'ir'}],
+        rows:[
+          { type:'field', label:'ВЫДЕЛЕНИЕ', value:'header · card · 1180 × 64' },
+          { type:'stats', items:[{k:'СЛОИ',v:'16'},{k:'ПРАВКИ',v:'4'},{k:'FIDELITY',v:'98'}] },
+          { type:'actions', items:[{label:'Открыть редактор',primary:true},{label:'+ Вход',add:true}] }
+        ],
+        inspect:[{k:'ТИП НОДЫ',v:'Редактор (DNA)'},{k:'ВХОДЫ',v:'a, b — динамические'},{k:'ВЫДЕЛЕНИЕ',v:'header · card'},{k:'ПРИВЯЗКА',v:'Сетка 8 px',chevron:true}] },
+
+      { id:'pg', x:1300, y:366, w:330, h:334, accent:'#22C55E', glyph:'▤', title:'Страница', sub:'merge: страница из блоков',
+        status:'ok', statusText:'3 блока',
+        ins:[{label:'style DNA',kind:'tokens'},{label:'a',kind:'ir'},{label:'b',kind:'ir'},{label:'c',kind:'ir'}],
+        outs:[{label:'страница',kind:'ir'}],
+        rows:[
+          { type:'field', label:'ЛИСТ · ПОРЯДОК DOM', value:'Desktop · 1440' },
+          { type:'merge', items:[
+            { n:'1', name:'Header', src:'Source Import' },
+            { n:'2', name:'ProductCard', src:'UI Kit' },
+            { n:'3', name:'CTA', src:'Генератор' }
+          ] },
+          { type:'actions', items:[{label:'Собрать лист',primary:true},{label:'+ Вход',add:true}] }
+        ],
+        inspect:[{k:'ТИП НОДЫ',v:'Страница (merge)'},{k:'ВХОДЫ',v:'style DNA + a, b, c'},{k:'ПОРЯДОК',v:'по DOM входов',chevron:true},{k:'ВЬЮПОРТ',v:'Desktop · 1440',chevron:true}] }
+    ]
+  };
+
+  /* цвет провода = kind порта (зеркало portKind.ts) */
+  KIND = { ir:'#9B5CFF', tokens:'#FF691D', artifact:'#35B8A0', interaction:'#2FBF9F', motion:'#E05FB0', text:'#8A8A93' };
+
+  edgeDefs = [
+    { from:'src', out:1, to:'ds', in:0, kind:'artifact' },
+    { from:'ds', out:0, to:'gen', in:2, kind:'tokens' },
+    { from:'gen', out:0, to:'mx', in:0, kind:'ir' },
+    { from:'mx', out:0, to:'ed', in:0, kind:'ir' },
+    { from:'ed', out:0, to:'pg', in:1, kind:'ir' },
+    { from:'ds', out:0, to:'pg', in:0, kind:'tokens' },
+    { from:'ed', out:0, to:'mo', in:0, kind:'ir' }
+  ];
+
+  /* Motion Editor: композиции из Interaction IR, слои сгруппированы по источнику */
+  propDefs = [
+    { k:'p', label:'Позиция', dims:2 },
+    { k:'s', label:'Масштаб', dims:1 },
+    { k:'r', label:'Поворот', dims:1 },
+    { k:'o', label:'Прозрачность', dims:1 }
+  ];
+  toolProp = { move:'p', scale:'s', rotate:'r', opacity:'o' };
+  ratios = { '16:9':[1920,1080], '9:16':[1080,1920], '1:1':[1080,1080] };
+
+  L(o) {
+    return { id:o.id, name:o.name, group:o.group, type:o.type, text:o.text, src:o.src,
+      size:o.size || 64, weight:o.weight || 700, color:o.color || '#000000', w:o.w || 1200,
+      props:{
+        p:{ keys:o.p || [{ t:0, v:[960, 540] }] },
+        s:{ keys:o.s || [{ t:0, v:1 }] },
+        r:{ keys:o.r || [{ t:0, v:0 }] },
+        o:{ keys:o.o || [{ t:0, v:1 }] }
+      } };
+  }
+
+  motionSeed() {
+    return [
+      { id:'s1', name:'01 · Обещание', kind:'hero', dur:3500, components:'Header · Button', layers:[
+        this.L({ id:'a1', name:'Заголовок', group:'gen', type:'text', text:'Продай то, что не нужно', size:104, w:1400,
+          p:[{t:0,v:[960,400]},{t:700,v:[960,380]}], s:[{t:0,v:0.94},{t:700,v:1}], o:[{t:0,v:0},{t:700,v:1}] }),
+        this.L({ id:'a2', name:'Подзаголовок', group:'gen', type:'text', text:'Объявление за 60 секунд. Бесплатно.', size:40, weight:500, color:'#888888', w:1200,
+          p:[{t:300,v:[960,530]},{t:1100,v:[960,520]}], o:[{t:300,v:0},{t:1100,v:1}] }),
+        this.L({ id:'a3', name:'Button · Подать объявление', group:'kit', type:'comp', text:'Подать объявление →', w:620,
+          p:[{t:0,v:[960,720]}], s:[{t:900,v:0.9},{t:1500,v:1}], o:[{t:900,v:0},{t:1500,v:1}] })
+      ] },
+      { id:'s2', name:'02 · Поиск', kind:'search', dur:3500, components:'SearchBar · Chip', layers:[
+        this.L({ id:'b1', name:'Заголовок', group:'gen', type:'text', text:'Что вы ищете в Белграде?', size:64, w:1200,
+          p:[{t:0,v:[960,300]}], o:[{t:0,v:0},{t:600,v:1}] })
+      ] },
+      { id:'s3', name:'03 · Карточка', kind:'card', dur:4000, components:'ProductCard · Badge', layers:[
+        this.L({ id:'c1', name:'Цена', group:'gen', type:'text', text:'11 900 €', size:76, w:700,
+          p:[{t:0,v:[1360,560]},{t:900,v:[1360,500]}], o:[{t:0,v:0},{t:900,v:1}] })
+      ] },
+      { id:'s4', name:'04 · Публикация', kind:'form', dur:4000, components:'Input · Button', layers:[
+        this.L({ id:'d1', name:'Заголовок', group:'gen', type:'text', text:'Три шага до публикации', size:64, w:1200,
+          p:[{t:0,v:[960,250]}], o:[{t:0,v:0},{t:600,v:1}] })
+      ] },
+      { id:'s5', name:'05 · Финал', kind:'cta', dur:3000, components:'Button · Header', layers:[
+        this.L({ id:'e1', name:'Домен', group:'gen', type:'text', text:'rsale.net', size:136, w:1400,
+          p:[{t:0,v:[960,500]}], s:[{t:0,v:0.9},{t:800,v:1}], o:[{t:0,v:0},{t:800,v:1}] }),
+        this.L({ id:'e2', name:'Слоган', group:'gen', type:'text', text:'Три языка, понятные правила, ноль скрытых платежей.', size:38, weight:500, color:'#888888', w:1400,
+          p:[{t:500,v:[960,650]}], o:[{t:500,v:0},{t:1300,v:1}] })
+      ] }
+    ];
+  }
+
+  /* группы слоёв = откуда пришёл материал */
+  groupDefs = {
+    src:{ label:'Source Import · slsbmb.com', color:'#FF691D' },
+    kit:{ label:'Design System / UI Kit', color:'#7018E6' },
+    gen:{ label:'Генератор · Design IR', color:'#9B5CFF' },
+    media:{ label:'Медиа · загружено', color:'#35B8A0' }
+  };
+  assetGroups = [
+    { key:'src', items:[{ name:'Header', kind:'блок' }, { name:'Hero', kind:'блок' }, { name:'CTA', kind:'блок' }] },
+    { key:'kit', items:[{ name:'Button', kind:'компонент' }, { name:'Badge', kind:'компонент' }, { name:'ProductCard', kind:'компонент' }, { name:'SearchBar', kind:'компонент' }, { name:'Input', kind:'компонент' }] }
+  ];
+
+  keyIdxAt(keys, lt) {
+    let i = 0;
+    keys.forEach((k, j) => { if (k.t <= lt) i = j; });
+    return i;
+  }
+  interpProp(keys, lt, dims) {
+    if (!keys.length) return dims === 2 ? [960, 540] : 0;
+    if (lt <= keys[0].t) return keys[0].v;
+    if (lt >= keys[keys.length - 1].t) return keys[keys.length - 1].v;
+    let i = 0;
+    for (let j = 0; j < keys.length - 1; j++) if (lt >= keys[j].t && lt < keys[j + 1].t) i = j;
+    const a = keys[i], b = keys[i + 1];
+    let u = (lt - a.t) / Math.max(1, b.t - a.t);
+    if (this.state.moEase !== 'linear') u = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+    if (dims === 2) return [a.v[0] + (b.v[0] - a.v[0]) * u, a.v[1] + (b.v[1] - a.v[1]) * u];
+    return a.v + (b.v - a.v) * u;
+  }
+  layerVals(l, lt) {
+    return {
+      p: this.interpProp(l.props.p.keys, lt, 2),
+      s: this.interpProp(l.props.s.keys, lt, 1),
+      r: this.interpProp(l.props.r.keys, lt, 1),
+      o: this.interpProp(l.props.o.keys, lt, 1)
+    };
+  }
+
+  layers = [
+    { name:'Артборд', glyph:'◇', depth:0 },
+    { name:'source-block', glyph:'◇', depth:1 },
+    { name:'header · card', glyph:'▤', depth:2 },
+    { name:'logo', glyph:'▣', depth:3 },
+    { name:'nav · Sales Automation', glyph:'T', depth:3 },
+    { name:'nav · AI Contacts', glyph:'T', depth:3 },
+    { name:'button · Sign in', glyph:'□', depth:3 },
+    { name:'hero', glyph:'◇', depth:1 },
+    { name:'cta', glyph:'◇', depth:1 }
+  ];
+  vps = { desktop:1440, tablet:834, mobile:390 };
+
+  /* Design System / UI Kit — содержимое ноды при открытии */
+  kit = [
+    { name:'Header', cat:'Layout', kind:'bar', variants:'1 вариант · 3 вьюпорта', observed:'12 observed · 1 variant', quality:98, accent:'#FF691D' },
+    { name:'Button', cat:'Core', kind:'pill', variants:'5 вариантов · 4 состояния', observed:'46 observed · 5 variants', quality:96, accent:'#FF691D' },
+    { name:'Badge', cat:'Core', kind:'chip', variants:'6 тонов', observed:'31 observed · 6 variants', quality:94, accent:'#16A34A' },
+    { name:'Chip', cat:'Core', kind:'chip', variants:'2 состояния', observed:'18 observed · 2 variants', quality:92, accent:'#7018E6' },
+    { name:'Input', cat:'Core', kind:'field', variants:'3 состояния', observed:'9 observed · 3 variants', quality:90, accent:'#7018E6' },
+    { name:'ProductCard', cat:'Marketplace', kind:'block', variants:'3:4 обложка · 4 бейджа', observed:'64 observed · 4 variants', quality:97, accent:'#FF691D' },
+    { name:'SearchBar', cat:'Marketplace', kind:'field', variants:'1 вариант', observed:'3 observed · 1 variant', quality:93, accent:'#7018E6' },
+    { name:'Footer', cat:'Layout', kind:'bar', variants:'1 вариант', observed:'12 observed · 1 variant', quality:88, accent:'#7018E6' }
+  ];
+  cats = [
+    { label:'Все компоненты', count:8 },
+    { label:'Core', count:4 },
+    { label:'Marketplace', count:2 },
+    { label:'Layout', count:2 }
+  ];
+  colorTokens = [
+    { name:'--brand-action', v:'#FF691D', note:'CTA, промо, акцент' },
+    { name:'--brand-net', v:'#7018E6', note:'ссылки, «Подать объявление»' },
+    { name:'--surface', v:'#FDFDFD', note:'страница' },
+    { name:'--sunken', v:'#F7F7F8', note:'утопленные секции' },
+    { name:'--border', v:'#E8E8EB', note:'единый хайрлайн' },
+    { name:'--text', v:'#000000', note:'основной текст' },
+    { name:'--text-muted', v:'#888888', note:'мета' },
+    { name:'--success', v:'#16A34A', note:'верификация' },
+    { name:'--star', v:'#F5A623', note:'рейтинг' }
+  ];
+  typeTokens = [
+    { k:'Семейство', v:'Manrope · variable' },
+    { k:'Веса', v:'500 / 600 / 700' },
+    { k:'Заголовки', v:'clamp(28px, 4vw, 56px) · -0.02em' },
+    { k:'Тело', v:'14px / 1.5' },
+    { k:'Мета', v:'13px · 600' },
+    { k:'Цена', v:'18px · 600' }
+  ];
+  shapeTokens = [
+    { k:'Шаг сетки', v:'4 px' },
+    { k:'Контролы', v:'8 px' },
+    { k:'Карточки', v:'16 px' },
+    { k:'Пилюли', v:'999 px' },
+    { k:'Тень карточки', v:'0 2 12 / .06' },
+    { k:'Тень дропдауна', v:'0 8 24 / .10' }
+  ];
+
+  /* Рейка инструментов — зеркало editor/ToolRail.svelte */
+  tools = [
+    { id:'select', icon:'▶', label:'Выделение', hot:'V' },
+    { id:'hand', icon:'✋', label:'Рука — панорама', hot:'H' },
+    { id:'frame', icon:'⬚', label:'Фрейм', hot:'F' },
+    { id:'rect', icon:'▭', label:'Прямоугольник', hot:'R' },
+    { id:'ellipse', icon:'◯', label:'Эллипс', hot:'O' },
+    { id:'line', icon:'╱', label:'Линия', hot:'L' },
+    { id:'image', icon:'▣', label:'Изображение', hot:'I' },
+    { id:'text', icon:'T', label:'Текст', hot:'T' }
+  ];
+  steps = [4, 8, 12, 16];
+
+  /* CTX_ITEMS + NODE_DEFS из frontend/src/flow/ports.ts */
+  groups = [
+    { label:'ИСТОЧНИК', color:'#FF691D', types:['prompt','reference','sourceimport'] },
+    { label:'ГЕНЕРАЦИЯ', color:'#9B5CFF', types:['generator','derive','mix','reskin'] },
+    { label:'СБОРКА', color:'#35B8A0', types:['edit','page','pagebridge'] },
+    { label:'КОНТРОЛЬ И ДВИЖЕНИЕ', color:'#22C55E', types:['qualitypass','recorder','motion','designsystem'] }
+  ];
+  defs = {
+    prompt:{ title:'Промпт', icon:'✎', note:'текст задачи' },
+    reference:{ title:'Референс', icon:'▣', note:'лёгкая стилевая подсказка' },
+    sourceimport:{ title:'Source Import', icon:'⌁', note:'URL/скрин → блоки + DNA' },
+    generator:{ title:'Генератор', icon:'◈', note:'LLM → варианты IR' },
+    derive:{ title:'Derive', icon:'↳', note:'родственный компонент' },
+    mix:{ title:'Микс', icon:'⊕', note:'смешение по весам' },
+    reskin:{ title:'Reskin', icon:'✦', note:'вариант с локом структуры' },
+    edit:{ title:'Редактор (DNA)', icon:'⬚', note:'DNA-редактор' },
+    page:{ title:'Страница', icon:'▤', note:'страница из блоков' },
+    pagebridge:{ title:'Page Bridge', icon:'↔', note:'передать компонент между страницами' },
+    qualitypass:{ title:'Quality Pass', icon:'✓', note:'judge + repair + scorecard' },
+    recorder:{ title:'Interaction Recorder', icon:'REC', note:'IR actions → Interaction IR' },
+    motion:{ title:'Motion Editor', icon:'M', note:'Interaction IR → editable timeline' },
+    designsystem:{ title:'Design System / UI Kit', icon:'◈', note:'Source → UI Kit → published Design System' }
+  };
+
+  componentDidMount() {
+    this._move = (e) => {
+      if (this._drag) {
+        const z = this.state.zoom;
+        const dx = (e.clientX - this._drag.mx) / z, dy = (e.clientY - this._drag.my) / z;
+        this.setState(s => ({ nodes: s.nodes.map(n => n.id === this._drag.id ? { ...n, x: this._drag.nx + dx, y: this._drag.ny + dy } : n) }));
+      } else if (this._modrag) {
+        const g = this._modrag, dx = (e.clientX - g.mx) / g.scale, dy = (e.clientY - g.my) / g.scale;
+        const nv = g.key === 'p' ? [g.v.p[0] + dx, g.v.p[1] + dy]
+          : g.key === 's' ? Math.max(0.1, Math.min(4, g.v.s + dx / 400))
+          : g.key === 'r' ? g.v.r + dx / 4
+          : Math.max(0, Math.min(1, g.v.o + dx / 400));
+        this.setState(st => ({
+          moData: (st.moData || this.motionSeed()).map(x => x.id === g.sceneId ? { ...x, layers: x.layers.map(l => {
+            if (l.id !== g.id) return l;
+            const keys = l.props[g.key].keys.slice(), i = this.keyIdxAt(keys, g.lt);
+            keys[i] = { ...keys[i], v: nv };
+            return { ...l, props: { ...l.props, [g.key]: { keys } } };
+          }) } : x)
+        }));
+      } else if (this._eldrag) {
+        const z = this.state.edZoom, st0 = this._eldrag;
+        let nx = st0.gx + (e.clientX - st0.mx) / z, ny = st0.gy + (e.clientY - st0.my) / z;
+        if (this.state.snap && !e.altKey) {
+          const q = this.state.snapStep;
+          nx = Math.round(nx / q) * q; ny = Math.round(ny / q) * q;
+        }
+        this.setState(s2 => ({ edGeo: { ...s2.edGeo, [st0.i]: { ...s2.edGeo[st0.i], x: nx, y: ny } } }));
+      } else if (this._edpan) {
+        this.setState({ edPan: { x: this._edpan.px + (e.clientX - this._edpan.mx), y: this._edpan.py + (e.clientY - this._edpan.my) } });
+      } else if (this._panning) {
+        this.setState({ pan: { x: this._panning.px + (e.clientX - this._panning.mx), y: this._panning.py + (e.clientY - this._panning.my) } });
+      }
+    };
+    this._up = () => { this._drag = null; this._panning = null; this._eldrag = null; this._edpan = null; this._modrag = null; };
+    this._key = (e) => {
+      if (e.key === 'Escape') this.setState({ menu: null });
+      if (this.state.screen !== 'editor') return;
+      const t = this.tools.find(x => x.hot.toLowerCase() === e.key.toLowerCase());
+      if (t) this.setState({ tool: t.id });
+    };
+    window.addEventListener('mousemove', this._move);
+    window.addEventListener('mouseup', this._up);
+    window.addEventListener('keydown', this._key);
+  }
+  componentWillUnmount() {
+    window.removeEventListener('mousemove', this._move);
+    window.removeEventListener('mouseup', this._up);
+    window.removeEventListener('keydown', this._key);
+  }
+
+  outPos(n, i) { return { x: n.x + n.w, y: n.y + n.h - 26 - i * 24 }; }
+  inPos(n, i) { return { x: n.x, y: n.y + 66 + i * 24 }; }
+
+  path(a, b) {
+    if ((this.props.edgeStyle ?? 'bezier') === 'step') {
+      const mx = (a.x + b.x) / 2;
+      return 'M ' + a.x + ' ' + a.y + ' H ' + mx + ' V ' + b.y + ' H ' + b.x;
+    }
+    const dx = Math.max(56, Math.abs(b.x - a.x) * 0.45);
+    return 'M ' + a.x + ' ' + a.y + ' C ' + (a.x + dx) + ' ' + a.y + ', ' + (b.x - dx) + ' ' + b.y + ', ' + b.x + ' ' + b.y;
+  }
+
+  fmt(t) {
+    const m = Math.floor(t / 60), sec = t - m * 60;
+    return m + ':' + (sec < 10 ? '0' : '') + sec.toFixed(1);
+  }
+
+  motionVals(s) {
+    const data = s.moData || this.motionSeed();
+    const total = data.reduce((a, x) => a + x.dur, 0);
+    let acc = 0;
+    const bounds = data.map(x => { const b = { s: acc, e: acc + x.dur }; acc += x.dur; return b; });
+    const t = Math.max(0, Math.min(s.moT, total));
+    let idx = bounds.findIndex(b => t >= b.s && t < b.e);
+    if (idx < 0) idx = data.length - 1;
+    const sc = data[idx], lt = t - bounds[idx].s, b0 = bounds[idx].s;
+    const [stW, stH] = this.ratios[s.moRatio];
+    /* кадр вписывается по обеим осям — иначе композиция обрезается по высоте */
+    const box = s.moBox || { w: 900, h: 520 };
+    const scale = Math.min(box.w / stW, box.h / stH);
+    const layer = sc.layers.find(l => l.id === s.moLayerSel) || sc.layers[0] || null;
+    const vals = layer ? this.layerVals(layer, lt) : null;
+    const pct = (ms) => (ms / total * 100) + '%';
+
+    const mutate = (layerId, fn) => this.setState(st => ({
+      moData: (st.moData || this.motionSeed()).map(x => x.id === sc.id
+        ? { ...x, layers: x.layers.map(l => l.id === layerId ? fn(l) : l) } : x)
+    }));
+    const writeProp = (layerId, key, value, ltime) => mutate(layerId, l => {
+      const keys = l.props[key].keys.slice();
+      const i = this.keyIdxAt(keys, ltime);
+      keys[i] = { ...keys[i], v: value };
+      return { ...l, props: { ...l.props, [key]: { keys } } };
+    });
+
+    /* строки таймлайна: группа → слой → свойства */
+    const rows = [];
+    const seen = [];
+    sc.layers.forEach(l => { if (!seen.includes(l.group)) seen.push(l.group); });
+    seen.forEach(gk => {
+      const g = this.groupDefs[gk] || { label: gk, color:'#8A8A93' };
+      const inGroup = sc.layers.filter(l => l.group === gk);
+      rows.push({ kind:'group', isGroup:true, label:g.label, count:inGroup.length + '',
+        nameStyle:{ width:216, flex:'none', display:'flex', alignItems:'center', gap:7, paddingLeft:6, fontSize:10.5, fontWeight:700, letterSpacing:'0.06em', color:g.color, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
+        laneStyle:{ position:'relative', flex:1, minWidth:0, height:22 },
+        barStyle:{ position:'absolute', left:pct(b0), width:pct(sc.dur), top:9, height:3, borderRadius:999, background:g.color + '3A' } });
+      inGroup.forEach(l => {
+        const on = layer && l.id === layer.id;
+        const open = !!s.moExpand[l.id];
+        const allKeys = [];
+        this.propDefs.forEach(pd => l.props[pd.k].keys.forEach(k => { if (!allKeys.includes(k.t)) allKeys.push(k.t); }));
+        rows.push({ kind:'layer', isLayer:true, id:l.id, label:l.name, twirl: open ? '▾' : '▸',
+          typeLabel: l.type === 'text' ? 'T' : l.type === 'image' ? '▣' : '◈',
+          nameStyle:{ width:216, flex:'none', display:'flex', alignItems:'center', gap:7, paddingLeft:16, cursor:'pointer', fontSize:12, fontWeight: on ? 700 : 600, color: on ? '#F5F5F6' : '#A0A0A8', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
+          laneStyle:{ position:'relative', flex:1, minWidth:0, height:26, borderRadius:7, background:'#0E0E11', border:'1px solid ' + (on ? 'rgba(155,92,255,.42)' : '#1F1F26'), cursor:'pointer' },
+          spanStyle:{ position:'absolute', left:pct(b0), width:pct(sc.dur), top:3, bottom:3, borderRadius:5,
+            background: on ? 'rgba(155,92,255,.24)' : 'rgba(155,92,255,.10)', border:'1px solid ' + (on ? 'rgba(155,92,255,.5)' : 'rgba(155,92,255,.2)') },
+          keys: allKeys.sort((x, y) => x - y).map(kt => ({ gt: b0 + kt,
+            style:{ position:'absolute', left:pct(b0 + kt), top:'50%', width:9, height:9, transform:'translate(-50%,-50%) rotate(45deg)', borderRadius:2,
+              background: on ? '#C7A6FF' : '#4A4A55', cursor:'pointer' } })) });
+        if (open) this.propDefs.forEach(pd => {
+          const psel = on && s.moPropSel === pd.k;
+          const raw = this.interpProp(l.props[pd.k].keys, lt, pd.dims);
+          const text = pd.dims === 2 ? Math.round(raw[0]) + ', ' + Math.round(raw[1])
+            : pd.k === 'r' ? Math.round(raw) + '°' : raw.toFixed(2);
+          rows.push({ kind:'prop', isProp:true, id:l.id, prop:pd.k, label:pd.label, value:text,
+            nameStyle:{ width:216, flex:'none', display:'flex', alignItems:'center', gap:7, paddingLeft:40, cursor:'pointer', fontSize:11, fontWeight:600, color: psel ? '#C7A6FF' : '#8A8A93', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
+            watchStyle:{ width:9, height:9, flex:'none', borderRadius:999, border:'1.5px solid ' + (l.props[pd.k].keys.length > 1 ? '#FF691D' : '#4A4A55'), background: l.props[pd.k].keys.length > 1 ? '#FF691D' : 'transparent' },
+            laneStyle:{ position:'relative', flex:1, minWidth:0, height:22, borderRadius:6, background:'#0C0C0F', border:'1px solid ' + (psel ? 'rgba(155,92,255,.3)' : '#171720'), cursor:'pointer' },
+            keys: l.props[pd.k].keys.map(k => ({ gt: b0 + k.t,
+              style:{ position:'absolute', left:pct(b0 + k.t), top:'50%', width:8, height:8, transform:'translate(-50%,-50%) rotate(45deg)', borderRadius:1,
+                background: psel ? '#FF691D' : '#6E6E78', cursor:'pointer' } })) });
+        });
+      });
+    });
+
+    return {
+      moComp: stW + ' × ' + stH + ' · ' + s.moFps + ' fps',
+      moSourceLabel: 'Design IR + Interaction IR',
+      moExportLabel: 'Экспорт ' + s.moFormat.toUpperCase(),
+      moSceneCount: data.length + '',
+      moSceneBadge: sc.name,
+      moSceneTitle: 'КОМПОЗИЦИЯ · ' + sc.name,
+      moSceneDur: sc.dur + '',
+      moComponents: sc.components,
+      moIsHero: sc.kind === 'hero', moIsSearch: sc.kind === 'search', moIsCard: sc.kind === 'card',
+      moIsForm: sc.kind === 'form', moIsCta: sc.kind === 'cta',
+      moTimeText: this.fmt(t / 1000) + ' / ' + this.fmt(total / 1000),
+      moPlayIcon: s.moPlaying ? '❙❙' : '▶',
+      moPlayStyle: { width:38, height:38, flex:'none', borderRadius:999, background:'#FF691D', color:'#fff', fontSize:12.5, fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' },
+      moFrameOuter: { position:'relative', flex:'none', width: Math.round(stW * scale), height: Math.round(stH * scale), borderRadius:10, overflow:'hidden', background:'#FDFDFD', border:'1px solid #26262D', boxShadow:'0 18px 50px rgba(0,0,0,.5)' },
+      moStageStyle: { position:'absolute', left:0, top:0, width:stW, height:stH, transformOrigin:'0 0', transform:'scale(' + scale + ')' },
+      moSceneStyle: { position:'absolute', inset:0, opacity: Math.min(1, lt / 260 + 0.15) },
+      frameRef: (el) => {
+        if (!el || el === this._frame) return;
+        this._frame = el;
+        const host = el.parentElement;
+        if (!host) return;
+        const read = () => {
+          const cs = getComputedStyle(host);
+          const w = host.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
+          const h = host.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
+          const bx = this.state.moBox;
+          if (w > 20 && h > 20 && (!bx || Math.abs(bx.w - w) > 1 || Math.abs(bx.h - h) > 1)) this.setState({ moBox: { w, h } });
+        };
+        if (this._ro) this._ro.disconnect();
+        this._ro = new ResizeObserver(read);
+        this._ro.observe(host);
+        read();
+      },
+
+      moCompTabs: data.map((x, i) => ({ idx:i, label:x.name,
+        style:{ padding:'7px 14px', borderRadius:8, fontSize:12, fontWeight: i === idx ? 700 : 600, cursor:'pointer', whiteSpace:'nowrap',
+          background: i === idx ? '#2A2A32' : 'transparent', color: i === idx ? '#F5F5F6' : '#8A8A93' } })),
+
+      moRects: sc.layers.map(l => {
+        const v = this.layerVals(l, lt);
+        const on = layer && l.id === layer.id;
+        return { id:l.id, isText:l.type === 'text', isImage:l.type === 'image', isComp:l.type === 'comp', text:l.text,
+          style:{ position:'absolute', left:v.p[0], top:v.p[1], width:l.w, transform:'translate(-50%,-50%) scale(' + v.s + ') rotate(' + v.r + 'deg)', opacity:v.o,
+            fontSize:l.size, fontWeight:l.weight, color:l.color, textAlign:'center', lineHeight:1.08, letterSpacing:'-0.02em', cursor:'move',
+            outline: on ? '3px dashed #9B5CFF' : 'none', outlineOffset:14 },
+          compStyle:{ display:'inline-block', padding:'32px 68px', borderRadius:999, background:'#FF691D', fontSize:38, fontWeight:700, color:'#fff', whiteSpace:'nowrap' },
+          imgStyle:{ width:'100%', aspectRatio:'3/2', display:'block', borderRadius:18, backgroundImage: l.src ? 'url(' + l.src + ')' : 'none', backgroundSize:'contain', backgroundPosition:'center', backgroundRepeat:'no-repeat' } };
+      }),
+      startLayerDrag: (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        const id = e.currentTarget.dataset.id;
+        const l = sc.layers.find(x => x.id === id);
+        if (!l) return;
+        const key = this.toolProp[s.moTool] || 'p';
+        this.setState({ moLayerSel: id, moPropSel: key });
+        this._modrag = { id, sceneId: sc.id, lt, key, mx: e.clientX, my: e.clientY, v: this.layerVals(l, lt), scale };
+      },
+
+      moRows: rows,
+      toggleExpand: (e) => {
+        e.stopPropagation();
+        const id = e.currentTarget.dataset.id;
+        this.setState(st => ({ moExpand: { ...st.moExpand, [id]: !st.moExpand[id] }, moLayerSel: id }));
+      },
+      selectLayer: (e) => this.setState({ moLayerSel: e.currentTarget.dataset.id }),
+      selectProp: (e) => this.setState({ moLayerSel: e.currentTarget.dataset.id, moPropSel: e.currentTarget.dataset.prop }),
+      seekKey: (e) => { e.stopPropagation(); this.setState({ moT: Number(e.currentTarget.dataset.gt) }); },
+
+      moTools: [['move','Перемещение','✥'],['scale','Масштаб','⤢'],['rotate','Поворот','⟳'],['opacity','Прозрачность','◐']].map(x => ({
+        value:x[0], label:x[1], icon:x[2], on:x[0] === s.moTool, off:x[0] !== s.moTool })),
+      setMoTool: (e) => {
+        const v = e.currentTarget.dataset.v;
+        this.setState({ moTool: v, moPropSel: this.toolProp[v] });
+      },
+
+      moLayerName: layer ? layer.name : '—',
+      moPropName: (this.propDefs.find(x => x.k === s.moPropSel) || this.propDefs[0]).label,
+      moTransform: vals ? [
+        { k:'X', v:Math.round(vals.p[0]) + '', f:'x', d:20 },
+        { k:'Y', v:Math.round(vals.p[1]) + '', f:'y', d:20 },
+        { k:'Масштаб', v:vals.s.toFixed(2), f:'s', d:0.05 },
+        { k:'Поворот', v:Math.round(vals.r) + '°', f:'r', d:5 },
+        { k:'Прозрачность', v:vals.o.toFixed(2), f:'o', d:0.1 }
+      ] : [],
+      bump: (e) => {
+        if (!layer) return;
+        const fld = e.currentTarget.dataset.f, d = Number(e.currentTarget.dataset.d) * Number(e.currentTarget.dataset.sign);
+        const v = this.layerVals(layer, lt);
+        if (fld === 'x' || fld === 'y') {
+          const np = fld === 'x' ? [v.p[0] + d, v.p[1]] : [v.p[0], v.p[1] + d];
+          writeProp(layer.id, 'p', np, lt);
+        } else {
+          let nv = v[fld] + d;
+          if (fld === 'o') nv = Math.max(0, Math.min(1, nv));
+          if (fld === 's') nv = Math.max(0.1, Math.min(4, nv));
+          writeProp(layer.id, fld, nv, lt);
+        }
+      },
+      moKeyInfo: layer ? layer.props[s.moPropSel].keys.length + ' кейфрейм(ов) · ' + (lt / 1000).toFixed(2) + ' с' : '—',
+      addKey: () => {
+        if (!layer) return;
+        const key = s.moPropSel, dims = key === 'p' ? 2 : 1;
+        const v = this.interpProp(layer.props[key].keys, lt, dims);
+        mutate(layer.id, l => {
+          const keys = l.props[key].keys.filter(k => Math.abs(k.t - lt) > 30).concat([{ t: Math.round(lt), v: dims === 2 ? [v[0], v[1]] : v }]);
+          keys.sort((a, b) => a.t - b.t);
+          return { ...l, props: { ...l.props, [key]: { keys } } };
+        });
+      },
+      delKey: () => {
+        if (!layer || layer.props[s.moPropSel].keys.length < 2) return;
+        const key = s.moPropSel;
+        mutate(layer.id, l => ({ ...l, props: { ...l.props, [key]: { keys: l.props[key].keys.filter(k => Math.abs(k.t - lt) > 120) } } }));
+      },
+      delLayer: () => {
+        if (!layer) return;
+        this.setState(st => {
+          const d = (st.moData || this.motionSeed()).map(x => x.id === sc.id ? { ...x, layers: x.layers.filter(l => l.id !== layer.id) } : x);
+          const rest = d[idx].layers;
+          return { moData: d, moLayerSel: rest.length ? rest[0].id : null };
+        });
+      },
+
+      moAssets: this.assetGroups.map(g => ({
+        label: this.groupDefs[g.key].label,
+        dotStyle:{ width:7, height:7, flex:'none', borderRadius:2, background:this.groupDefs[g.key].color },
+        items: g.items.map(it => ({ name:it.name, kind:it.kind, group:g.key,
+          iconStyle:{ width:22, height:22, flex:'none', borderRadius:6, background:this.groupDefs[g.key].color + '26', color:this.groupDefs[g.key].color, fontSize:10, fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center' } }))
+      })),
+      addAsset: (e) => {
+        const name = e.currentTarget.dataset.name, grp = e.currentTarget.dataset.group;
+        const id = 'as' + Date.now();
+        this.setState(st => ({
+          moLayerSel: id, moPropSel:'p', moExpand: { ...st.moExpand, [id]: true },
+          moData: (st.moData || this.motionSeed()).map(x => x.id === sc.id ? { ...x, layers: x.layers.concat([
+            this.L({ id, name: name, group: grp, type:'comp', text: name, w:620,
+              p:[{ t: Math.round(lt), v:[960, 540] }], o:[{ t: Math.round(lt), v:0 }, { t: Math.round(lt) + 500, v:1 }] })
+          ]) } : x)
+        }));
+      },
+      fileRef: (el) => { if (el) this._file = el; },
+      pickFile: () => { if (this._file) this._file.click(); },
+      onUpload: (e) => {
+        const files = Array.from(e.target.files || []);
+        files.forEach(file => {
+          const fr = new FileReader();
+          fr.onload = () => {
+            const id = 'im' + Date.now() + Math.round(Math.random() * 999);
+            this.setState(st => ({
+              moLayerSel: id, moPropSel:'p', moExpand: { ...st.moExpand, [id]: true },
+              moData: (st.moData || this.motionSeed()).map(x => x.id === sc.id ? { ...x, layers: x.layers.concat([
+                this.L({ id, name: file.name.slice(0, 20), group:'media', type:'image', src: fr.result, w:760,
+                  p:[{ t: Math.round(lt), v:[960, 540] }], o:[{ t: Math.round(lt), v:0 }, { t: Math.round(lt) + 400, v:1 }] })
+              ]) } : x)
+            }));
+          };
+          fr.readAsDataURL(file);
+        });
+        e.target.value = '';
+      },
+
+      moGroups: [
+        { key:'moRatio', label:'Кадр', items:['16:9','9:16','1:1'].map(v => ({ label:v, value:v, on:v === s.moRatio, off:v !== s.moRatio })) },
+        { key:'moFps', label:'Частота кадров', items:[24,30,60].map(v => ({ label:v + ' fps', value:v + '', on:v === s.moFps, off:v !== s.moFps })) },
+        { key:'moFormat', label:'Формат', items:[['mp4','MP4 / H.264'],['webm','WebM / VP9']].map(v => ({ label:v[1], value:v[0], on:v[0] === s.moFormat, off:v[0] !== s.moFormat })) },
+        { key:'moQuality', label:'Качество', items:[['draft','Draft'],['high','High'],['lossless','Lossless']].map(v => ({ label:v[1], value:v[0], on:v[0] === s.moQuality, off:v[0] !== s.moQuality })) }
+      ],
+      moSceneGroups: [
+        { key:'moTransition', label:'Переход', items:[['cut','Cut'],['fade','Fade'],['slide-left','Slide left'],['slide-up','Slide up'],['zoom','Zoom']].map(v => ({ label:v[1], value:v[0], on:v[0] === s.moTransition, off:v[0] !== s.moTransition })) },
+        { key:'moEase', label:'Easing', items:[['linear','Linear'],['ease','Ease'],['ease-in','Ease in'],['ease-out','Ease out'],['ease-in-out','Ease in/out']].map(v => ({ label:v[1], value:v[0], on:v[0] === s.moEase, off:v[0] !== s.moEase })) }
+      ],
+      setMo: (e) => {
+        const k = e.currentTarget.dataset.k, v = e.currentTarget.dataset.v;
+        this.setState({ [k]: k === 'moFps' ? Number(v) : v });
+      },
+
+      moTicks: [0, 3, 6, 9, 12, 15, 18].map(v => ({ label: v + 'с',
+        style:{ position:'absolute', left:pct(v * 1000), top:0, fontSize:9.5, fontWeight:700, color:'#7E7E88', transform:'translateX(-50%)' } })),
+      moPlayhead: { position:'absolute', left:pct(t), top:0, bottom:0, width:2, background:'#fff', boxShadow:'0 0 8px rgba(255,255,255,.6)', zIndex:5, pointerEvents:'none' },
+      setMoScene: (e) => { e.stopPropagation(); this.setState({ moT: bounds[Number(e.currentTarget.dataset.idx)].s + 60 }); },
+      seek: (e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        this.setState({ moT: Math.max(0, Math.min(total, (e.clientX - r.left) / r.width * total)) });
+      },
+      moStart: () => this.setState({ moT: 0 }),
+      togglePlay: () => {
+        if (this._timer) { clearInterval(this._timer); this._timer = null; this.setState({ moPlaying: false }); return; }
+        this.setState(st => ({ moPlaying: true, moT: st.moT >= total - 20 ? 0 : st.moT }));
+        this._timer = setInterval(() => {
+          this.setState(st => {
+            const nt = st.moT + 1000 / 20;
+            if (nt >= total) { clearInterval(this._timer); this._timer = null; return { moT: total, moPlaying: false }; }
+            return { moT: nt };
+          });
+        }, 1000 / 20);
+      },
+      closeMotion: () => { if (this._timer) { clearInterval(this._timer); this._timer = null; } this.setState({ screen: 'graph', moPlaying: false }); }
+    };
+  }
+
+  tabStyle(on) {
+    return { padding:'8px 18px', borderRadius:999, fontSize:13, fontWeight: on ? 700 : 600, cursor:'pointer',
+      background: on ? '#F5F5F6' : 'transparent', color: on ? '#0A0A0C' : '#9A9AA3' };
+  }
+
+  statusStyle(n) {
+    const map = { run: ['rgba(255,105,29,.14)', '#FFB183'], ok: ['rgba(34,197,94,.14)', '#7EE2A4'], idle: ['#17171B', '#8A8A93'] };
+    const c = map[n.status] || map.idle;
+    return { padding:'3px 9px', borderRadius:999, background:c[0], color:c[1], fontSize:10.5, fontWeight:700, whiteSpace:'nowrap' };
+  }
+
+  decorate(n) {
+    const sel = this.state.selected === n.id;
+    const toneMap = { run:'#FF691D', ok:'#22C55E', idle:'#8A8A93' };
+    return {
+      ...n,
+      tone: toneMap[n.status] || toneMap.idle,
+      wrapStyle: {
+        position:'absolute', left:n.x, top:n.y, width:n.w, borderRadius:14,
+        background:'#131317', border:'1px solid ' + (sel ? n.accent : '#26262D'),
+        boxShadow: sel ? '0 0 0 3px ' + n.accent + '26, 0 14px 40px rgba(0,0,0,.55)' : '0 8px 26px rgba(0,0,0,.42)',
+        transition:'box-shadow .15s ease, border-color .15s ease'
+      },
+      iconStyle: { width:26, height:26, borderRadius:8, flex:'none', background:n.accent + '24', color:n.accent, fontSize:13, fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center' },
+      statusStyle: this.statusStyle(n),
+      rows: n.rows.map(r => ({
+        ...r,
+        isField:r.type==='field', isToggles:r.type==='toggles', isChips:r.type==='chips',
+        isStats:r.type==='stats', isProgress:r.type==='progress', isPreview:r.type==='preview',
+        isActions:r.type==='actions', isNote:r.type==='note', isMerge:r.type==='merge',
+        isNote2:r.type==='note2', isWeights:r.type==='weights', isVariants:r.type==='variants',
+        variantsValue: n.variants ? n.variants + '' : '1',
+        weightItems: r.type === 'weights' && n.weights
+          ? Object.keys(n.weights).map(k => ({ key:k, label:'Вход ' + k, pctText:Math.round(n.weights[k]) + '%',
+              barStyle:{ position:'absolute', left:0, top:0, bottom:0, width:Math.round(n.weights[k]) + '%', borderRadius:999, background:'linear-gradient(90deg,#9B5CFF,#7018E6)' } }))
+          : [],
+        items:(r.items||[]).map(it => ({ ...it, off: it.on === false || (it.on === undefined && !it.primary && !it.ghost) ? true : false })),
+        barStyle: r.type==='progress' ? { position:'absolute', left:0, top:0, bottom:0, width:(r.pct*100)+'%', borderRadius:999, background:'linear-gradient(90deg,' + n.accent + ',' + n.accent + 'AA)' } : null
+      })),
+      ins: n.ins.map((p, i) => ({
+        ...p,
+        style:{ position:'absolute', right:'calc(100% - 5px)', top:61 + i*24, height:10, display:'flex', alignItems:'center', justifyContent:'flex-end', gap:7 },
+        dotStyle:{ width:10, height:10, borderRadius:999, flex:'none', background:'#0A0A0C', border:'2px solid ' + (this.KIND[p.kind] || '#8A8A93') }
+      })),
+      outs: n.outs.map((p, i) => {
+        const c = this.KIND[p.kind] || '#8A8A93';
+        return {
+          ...p,
+          style:{ position:'absolute', right:-5, top:n.h - 31 - i*24, height:10, display:'flex', alignItems:'center', gap:7, flexDirection:'row' },
+          dotStyle:{ width:10, height:10, borderRadius:999, flex:'none', background:c, boxShadow:'0 0 0 3px ' + c + '22' }
+        };
+      })
+    };
+  }
+
+  renderVals() {
+    const s = this.state, byId = {};
+    s.nodes.forEach(n => byId[n.id] = n);
+    const nodes = s.nodes.map(n => this.decorate(n));
+    const selNode = byId[s.selected] || s.nodes[0];
+
+    const edges = this.edgeDefs.filter(e => byId[e.from] && byId[e.to]).map(e => ({
+      d: this.path(this.outPos(byId[e.from], e.out), this.inPos(byId[e.to], e.in)),
+      color: this.KIND[e.kind] || '#8A8A93'
+    }));
+
+    const menuGroups = this.groups.map(g => ({
+      label: g.label,
+      items: g.types.map(t => ({
+        type: t, title: this.defs[t].title, icon: this.defs[t].icon, note: this.defs[t].note,
+        iconStyle: { width:26, height:26, flex:'none', borderRadius:7, background:g.color + '24', color:g.color, fontSize: this.defs[t].icon.length > 1 ? 8.5 : 12, fontWeight:700, letterSpacing:'0.02em', display:'flex', alignItems:'center', justifyContent:'center' }
+      }))
+    }));
+
+    const gs = this.props.gridStyle ?? 'dots';
+    const gridBg = gs === 'lines'
+      ? { backgroundImage:'linear-gradient(#16161C 1px, transparent 0), linear-gradient(90deg,#16161C 1px, transparent 0)', backgroundSize:'32px 32px' }
+      : gs === 'none' ? {} : { backgroundImage:'radial-gradient(circle at 1px 1px, #1B1B22 1px, transparent 0)', backgroundSize:'26px 26px' };
+
+    const xs = s.nodes.map(n => n.x), ys = s.nodes.map(n => n.y);
+    const minX = Math.min(...xs) - 60, minY = Math.min(...ys) - 60;
+    const maxX = Math.max(...s.nodes.map(n => n.x + n.w)) + 60, maxY = Math.max(...s.nodes.map(n => n.y + n.h)) + 60;
+    const sx = 190 / (maxX - minX), sy = 120 / (maxY - minY), ms = Math.min(sx, sy) * 0.86;
+
+    return {
+      isGraph: s.screen === 'graph',
+      isEditor: s.screen === 'editor',
+      nodes, edges,
+      sel: this.decorate(selNode),
+      zoomPct: Math.round(s.zoom * 100) + '%',
+      showMinimap: this.props.showMinimap ?? true,
+      mini: s.nodes.map(n => ({ style:{ position:'absolute', left:(n.x-minX)*ms+8, top:(n.y-minY)*ms+8, width:n.w*ms, height:n.h*ms, borderRadius:3, background:n.accent + (n.id===s.selected ? 'CC' : '55') } })),
+      gridStyle: { position:'absolute', inset:0, ...gridBg },
+      canvasStyle: { position:'absolute', left:0, top:0, transformOrigin:'0 0', transform:'translate(' + s.pan.x + 'px,' + s.pan.y + 'px) scale(' + s.zoom + ')' },
+      showMenu: !!s.menu,
+      menuStyle: s.menu ? { position:'absolute', left:s.menu.x, top:s.menu.y, width:330, borderRadius:14, background:'rgba(16,16,20,.97)', border:'1px solid #2A2A33', boxShadow:'0 20px 60px rgba(0,0,0,.6)', backdropFilter:'blur(12px)', zIndex:40 } : null,
+
+      zoomIn: () => this.setState(st => ({ zoom: Math.min(2, st.zoom + 0.1) })),
+      zoomOut: () => this.setState(st => ({ zoom: Math.max(0.3, st.zoom - 0.1) })),
+      fitAll: () => this.setState({ zoom: 0.52, pan: { x: 30, y: 24 } }),
+      onWheel: (e) => { e.preventDefault(); this.setState(st => ({ zoom: Math.max(0.3, Math.min(2, st.zoom - e.deltaY * 0.0012)) })); },
+      onCanvasDown: (e) => {
+        if (e.button === 1) {
+          /* средняя кнопка — панорама откуда угодно, даже с ноды */
+          e.preventDefault();
+          this._drag = null;
+          this.setState({ menu: null });
+          this._panning = { mx: e.clientX, my: e.clientY, px: s.pan.x, py: s.pan.y };
+          return;
+        }
+        if (e.button !== 0) return;
+        if (e.target.closest('[data-id]')) return;
+        this.setState({ menu: null });
+        this._panning = { mx: e.clientX, my: e.clientY, px: s.pan.x, py: s.pan.y };
+      },
+      onCanvasMenu: (e) => {
+        e.preventDefault();
+        const r = e.currentTarget.getBoundingClientRect();
+        this.setState({ menu: { x: Math.min(e.clientX - r.left, r.width - 350), y: Math.min(e.clientY - r.top, Math.max(20, r.height - 520)) } });
+      },
+      openMenuCenter: () => this.setState({ menu: { x: 320, y: 90 } }),
+      selectNode: (e) => { const id = e.currentTarget.dataset.id; this.setState({ selected: id, menu: null }); },
+      startDrag: (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        const id = e.currentTarget.dataset.id;
+        const n = byId[id];
+        this._drag = { id, mx: e.clientX, my: e.clientY, nx: n.x, ny: n.y };
+        this.setState({ selected: id, menu: null });
+      },
+      addNode: (e) => {
+        const kind = e.currentTarget.dataset.kind;
+        const m = s.menu || { x: 200, y: 120 };
+        const wx = (m.x - s.pan.x) / s.zoom, wy = (m.y - s.pan.y) / s.zoom;
+        const id = 'n' + Date.now();
+        this.setState(st => ({
+          menu: null, selected: id,
+          nodes: st.nodes.concat([{
+            id, x: wx, y: wy, w: 280, h: 168, accent:'#9B5CFF', glyph:'＋', title: kind, sub:'новая нода',
+            status:'idle', statusText:'idle',
+            ins:[{label:'in'}], outs:[{label:'out'}],
+            rows:[{ type:'field', label:'ПАРАМЕТР', value:'не задан' }, { type:'progress', label:'Ожидает запуска', pct:0, pctText:'0%' }],
+            inspect:[{k:'ТИП НОДЫ',v:kind},{k:'СТАТУС',v:'Не запускалась'}]
+          }])
+        }));
+      },
+      layerItems: this.layers.map((l, i) => {
+        const on = i === s.edSel;
+        return { ...l, idx: i, hasGeo: !!s.edGeo[i],
+          style:{ display:'flex', alignItems:'center', gap:8, padding:'7px 8px', paddingLeft: 8 + l.depth * 14, borderRadius:7, cursor:'pointer',
+            background: on ? 'rgba(155,92,255,.16)' : 'transparent',
+            border:'1px solid ' + (on ? 'rgba(155,92,255,.34)' : 'transparent'),
+            fontSize:12, fontWeight: on ? 700 : 600, color: on ? '#F5F5F6' : '#9A9AA3' },
+          glyphStyle:{ color: on ? '#B98CFF' : '#7E7E88', flex:'none', width:12, textAlign:'center' } };
+      }),
+      setLayer: (e) => this.setState({ edSel: Number(e.currentTarget.dataset.idx) }),
+      edLayerName: this.layers[s.edSel].name,
+      edZoomPct: Math.round(s.edZoom * 100) + '%',
+      edZoomIn: () => this.setState(st => ({ edZoom: Math.min(2, st.edZoom + 0.08) })),
+      edZoomOut: () => this.setState(st => ({ edZoom: Math.max(0.2, st.edZoom - 0.08) })),
+      edFit: () => this.setState({ edZoom: 0.63, edPan: { x: 0, y: 0 } }),
+      vpTabs: ['desktop', 'tablet', 'mobile'].map(v => ({
+        id: v, label: v === 'desktop' ? 'Desktop' : v === 'tablet' ? 'Tablet' : 'Mobile',
+        style:{ padding:'6px 14px', borderRadius:7, fontSize:12, fontWeight: v === s.edVp ? 700 : 600, cursor:'pointer',
+          background: v === s.edVp ? '#2A2A32' : 'transparent', color: v === s.edVp ? '#F5F5F6' : '#8A8A93' }
+      })),
+      setVp: (e) => this.setState({ edVp: e.currentTarget.dataset.vp }),
+      edVpWidth: this.vps[s.edVp] + ' px',
+      artboardStyle: { position:'absolute', left:'50%', top:'50%', width:this.vps[s.edVp], height:900, background:'#0E0E12', border:'1px solid #26262D', borderRadius:6,
+        transformOrigin:'50% 50%', transform:'translate(-50%,-50%) translate(' + s.edPan.x + 'px,' + s.edPan.y + 'px) scale(' + s.edZoom + ')' },
+      elemRects: Object.keys(s.edGeo).map(k => {
+        const i = Number(k), g = s.edGeo[i], on = i === s.edSel;
+        return { idx: i, name: this.layers[i].name, on, off: !on,
+          style:{ position:'absolute', left:g.x, top:g.y, width:g.w, height:g.h, borderRadius:6, cursor:'move',
+            border:'1.5px solid ' + (on ? '#9B5CFF' : 'rgba(155,92,255,.18)'),
+            background: on ? 'rgba(155,92,255,.07)' : 'transparent' },
+          badgeStyle:{ position:'absolute', left:0, top:-24, padding:'3px 9px', borderRadius:6, background:'#7018E6', fontSize:11, fontWeight:700, color:'#fff', whiteSpace:'nowrap' },
+          badgeText: this.layers[i].name + ' · ' + Math.round(g.w) + '×' + Math.round(g.h) };
+      }),
+      startElDrag: (e) => {
+        if (e.button !== 0 || s.tool === 'hand') return;
+        e.stopPropagation();
+        const i = Number(e.currentTarget.dataset.idx), g = s.edGeo[i];
+        this._eldrag = { i, mx: e.clientX, my: e.clientY, gx: g.x, gy: g.y };
+        this.setState({ edSel: i });
+      },
+      onArtDown: (e) => {
+        if (e.button === 1 || s.tool === 'hand') {
+          e.preventDefault();
+          this._edpan = { mx: e.clientX, my: e.clientY, px: s.edPan.x, py: s.edPan.y };
+        }
+      },
+      onEdWheel: (e) => { e.preventDefault(); this.setState(st => ({ edZoom: Math.max(0.2, Math.min(2, st.edZoom - e.deltaY * 0.0011)) })); },
+      geoFields: (() => {
+        const g = s.edGeo[s.edSel];
+        if (!g) return [{ k:'X', v:'—' }, { k:'Y', v:'—' }, { k:'Ш', v:'—' }, { k:'В', v:'—' }];
+        return [{ k:'X', v:Math.round(g.x) + '' }, { k:'Y', v:Math.round(g.y) + '' }, { k:'Ш', v:Math.round(g.w) + '' }, { k:'В', v:Math.round(g.h) + '' }];
+      })(),
+
+      isMotion: s.screen === 'motion',
+      ...this.motionVals(s),
+
+      isDs: s.screen === 'ds',
+      dsKitTab: s.dsTab === 'kit',
+      dsTokTab: s.dsTab === 'tokens',
+      dsTabKitStyle: this.tabStyle(s.dsTab === 'kit'),
+      dsTabTokStyle: this.tabStyle(s.dsTab === 'tokens'),
+      showKit: () => this.setState({ dsTab: 'kit' }),
+      showTokens: () => this.setState({ dsTab: 'tokens' }),
+      catItems: this.cats.map((c, i) => ({
+        ...c,
+        style:{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 12px', borderRadius:9, cursor:'pointer',
+          background: i === s.dsCat ? 'rgba(155,92,255,.14)' : 'transparent',
+          border: '1px solid ' + (i === s.dsCat ? 'rgba(155,92,255,.36)' : 'transparent'),
+          color: i === s.dsCat ? '#F5F5F6' : '#9A9AA3', fontSize:12.5, fontWeight: i === s.dsCat ? 700 : 600 },
+        idx: i
+      })),
+      setCat: (e) => this.setState({ dsCat: Number(e.currentTarget.dataset.idx) }),
+      kitItems: this.kit
+        .filter(k => s.dsCat === 0 || k.cat === this.cats[s.dsCat].label)
+        .map(k => {
+          const i = this.kit.indexOf(k);
+          const on = i === s.dsSel;
+          return { ...k, idx: i,
+            isPill: k.kind === 'pill', isChip: k.kind === 'chip', isField: k.kind === 'field', isBlock: k.kind === 'block', isBar: k.kind === 'bar',
+            accentStyle:{ color:k.accent },
+            fillStyle:{ background:k.accent },
+            style:{ borderRadius:14, overflow:'hidden', cursor:'pointer', background:'#131317',
+              border:'1px solid ' + (on ? '#9B5CFF' : '#26262D'),
+              boxShadow: on ? '0 0 0 3px rgba(155,92,255,.16)' : 'none', transition:'border-color .15s ease, box-shadow .15s ease' } };
+        }),
+      setKit: (e) => this.setState({ dsSel: Number(e.currentTarget.dataset.idx) }),
+      kitSel: this.kit[s.dsSel] || this.kit[0],
+      colorTokens: this.colorTokens.map(c => ({ ...c, swatch:{ width:34, height:34, flex:'none', borderRadius:9, background:c.v, border:'1px solid rgba(255,255,255,.14)' } })),
+      typeTokens: this.typeTokens,
+      shapeTokens: this.shapeTokens,
+      openDs: () => this.setState({ screen: 'ds' }),
+      closeDs: () => this.setState({ screen: 'graph' }),
+      openPrimary: (e) => {
+        e.stopPropagation();
+        const n = e.currentTarget.dataset.node;
+        this.setState({ screen: n === 'ds' ? 'ds' : n === 'mo' ? 'motion' : 'editor' });
+      },
+      bumpWeight: (e) => {
+        e.stopPropagation();
+        const id = e.currentTarget.dataset.node, key = e.currentTarget.dataset.wk, d = Number(e.currentTarget.dataset.d);
+        this.setState(st => ({
+          selected: id,
+          nodes: st.nodes.map(n => {
+            if (n.id !== id || !n.weights) return n;
+            const w = { ...n.weights };
+            w[key] = Math.max(0, Math.min(100, Math.round((w[key] || 0) + d)));
+            const sum = Object.keys(w).reduce((a, k) => a + w[k], 0) || 1;
+            Object.keys(w).forEach(k => { w[k] = Math.round(w[k] / sum * 100); });
+            return { ...n, weights: w };
+          })
+        }));
+      },
+      bumpVariants: (e) => {
+        e.stopPropagation();
+        const id = e.currentTarget.dataset.node, d = Number(e.currentTarget.dataset.d);
+        this.setState(st => ({
+          selected: id,
+          nodes: st.nodes.map(n => n.id === id ? { ...n, variants: Math.max(1, Math.min(8, (n.variants || 1) + d)), statusText: Object.keys(n.weights || {}).length + ' → ' + Math.max(1, Math.min(8, (n.variants || 1) + d)) } : n)
+        }));
+      },
+      addInput: (e) => {
+        e.stopPropagation();
+        const id = e.currentTarget.dataset.node;
+        const letters = 'abcdefgh';
+        this.setState(st => ({
+          selected: id,
+          nodes: st.nodes.map(n => {
+            if (n.id !== id) return n;
+            const used = n.ins.filter(p => p.kind === 'ir').length;
+            const label = letters[used] || 'in';
+            const patch = { ...n, h: n.h + (n.weights ? 52 : 24), ins: n.ins.concat([{ label, kind:'ir' }]) };
+            if (n.weights) {
+              const w = { ...n.weights, [label]: 20 };
+              const sum = Object.keys(w).reduce((a, k) => a + w[k], 0) || 1;
+              Object.keys(w).forEach(k => { w[k] = Math.round(w[k] / sum * 100); });
+              patch.weights = w;
+              patch.statusText = Object.keys(w).length + ' → ' + (n.variants || 1);
+            }
+            return patch;
+          })
+        }));
+      },
+
+      leftStyle: { width: s.leftOpen ? 264 : 0, flex:'none', background:'#0D0D10', borderRight: s.leftOpen ? '1px solid #1F1F26' : 'none', display:'flex', flexDirection:'column', overflowY: s.leftOpen ? 'auto' : 'hidden', overflowX:'hidden', transition:'width .18s ease' },
+      leftStyleEditor: { width: s.leftOpen ? 256 : 0, flex:'none', background:'#0D0D10', borderRight: s.leftOpen ? '1px solid #1F1F26' : 'none', display:'flex', flexDirection:'column', overflow:'hidden', transition:'width .18s ease' },
+      leftIcon: s.leftOpen ? '⟨' : '⟩',
+      leftTitle: s.leftOpen ? 'Скрыть панель' : 'Показать панель',
+      toggleLeft: () => this.setState(st => ({ leftOpen: !st.leftOpen })),
+
+      toolItems: this.tools.map(t => {
+        const on = s.tool === t.id;
+        return { ...t, on,
+          style:{ position:'relative', width:38, height:38, borderRadius:9, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:700, cursor:'pointer',
+            background: on ? '#9B5CFF' : 'transparent', color: on ? '#fff' : '#9A9AA3', transition:'background .15s ease, color .15s ease' } };
+      }),
+      setTool: (e) => this.setState({ tool: e.currentTarget.dataset.tool }),
+      toolHint: (this.tools.find(t => t.id === s.tool) || this.tools[0]).label,
+      snap: s.snap,
+      snapStep: s.snapStep + ' px',
+      snapToggleStyle: { width:34, height:20, flex:'none', borderRadius:999, padding:2, display:'flex', justifyContent: s.snap ? 'flex-end' : 'flex-start', background: s.snap ? '#FF691D' : '#2A2A32', cursor:'pointer', transition:'background .15s ease' },
+      toggleSnap: () => this.setState(st => ({ snap: !st.snap })),
+      stepItems: this.steps.map(v => ({ label: v + '', on: v === s.snapStep, off: v !== s.snapStep, value: v })),
+      setStep: (e) => this.setState({ snapStep: Number(e.currentTarget.dataset.step) }),
+      snapGridStyle: s.snap
+        ? { position:'absolute', inset:0, pointerEvents:'none', backgroundImage:'linear-gradient(rgba(155,92,255,.09) 1px, transparent 0), linear-gradient(90deg, rgba(155,92,255,.09) 1px, transparent 0)', backgroundSize: (s.snapStep * 4) + 'px ' + (s.snapStep * 4) + 'px' }
+        : { display:'none' },
+
+      openEditor: (e) => { if (e) e.stopPropagation(); this.setState({ screen: 'editor' }); },
+      closeEditor: () => this.setState({ screen: 'graph' })
+    };
+  }
+}
+</script>
+</body>
+</html>
