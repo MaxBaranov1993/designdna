@@ -130,8 +130,8 @@ def main():
         check("undo откатывает gap", gp2 != 24, str(gp2))
 
         # левая панель инструментов как в pen.dev
-        check("rail: 5 кнопок (фигуры собраны во flyout)", pg.evaluate(
-            "document.querySelectorAll('.dna-editor .fe-rail [data-tool]').length === 5"))
+        check("rail: 8 плоских кнопок (хендофф)", pg.evaluate(
+            "document.querySelectorAll('.dna-editor .fe-rail [data-tool]').length === 8"))
         pg.click('.dna-editor .fe-rail [data-tool="rect"]')
         pg.wait_for_timeout(200)
         check("rail: rect активен", pg.evaluate(

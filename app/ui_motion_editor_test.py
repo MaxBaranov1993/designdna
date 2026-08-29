@@ -79,7 +79,7 @@ def main():
         check("Render rejects stale provenance", stale.status == 409, stale.text())
         check("Motion output uses typed port", page.locator('.n-motion .port-row.out[data-port="motion"][data-kind="motion"]').count() == 1)
 
-        page.get_by_role("button", name="Open editor").click()
+        page.get_by_role("button", name="Открыть", exact=True).click()
         page.wait_for_selector(".motion-workspace")
         check("Fullscreen Motion Editor opens", page.locator(".motion-workspace").count() == 1)
         check("Timeline renders two clips", page.locator(".motion-clips button").count() == 2)

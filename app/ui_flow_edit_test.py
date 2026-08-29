@@ -96,7 +96,7 @@ def main():
         pg.wait_for_selector('.dna-editor .fe-canvas-inner div[class^="ir-"]', timeout=5000)
         check("DNA-редактор: открылся из thin-ноды", pg.evaluate("document.querySelector('.dna-editor').style.display !== 'none'"))
         check("DNA-редактор: слои доступны", pg.evaluate("document.querySelectorAll('.dna-editor .fe-layer').length > 0"))
-        check("DNA-редактор: toolbar/rail доступны", pg.evaluate("document.querySelectorAll('.dna-editor .fe-rail [data-tool]').length === 5"))
+        check("DNA-редактор: toolbar/rail доступны", pg.evaluate("document.querySelectorAll('.dna-editor .fe-rail [data-tool]').length === 8"))
 
         pg.click('.dna-editor [data-act="save"]')
         pg.wait_for_timeout(300)

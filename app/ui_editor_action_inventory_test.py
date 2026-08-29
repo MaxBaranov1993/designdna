@@ -25,8 +25,8 @@ FAILS: list[str] = []
 EXPECTED_GROUPS = {
     "topbar": ["zoom-out", "zoom-in", "zoom-fit", "close", "save"],
     "viewports": ["desktop", "tablet", "mobile"],
-    "tools": ["select", "hand", "frame", "rect", "text"],
-    "shapeFlyout": ["rect", "ellipse", "line", "image"],
+    # Хендофф: рейка — 8 плоских инструментов, flyout фигур удалён
+    "tools": ["select", "hand", "frame", "rect", "ellipse", "line", "image", "text"],
     "inspector": [
         "semantic-select", "smart-axis", "quality-gate", "harmonize",
         "responsive-autopilot", "intent-locks", "style-dna",
@@ -233,12 +233,11 @@ def main() -> None:
             page.click(f'.dna-editor .fe-rail [data-tool="{tool}"]')
             page.wait_for_timeout(80)
             check(f"tool {tool} pressed", page.locator(f'.fe-rail [data-tool="{tool}"]').first.get_attribute("aria-pressed") == "true")
-        page.click('.dna-editor .fe-rail .fe-fly-arrow')
-        page.wait_for_selector(".dna-editor .fe-rail-flyout")
-        check("shape flyout opens by click", page.locator(".fe-rail-flyout [data-fly-item]").count() == 4)
-        page.click('.dna-editor .fe-rail-flyout [data-fly-item="ellipse"]')
+        # Хендофф: рейка стала 8 плоскими кнопками — flyout фигур удалён
+        check("rail is flat: 8 tool buttons", page.locator(".dna-editor .fe-rail [data-tool]").count() == 8)
+        page.click('.dna-editor .fe-rail [data-tool="ellipse"]')
         page.wait_for_timeout(120)
-        check("ellipse selected from flyout", page.locator('.fe-rail [data-flyout="shapes"]').get_attribute("aria-pressed") == "true")
+        check("ellipse selected from rail", page.locator('.fe-rail [data-tool="ellipse"]').get_attribute("aria-pressed") == "true")
         page.keyboard.press("v")
         page.wait_for_timeout(80)
 

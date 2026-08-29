@@ -147,29 +147,18 @@ def main():
             "document.querySelector('.dna-editor [data-viewport=\"desktop\"]').classList.contains('active')"))
         check("кастом 1200: meta.activeViewport", pg.evaluate(WIDTH) == "desktop", str(pg.evaluate(WIDTH)))
 
-        # ---------- 4. flyout-группа фигур ----------
-        check("rail: 5 кнопок", pg.evaluate(
-            "document.querySelectorAll('.dna-editor .fe-rail [data-tool]').length === 5"))
-        check("лидер flyout — стабильный data-tool=rect", pg.evaluate(
-            "document.querySelector('.dna-editor .fe-rail [data-flyout=\"shapes\"]').dataset.tool === 'rect'"))
-        pg.hover('.dna-editor .fe-rail [data-flyout="shapes"]')
-        pg.wait_for_timeout(450)  # hover-таймер 200 мс
-        check("flyout открылся по hover", pg.query_selector(".dna-editor .fe-rail-flyout") is not None)
-        check("flyout: 4 фигуры", pg.evaluate(
-            "document.querySelectorAll('.dna-editor .fe-rail-flyout [data-fly-item]').length === 4"))
-        pg.click('.dna-editor .fe-rail-flyout [data-fly-item="ellipse"]')
+        # ---------- 4. рейка: 8 плоских инструментов (хендофф, flyout удалён) ----------
+        check("rail: 8 кнопок", pg.evaluate(
+            "document.querySelectorAll('.dna-editor .fe-rail [data-tool]').length === 8"))
+        pg.click('.dna-editor .fe-rail [data-tool="ellipse"]')
         pg.wait_for_timeout(250)
-        check("клик по ellipse во flyout активировал инструмент", pg.evaluate(
-            "document.querySelector('.dna-editor .fe-rail [data-flyout=\"shapes\"]').classList.contains('active')"))
-        check("flyout закрылся после выбора", pg.query_selector(".dna-editor .fe-rail-flyout") is None)
+        check("клик по ellipse активировал инструмент", pg.evaluate(
+            "document.querySelector('.dna-editor .fe-rail [data-tool=\"ellipse\"]').getAttribute('aria-pressed') === 'true'"))
 
-        pg.keyboard.press("r")  # хоткей rect — синхронизация лидера группы
+        pg.keyboard.press("r")  # хоткей rect
         pg.wait_for_timeout(200)
-        pg.hover('.dna-editor .fe-rail [data-flyout="shapes"]')
-        pg.wait_for_timeout(450)
-        check("хоткей R: leader снова rect", pg.evaluate(
-            "document.querySelector('.dna-editor .fe-rail-flyout [data-fly-item=\"rect\"]')"
-            ".classList.contains('active')"))
+        check("хоткей R активировал rect", pg.evaluate(
+            "document.querySelector('.dna-editor .fe-rail [data-tool=\"rect\"]').getAttribute('aria-pressed') === 'true'"))
         pg.keyboard.press("v")  # вернуть select
         pg.wait_for_timeout(200)
 

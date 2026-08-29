@@ -142,12 +142,13 @@ def main():
         # изоляция от состояния в SQLite: boot мог подтянуть прошлый проект из БД
         pg.evaluate("window.GraphDev.clear()")
 
-        # ---------- создание нод из контекстного меню (14 типов, с Recorder, Motion и Page Bridge) ----------
+        # ---------- создание нод из контекстного меню (15 типов; Recorder исключён
+        # по хендоффу — Motion строит Interaction IR сам) ----------
         pg.click(".svelte-flow__pane", button="right", position={"x": 300, "y": 120})
         pg.wait_for_selector("#ctx-menu")
         check(
-            "контекстное меню: 14 типов нод",
-            pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"),
+            "контекстное меню: 15 типов нод",
+            pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 15"),
         )
         pg.click("#ctx-menu .ctx-item[data-type='sourceimport']")
         pg.wait_for_selector(".n-sourceimport")
