@@ -148,6 +148,55 @@
     return String(value ?? "—");
   }
 
+  /* Каталог карточек (прототип ds: dsCat): слева категории, в центре сетка. */
+  let dsCat = $state("all");
+  const libCategories = $derived(componentGroups.map(([label, items]) => [label, items.length] as const));
+  const gridEntries = $derived.by(() => {
+    if (dsCat !== "all") {
+      const hit = componentGroups.find(([label]) => label === dsCat);
+      if (hit) return hit[1];
+    }
+    return componentGroups.flatMap(([, items]) => items);
+  });
+  function fidelityOf(comp: Record<string, any>): number | null {
+    const value = comp?.fidelity?.viewports?.desktop?.pixelSimilarity;
+    return Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
+  }
+  /* Мини-превью карточки: тот же IRRenderer, уменьшенный zoom-ом. */
+  function cardPreview(node: HTMLElement, ir: unknown) {
+    let disposed = false;
+    const render = (value: unknown) => {
+      node.innerHTML = "";
+      if (!value) return;
+      void loadRenderer().then(() => {
+        if (disposed) return;
+        try {
+          const renderer = (window as any).IRRenderer;
+          if (renderer) renderer.renderIR(node, JSON.parse(JSON.stringify(value)), { viewport: "desktop" });
+        } catch { /* мини-превью не критично */ }
+      });
+    };
+    render(ir);
+    return { update: render, destroy: () => { disposed = true; } };
+  }
+  /* Сводка «Уходит в Генератор как style DNA» — из реальных данных документа. */
+  const styleDnaSummary = $derived.by(() => {
+    const hexTokens = styleTokens.filter(([, value]) => typeof value === "string" && value.startsWith("#")).length;
+    return {
+      colors: hexTokens || Object.keys(foundations.colors?.semantic || {}).length,
+      weights: (foundations.typography?.weights || []).length,
+      radii: (foundations.radii || []).length,
+      components: components.length,
+    };
+  });
+  /* Передать в Генератор: событие для графа (слушатель пока может быть no-op),
+   * затем закрыть панель — контракт события фиксируем здесь. */
+  function sendToGenerator() {
+    const systemId = String(doc.id || data.systemId || "");
+    window.dispatchEvent(new CustomEvent("designdna:ds-to-generator", { detail: { systemId } }));
+    void cancel();
+  }
+
   let previewHost = $state<HTMLElement | null>(null);
   let snapshot = $state("");
   let snapshotRef: Record<string, unknown> | null = null;
@@ -858,6 +907,9 @@
       <button type="button" data-ds-action="cancel" aria-label="Отменить правки и закрыть" onclick={() => void cancel()} disabled={publishing}>
         Отмена
       </button>
+      <button type="button" class="dna-btn-sell" data-ds-action="to-generator" aria-label="Передать систему в Генератор как style DNA" onclick={sendToGenerator} disabled={publishing}>
+        Передать в Генератор
+      </button>
       <button type="button" class="close" data-ds-action="close" aria-label="Закрыть редактор" onclick={() => void cancel()}>✕</button>
     </div>
   </header>
@@ -877,7 +929,7 @@
     {/if}
   </nav>
 
-  <div class="ds-editor-body" class:source-overview={activeTab === "source"}>
+  <div class="ds-editor-body" class:source-overview={activeTab === "source"} class:styleguide-overview={activeTab === "styleguide"} class:catalog-cols={activeTab === "components"}>
     <aside class="ds-editor-lib">
       <nav class="ds-legacy-tabs" aria-hidden="true"></nav>
 
@@ -953,29 +1005,20 @@
           <span>Search components</span>
           <input type="search" placeholder="Search by name or category" bind:value={componentSearch} />
         </label>
-        <div class="ds-component-groups">
-          {#each componentGroups as [category, items] (category)}
-            <section class="ds-component-group">
-              <h4>{category}<span>{items.length}</span></h4>
-              <ul class="ds-comp-list">
-                {#each items as entry (entry.pool + ":" + entry.key)}
-                  {@const key = entry.key}
-                  {@const comp = entry.component}
-                  <li>
-                    <button type="button" class:active={selectedPool === entry.pool && selectedKey === key} data-ds-component={key} aria-label={`Выбрать компонент ${comp.name}`} onclick={() => selectCatalogComponent(key, entry.pool)}>
-                      <span class="ds-status-dot" class:verified={comp.status === "verified"} aria-hidden="true"></span>
-                      <span class="ds-comp-copy">
-                        <span class="ds-comp-name">{comp.name}</span>
-                        <small>{comp.provenance?.occurrenceCount || 1} observed · {Object.keys(comp.variants || {}).length} variant{Object.keys(comp.variants || {}).length === 1 ? "" : "s"}</small>
-                      </span>
-                      <span class="ds-count-badge">{Object.keys(comp.variants || {}).length}</span>
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            </section>
+        <!-- Категории вместо вертикального списка: сами компоненты — карточками в центре. -->
+        <nav class="ds-cat-list" aria-label="Категории компонентов">
+          <button type="button" class:active={dsCat === "all"} onclick={() => (dsCat = "all")}>
+            <span>Все</span><span class="ds-cat-count">{componentGroups.reduce((sum, [, items]) => sum + items.length, 0)}</span>
+          </button>
+          {#each libCategories as [label, count] (label)}
+            <button type="button" class:active={dsCat === label} onclick={() => (dsCat = label)}>
+              <span>{label}</span><span class="ds-cat-count">{count}</span>
+            </button>
           {/each}
-          {#if !componentGroups.length}<p class="ds-empty-filter">No components match “{componentSearch}”.</p>{/if}
+        </nav>
+        <div class="ds-strict-note">
+          <strong>Strict-набор</strong>
+          <small>Генератор собирает страницы только из этих компонентов.</small>
         </div>
       {:else if activeTab === "suggestions"}
         <div class="ds-lib-heading"><div><strong>Suggestions</strong><small>Semantic hypotheses, separate from exact Source masters</small></div><span>{semanticSuggestions.length}</span></div>
@@ -1040,6 +1083,18 @@
               <p class="ds-sg-hint">Токены появятся после сборки из Source.</p>
             {/each}
           </div>
+
+          <!-- Что именно получает Генератор: сводка вместо абстрактного обещания. -->
+          <section class="ds-sg-dna" aria-label="Передача в Генератор">
+            <div class="ds-sg-dna-head"><i aria-hidden="true"></i><strong>Уходит в Генератор как style DNA</strong></div>
+            <p>Генератор строит варианты только на этих токенах и компонентах — стиль сайта сохраняется без отдельного промпта.</p>
+            <div class="ds-sg-dna-grid">
+              <div><strong>{styleDnaSummary.colors}</strong><small>цвета</small></div>
+              <div><strong>{styleDnaSummary.weights}</strong><small>веса</small></div>
+              <div><strong>{styleDnaSummary.radii}</strong><small>радиусы</small></div>
+              <div><strong>{styleDnaSummary.components}</strong><small>компоненты</small></div>
+            </div>
+          </section>
 
           <h4>Измеренный характер</h4>
           <div class="ds-sg-chips">
@@ -1175,7 +1230,33 @@
       {/if}
     </aside>
 
-    <main class="ds-editor-canvas">
+    <main class="ds-editor-canvas" class:ds-catalog-mode={activeTab === "components"}>
+      {#if activeTab === "components"}
+        <!-- Сетка каталога: живой мини-рендер на светлой поверхности + мета. -->
+        <div class="ds-card-grid" aria-label="Каталог компонентов">
+          {#each gridEntries as entry (entry.pool + ":" + entry.key)}
+            {@const comp = entry.component}
+            {@const variantCount = Object.keys(comp.variants || {}).length}
+            {@const fidelity = fidelityOf(comp)}
+            <button type="button" class="ds-card" class:active={selectedPool === entry.pool && selectedKey === entry.key}
+                    data-ds-component={entry.key} aria-label={`Выбрать компонент ${comp.name}`}
+                    onclick={() => selectCatalogComponent(entry.key, entry.pool)}>
+              <span class="ds-card-preview" aria-hidden="true">
+                <span class="ds-card-render" use:cardPreview={comp.masterIr || comp.templateIr}></span>
+              </span>
+              <span class="ds-card-info">
+                <span class="ds-card-title">
+                  <span class="ds-status-dot" class:verified={comp.status === "verified"} aria-hidden="true"></span>
+                  <span class="ds-card-name">{comp.name}</span>
+                  {#if fidelity != null}<span class="ds-card-fidelity">{fidelity}%</span>{/if}
+                </span>
+                <small>{comp.provenance?.occurrenceCount || 1} observed · {variantCount} variant{variantCount === 1 ? "" : "s"}</small>
+              </span>
+            </button>
+          {/each}
+          {#if !gridEntries.length}<p class="ds-empty-filter">No components match “{componentSearch}”.</p>{/if}
+        </div>
+      {/if}
       {#if hasSelection && selectedComp}
         <header class="ds-workbench-head">
           <div class="ds-workbench-title">
@@ -1314,26 +1395,27 @@
 </div>
 
 <style>
+  /* Приватная палитра панели заменена на глобальные --dna-* токены темы. */
   .ds-editor-overlay {
-    --panel: #0f1218;
-    --panel-raised: #141821;
-    --panel-soft: #191e29;
-    --border: #292f3c;
-    --border-strong: #3b4353;
-    --text: #f4f6fb;
-    --muted: #929bad;
-    --subtle: #697386;
-    --accent: #8b7cff;
-    --accent-soft: #292342;
-    --success: #45df91;
+    --panel: var(--dna-panel);
+    --panel-raised: var(--dna-elevated);
+    --panel-soft: var(--dna-hover);
+    --border: var(--dna-border);
+    --border-strong: var(--dna-border-strong);
+    --text: var(--dna-text);
+    --muted: var(--dna-muted);
+    --subtle: var(--dna-faint);
+    --accent: var(--dna-violet-l);
+    --accent-soft: rgba(112, 24, 230, .22);
+    --success: var(--dna-success);
     position: fixed;
     inset: 0;
     z-index: 200;
     display: flex;
     flex-direction: column;
-    background: #090b10;
+    background: var(--dna-bg);
     color: var(--text);
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: inherit;
   }
   .ds-editor-top {
     min-height: 60px;
@@ -1343,13 +1425,13 @@
     gap: 20px;
     padding: 0 18px;
     border-bottom: 1px solid var(--border);
-    background: #0c0f15;
+    background: var(--dna-panel-2);
   }
   .ds-editor-top > div:first-child { min-width: 0; display: flex; align-items: baseline; }
   .ds-editor-top strong { flex: none; font-size: 15px; letter-spacing: -.01em; }
   .ds-editor-meta { min-width: 0; margin-left: 14px; overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
   .ds-editor-actions { flex: none; display: flex; align-items: center; gap: 7px; }
-  .ds-editor-actions button,
+  .ds-editor-actions button:not(.dna-btn-sell),
   .ds-edit-master,
   .ds-promote {
     min-height: 34px;
@@ -1357,16 +1439,16 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--panel-raised);
-    color: #e8ebf3;
+    color: var(--dna-text-2);
     font: inherit;
     font-size: 11.5px;
     cursor: pointer;
   }
-  .ds-editor-actions button:hover:not(:disabled), .ds-edit-master:hover:not(:disabled) { border-color: var(--border-strong); background: var(--panel-soft); }
+  .ds-editor-actions button:not(.dna-btn-sell):hover:not(:disabled), .ds-edit-master:hover:not(:disabled) { border-color: var(--border-strong); background: var(--panel-soft); }
   .ds-editor-actions button:disabled, .ds-edit-master:disabled, .ds-promote:disabled { opacity: .45; cursor: not-allowed; }
-  .ds-editor-actions [data-ds-action="publish"] { border-color: #675ad4; background: #6f5ee7; color: #fff; }
+  .ds-editor-actions [data-ds-action="publish"] { border-color: var(--dna-violet); background: var(--dna-violet); color: #fff; }
   .ds-editor-actions .close { width: 34px; padding: 0; border-color: transparent; background: transparent; font-size: 15px; }
-  .ds-editor-error { padding: 8px 18px; border-bottom: 1px solid #642e35; background: #2d1519; color: #ff9aa6; font-size: 12px; }
+  .ds-editor-error { padding: 8px 18px; border-bottom: 1px solid rgba(229, 48, 92, .4); background: rgba(229, 48, 92, .12); color: var(--dna-danger-text); font-size: 12px; }
 
   .ds-section-tabs {
     flex: none;
@@ -1377,18 +1459,18 @@
     padding: 6px 14px;
     overflow-x: auto;
     border-bottom: 1px solid var(--border);
-    background: #0c0f15;
+    background: var(--dna-panel-2);
   }
   /* Основные вкладки крупнее: их всего две, и они несут ежедневную работу. */
   .ds-section-tabs:not(.ds-advanced-tabs) button:not(.ds-tab-more) { font-size: 12.5px; padding: 0 14px; }
-  .ds-tab-more { margin-left: auto; color: #6f788a !important; font-size: 11px !important; }
+  .ds-tab-more { margin-left: auto; color: var(--dna-faint) !important; font-size: 11px !important; }
   .ds-diagnostic-crumb {
     margin-left: 12px;
-    border: 1px solid #2c3340;
+    border: 1px solid var(--border);
     border-radius: 999px;
-    background: #151a23;
+    background: var(--dna-elevated);
     padding: 4px 10px;
-    color: #a7afbd;
+    color: var(--dna-muted-2);
     font-size: 10.5px;
   }
   .ds-section-tabs button {
@@ -1406,29 +1488,37 @@
     font-size: 11.5px;
     cursor: pointer;
   }
-  .ds-section-tabs button:hover { background: #151923; color: #dfe3ed; }
-  .ds-section-tabs button.active { border-color: #3a4253; background: #1b202b; color: #fff; box-shadow: 0 1px 2px #0005; }
-  .ds-section-tabs button span { min-width: 18px; padding: 1px 5px; border-radius: 999px; background: #262c39; color: #b8c0cf; font-size: 10px; text-align: center; }
+  .ds-section-tabs button:hover { background: var(--dna-hover); color: var(--dna-text-3); }
+  .ds-section-tabs button.active { border-color: var(--dna-border-strong); background: var(--dna-hover); color: var(--dna-text); box-shadow: 0 1px 2px #0005; }
+  .ds-section-tabs button span { min-width: 18px; padding: 1px 5px; border-radius: 999px; background: var(--dna-elevated); color: var(--dna-text-2); font-size: 10px; text-align: center; }
 
   .ds-editor-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr) 300px; }
-  .ds-editor-body.source-overview { grid-template-columns: minmax(0, 1fr); background: #0a0d12; }
-  .ds-editor-body.source-overview .ds-editor-lib { padding: 0; border-right: 0; background: #0a0d12; }
+  /* Каталог: слева узкая колонка категорий, справа инспектор 300px. */
+  .ds-editor-body.catalog-cols { grid-template-columns: 240px minmax(0, 1fr) 300px; }
+  .ds-editor-body.source-overview { grid-template-columns: minmax(0, 1fr); background: var(--dna-bg); }
+  .ds-editor-body.source-overview .ds-editor-lib { padding: 0; border-right: 0; background: var(--dna-bg); }
   .ds-editor-body.source-overview .ds-editor-canvas,
   .ds-editor-body.source-overview .ds-editor-inspector { display: none; }
-  .ds-source-views { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #1d222c; padding: 10px 16px; }
-  .ds-source-views > button { border: 1px solid #2a3140; border-radius: 8px; background: #12161e; padding: 6px 12px; color: #97a0b1; font-size: 11.5px; cursor: pointer; }
-  .ds-source-views > button:hover { background: #171c26; color: #dfe3ed; }
-  .ds-source-views > button.active { border-color: #3a4253; background: #1b202b; color: #fff; }
-  .ds-source-views > button span { margin-left: 6px; border-radius: 999px; background: #262c39; padding: 1px 5px; color: #b8c0cf; font-size: 9.5px; }
+  /* «Стиль сайта» — полноширинный обзор, как экран ds прототипа. */
+  .ds-editor-body.styleguide-overview { grid-template-columns: minmax(0, 1fr); background: var(--dna-bg); }
+  .ds-editor-body.styleguide-overview .ds-editor-lib { border-right: 0; background: var(--dna-bg); }
+  .ds-editor-body.styleguide-overview .ds-editor-canvas,
+  .ds-editor-body.styleguide-overview .ds-editor-inspector { display: none; }
+  .ds-editor-body.styleguide-overview .ds-styleguide { max-width: 880px; margin: 0 auto; padding: 10px 6px 34px; }
+  .ds-source-views { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--dna-border-soft); padding: 10px 16px; }
+  .ds-source-views > button { border: 1px solid var(--dna-border); border-radius: 8px; background: var(--dna-node); padding: 6px 12px; color: var(--dna-muted); font-size: 11.5px; cursor: pointer; }
+  .ds-source-views > button:hover { background: var(--dna-hover); color: var(--dna-text-3); }
+  .ds-source-views > button.active { border-color: var(--dna-border-strong); background: var(--dna-hover); color: var(--dna-text); }
+  .ds-source-views > button span { margin-left: 6px; border-radius: 999px; background: var(--dna-elevated); padding: 1px 5px; color: var(--dna-text-2); font-size: 9.5px; }
   .ds-kit-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-  .ds-kit-tools small { color: #6f788a; font-size: 9.5px; }
-  .ds-kit-tools button { border: 1px solid #333b49; border-radius: 8px; background: #171c26; padding: 6px 10px; color: #cbd1dc; font-size: 11px; cursor: pointer; }
-  .ds-kit-tools button:hover:not(:disabled) { border-color: #5e6a7f; }
+  .ds-kit-tools small { color: var(--dna-faint); font-size: 9.5px; }
+  .ds-kit-tools button { border: 1px solid var(--dna-border-strong); border-radius: 8px; background: var(--dna-elevated); padding: 6px 10px; color: var(--dna-text-2); font-size: 11px; cursor: pointer; }
+  .ds-kit-tools button:hover:not(:disabled) { border-color: var(--dna-dim); }
   .ds-kit-tools button:disabled { opacity: .55; cursor: default; }
-  .ds-kit-view { height: calc(100vh - 168px); min-height: 420px; background: #0a0d12; }
-  .ds-kit-view iframe { display: block; width: 100%; height: 100%; border: 0; background: #0b0e14; }
-  .ds-kit-empty { display: grid; place-items: center; height: 100%; color: #7c8595; font-size: 11px; }
-  .ds-editor-lib, .ds-editor-inspector { min-width: 0; overflow-y: auto; background: var(--panel); scrollbar-color: #555d6d transparent; scrollbar-width: thin; }
+  .ds-kit-view { height: calc(100vh - 168px); min-height: 420px; background: var(--dna-bg); }
+  .ds-kit-view iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--dna-sunken); }
+  .ds-kit-empty { display: grid; place-items: center; height: 100%; color: var(--dna-faint); font-size: 11px; }
+  .ds-editor-lib, .ds-editor-inspector { min-width: 0; overflow-y: auto; background: var(--panel); scrollbar-color: var(--dna-border-strong) transparent; scrollbar-width: thin; }
   .ds-editor-lib { padding: 16px 14px 24px; border-right: 1px solid var(--border); }
   .ds-editor-inspector { padding: 18px; border-left: 1px solid var(--border); }
   .ds-legacy-tabs { display: none !important; }
@@ -1436,25 +1526,26 @@
   .ds-lib-heading div { min-width: 0; }
   .ds-lib-heading strong { display: block; font-size: 13px; }
   .ds-lib-heading small { display: block; margin-top: 4px; color: var(--subtle); font-size: 10.5px; line-height: 1.4; }
-  .ds-lib-heading > span { min-width: 27px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: #bcc3d0; font-size: 10.5px; text-align: center; }
+  .ds-lib-heading > span { min-width: 27px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--dna-text-2); font-size: 10.5px; text-align: center; }
   .ds-library-search { display: block; margin-bottom: 16px; }
   .ds-ai-organizer {
-    display: grid; grid-template-columns: minmax(210px, 1fr) auto auto; align-items: center; gap: 10px;
-    margin: 0 0 14px; border: 1px solid #343c4b; border-radius: 12px; padding: 11px 12px;
-    background: linear-gradient(135deg, #171d28, #121720); box-shadow: inset 3px 0 #7767e8;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 10px;
+    margin: 0 0 14px; border: 1px solid var(--dna-border-strong); border-radius: 12px; padding: 11px 12px;
+    background: linear-gradient(135deg, var(--dna-elevated), var(--dna-node)); box-shadow: inset 3px 0 var(--dna-violet-l);
   }
+  .ds-ai-organizer > div { grid-column: 1 / -1; }
   .ds-ai-organizer > div strong, .ds-ai-organizer > div small { display: block; }
-  .ds-ai-organizer > div strong { color: #e7eaf1; font-size: 11px; }
-  .ds-ai-organizer > div small { margin-top: 3px; color: #858fa1; font-size: 9px; line-height: 1.35; }
-  .ds-ai-organizer label { display: grid; gap: 3px; color: #778195; font-size: 8px; text-transform: uppercase; }
+  .ds-ai-organizer > div strong { color: var(--dna-text-2); font-size: 11px; }
+  .ds-ai-organizer > div small { margin-top: 3px; color: var(--dna-dim); font-size: 9px; line-height: 1.35; }
+  .ds-ai-organizer label { display: grid; gap: 3px; color: var(--dna-faint); font-size: 8px; text-transform: uppercase; }
   .ds-ai-organizer select, .ds-ai-organizer button {
-    min-height: 30px; border: 1px solid #414a5c; border-radius: 8px; background: #1a202b;
-    padding: 0 9px; color: #dce1eb; font-size: 9px;
+    min-height: 30px; border: 1px solid var(--dna-border-strong); border-radius: 8px; background: var(--dna-hover);
+    padding: 0 9px; color: var(--dna-text-2); font-size: 9px;
   }
-  .ds-ai-organizer button { border-color: #6d5edf; background: #6555d5; color: #fff; font-weight: 700; cursor: pointer; }
+  .ds-ai-organizer button { border-color: var(--dna-violet); background: var(--dna-violet); color: #fff; font-weight: 700; cursor: pointer; }
   .ds-ai-organizer button:disabled { opacity: .45; cursor: not-allowed; }
-  .ds-organizer-state { grid-column: 1 / -1; color: #707b8d; font-size: 8px; }
-  .ds-organizer-state[data-kind="ai"] { color: #72cfb9; }
+  .ds-organizer-state { grid-column: 1 / -1; color: var(--dna-faint); font-size: 8px; }
+  .ds-organizer-state[data-kind="ai"] { color: var(--dna-artifact); }
   .ds-library-search > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .ds-library-search input {
     width: 100%;
@@ -1463,28 +1554,54 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     outline: none;
-    background: #0b0e13
+    background: var(--dna-sunken)
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%237b8496' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E")
       no-repeat 10px center;
     color: var(--text);
     font: inherit;
     font-size: 11.5px;
   }
-  .ds-library-search input::placeholder { color: #60697a; }
-  .ds-library-search input:focus { border-color: #7367d8; box-shadow: 0 0 0 3px #7367d826; }
-  .ds-component-groups { display: flex; flex-direction: column; gap: 18px; }
-  .ds-component-group h4 {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin: 0 5px 7px;
-    color: #7d8799;
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: .09em;
-    text-transform: uppercase;
+  .ds-library-search input::placeholder { color: var(--dna-faint-2); }
+  .ds-library-search input:focus { border-color: var(--dna-violet-l); box-shadow: 0 0 0 3px rgba(155, 92, 255, .15); }
+
+  /* Категории каталога (прототип ds: dsCat). */
+  .ds-cat-list { display: flex; flex-direction: column; gap: 3px; }
+  .ds-cat-list button {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    min-height: 34px; padding: 0 10px; border: 1px solid transparent; border-radius: 8px;
+    background: transparent; color: var(--dna-muted); font: inherit; font-size: 12px; font-weight: 600;
+    text-align: left; cursor: pointer;
   }
-  .ds-component-group h4 span { color: #555f71; }
+  .ds-cat-list button:hover { background: var(--dna-hover); color: var(--dna-text-3); }
+  .ds-cat-list button.active {
+    border-color: rgba(155, 92, 255, .36); background: rgba(155, 92, 255, .14);
+    color: var(--dna-text); font-weight: 700;
+  }
+  .ds-cat-count { color: var(--dna-faint); font-size: 10.5px; font-weight: 700; }
+  .ds-strict-note { margin-top: 14px; padding: 12px; border: 1px solid var(--dna-border-soft); border-radius: 11px; background: var(--dna-node); }
+  .ds-strict-note strong { display: block; margin-bottom: 5px; font-size: 11.5px; }
+  .ds-strict-note small { display: block; color: var(--dna-dim); font-size: 10.5px; line-height: 1.5; }
+
+  /* Сетка карточек каталога: превью на светлой поверхности + мета. */
+  .ds-editor-canvas.ds-catalog-mode { overflow-y: auto; scrollbar-color: var(--dna-border-strong) transparent; scrollbar-width: thin; }
+  .ds-editor-canvas.ds-catalog-mode .ds-canvas-preview { flex: none; min-height: 340px; }
+  .ds-card-grid { flex: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 14px; }
+  .ds-card {
+    display: flex; flex-direction: column; align-items: stretch; padding: 0; overflow: hidden;
+    border: 1px solid var(--dna-border); border-radius: 12px; background: var(--dna-node);
+    color: var(--dna-text); font: inherit; text-align: left; cursor: pointer;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .ds-card:hover { border-color: var(--dna-border-strong); }
+  .ds-card.active { border-color: var(--dna-violet-l); box-shadow: 0 0 0 2px rgba(155, 92, 255, .18); }
+  .ds-card-preview { height: 118px; margin: 6px 6px 0; display: grid; place-items: center; overflow: hidden; border-radius: 10px; background: #fdfdfd; }
+  .ds-card-render { display: block; width: 760px; zoom: .26; pointer-events: none; }
+  .ds-card-info { display: flex; flex-direction: column; gap: 3px; padding: 10px 13px 12px; }
+  .ds-card-title { display: flex; align-items: center; gap: 7px; }
+  .ds-card-name { min-width: 0; flex: 1; overflow: hidden; font-size: 13px; font-weight: 700; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-card-fidelity { flex: none; color: var(--dna-violet-text); font-size: 11px; font-weight: 700; }
+  .ds-card-info small { overflow: hidden; color: var(--dna-dim); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+
   .ds-comp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .ds-comp-list button {
     width: 100%;
@@ -1496,39 +1613,36 @@
     border: 1px solid transparent;
     border-radius: 9px;
     background: transparent;
-    color: #d9dde7;
+    color: var(--dna-text-2);
     font: inherit;
     text-align: left;
     cursor: pointer;
   }
-  .ds-comp-list button:hover { border-color: #242a36; background: #151922; }
-  .ds-comp-list button.active { border-color: #3d4560; background: #1c2230; box-shadow: 0 1px 2px #0004; }
-  .ds-status-dot { flex: none; width: 8px; height: 8px; border-radius: 999px; background: #f0b852; box-shadow: 0 0 0 3px #f0b85212; }
-  .ds-status-dot.verified { background: var(--success); box-shadow: 0 0 0 3px #45df9116; }
-  .ds-comp-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+  .ds-comp-list button:hover { border-color: var(--dna-border); background: var(--dna-hover); }
+  .ds-comp-list button.active { border-color: var(--dna-border-strong); background: var(--dna-hover-2); box-shadow: 0 1px 2px #0004; }
+  .ds-status-dot { flex: none; width: 8px; height: 8px; border-radius: 999px; background: var(--dna-amber); box-shadow: 0 0 0 3px rgba(245, 166, 35, .08); }
+  .ds-status-dot.verified { background: var(--success); box-shadow: 0 0 0 3px rgba(34, 197, 94, .1); }
   .ds-comp-name { overflow: hidden; font-size: 11.8px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-  .ds-comp-copy small { overflow: hidden; color: #727c8e; font-size: 9.8px; text-overflow: ellipsis; white-space: nowrap; }
-  .ds-count-badge { flex: none; min-width: 22px; padding: 2px 5px; border: 1px solid #303746; border-radius: 999px; color: #8f99aa; font-size: 9.5px; text-align: center; }
   .ds-empty-filter { padding: 24px 8px; color: var(--subtle); font-size: 11px; line-height: 1.5; text-align: center; }
   .ds-origin { flex: none; font-size: 10px; }
   .ds-origin[data-origin="observed"] { color: var(--success); }
-  .ds-origin[data-origin="inferred"], .ds-origin[data-origin="suggested"] { color: #f7c75b; }
-  .ds-origin[data-origin="generated"] { color: #b99cff; }
+  .ds-origin[data-origin="inferred"], .ds-origin[data-origin="suggested"] { color: var(--dna-amber); }
+  .ds-origin[data-origin="generated"] { color: var(--dna-violet-text); }
   .ds-origin[data-origin="user"] { color: #68a9ff; }
-  .ds-suggestion-intro { margin-bottom: 10px; padding: 10px; border: 1px solid #4b4128; border-radius: 8px; background: #1d1a12; color: #d6bd7b; font-size: 10.5px; line-height: 1.45; }
-  .ds-comp-cat { margin-left: auto; color: #737d8e; font-size: 10px; }
+  .ds-suggestion-intro { margin-bottom: 10px; padding: 10px; border: 1px solid rgba(245, 166, 35, .35); border-radius: 8px; background: rgba(245, 166, 35, .08); color: var(--dna-amber); font-size: 10.5px; line-height: 1.45; }
+  .ds-comp-cat { margin-left: auto; color: var(--dna-dim); font-size: 10px; }
 
-  .ds-editor-canvas { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 18px; overflow: hidden; background: #090b10; }
+  .ds-editor-canvas { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 18px; overflow: hidden; background: var(--dna-bg); }
   .ds-workbench-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
   .ds-workbench-title { min-width: 0; }
-  .ds-eyebrow { display: block; margin-bottom: 3px; color: #7d8798; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .ds-eyebrow { display: block; margin-bottom: 3px; color: var(--dna-faint); font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .ds-workbench-head h2 { margin: 0; overflow: hidden; font-size: 18px; line-height: 1.25; letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
   .ds-component-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
-  .ds-component-meta span { padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: #8d96a6; font-size: 9.5px; }
-  .ds-component-meta span:first-child { color: #f0bd5b; }
-  .ds-component-meta span.verified { border-color: #285841; background: #10241a; color: #62e6a1; }
-  .ds-edit-master { flex: none; border-color: #675bd1; background: #1d1931; color: #c5bdff; }
-  .ds-promote { flex: none; border-color: #80682e; background: #27200f; color: #f2c85d; }
+  .ds-component-meta span { padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--dna-muted); font-size: 9.5px; }
+  .ds-component-meta span:first-child { color: var(--dna-amber); }
+  .ds-component-meta span.verified { border-color: rgba(34, 197, 94, .4); background: rgba(34, 197, 94, .1); color: var(--dna-success-text); }
+  .ds-edit-master { flex: none; border-color: var(--dna-violet); background: rgba(112, 24, 230, .16); color: var(--dna-violet-text); }
+  .ds-promote { flex: none; border-color: rgba(245, 166, 35, .45); background: rgba(245, 166, 35, .08); color: var(--dna-amber); }
   .ds-canvas-head {
     flex: none;
     display: flex;
@@ -1538,7 +1652,7 @@
     padding: 6px;
     border: 1px solid var(--border);
     border-radius: 10px;
-    background: #10141b;
+    background: var(--dna-node);
   }
   .ds-viewport-switch { display: flex; align-items: center; gap: 3px; }
   .ds-viewport-switch button {
@@ -1547,117 +1661,130 @@
     border: 1px solid transparent;
     border-radius: 7px;
     background: transparent;
-    color: #818b9c;
+    color: var(--dna-muted);
     font: inherit;
     font-size: 10.5px;
     cursor: pointer;
   }
-  .ds-viewport-switch button:hover { color: #dce1eb; }
-  .ds-viewport-switch button.active { border-color: #4f477f; background: #241f3a; color: #fff; }
-  .ds-fixture { display: flex; align-items: center; gap: 7px; margin-left: auto; color: #777f90; font-size: 10.5px; }
-  .ds-fixture select { min-height: 32px; padding: 0 26px 0 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-raised); color: #dce1eb; font: inherit; font-size: 10.5px; }
-  .ds-variant-strip { flex: none; display: flex; align-items: center; gap: 6px; min-height: 46px; padding: 7px 9px; overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: #0f1319; }
-  .ds-variant-label { flex: none; padding: 0 4px; color: #707a8c; font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-  .ds-variant-strip button { flex: none; min-height: 32px; display: inline-flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; background: #151922; color: #aeb6c5; font: inherit; font-size: 10.5px; cursor: pointer; }
+  .ds-viewport-switch button:hover { color: var(--dna-text-3); }
+  .ds-viewport-switch button.active { border-color: var(--dna-violet); background: rgba(112, 24, 230, .18); color: var(--dna-text); }
+  .ds-fixture { display: flex; align-items: center; gap: 7px; margin-left: auto; color: var(--dna-dim); font-size: 10.5px; }
+  .ds-fixture select { min-height: 32px; padding: 0 26px 0 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-raised); color: var(--dna-text-2); font: inherit; font-size: 10.5px; }
+  .ds-variant-strip { flex: none; display: flex; align-items: center; gap: 6px; min-height: 46px; padding: 7px 9px; overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--dna-sunken); }
+  .ds-variant-label { flex: none; padding: 0 4px; color: var(--dna-faint); font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .ds-variant-strip button { flex: none; min-height: 32px; display: inline-flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--dna-elevated); color: var(--dna-text-2); font: inherit; font-size: 10.5px; cursor: pointer; }
   .ds-variant-strip button:hover { border-color: var(--border-strong); }
-  .ds-variant-strip button.active { border-color: #7569d9; background: #25203e; color: #fff; box-shadow: 0 0 0 2px #7569d91a; }
-  .ds-variant-strip button small { color: #707a8c; font-size: 9px; }
+  .ds-variant-strip button.active { border-color: var(--dna-violet-l); background: rgba(112, 24, 230, .18); color: var(--dna-text); box-shadow: 0 0 0 2px rgba(155, 92, 255, .12); }
+  .ds-variant-strip button small { color: var(--dna-faint); font-size: 9px; }
   .ds-variant-swatch { width: 14px; height: 14px; border: 1px solid #ffffff33; border-radius: 4px; box-shadow: inset 0 0 0 1px #0002; }
-  .ds-canvas-preview { flex: 1; min-height: 0; overflow: auto; scrollbar-color: #555d6d transparent; scrollbar-width: thin; }
+  .ds-canvas-preview { flex: 1; min-height: 0; overflow: auto; scrollbar-color: var(--dna-border-strong) transparent; scrollbar-width: thin; }
   :global(.ds-preview-stage) { min-height: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
   :global(.ds-preview-stage.ds-preview-compare) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  :global(.ds-preview-pane) { min-width: 0; min-height: 310px; display: flex; flex-direction: column; margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: #11151c; box-shadow: 0 8px 24px #0002; }
-  :global(.ds-preview-pane figcaption) { flex: none; margin: 0; padding: 9px 11px; border-bottom: 1px solid #292f3c; background: #171b24; color: #929bad; font-size: 9.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+  :global(.ds-preview-pane) { min-width: 0; min-height: 310px; display: flex; flex-direction: column; margin: 0; overflow: hidden; border: 1px solid var(--dna-border); border-radius: 12px; background: var(--dna-node); box-shadow: 0 8px 24px #0002; }
+  :global(.ds-preview-pane figcaption) { flex: none; margin: 0; padding: 9px 11px; border-bottom: 1px solid var(--dna-border); background: var(--dna-elevated); color: var(--dna-muted); font-size: 9.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
   :global(.ds-reference-pane img), :global(.ds-reference-pane canvas) { display: block; max-width: 100%; height: auto; margin: 0 auto; background: #fff; }
   :global(.ds-master-pane .ir-preview) { width: 100%; max-width: 100%; margin: 0 auto; background: #fff; overflow: hidden !important; }
-  .ds-canvas-empty { flex: 1; place-items: center; border: 1px dashed #252b37; border-radius: 12px; color: #515b6c; font-size: 12px; }
+  .ds-canvas-empty { flex: 1; place-items: center; border: 1px dashed var(--dna-border); border-radius: 12px; color: var(--dna-faint-2); font-size: 12px; }
 
-  .ds-inspector-kicker { display: block; margin-bottom: 5px; color: #717b8c; font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+  .ds-inspector-kicker { display: block; margin-bottom: 5px; color: var(--dna-faint); font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
   .ds-editor-inspector h3 { margin: 0; font-size: 16px; letter-spacing: -.02em; }
-  .ds-inspector-description { margin: 7px 0 18px; color: #8892a3; font-size: 10.8px; line-height: 1.5; }
-  .ds-inspector-section { padding: 14px 0; border-top: 1px solid #252b36; }
-  .ds-inspector-section h4 { margin: 0 0 10px; color: #777f90; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-  .ds-selected-variant { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: #141821; }
+  .ds-inspector-description { margin: 7px 0 18px; color: var(--dna-muted); font-size: 10.8px; line-height: 1.5; }
+  .ds-inspector-section { padding: 14px 0; border-top: 1px solid var(--dna-border-soft); }
+  .ds-inspector-section h4 { margin: 0 0 10px; color: var(--dna-dim); font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .ds-selected-variant { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--dna-elevated); }
   .ds-selected-variant > i { flex: none; width: 30px; height: 30px; border: 1px solid #ffffff30; border-radius: 7px; box-shadow: inset 0 0 0 1px #0003; }
   .ds-selected-variant strong, .ds-selected-variant small { display: block; }
   .ds-selected-variant strong { font-size: 11.5px; }
-  .ds-selected-variant small { margin-top: 3px; color: #768092; font-size: 9.5px; }
+  .ds-selected-variant small { margin-top: 3px; color: var(--dna-dim); font-size: 9.5px; }
   .ds-style-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 10px; font-size: 10px; }
-  .ds-style-grid > span { color: #737d8f; }
-  .ds-style-grid code { max-width: 160px; overflow-wrap: anywhere; color: #cdd3de; font-family: "SFMono-Regular", Consolas, monospace; text-align: right; }
+  .ds-style-grid > span { color: var(--dna-dim); }
+  .ds-style-grid code { max-width: 160px; overflow-wrap: anywhere; color: var(--dna-text-2); font-family: "SFMono-Regular", Consolas, monospace; text-align: right; }
   .ds-editor-inspector dl { display: grid; grid-template-columns: minmax(58px, auto) minmax(0, 1fr); gap: 7px 10px; margin: 0; font-size: 10px; line-height: 1.45; }
-  .ds-editor-inspector dt { color: #70798b; }
-  .ds-editor-inspector dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #c7cdd8; }
+  .ds-editor-inspector dt { color: var(--dna-dim); }
+  .ds-editor-inspector dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--dna-text-2); }
   .ds-editor-inspector code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 9.5px; }
-  .ds-fidelity-fail { color: #ff858f !important; }
-  .ds-state { display: inline-block; min-height: 24px; margin: 1px 4px 2px 0; padding: 0 7px; border: 1px solid #343b49; border-radius: 6px; background: #171b24; color: inherit; font: inherit; font-size: 9.5px; cursor: pointer; }
+  .ds-fidelity-fail { color: var(--dna-danger-text) !important; }
+  .ds-state { display: inline-block; min-height: 24px; margin: 1px 4px 2px 0; padding: 0 7px; border: 1px solid var(--dna-border-strong); border-radius: 6px; background: var(--dna-elevated); color: inherit; font: inherit; font-size: 9.5px; cursor: pointer; }
   .ds-state:disabled { cursor: default; }
-  .ds-state.unconfirmed { border-style: dashed; color: #b99cff; }
-  .ds-insp-empty { color: #515b6c; font-size: 11px; }
+  .ds-state.unconfirmed { border-style: dashed; color: var(--dna-violet-text); }
+  .ds-insp-empty { color: var(--dna-faint-2); font-size: 11px; }
 
-  .ds-foundations h4 { margin: 14px 0 7px; color: #7d8798; font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; }
-  .ds-foundations p { margin: 0 0 10px; color: #ccd1dc; font-size: 10.5px; line-height: 1.55; }
+  .ds-foundations h4 { margin: 14px 0 7px; color: var(--dna-faint); font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; }
+  .ds-foundations p { margin: 0 0 10px; color: var(--dna-text-2); font-size: 10.5px; line-height: 1.55; }
   .ds-swatches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-  .ds-swatch { min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; color: #a7afbd; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
-  .ds-swatch i { flex: none; width: 20px; height: 20px; border: 1px solid #3a4250; border-radius: 5px; }
+  .ds-swatch { min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; color: var(--dna-muted-2); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-swatch i { flex: none; width: 20px; height: 20px; border: 1px solid var(--dna-border-strong); border-radius: 5px; }
   .ds-styleguide { display: grid; gap: 10px; align-content: start; }
   .ds-styleguide h4 { margin: 8px 0 0; font-size: 11px; }
-  .ds-sg-review-bar { display: grid; gap: 8px; border: 1px solid #2a303b; border-radius: 10px; background: #11151d; padding: 10px; }
+  .ds-sg-review-bar { display: grid; gap: 8px; border: 1px solid var(--dna-border); border-radius: 10px; background: var(--dna-node); padding: 10px; }
   .ds-sg-review-bar strong { display: block; font-size: 11px; }
-  .ds-sg-review-bar small { color: #8f97a8; font-size: 9px; line-height: 1.4; }
-  .ds-sg-review-bar label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #8f97a8; font-size: 9.5px; }
-  .ds-sg-review-bar select { min-width: 0; border: 1px solid #333b49; border-radius: 7px; background: #171c26; color: #dfe4ee; padding: 4px 6px; font-size: 10px; }
-  .ds-sg-review-bar button { border: 1px solid #394252; border-radius: 8px; background: #1b222d; padding: 7px 9px; color: #e6eaf2; font-size: 10px; cursor: pointer; }
-  .ds-sg-review-bar button:hover:not(:disabled) { border-color: #5e6a7f; }
-  .ds-sg-hint { margin: 0; color: #79839a; font-size: 9.5px; line-height: 1.45; }
-  .ds-sg-tokens { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-  .ds-sg-token { display: flex; align-items: center; gap: 7px; min-width: 0; border: 1px solid #262d38; border-radius: 8px; background: #121720; padding: 6px; }
-  .ds-sg-token i { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid #3a4250; border-radius: 6px; color: #97a1b4; font-size: 8px; font-style: normal; }
-  .ds-sg-token i.abstract { background: #1a212c; }
+  .ds-sg-review-bar small { color: var(--dna-muted); font-size: 9px; line-height: 1.4; }
+  .ds-sg-review-bar label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--dna-muted); font-size: 9.5px; }
+  .ds-sg-review-bar select { min-width: 0; border: 1px solid var(--dna-border-strong); border-radius: 7px; background: var(--dna-elevated); color: var(--dna-text-2); padding: 4px 6px; font-size: 10px; }
+  .ds-sg-review-bar button { border: 1px solid var(--dna-border-strong); border-radius: 8px; background: var(--dna-elevated); padding: 7px 9px; color: var(--dna-text-2); font-size: 10px; cursor: pointer; }
+  .ds-sg-review-bar button:hover:not(:disabled) { border-color: var(--dna-dim); }
+  .ds-sg-hint { margin: 0; color: var(--dna-dim); font-size: 9.5px; line-height: 1.45; }
+  .ds-sg-tokens { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 7px; }
+  .ds-sg-token { display: flex; align-items: center; gap: 8px; min-width: 0; border: 1px solid var(--dna-border); border-radius: 10px; background: var(--dna-sunken); padding: 6px; }
+  /* Свотч токена 34px — по споке раздела «Стиль сайта». */
+  .ds-sg-token i { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--dna-border-strong); border-radius: 8px; color: var(--dna-muted); font-size: 9px; font-style: normal; }
+  .ds-sg-token i.abstract { background: var(--dna-elevated); }
   .ds-sg-token div { min-width: 0; }
-  .ds-sg-token strong { display: block; overflow: hidden; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
-  .ds-sg-token small { display: block; overflow: hidden; color: #6f788a; font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-sg-token strong { display: block; overflow: hidden; font-size: 10px; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-sg-token small { display: block; overflow: hidden; color: var(--dna-faint); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+  /* «Уходит в Генератор как style DNA» — тот же градиент, что у карточки Design IR. */
+  .ds-sg-dna { padding: 16px; border: 1px solid rgba(112, 24, 230, .35); border-radius: 14px; background: linear-gradient(150deg, rgba(112, 24, 230, .2), rgba(255, 105, 29, .1)); }
+  .ds-sg-dna-head { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+  .ds-sg-dna-head i { flex: none; width: 9px; height: 9px; border-radius: 999px; background: var(--dna-action); animation: ds-dna-pulse 2s ease-in-out infinite; }
+  .ds-sg-dna-head strong { font-size: 12.5px; }
+  .ds-sg-dna > p { margin: 0; color: var(--dna-muted-2); font-size: 11px; line-height: 1.55; }
+  .ds-sg-dna-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-top: 12px; }
+  .ds-sg-dna-grid > div { padding: 10px 6px; border: 1px solid rgba(112, 24, 230, .3); border-radius: 9px; background: rgba(0, 0, 0, .35); text-align: center; }
+  .ds-sg-dna-grid strong { display: block; font-size: 16px; font-weight: 700; }
+  .ds-sg-dna-grid small { color: var(--dna-dim); font-size: 9px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+  @keyframes ds-dna-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
   .ds-sg-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .ds-sg-chips span { border: 1px solid #2c3340; border-radius: 999px; background: #151a23; padding: 4px 9px; color: #c4cad6; font-size: 9.5px; }
-  .ds-sg-chips small { margin-right: 5px; color: #6f788a; }
+  .ds-sg-chips span { border: 1px solid var(--dna-border); border-radius: 999px; background: var(--dna-elevated); padding: 4px 9px; color: var(--dna-text-2); font-size: 9.5px; }
+  .ds-sg-chips small { margin-right: 5px; color: var(--dna-faint); }
   .ds-sg-traits { display: grid; gap: 6px; margin: 0; }
-  .ds-sg-traits div { border-left: 2px solid #3d4658; padding-left: 8px; }
-  .ds-sg-traits dt { color: #8f97a8; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
-  .ds-sg-traits dd { margin: 2px 0 0; color: #d5dae4; font-size: 10.5px; line-height: 1.45; }
+  .ds-sg-traits div { border-left: 2px solid var(--dna-border-strong); padding-left: 8px; }
+  .ds-sg-traits dt { color: var(--dna-muted); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+  .ds-sg-traits dd { margin: 2px 0 0; color: var(--dna-text-3); font-size: 10.5px; line-height: 1.45; }
   .ds-sg-rules { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .ds-sg-rules ul { margin: 4px 0 0; padding-left: 14px; }
   .ds-sg-rules li { margin-bottom: 4px; font-size: 10px; line-height: 1.4; }
-  .ds-sg-rules li.do { color: #7fd7b6; }
-  .ds-sg-rules li.dont { color: #e2988a; }
-  .ds-sg-note { margin: 0; color: #a7afbd; font-size: 9.5px; line-height: 1.45; }
-  .ds-sg-note code { margin-right: 5px; color: #8b7cf6; }
-  .ds-mock-item { padding: 9px 0; border-bottom: 1px solid #222833; }
+  .ds-sg-rules li.do { color: var(--dna-success-text); }
+  .ds-sg-rules li.dont { color: var(--dna-danger-text); }
+  .ds-sg-note { margin: 0; color: var(--dna-muted-2); font-size: 9.5px; line-height: 1.45; }
+  .ds-sg-note code { margin-right: 5px; color: var(--dna-violet-text); }
+  .ds-mock-item { padding: 9px 0; border-bottom: 1px solid var(--dna-border-soft); }
   .ds-mock-item strong { display: block; font-size: 10.8px; }
-  .ds-mock-item small { color: #727c8e; font-size: 9.5px; }
+  .ds-mock-item small { color: var(--dna-dim); font-size: 9.5px; }
   .ds-val-error, .ds-val-ok { margin-bottom: 6px; padding: 9px 10px; border-radius: 8px; font-size: 10.5px; line-height: 1.45; }
-  .ds-val-error { border: 1px solid #5c2b32; background: #2d1519; color: #ff919d; }
-  .ds-val-ok { border: 1px solid #28573e; background: #10241a; color: #5ee49d; }
+  .ds-val-error { border: 1px solid rgba(229, 48, 92, .4); background: rgba(229, 48, 92, .12); color: var(--dna-danger-text); }
+  .ds-val-ok { border: 1px solid rgba(34, 197, 94, .4); background: rgba(34, 197, 94, .1); color: var(--dna-success-text); }
   .ds-identity { display: flex; flex-direction: column; gap: 8px; font-size: 10.5px; }
-  .ds-identity h4 { margin: 10px 0 0; color: #7d8798; font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; }
-  .ds-identity label { display: flex; flex-direction: column; gap: 5px; color: #8b95a7; }
-  .ds-identity textarea { min-height: 76px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; background: #0b0e13; color: #e2e6ef; padding: 9px; font: inherit; }
-  .ds-identity article { padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: #141821; }
+  .ds-identity h4 { margin: 10px 0 0; color: var(--dna-faint); font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; }
+  .ds-identity label { display: flex; flex-direction: column; gap: 5px; color: var(--dna-muted); }
+  .ds-identity textarea { min-height: 76px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; background: var(--dna-sunken); color: var(--dna-text-2); padding: 9px; font: inherit; }
+  .ds-identity article { padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--dna-elevated); }
   .ds-identity article strong, .ds-identity article small { display: block; }
-  .ds-identity article p { margin: 5px 0; color: #c5cad6; line-height: 1.45; }
-  .ds-identity small { color: #737d8e; }
-  .ds-identity button { min-height: 30px; margin-top: 6px; padding: 0 9px; border: 1px solid #394152; border-radius: 7px; background: #1b202b; color: #dce1eb; font: inherit; font-size: 9.8px; cursor: pointer; }
-  .ds-uncertain { margin: 0; color: #f1c45c; }
-  .ds-test-fail { color: #ff858f !important; border-color: #6b3038 !important; }
+  .ds-identity article p { margin: 5px 0; color: var(--dna-text-2); line-height: 1.45; }
+  .ds-identity small { color: var(--dna-dim); }
+  .ds-identity button { min-height: 30px; margin-top: 6px; padding: 0 9px; border: 1px solid var(--dna-border-strong); border-radius: 7px; background: var(--dna-hover); color: var(--dna-text-2); font: inherit; font-size: 9.8px; cursor: pointer; }
+  .ds-uncertain { margin: 0; color: var(--dna-amber); }
+  .ds-test-fail { color: var(--dna-danger-text) !important; border-color: rgba(229, 48, 92, .45) !important; }
 
-  button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid #9a8dff; outline-offset: 2px; }
+  button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--dna-violet-l); outline-offset: 2px; }
   @media (max-width: 1220px) {
     .ds-editor-body { grid-template-columns: 260px minmax(0, 1fr) 260px; }
+    .ds-editor-body.catalog-cols { grid-template-columns: 220px minmax(0, 1fr) 260px; }
     .ds-editor-top { padding-inline: 12px; }
     .ds-editor-actions { gap: 4px; }
-    .ds-editor-actions button { padding-inline: 9px; }
+    .ds-editor-actions button:not(.dna-btn-sell) { padding-inline: 9px; }
   }
   @media (max-width: 980px) {
-    .ds-editor-body { grid-template-columns: 240px minmax(0, 1fr); }
+    .ds-editor-body, .ds-editor-body.catalog-cols { grid-template-columns: 240px minmax(0, 1fr); }
     .ds-editor-inspector { display: none; }
     .ds-editor-meta { display: none; }
     :global(.ds-preview-stage.ds-preview-compare) { grid-template-columns: minmax(0, 1fr); }
