@@ -6,11 +6,15 @@ import json
 from typing import Any
 
 # Fields that are visual QA evidence or runtime state, not canonical design data.
+# provenance included: migrate_ir stamps wall-clock createdAt on documents that
+# arrive without it (frontend-composed pages), so hashing provenance made two
+# migrations of one document disagree and broke interaction/motion hash binding.
 _PREVIEW_KEYS = frozenset({
     "sourcePreview",
     "preview",
     "previews",
     "contentHash",
+    "provenance",
 })
 
 

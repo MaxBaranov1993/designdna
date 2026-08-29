@@ -461,7 +461,7 @@ def generate(req: GenerateReq):
             token_budget=int(req.designSystem.get("tokenBudget") or provider_budget),
         )
         if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
-            return err(422, "Design System Strict: exact master не помещается в выбранный context budget")
+            return err(422, "Design System Strict: exact master не помещается в выбранный context budget. Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")
         ds_prompt_block = ds_compiled["promptBlock"]
 
 
@@ -1167,7 +1167,7 @@ def reskin(req: ReskinReq):
             token_budget=int(req.designSystem.get("tokenBudget") or (24_000 if ds_usage_mode == "strict" else 1000)),
         )
         if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
-            return err(422, "Design System Strict: exact master не помещается в выбранный context budget")
+            return err(422, "Design System Strict: exact master не помещается в выбранный context budget. Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")
         user += "\n\n" + ds_compiled["promptBlock"]
 
     provider = "openai"
@@ -2036,25 +2036,53 @@ def motion_render(req: MotionRenderReq):
     return {key: value for key, value in RENDER_JOBS[render_id].items() if key != "output"}
 
 
+def _completed_render_on_disk(render_id: str) -> Path | None:
+    """RENDER_JOBS живёт в памяти процесса, а артефакты — на диске. После
+    рестарта сервера сохранённые в проекте downloadUrl не должны ломаться."""
+    if not re.fullmatch(r"[0-9a-f]{32}", render_id):
+        return None
+    for suffix in (".mp4", ".webm"):
+        candidate = RENDER_DIR / f"{render_id}{suffix}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 @app.get("/api/motion/render/{render_id}")
 def motion_render_status(render_id: str):
     with RENDER_JOBS_LOCK:
         job = RENDER_JOBS.get(render_id)
-        if not job:
-            return err(404, "Render job not found.")
-        return {key: value for key, value in job.items() if key != "output"}
+        if job:
+            return {key: value for key, value in job.items() if key != "output"}
+    output = _completed_render_on_disk(render_id)
+    if output is None:
+        return err(404, "Render job not found.")
+    return {
+        "id": render_id,
+        "status": "complete",
+        "progress": 100,
+        "format": output.suffix.lstrip("."),
+        "filename": f"designai-motion-{render_id[:8]}{output.suffix}",
+        "downloadUrl": f"/api/motion/render/{render_id}/download",
+    }
 
 
 @app.get("/api/motion/render/{render_id}/download")
 def motion_render_download(render_id: str):
+    output: Path | None = None
+    filename = ""
     with RENDER_JOBS_LOCK:
         job = RENDER_JOBS.get(render_id)
-        if not job:
+        if job:
+            if job["status"] != "complete":
+                return err(409, "Render is not complete.")
+            output = Path(job["output"])
+            filename = job["filename"]
+    if output is None:
+        output = _completed_render_on_disk(render_id)
+        if output is None:
             return err(404, "Render job not found.")
-        if job["status"] != "complete":
-            return err(409, "Render is not complete.")
-        output = Path(job["output"])
-        filename = job["filename"]
+        filename = f"designai-motion-{render_id[:8]}{output.suffix}"
     if not output.is_file() or output.parent.resolve() != RENDER_DIR.resolve():
         return err(404, "Rendered artifact not found.")
     media_type = "video/mp4" if output.suffix == ".mp4" else "video/webm"
