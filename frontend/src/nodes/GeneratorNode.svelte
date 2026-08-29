@@ -2,7 +2,8 @@
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import ProviderPicker from "../components/ProviderPicker.svelte";
-  import { flow, flowBusy } from "../flow/state";
+  import { flow, flowBusy, flowDesignSystemPicker, flowDesignSystems } from "../flow/state";
+  import { pinnedDesignSystemRef } from "../flow/store";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { GeneratorFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
@@ -13,18 +14,23 @@
   /* «Генератор» — run-based: бриф тянет из входов prompt/style (pull-based,
    * fallback ownPrompt), POST /api/generate (payload — зеркало runGenerator,
    * nodes.js:498-518). Варианты — миниатюрами, активный — в IrPreview и на
-   * выход ir (outValue) для нод ниже по графу. */
-  const PRESETS: { id: string; label: string }[] = [
-    { id: "minimal", label: "Minimal" },
-    { id: "bento", label: "Bento" },
-    { id: "editorial", label: "Editorial" },
-    { id: "brutal", label: "Brutal" },
-    { id: "glass", label: "Glass" },
-  ];
-
+   * выход ir (outValue). Пресеты стиля сняты по хендоффу: стиль приходит
+   * из style DNA источника. */
   let { id, data, selected }: NodeProps<GeneratorFlowNode> = $props();
 
   let busy = $derived(!!$flowBusy[Number(id)]);
+  /* ДС, которую генерация реально получит (узел мог унаследовать её от
+   * глобального пикера) — иначе strict-ошибки выглядят беспричинными. */
+  let dsRef = $derived(pinnedDesignSystemRef(
+    data as unknown as Record<string, unknown>,
+    $flowDesignSystems,
+    $flowDesignSystemPicker,
+  ));
+  let dsId = $derived(dsRef ? String(dsRef.systemId || "") : "");
+  let dsName = $derived(
+    dsId ? ($flowDesignSystems.systems?.find((s) => s.systemId === dsId)?.name || dsId) : "",
+  );
+  let dsOptedOut = $derived(String((data as Record<string, unknown>).designSystemSelection || "") === "none");
   let activeIr = $derived(data.variants.length ? data.variants[data.active] || null : null);
   let effort = $derived(["medium", "high", "max"].includes(data.effort) ? data.effort : "medium");
   let count = $derived(Math.max(1, Math.min(2, Number(data.count) || 1)));
@@ -49,6 +55,25 @@
       onChange={(next) => $flow.setNodeData(Number(id), next)}
     />
   </div>
+  {#if dsRef}
+    <div class="gen-ds-row nodrag" title="Дизайн-система придёт в генерацию из глобального выбора проекта">
+      <span class="gen-ds-label">◈ ДС: {dsName} · {String(dsRef.usageMode || "strict")}</span>
+      <button
+        class="gen-ds-off"
+        title="Генерировать без дизайн-системы"
+        onclick={() => $flow.setNodeData(Number(id), { designSystemSelection: "none" })}
+      >×</button>
+    </div>
+  {:else if dsOptedOut}
+    <div class="gen-ds-row nodrag">
+      <span class="gen-ds-label">ДС отключена для этой ноды</span>
+      <button
+        class="gen-ds-off"
+        title="Вернуть дизайн-систему проекта"
+        onclick={() => $flow.setNodeData(Number(id), { designSystemSelection: "inherit" })}
+      >↺</button>
+    </div>
+  {/if}
   <div class="ctl-row">
     <select
       class="f-count nodrag"
@@ -65,17 +90,6 @@
     >
       {#if busy}<span class="spinner"></span>{:else}<span>▶</span>{/if} Сгенерировать
     </button>
-  </div>
-  <div class="f-presets nodrag">
-    {#each PRESETS as p (p.id)}
-      <button
-        class={"f-preset" + (data.preset === p.id ? " on" : "")}
-        title={"Стилевое направление: " + p.label}
-        onclick={() => $flow.setNodeData(Number(id), { preset: data.preset === p.id ? "" : p.id })}
-      >
-        {p.label}
-      </button>
-    {/each}
   </div>
   {#if data.variants.length}
     <div class="thumbs">

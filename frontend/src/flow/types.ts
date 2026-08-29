@@ -118,6 +118,12 @@ export type MixNodeData = {
   weights: Record<string, number>;
   /** Сколько вариантов собрать (1–8) — счётчик из дизайн-хендоффа. */
   variants?: number;
+  /** Промпт микса (хендофф): намерение смешения, хранится с нодой. */
+  prompt?: string;
+  /** Результаты последнего запуска: вариант 0 — точные веса, дальше —
+   * детерминированная ротация акцента по входам. */
+  mixVariants?: IRObject[];
+  mixActive?: number;
   ir: IRObject | null;
 };
 /* Блок Source Import: lit — «зажжён» ли выходной порт блока. */
@@ -379,6 +385,29 @@ export type MotionSceneSettings = {
   easing: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out";
 };
 export type MotionScenePreview = { sceneId: string; ir: IRObject };
+/* Слой композиции Motion Editor (см. README хендоффа, State Management).
+ * Времена кейфреймов — локальные мс внутри сцены; sceneId привязывает слой
+ * к композиции (сцене построенного motion). */
+export type MotionLayerKeyframe<V> = { t: number; v: V };
+export type MotionCompLayer = {
+  id: string;
+  name: string;
+  group: "src" | "kit" | "gen" | "media";
+  type: "text" | "image" | "comp";
+  sceneId?: string;
+  text?: string;
+  src?: string;
+  size: number;
+  weight: number;
+  color: string;
+  w: number;
+  props: {
+    p: { keys: Array<MotionLayerKeyframe<[number, number]>> };
+    s: { keys: Array<MotionLayerKeyframe<number>> };
+    r: { keys: Array<MotionLayerKeyframe<number>> };
+    o: { keys: Array<MotionLayerKeyframe<number>> };
+  };
+};
 export type MotionRenderJob = {
   id: string;
   status: "queued" | "rendering" | "complete" | "error";
@@ -393,6 +422,12 @@ export type MotionRenderJob = {
 export type MotionNodeData = {
   ir: IRObject | null;
   interaction: InteractionObject | null;
+  /* Сцены композиции авторятся в самой ноде (Recorder исключён из хендоффа);
+   * runMotion строит из них Interaction IR, когда провода interaction нет. */
+  scenes?: InteractionDraftScene[];
+  /* Слои композиций Motion Editor; пусто — воркспейс выводит дефолтный
+   * набор из IR сцены (детерминированно). */
+  layers?: MotionCompLayer[];
   motion: IRObject | null;
   sceneIrs: MotionScenePreview[];
   selectedScene: number;

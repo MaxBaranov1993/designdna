@@ -18,7 +18,7 @@
     class="port-row dna-port in"
     data-port={p.name}
     data-kind={p.kind}
-    style={`top: ${61 + index * 24}px`}
+    style={`top: ${60 + index * 24}px`}
   >
     <span class="plabel">{p.label}</span>
     <Handle

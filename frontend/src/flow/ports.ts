@@ -18,7 +18,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   reskin: { title: "Reskin", icon: "✦", w: 310, sub: "вариант с локом структуры", accent: "#9B5CFF" },
   qualitypass: { title: "Quality Pass", icon: "✓", w: 310, sub: "judge + repair + scorecard", accent: "#22C55E" },
   recorder: { title: "Interaction Recorder", icon: "REC", w: 334, sub: "IR actions → Interaction IR", accent: "#22C55E" },
-  motion: { title: "Motion Editor", icon: "M", w: 322, sub: "Interaction IR → editable timeline", accent: "#E05FB0" },
+  motion: { title: "Motion Editor", icon: "M", w: 322, sub: "Design IR → editable timeline", accent: "#E05FB0" },
   motiondesign: { title: "Motion Design", icon: "MD", w: 334, sub: "prompt / video → Seedance 2.5", accent: "#4F7CFF" },
   timeline: { title: "Video Editor", icon: "▶", w: 322, sub: "слои и кейфреймы → локальный ролик", accent: "#FF5F56" },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300, sub: "передать компонент между страницами", accent: "#35B8A0" },
@@ -176,7 +176,7 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "edit":
       return { inputs: ["a", "b"], ir: null, sourceRegistry: {}, nodeSources: {} };
     case "mix":
-      return { inputs: ["a", "b"], weights: { a: 70, b: 30 }, variants: 3, ir: null };
+      return { inputs: ["a", "b"], weights: { a: 70, b: 30 }, variants: 3, prompt: "", mixVariants: [], mixActive: 0, ir: null };
     case "page":
       return { inputs: ["a", "b"], ir: null, activeViewport: "desktop" };
     case "sourceimport":
@@ -205,7 +205,9 @@ export function defaultData(type: NodeType): AnyNodeData {
       };
     case "motion":
       return {
-        ir: null, interaction: null, motion: null, sceneIrs: [], selectedScene: 0,
+        ir: null, interaction: null,
+        scenes: [{ id: "scene-0", viewport: "desktop", patch: [] }],
+        motion: null, sceneIrs: [], selectedScene: 0,
         composition: { width: 1920, height: 1080, fps: 30 },
         renderSettings: { format: "mp4", quality: "high" }, renderJob: null, sceneSettings: {},
       };
@@ -265,8 +267,9 @@ export const CTX_GROUPS: { label: string; color: string; items: { type: NodeType
     color: "#22C55E",
     items: [
       { type: "qualitypass", note: "judge + repair + scorecard" },
-      { type: "recorder", note: "IR actions → Interaction IR" },
-      { type: "motion", note: "Interaction IR → editable timeline" },
+      // recorder исключён из меню по хендоффу: Motion сам строит Interaction IR
+      // из Design IR (легаси-графы с нодой Recorder по-прежнему загружаются).
+      { type: "motion", note: "Design IR → editable timeline" },
       { type: "timeline", note: "компоненты → слои, кейфреймы и локальный ролик" },
       { type: "motiondesign", note: "prompt / готовое видео → Seedance 2.5" },
       { type: "designsystem", note: "Source → UI Kit → published Design System" },
@@ -286,8 +289,7 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "page", note: "страница из блоков" },
   { type: "reskin", note: "вариант с локом структуры" },
   { type: "qualitypass", note: "judge + repair + scorecard" },
-  { type: "recorder", note: "IR actions -> Interaction IR" },
-  { type: "motion", note: "Interaction IR -> editable timeline" },
+  { type: "motion", note: "Design IR -> editable timeline" },
   { type: "timeline", note: "компоненты -> ролик: слои и кейфреймы" },
   { type: "motiondesign", note: "prompt / готовое видео -> Seedance 2.5" },
   { type: "pagebridge", note: "передать компонент между страницами" },

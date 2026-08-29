@@ -15,6 +15,7 @@ export const flowPages = selectReadable(useFlowStore, (s) => s.pages);
 export const flowActivePageId = selectReadable(useFlowStore, (s) => s.activePageId);
 export const flowChannels = selectReadable(useFlowStore, (s) => s.channels, shallowRecordEquals);
 export const flowDesignSystems = selectReadable(useFlowStore, (s) => s.designSystems);
+export const flowDesignSystemPicker = selectReadable(useFlowStore, (s) => s.designSystemPicker);
 export const flowStatuses = selectReadable(useFlowStore, (s) => s.statuses, shallowRecordEquals);
 export const flowBusy = selectReadable(useFlowStore, (s) => s.busy, shallowRecordEquals);
 export const flowProgresses = selectReadable(useFlowStore, (s) => s.progresses, shallowRecordEquals);

@@ -28,12 +28,17 @@
 <NodeShell {id} type="motion" {selected}>
   <InPorts type="motion" />
   <div class="motion-node-preview nodrag">
-    <IrPreview ir={preview} height={180} fitHeight empty="Build Motion IR to materialize scenes" />
-    <div><span>{scenes.length} scenes</span><span>{(durationOf(data) / 1000).toFixed(1)}s · {data.composition.fps} fps</span></div>
+    <IrPreview ir={preview} height={180} fitHeight empty="Соберите таймлайн — сцены появятся здесь" />
+    <div><span>{scenes.length} {scenes.length === 1 ? "сцена" : "сцен"}</span><span>{(durationOf(data) / 1000).toFixed(1)}s · {data.composition.fps} fps</span></div>
+  </div>
+  <div class="nrow-stats">
+    <div class="nrow-stat"><strong>{scenes.length}</strong><span>СЦЕНЫ</span></div>
+    <div class="nrow-stat"><strong>{data.composition.fps}</strong><span>FPS</span></div>
+    <div class="nrow-stat"><strong>{(data.renderSettings?.format || "mp4").toUpperCase()}</strong><span>ФОРМАТ</span></div>
   </div>
   <div class="ctl-row">
-    <button class="btn-node primary small nodrag" disabled={busy || !data.ir || !data.interaction} onclick={() => $flow.runNode(nodeId)}>{#if busy}<span class="spinner"></span>{/if} Build timeline</button>
-    <button class="btn-node small nodrag" disabled={!data.motion} onclick={() => void openWorkspace()}>Open editor</button>
+    <button class="btn-node primary small nodrag" disabled={busy} onclick={() => $flow.runNode(nodeId)}>{#if busy}<span class="spinner"></span>{/if} Собрать таймлайн</button>
+    <button class="btn-node small nodrag" disabled={!data.motion} onclick={() => void openWorkspace()}>Открыть</button>
   </div>
   {#if scenes.length > 1}
     <div class="motion-node-scenes nodrag">

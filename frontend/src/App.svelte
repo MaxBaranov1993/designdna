@@ -67,6 +67,25 @@
       });
     });
     window.addEventListener("designdna:ensure-editor", onEditorRequest);
+    // Fail-closed сейв (serialize.ts): после 409 автосохранение в БД молчит,
+    // пока пользователь не решит конфликт — без слушателя это тихая потеря работы.
+    const onProjectConflict = () => {
+      toast(
+        "Проект изменён в другом окне: автосохранение приостановлено. " +
+          "Экспортируйте JSON для страховки и перезагрузите страницу.",
+        "error",
+      );
+    };
+    window.addEventListener("designdna:project-conflict", onProjectConflict);
+    // «Передать в Генератор» из панели DS: система становится выбором проекта,
+    // Генератор подхватывает её через pinnedDesignSystemRef.
+    const onDsToGenerator = (event: Event) => {
+      const systemId = String((event as CustomEvent).detail?.systemId || "");
+      if (!systemId) return;
+      useFlowStore.getState().setDesignSystemPicker({ selection: systemId });
+      toast("Дизайн-система передана в Генератор", "ok");
+    };
+    window.addEventListener("designdna:ds-to-generator", onDsToGenerator);
     installGraphDev();
     const uninstallLiveCommands = installRendererLiveCommands();
     void useFlowStore.getState().loadPersistedProject();
@@ -78,6 +97,8 @@
       window.clearTimeout(editorWarmup);
       uninstallLiveCommands();
       window.removeEventListener("designdna:ensure-editor", onEditorRequest);
+      window.removeEventListener("designdna:project-conflict", onProjectConflict);
+      window.removeEventListener("designdna:ds-to-generator", onDsToGenerator);
     };
   });
 </script>

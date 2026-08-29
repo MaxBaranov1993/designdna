@@ -572,7 +572,7 @@ const emptyPicker: DesignSystemPickerConfig = {
   fixtureProfile: "typical",
 };
 
-function pinnedDesignSystemRef(
+export function pinnedDesignSystemRef(
   data: Record<string, unknown>,
   registry: DesignSystemsRegistry,
   picker?: DesignSystemPickerConfig,
@@ -1148,9 +1148,25 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     get().setStatus(id, "Смешиваю…");
     get().setBusy(id, true);
     try {
-      const res = await api<MixResp>("/api/mix", { irs, weights });
-      get().setNodeData(id, { ir: res.ir || null });
-      get().setStatus(id, "Готово: " + labels.join(" + "), "ok");
+      // Счётчик вариантов (хендофф): вариант 0 — точные веса, дальше акцент
+      // детерминированно ротируется по входам (/api/mix даёт один результат за вызов).
+      const count = Math.max(1, Math.min(8, Number(data.variants) || 1));
+      const runs: number[][] = [];
+      for (let k = 0; k < count; k++) {
+        if (k === 0) {
+          runs.push(weights);
+          continue;
+        }
+        const boosted = weights.map((w, i) => (i === (k - 1) % weights.length ? w * 1.35 + 0.05 : w));
+        const sum = boosted.reduce((s, w) => s + w, 0) || 1;
+        runs.push(boosted.map((w) => w / sum));
+      }
+      const results = await Promise.all(
+        runs.map((run) => api<MixResp>("/api/mix", { irs, weights: run })),
+      );
+      const mixVariants = results.map((res) => res.ir).filter((ir): ir is IRObject => !!ir);
+      get().setNodeData(id, { mixVariants, mixActive: 0, ir: mixVariants[0] || null });
+      get().setStatus(id, `${irs.length} вх → ${mixVariants.length} вар · ` + labels.join(" + "), "ok");
       get().propagate(id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1666,14 +1682,30 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     if (!n || n.type !== "motion" || st.busy[id]) return;
     const data = n.data as MotionNodeData;
     const designIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
-    const interaction = (pullInput(st.nodes, st.edges, n, "interaction") || data.interaction) as IRObject | null;
-    if (!designIr || !interaction) {
-      get().setStatus(id, "Connect Design IR and Interaction IR", "err");
+    let interaction = (pullInput(st.nodes, st.edges, n, "interaction") || data.interaction) as IRObject | null;
+    if (!designIr) {
+      get().setStatus(id, "Подключите Design IR", "err");
       return;
     }
     get().setBusy(id, true);
     get().setStatus(id, "Building editable motion timeline...");
     try {
+      if (!interaction) {
+        // Recorder исключён из хендоффа: сцены композиции авторятся прямо в
+        // Motion, а Interaction IR нода строит сама из Design IR.
+        const draftScenes = Array.isArray(data.scenes) && data.scenes.length
+          ? data.scenes
+          : [{ id: "scene-0", viewport: "desktop", patch: [] }];
+        const built = await api<{ interaction?: IRObject }>("/api/interaction/build", {
+          base_ir: designIr,
+          source: { kind: "design-ir", url: "" },
+          scenes: draftScenes,
+          events: [],
+          variables: {},
+        });
+        interaction = built.interaction || null;
+        if (!interaction) throw new Error("Не удалось построить Interaction IR из Design IR");
+      }
       const response = await api<{ motion?: IRObject; sceneIrs?: MotionNodeData["sceneIrs"] }>("/api/motion/build", {
         base_ir: designIr,
         interaction,

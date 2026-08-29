@@ -10,6 +10,17 @@
   const countNodes = (pageId: string) => pageId === activePageId
     ? $flowNodes.length
     : pages.find((page) => page.id === pageId)?.nodes.length || 0;
+
+  /* SEND/RECV — из реального mode нод Page Bridge, а не чередования строк */
+  const channelHasSender = (name: string) => {
+    const isSender = (node: { type?: string; data?: unknown }) => {
+      if (node.type !== "pagebridge") return false;
+      const data = node.data as { channel?: string; mode?: string } | undefined;
+      return data?.channel === name && data?.mode === "send";
+    };
+    if ($flowNodes.some(isSender)) return true;
+    return pages.some((page) => page.id !== activePageId && page.nodes.some(isSender));
+  };
 </script>
 
 <aside class:closed={!$leftPanelOpen} class="dna-left">
@@ -56,13 +67,14 @@
   <div class="dna-left-cap dna-panel-cap">BRIDGE CHANNELS</div>
   <div class="dna-left-list">
     {#if channelNames.length}
-      {#each channelNames as name, index (name)}
+      {#each channelNames as name (name)}
+        {@const send = channelHasSender(name)}
         <div class="dna-bridge-row">
           <div class="dna-bridge-main">
-            <span class:send={index % 2 === 0} class:recv={index % 2 !== 0} class="dna-bridge-ic">{index % 2 === 0 ? "S" : "R"}</span>
+            <span class:send class:recv={!send} class="dna-bridge-ic">{send ? "S" : "R"}</span>
             <span class="dna-bridge-name">{name}</span>
           </div>
-          <span class="dna-badge" style="--badge-tone: {index % 2 === 0 ? '#FF691D' : '#9B5CFF'}">{index % 2 === 0 ? "SEND" : "RECV"}</span>
+          <span class="dna-badge" style="--badge-tone: {send ? '#FF691D' : '#9B5CFF'}">{send ? "SEND" : "RECV"}</span>
         </div>
       {/each}
     {:else}

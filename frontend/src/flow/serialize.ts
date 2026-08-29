@@ -123,6 +123,9 @@ let lsPagesDisabled = false;
 /* Ревизия проекта (SHA-256 строки payload) с последнего load/save —
  * заголовок CAS для /api/project/save. */
 let lastKnownRevision: string | null = null;
+/* Пока /api/project/load не ответил, ревизия БД неизвестна: безусловный POST
+ * свежей (ещё пустой) страницы затирал сохранённый проект целиком. */
+let dbRevisionSynced = false;
 
 function scheduleIdleWrite(): void {
   if (idleWriteHandle != null) return; // отложенный write возьмёт свежий provider при исполнении
@@ -201,6 +204,11 @@ function scheduleDbProjectSave(): void {
 async function flushDbProject(): Promise<void> {
   const text = lastDbProjectText;
   if (!text) return;
+  if (!dbRevisionSynced) {
+    // Ревизия ещё не загружена — подождём: сейв повторится следующим change
+    // или beforeunload после того, как load зафиксирует базовую ревизию.
+    return;
+  }
   lastDbProjectText = null;
   try {
     // CAS по ревизии с последнего известного load/save. Конфликт (409 stale)
@@ -265,7 +273,7 @@ window.addEventListener("beforeunload", () => {
     clearTimeout(dbSaveTimer);
     dbSaveTimer = null;
   }
-  if (lastDbProjectText && navigator.sendBeacon) {
+  if (lastDbProjectText && dbRevisionSynced && navigator.sendBeacon) {
     const expected = lastKnownRevision
       ? `,"expectedRevision":${JSON.stringify(lastKnownRevision)}`
       : "";
@@ -296,7 +304,11 @@ export function makeRfEdge(
 
 function dataForStorage(type: NodeType, data: AnyNodeData): AnyNodeData {
   if (type !== "motion" && type !== "timeline") return data;
-  const { renderJob: _runtime, ...persistent } = data as AnyNodeData & { renderJob?: unknown };
+  // sceneIrs — производные материализации (полная копия страницы на каждую
+  // сцену): в автосейве они раздували payload до десятков МБ и блокировали
+  // главный поток на compact+stringify. Восстанавливаются одним /api/motion/build.
+  const { renderJob: _runtime, sceneIrs: _derived, ...persistent } =
+    data as AnyNodeData & { renderJob?: unknown; sceneIrs?: unknown };
   return persistent as AnyNodeData;
 }
 
@@ -614,6 +626,7 @@ export async function loadPagesProjectFromDb(): Promise<{
     if (!resp.ok) return null;
     const data = (await resp.json()) as ProjectLoadResp;
     if (typeof data.revision === "string" && data.revision) lastKnownRevision = data.revision;
+    dbRevisionSynced = true;
     if (!data.project) return null;
     return parsePagesPayload(data.project);
   } catch {

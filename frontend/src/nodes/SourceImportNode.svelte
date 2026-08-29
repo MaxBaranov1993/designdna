@@ -134,34 +134,28 @@
       {/if}
     {/if}
     {#if desktopAuth}
-      <label class="bp-mine nodrag" title="После разбора модель уточнит имена компонентов и роли блоков. IR и геометрия не меняются.">
-        <input
-          type="checkbox"
-          class="f-ai-refine"
-          checked={!!data.aiRefine}
-          onchange={(e) => $flow.setNodeData(Number(id), { aiRefine: e.currentTarget.checked })}
-        />
-        AI-уточнение компонентов
-      </label>
-      <!-- AI-починка расхождений тумблера не имеет: она идёт сама на каждом
-           импорте, где гейт не пройден, и принимается только при росте
-           измеренного сходства. Выбор здесь один — чей аккаунт отвечает. -->
+      <!-- Чекбокс AI-уточнения снят по хендоффу: уточнение и AI-починка идут
+           сами на каждом импорте (aiRefine включён в defaultData). Выбор здесь
+           один — чей аккаунт отвечает. -->
       <ProviderPicker
         provider={data.aiProvider || "openai"}
         effort="medium"
         onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider })}
       />
     {/if}
-    <div class="source-viewports nodrag" aria-label="Source viewport">
-      {#each VIEWPORTS as viewport (viewport)}
-        <button
-          class={"source-viewport" + (data.activeViewport === viewport ? " active" : "")}
-          onclick={() => setViewport(viewport)}
-          title={viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}
-        >
-          {viewport === "desktop" ? "Desktop" : viewport === "tablet" ? "Tablet" : "Mobile"}
-        </button>
-      {/each}
+    <div class="nrow">
+      <span class="nrow-cap">ВЬЮПОРТЫ — ВСЕ СРАЗУ</span>
+      <div class="source-viewports nodrag" aria-label="Source viewport">
+        {#each VIEWPORTS as viewport (viewport)}
+          <button
+            class={"source-viewport" + (data.activeViewport === viewport ? " active" : "")}
+            onclick={() => setViewport(viewport)}
+            title={"Импорт снимает все три вьюпорта; здесь выбирается превью · " + (viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px")}
+          >
+            {viewport === "desktop" ? "Desktop" : viewport === "tablet" ? "Tablet" : "Mobile"}
+          </button>
+        {/each}
+      </div>
     </div>
   {:else}
     {#if data.image}

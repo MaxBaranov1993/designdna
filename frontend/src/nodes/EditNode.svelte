@@ -42,10 +42,10 @@
 
 <NodeShell {id} type="edit" {selected}>
   <InPorts type="edit" data={data} />
-  <div class="edit-inputs-label">Компоненты · порядок сверху вниз</div>
+  <div class="nrow-cap">КОМПОНЕНТЫ · ПОРЯДОК СВЕРХУ ВНИЗ</div>
   {#each inputs as name, index (name)}
     <div
-      class="edit-input-row"
+      class="merge-row"
       data-port={name}
       data-kind="ir"
       role="listitem"
@@ -60,16 +60,16 @@
         dragFrom = null;
       }}
     >
-      <span class="page-grip nodrag">⠿</span>
-      <span class="cap">{name}</span>
-      <span class="page-row-ctl nodrag">
-        <button class="mx" title="Выше" disabled={index === 0} onclick={() => $flow.reorderEditInputs(nodeId, index, index - 1)}>↑</button>
-        <button class="mx" title="Ниже" disabled={index === inputs.length - 1} onclick={() => $flow.reorderEditInputs(nodeId, index, index + 1)}>↓</button>
-        <button class="mx" title="Убрать вход" onclick={() => $flow.removeEditInput(nodeId, name)}>✕</button>
+      <span class="merge-n">{index + 1}</span>
+      <span class="merge-name">{name}</span>
+      <span class="merge-ctl nodrag">
+        <button title="Выше" disabled={index === 0} onclick={() => $flow.reorderEditInputs(nodeId, index, index - 1)}>↑</button>
+        <button title="Ниже" disabled={index === inputs.length - 1} onclick={() => $flow.reorderEditInputs(nodeId, index, index + 1)}>↓</button>
+        <button title="Убрать вход" onclick={() => $flow.removeEditInput(nodeId, name)}>✕</button>
       </span>
     </div>
   {/each}
-  <button class="btn-node small edit-add-input nodrag" onclick={() => $flow.addEditInput(nodeId)}>+ компонент</button>
+  <button class="btn-node small edit-add-input nodrag" onclick={() => $flow.addEditInput(nodeId)}>+ Вход</button>
   <div class="edit-preview-card nodrag">
     <IrPreview
       ir={data.ir}

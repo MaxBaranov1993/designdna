@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
-  import { flow, flowBusy, flowNodes } from "../flow/state";
+  import { flowNodes } from "../flow/state";
   import type { DesignSystemFlowNode, SourceArtifact } from "../flow/types";
   import InPorts from "./InPorts.svelte";
   import OutPorts from "./OutPorts.svelte";
@@ -9,8 +9,6 @@
 
   let { id, data, selected }: NodeProps<DesignSystemFlowNode> = $props();
 
-  let busy = $derived(!!$flowBusy[Number(id)]);
-  let busyAction = $derived(String(data.busyAction || ""));
   let summary = $derived((data.summary || {}) as Record<string, any>);
   let lastError = $derived(String(data.lastError || ""));
   let sourceArtifact = $derived.by((): SourceArtifact | null => {
@@ -29,16 +27,7 @@
     summary.catalogVariants == null ? null : Number(summary.catalogVariants));
   let acceptedMasters = $derived(Number(summary.components || 0));
   let acceptedVariants = $derived(Number(summary.variants || 0));
-  let canPublish = $derived(!!data.systemId && !busy);
-  let canDefault = $derived(!!data.systemId && data.status === "published" && !data.defaultSet && !busy);
-  let canSync = $derived(!!data.sourceNodeId && !busy);
   let canOpen = $derived(!!data.systemId);
-
-  const run = (action: "publish" | "default" | "sync") => {
-    if (action === "publish") void $flow.publishDesignSystem(Number(id));
-    else if (action === "default") void $flow.setDefaultDesignSystem(Number(id));
-    else void $flow.rebuildDesignSystemFromSource(Number(id));
-  };
 
   const openEditor = () => {
     if (!canOpen) return;
@@ -91,25 +80,11 @@
     <div class="ds-error" role="alert">{lastError}</div>
   {/if}
 
+  <!-- Хендофф: на ноде только «Открыть» — Sync и публикация живут внутри
+       панели Design System, система активна по умолчанию. -->
   <div class="ds-actions">
     <button type="button" class="btn-node primary small nodrag" data-ds-action="open"
       aria-label="Open Design System and Source UI editor" disabled={!canOpen} onclick={openEditor}>Открыть</button>
-    {#if data.systemId}
-      <button type="button" class="btn-node small nodrag" data-ds-action="publish"
-        aria-busy={busyAction === "publish"} onclick={() => run("publish")} disabled={!canPublish}>
-        {busyAction === "publish" ? "Публикация…" : "Опубликовать"}
-      </button>
-      <button type="button" class="btn-node small nodrag" data-ds-action="default"
-        aria-busy={busyAction === "default"} onclick={() => run("default")} disabled={!canDefault}>
-        {busyAction === "default" ? "Назначаю…" : "По умолчанию"}
-      </button>
-      {#if data.sourceNodeId}
-        <button type="button" class="btn-node small nodrag" data-ds-action="sync"
-          aria-busy={busyAction === "sync"} onclick={() => run("sync")} disabled={!canSync}>
-          {busyAction === "sync" ? "Сборка…" : "Sync"}
-        </button>
-      {/if}
-    {/if}
   </div>
   <NodeStatus {id} />
   <OutPorts type="designsystem" />

@@ -508,7 +508,7 @@
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
-  color: var(--dna-faint-2);
+  color: var(--dna-faint);
   white-space: nowrap;
 }
 .dna-left-cap {
@@ -1095,6 +1095,7 @@
 .n-badge.run {
   background: rgba(255, 105, 29, 0.14);
   color: var(--dna-action-text);
+  animation: dnaPulse 2s ease-in-out infinite;
 }
 .n-badge.ok {
   background: rgba(34, 197, 94, 0.14);
@@ -1438,6 +1439,59 @@
   text-align: center;
   font-size: 14px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* чипы выбора варианта Микса и сцены Motion-ноды */
+.mix-variant-tabs,
+.motion-node-scenes {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.mix-variant-tabs button,
+.motion-node-scenes button {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 7px;
+  border: 1px solid var(--dna-border-strong);
+  background: var(--dna-sunken);
+  color: var(--dna-text-2);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.mix-variant-tabs button:hover,
+.motion-node-scenes button:hover {
+  background: var(--dna-hover);
+}
+.mix-variant-tabs button.active,
+.motion-node-scenes button.active {
+  background: rgba(155, 92, 255, 0.18);
+  border-color: rgba(155, 92, 255, 0.45);
+  color: var(--dna-violet-text);
+}
+
+/* превью Motion-ноды: кадр + строка сцен/длительности */
+.motion-node-preview {
+  border-radius: 10px;
+  border: 1px solid var(--dna-border-soft);
+  background: var(--dna-sunken);
+  overflow: hidden;
+}
+.motion-node-preview > div {
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--dna-border-soft);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--dna-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1938,6 +1992,38 @@
   font-size: 11px;
   font-weight: 650;
   box-shadow: none;
+}
+.gen-ds-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 9px;
+  border-radius: 8px;
+  border-left: 2px solid var(--dna-violet-l);
+  color: var(--dna-muted);
+  background: var(--dna-sunken);
+  font-size: 11px;
+}
+.gen-ds-row .gen-ds-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gen-ds-row .gen-ds-off {
+  border: 0;
+  border-radius: 5px;
+  width: 18px;
+  height: 18px;
+  color: var(--dna-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.gen-ds-row .gen-ds-off:hover {
+  color: var(--dna-text);
+  background: var(--dna-hover);
 }
 .recorder-live-steps button {
   width: 22px;
