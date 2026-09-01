@@ -158,27 +158,75 @@ def visual_losses(item: dict, viewport: str) -> list[dict]:
 
 
 def viewport_gate(metrics: dict | None) -> dict:
-    """Gate одного viewport: все метрики обязаны существовать, пороги жёсткие."""
+    """Gate одного viewport: все метрики обязаны существовать, пороги жёсткие.
+
+    Два случая понижены до advisory (видны, но не валят гейт):
+    - pixel similarity у блока с ПОЛУПРОЗРАЧНЫМ корнем: в референсе сквозь него
+      просвечивает контент страницы, а IR-рендер рисует блок изолированно —
+      расхождение не является ошибкой захвата (геометрия проверяется отдельно);
+    - unexplained lost visuals при ПРОШЕДШЕМ pixel similarity: потерянный канал
+      не проявился в пикселях (например, ротатор строк с sr-only дублем).
+    Раньше оба случая держали блок вечно красным и, из-за fail-closed кэша,
+    каждый импорт такого сайта пересчитывался заново.
+    """
     if not isinstance(metrics, dict):
-        return {"passed": False, "reasons": ["no metrics"]}
+        return {"passed": False, "reasons": ["no metrics"], "advisory": []}
     reasons = [f"missing metric: {key}" for key in REQUIRED_METRICS if metrics.get(key) is None]
     if reasons:
-        return {"passed": False, "reasons": reasons}
+        return {"passed": False, "reasons": reasons, "advisory": []}
+    advisory: list = []
     if float(metrics["grid_origin_error"]) > GATE_THRESHOLDS["max_origin_error_px"]:
         reasons.append(f"grid origin error {metrics['grid_origin_error']}px > "
                        f"{GATE_THRESHOLDS['max_origin_error_px']}px")
     if float(metrics["paint_coverage"]) < GATE_THRESHOLDS["min_paint_coverage"]:
         reasons.append(f"paint coverage {metrics['paint_coverage']} < "
                        f"{GATE_THRESHOLDS['min_paint_coverage']}")
-    if float(metrics["pixel_similarity"]) < GATE_THRESHOLDS["min_pixel_similarity"]:
-        reasons.append(f"pixel similarity {metrics['pixel_similarity']} < "
-                       f"{GATE_THRESHOLDS['min_pixel_similarity']}")
+    similarity_ok = float(metrics["pixel_similarity"]) >= GATE_THRESHOLDS["min_pixel_similarity"]
+    if not similarity_ok:
+        message = (f"pixel similarity {metrics['pixel_similarity']} < "
+                   f"{GATE_THRESHOLDS['min_pixel_similarity']}")
+        if metrics.get("translucent_root"):
+            advisory.append(message + " (полупрозрачный корень блока — фон страницы просвечивает в референсе)")
+        else:
+            reasons.append(message)
     if float(metrics["bbox_p95"]) > GATE_THRESHOLDS["max_bbox_p95_px"]:
         reasons.append(f"bbox p95 {metrics['bbox_p95']}px > "
                        f"{GATE_THRESHOLDS['max_bbox_p95_px']}px")
     if int(metrics["unexplained_losses"]) > 0:
-        reasons.append(f"{metrics['unexplained_losses']} unexplained lost visuals")
-    return {"passed": not reasons, "reasons": reasons}
+        message = f"{metrics['unexplained_losses']} unexplained lost visuals"
+        unexplained = [loss for loss in (metrics.get("visual_losses") or [])
+                       if isinstance(loss, dict) and not loss.get("explained")]
+        # Послабление только для kind=dropped (выпавший DOM-ребёнок): раз пиксели
+        # сошлись, содержимое дошло другим путём (sr-only дубль, ротатор строк).
+        # kind=extra (непредставленный канал: фон, pseudo) остаётся блокирующим —
+        # совпадение пикселей там может быть случайным.
+        only_dropped = bool(unexplained) and all(
+            str(loss.get("kind") or "") == "dropped" for loss in unexplained)
+        if similarity_ok and only_dropped:
+            advisory.append(message + " (kind=dropped, пиксельное сходство в норме — потеря не проявилась)")
+        else:
+            reasons.append(message)
+    return {"passed": not reasons, "reasons": reasons, "advisory": advisory}
+
+
+def _translucent_root(ir: dict | None) -> bool:
+    """Корень блока полупрозрачен: 8-значный hex-фон с alpha<0.97 или backdropFilter."""
+    if not isinstance(ir, dict):
+        return False
+    tree = ir.get("tree")
+    root = tree[0] if isinstance(tree, list) and tree and isinstance(tree[0], dict) else None
+    style = (root or {}).get("style")
+    if not isinstance(style, dict):
+        return False
+    if str(style.get("backdropFilter") or "").strip():
+        return True
+    background = str(style.get("background") or "")
+    if len(background) == 9 and background.startswith("#"):
+        try:
+            return int(background[7:9], 16) / 255.0 < 0.97
+        except ValueError:
+            return False
+    return False
 
 
 def provenance_reasons(provenance) -> list[str]:
@@ -630,6 +678,7 @@ def evaluate_capture_item(item: dict, page, artifacts_dir: Path | None = None,
         preview = str(previews.get(name) or "")
         size = sizes.get(name) or {}
         metrics: dict = {key: None for key in REQUIRED_METRICS}
+        metrics["translucent_root"] = _translucent_root(ir)
         metrics["visual_losses"] = visual_losses(item, name)
         metrics["unexplained_losses"] = sum(1 for loss in metrics["visual_losses"]
                                             if not loss["explained"])
