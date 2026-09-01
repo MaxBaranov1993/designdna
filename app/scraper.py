@@ -1469,14 +1469,21 @@ _NORMALIZE_CAROUSEL_JS = """() => {
 
 _PAGE_TOKEN_SIGNALS_JS = """() => {
   const num = (v) => Number.parseFloat(v) || 0;
-  const hex = (v) => {
+  const hex = (v, base) => {
     const value=String(v||'');
     const rgb=value.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/);
-    if(rgb){
-      if(rgb[4]!==undefined && Number(rgb[4])<=.05) return null;
-      return '#'+rgb.slice(1,4).map(x=>(+x).toString(16).padStart(2,'0')).join('');
+    if(!rgb) return null;
+    const a=rgb[4]===undefined?1:Number(rgb[4]);
+    if(a<=.05) return null;
+    let ch=rgb.slice(1,4).map(Number);
+    // Полупрозрачный цвет: сбрасывать альфу нельзя — border rgba(255,255,255,.07)
+    // на тёмной теме превращался в токен #ffffff, и генерация рисовала яркие
+    // белые рамки. Смешиваем с фоном страницы: токен = ВИДИМЫЙ цвет.
+    if(a<1 && base && /^#[0-9a-f]{6}$/i.test(base)){
+      const bs=[1,3,5].map(i=>parseInt(base.slice(i,i+2),16));
+      ch=ch.map((x,i)=>Math.round(x*a+bs[i]*(1-a)));
     }
-    return null;
+    return '#'+ch.map(x=>x.toString(16).padStart(2,'0')).join('');
   };
   const visible = (el) => {
     const r=el.getBoundingClientRect(), cs=getComputedStyle(el);
@@ -1503,8 +1510,8 @@ _PAGE_TOKEN_SIGNALS_JS = """() => {
     const isButton=el.matches('button,[role="button"]') || (el.tagName==='A' && (bg || num(cs.borderTopWidth)>0));
     if(isButton && bg){ sig.buttonRadius.push(radiusOf(cs,r)); if(bg!==sig.bodyBg) tally(sig.buttonBg,bg); }
     if(el.tagName==='A') tally(sig.linkColor,hex(cs.color));
-    if(num(cs.borderTopWidth)>0) tally(sig.borderColor,hex(cs.borderTopColor));
-    if(num(cs.fontSize)>0 && num(cs.fontSize)<13 && String(el.innerText||'').trim()) tally(sig.mutedColor,hex(cs.color));
+    if(num(cs.borderTopWidth)>0) tally(sig.borderColor,hex(cs.borderTopColor,sig.bodyBg));
+    if(num(cs.fontSize)>0 && num(cs.fontSize)<13 && String(el.innerText||'').trim()) tally(sig.mutedColor,hex(cs.color,sig.bodyBg));
     if(el.matches('input,select,textarea')) sig.inputRadius.push(num(cs.borderTopLeftRadius));
     if(el.matches('[class*="card"],article,[class*="tile"]')){
       sig.cardRadius.push(radiusOf(cs,r));

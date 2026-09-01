@@ -144,7 +144,7 @@
       />
     {/if}
     <div class="nrow">
-      <span class="nrow-cap">ВЬЮПОРТЫ — ВСЕ СРАЗУ</span>
+      <span class="nrow-cap">ПРЕВЬЮ ВЬЮПОРТА · СНИМАЮТСЯ ВСЕ ТРИ</span>
       <div class="source-viewports nodrag" aria-label="Source viewport">
         {#each VIEWPORTS as viewport (viewport)}
           <button

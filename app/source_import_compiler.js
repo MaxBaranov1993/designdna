@@ -737,8 +737,15 @@
                         if(!pcs) return [];
                         const content=String(pcs.content||'none');
                         const textMatch=content.match(/^(['"])([\s\S]*)\1$/);
-                        const hasTextContent=!!(textMatch && textMatch[2].trim());
-                        const hasUnserializableContent=!!content && content!=='none' && content!=='normal' && !textMatch;
+                        // content:attr(data-text) — рабочая лошадка «текст в разметке, краска в
+                        // CSS»: Chrome отдаёт его нерезолвленным, и целые заголовки уезжали в
+                        // потери. Значение берём с самого элемента.
+                        const attrMatch=content.match(/^attr\(\s*([-\w]+)\s*\)$/);
+                        const attrText=attrMatch ? String(el.getAttribute(attrMatch[1])||'').trim() : '';
+                        const pseudoText=textMatch ? textMatch[2] : attrText;
+                        const hasTextContent=!!(pseudoText && pseudoText.trim());
+                        const hasUnserializableContent=!!content && content!=='none' && content!=='normal'
+                          && !textMatch && !hasTextContent;
                         const hasContent=hasTextContent || hasUnserializableContent;
                         const bgL=parseBackground(pcs.backgroundImage);
                         const bgColor=hex(pcs.backgroundColor);
@@ -782,10 +789,10 @@
                           return out;
                         }
                         if(hasTextContent){
-                          return [{type:'text',text:textMatch[2].slice(0,1000),sourceKey:skey,
+                          return [{type:'text',text:pseudoText.slice(0,1000),sourceKey:skey,
                             sourceMeta:{kind},style:cleanTextStyle(styleOf(pcs,warnings)),frame}];
                         }
-                        if(hasContent && !textMatch){
+                        if(hasContent && !hasTextContent){
                           // counters/attr()/url() в content сериализовать не можем —
                           // журналируем как честно потерянный визуальный канал.
                           recordExtra(skey,'pseudo-content',r,true);
@@ -876,13 +883,74 @@
                       // text-слои с собственной типографикой — поглощённый текст
                       // родителя надо ограничить прямыми текст-нодами (иначе дубль)
                       let splitInlineKids=false, directOnlyText='';
+                      // Прямые текст-ноды текстового узла: пока просто копим ссылки.
+                      // Понадобятся, только если у этого же узла найдётся inline-акцент
+                      // со своей типографикой (см. splitTextLayers ниже).
+                      let splitTextLayers=false; const inlineTextNodes=[];
+                      // Дети, которые занимают место в оригинальном потоке, но в IR
+                      // не попали (скрыты по opacity, схлопнуты как пустые): flow
+                      // без них съезжает — см. пиннинг после сборки детей.
+                      let droppedFlowKids=0;
+                      /* Строки одной текст-ноды. Объединённый bbox многострочного
+                       * текста начинается у левого края (вторая строка), поэтому
+                       * рендер сдвигал первую строку под соседний inline-акцент
+                       * («Output:» печатался поверх «who to email…»). Режем ноду по
+                       * строкам через Range.getClientRects и отдаём слой на строку. */
+                      const textLineLayers=(tn,idx)=>{
+                        const raw=tn.textContent||'';
+                        const range=document.createRange();
+                        const rectsOf=(from,to)=>{
+                          range.setStart(tn,from); range.setEnd(tn,to);
+                          return [...range.getClientRects()].filter(x=>x.width>0.5&&x.height>0.5);
+                        };
+                        const alignMap={start:'left',end:'right',left:'left',center:'center',right:'right',justify:'justify'};
+                        const layers=[]; let start=0, guard=0;
+                        while(start<raw.length && guard++<64){
+                          if(!rectsOf(start,raw.length).length) break;
+                          // самый длинный префикс, укладывающийся в одну строку
+                          let lo=start+1, hi=raw.length, best=start+1;
+                          while(lo<=hi){
+                            const mid=(lo+hi)>>1;
+                            if(rectsOf(start,mid).length<=1){ best=mid; lo=mid+1; } else hi=mid-1;
+                          }
+                          const rects=rectsOf(start,best);
+                          const piece=raw.slice(start,best).replace(/\s+/g,' ').trim();
+                          if(piece && rects.length){
+                            const lr=rects[0];
+                            const lstyle=cleanTextStyle(styleOf(cs,warnings));
+                            const align=alignMap[lstyle.textAlign]||null;
+                            delete lstyle.textAlign;
+                            layers.push({type:'text',text:piece.slice(0,1000),
+                              sourceKey:key+'::text'+idx+'l'+start,align,style:lstyle,
+                              frame:{width:round2(lr.width),height:round2(lr.height),
+                                x:round2(lr.left-r.left),y:round2(lr.top-r.top),absolute:true},
+                              __domIdx:idx});
+                          }
+                          start=best;
+                        }
+                        return layers;
+                      };
                       [...el.childNodes].forEach((child,idx)=>{
                         if(child.nodeType===Node.TEXT_NODE){
                           const text=(child.textContent||'').replace(/\s+/g,' ').trim();
                           if(text) directOnlyText=(directOnlyText+' '+text).trim();
+                          if(text && !isContainer) inlineTextNodes.push({node:child,idx});
                           if(!text || !isContainer) return;
                           const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect();
                           if(tr.width<1||tr.height<1) return;
+                          const lines=[...range.getClientRects()].filter(x=>x.width>0.5&&x.height>0.5);
+                          if(lines.length>1){
+                            const layers=textLineLayers(child,idx);
+                            if(layers.length>1){
+                              for(const layer of layers){
+                                rawChildren.push(layer);
+                                emitted++;
+                                pushRootRect({left:r.left+layer.frame.x,top:r.top+layer.frame.y,
+                                  width:layer.frame.width,height:layer.frame.height},layer.sourceKey);
+                              }
+                              return;
+                            }
+                          }
                           // субпиксельная точность: округление в целый px и надбавка
                           // +2px сдвигали глифы на доли px и портили сходство
                           const textFrame={width:round2(tr.width),height:round2(tr.height),
@@ -898,7 +966,11 @@
                           emitted++; pushRootRect({left:r.left+textFrame.x,top:r.top+textFrame.y,width:textFrame.width,height:textFrame.height},tnode.sourceKey);
                         } else if(child.nodeType===Node.ELEMENT_NODE){
                           const ccr=child.getBoundingClientRect(), ccs=getComputedStyle(child);
-                          if(!visible(child,ccr,ccs)) return;
+                          if(!visible(child,ccr,ccs)){
+                            if(ccr.width>=1 && ccr.height>=1 && ccs.display!=='none'
+                               && ccs.position!=='absolute' && ccs.position!=='fixed') droppedFlowKids++;
+                            return;
+                          }
                           if(!isContainer){
                             const ctag=String(child.tagName||'').toLowerCase();
                             const ctext=(child.textContent||'').replace(/\s+/g,' ').trim();
@@ -918,7 +990,7 @@
                               const calign={start:'left',end:'right',left:'left',center:'center',right:'right',justify:'justify'}[cstyle.textAlign]||null;
                               delete cstyle.textAlign;
                               rawChildren.push({type:'text',text:ctext.slice(0,1000),
-                                sourceKey:pathOf(child,rootEl),align:calign,style:cstyle,frame:cframe});
+                                sourceKey:pathOf(child,rootEl),align:calign,style:cstyle,frame:cframe,__domIdx:idx});
                               emitted++;
                               pushRootRect({left:r.left+cframe.x,top:r.top+cframe.y,width:cframe.width,height:cframe.height},pathOf(child,rootEl));
                               splitInlineKids=true;
@@ -928,6 +1000,7 @@
                             return;
                           }
                           const compiled=compile(child,r,childParentAuto,rootEl);
+                          if(!compiled && ccs.position!=='absolute' && ccs.position!=='fixed') droppedFlowKids++;
                           if(compiled){
                             // CSS order у flex-детей: визуальный порядок может
                             // отличаться от DOM; сортим позже по __flexOrder
@@ -947,6 +1020,25 @@
                           }
                         }
                       });
+                      // Текст с inline-акцентом («**Output:** verified send list»):
+                      // акцент уже вынесен в absolute-слой по своему rect, а текст
+                      // родителя рисовался с начала бокса и наползал на него. Режем
+                      // прямые текст-ноды на СТРОКИ (Range.getClientRects) и кладём
+                      // каждую строку своим absolute-слоем: первая строка встаёт
+                      // после акцента, остальные — от левого края, как в браузере.
+                      if(splitInlineKids && inlineTextNodes.length){
+                        for(const item of inlineTextNodes){
+                          for(const layer of textLineLayers(item.node,item.idx)){
+                            rawChildren.push(layer);
+                            emitted++;
+                            pushRootRect({left:r.left+layer.frame.x,top:r.top+layer.frame.y,
+                              width:layer.frame.width,height:layer.frame.height},layer.sourceKey);
+                            splitTextLayers=true;
+                          }
+                        }
+                        if(splitTextLayers) rawChildren.sort((a,b)=>((a&&a.__domIdx)||0)-((b&&b.__domIdx)||0));
+                      }
+                      for(const c of rawChildren){ if(c) delete c.__domIdx; }
                       if(type==='button' && childParentAuto && directText && rawChildren.length){
                         const collectText=(item)=>{
                           if(!item || typeof item!=='object') return '';
@@ -1000,8 +1092,9 @@
                       }
                       const componentMeta=componentMetaOf(el);
                       if(componentMeta) node.sourceMeta=componentMeta;
-                      if(type==='heading'){ node.level=Number(tag.slice(1)); node.text=(splitInlineKids?directOnlyText:directText).slice(0,1000); }
-                      if(type==='text') node.text=(splitInlineKids?directOnlyText:directText).slice(0,1000);
+                      const ownText=splitTextLayers?'':(splitInlineKids?directOnlyText:directText);
+                      if(type==='heading'){ node.level=Number(tag.slice(1)); node.text=ownText.slice(0,1000); }
+                      if(type==='text') node.text=ownText.slice(0,1000);
                       if(type==='button') node.text=String(el.innerText||'').replace(/\s+/g,' ').trim().slice(0,1000);
                       if(type==='input'){
                         node.placeholder=(el.value||el.placeholder||el.options?.[el.selectedIndex]?.text||'').slice(0,1000);
@@ -1074,6 +1167,21 @@
                       // split-inline дети у text/heading — иначе цветные ссылки
                       // в заголовках терялись (node.text без детей не рендерится)
                       if((isContainer || splitInlineKids) && allChildren.length) node.children=allChildren;
+                      // Смешанный режим ломает раскладку: ребёнок с transform
+                      // (или поднятый flatten-ом из обёртки) уже помечен absolute
+                      // и выпал из потока, а соседи, оставшиеся в flow, встают на
+                      // его место — метка колонки печаталась поверх первой ссылки,
+                      // правая группа space-between уезжала в левый край. Если
+                      // среди DOM-детей auto-контейнера есть хоть один пиннутый,
+                      // пиннем контейнер целиком: x/y у всех уже сняты от него,
+                      // поэтому позиции остаются pixel-perfect по конструкции.
+                      // Синтетические слои (фон, ::before/::after) в счёт не идут —
+                      // они absolute всегда и не должны сносить auto-flow.
+                      if(node.frame.layout==='auto' && (droppedFlowKids>0
+                          || rawChildren.some(child=>child&&child.frame&&child.frame.absolute))){
+                        node.frame.layout='free';
+                        allChildren.forEach(child=>{ if(child&&child.frame) child.frame.absolute=true; });
+                      }
                       // Renderer uses a dedicated source-control/source-input wrapper.
                       // Keeping their measured children in auto flow discards captured
                       // x/y (notably button text padding). Pin inner parts so the
@@ -1093,11 +1201,18 @@
                         const only=allChildren[0];
                         recordDropped(key,'flattened',false);
                         const of=only.frame||{};
-                        only.frame=Object.assign({}, of, {
-                          absolute:true,
+                        // Координаты пересчитываем на деда всегда, а вот absolute
+                        // навешивать можно только когда дед НЕ auto: в auto-flow
+                        // пиннинг вырывал поднятого ребёнка из потока, и соседи,
+                        // оставшиеся в flow, съезжали на его место (метка поверх
+                        // заголовка колонки; правая группа space-between уезжала
+                        // в левый край, потому что в потоке оставался один ребёнок).
+                        const flatFrame={
                           x:Math.round(r.left-parentRect.left+(Number(of.x)||0)),
                           y:Math.round(r.top-parentRect.top+(Number(of.y)||0))
-                        });
+                        };
+                        if(!parentAuto || of.absolute) flatFrame.absolute=true;
+                        only.frame=Object.assign({}, of, flatFrame);
                         // обёртка выброшена: она не попадает ни в emitted, ни в
                         // paint/leaf-метрики (считаются только вернувшиеся IR-узлы)
                         return only;
