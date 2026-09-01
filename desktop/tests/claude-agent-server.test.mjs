@@ -95,7 +95,11 @@ test("credential probe looks at the Claude Code login file, never at its content
   assert.equal(claudeCredentialPaths({}).length, 0);
 });
 
-test("status reports logged out with an actionable hint", () => {
+/* Валидные креды CLI: непустой accessToken (logout оставляет файл с пустыми). */
+const VALID_CREDS = JSON.stringify({ claudeAiOauth: { accessToken: "tok", refreshToken: "tok" } });
+const EMPTY_CREDS = JSON.stringify({ claudeAiOauth: { accessToken: "", refreshToken: "" } });
+
+test("status reports logged out with an app-connect hint", () => {
   const server = new ClaudeAgentServer({
     cwd: ".",
     environment: { DESIGNDNA_CLAUDE: "/opt/claude", USERPROFILE: "C:\\Users\\dev" },
@@ -106,7 +110,7 @@ test("status reports logged out with an actionable hint", () => {
   assert.equal(status.installed, true);
   assert.equal(status.loggedIn, false);
   assert.equal(status.ready, false);
-  assert.match(status.hint, /\/login/);
+  assert.match(status.hint, /Подключить Claude/);
 });
 
 test("credentials without a resolvable binary are not reported as connected", () => {
@@ -116,6 +120,7 @@ test("credentials without a resolvable binary are not reported as connected", ()
     cwd: ".",
     environment: { PATH: "", USERPROFILE: "C:\\Users\\dev" },
     fileExists: (file) => file.endsWith(".credentials.json"),
+    readFile: () => VALID_CREDS,
   });
   const status = server.account();
   assert.equal(status.loggedIn, true);
@@ -129,12 +134,38 @@ test("status reports connected once Claude Code holds credentials", () => {
     cwd: ".",
     environment: { DESIGNDNA_CLAUDE: "/opt/claude", USERPROFILE: "C:\\Users\\dev" },
     fileExists: () => true,
+    readFile: () => VALID_CREDS,
   });
   const status = server.account();
   assert.equal(status.loggedIn, true);
   assert.equal(status.ready, true);
   assert.equal(status.hint, null);
   assert.equal(status.model, "opus");
+});
+
+test("credentials file with wiped tokens is logged out (logout leaves the skeleton)", () => {
+  const server = new ClaudeAgentServer({
+    cwd: ".",
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", USERPROFILE: "C:\\Users\\dev" },
+    fileExists: () => true,
+    readFile: () => EMPTY_CREDS,
+  });
+  const status = server.account();
+  assert.equal(status.loggedIn, false);
+  assert.equal(status.ready, false);
+});
+
+test("an app-stored setup token counts as logged in", () => {
+  const server = new ClaudeAgentServer({
+    cwd: ".",
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", USERPROFILE: "C:\\Users\\dev" },
+    fileExists: (file) => !file.endsWith(".credentials.json"),
+    getStoredToken: () => "sk-ant-oat01-test",
+  });
+  const status = server.account();
+  assert.equal(status.loggedIn, true);
+  assert.equal(status.viaApp, true);
+  assert.equal(status.ready, true);
 });
 
 test("chat fails fast with an install hint when no binary resolves", async () => {
@@ -203,7 +234,7 @@ test("a login failure reported on stdout is surfaced, not swallowed as exit 1", 
     cwd: "/repo", spawnProcess,
     environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
   });
-  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude не подключён.*\/login/s);
+  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude не подключён.*Подключить Claude/s);
 });
 
 test("an authentication failure becomes a readable login instruction", async () => {
@@ -212,7 +243,7 @@ test("an authentication failure becomes a readable login instruction", async () 
     cwd: "/repo", spawnProcess,
     environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => false,
   });
-  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude не подключён.*\/login/s);
+  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude не подключён.*Подключить Claude/s);
 });
 
 test("cmd.exe OEM-encoded failures are decoded, not shown as mojibake", async () => {

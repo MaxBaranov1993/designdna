@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld("designDNA", Object.freeze({
   }),
   claude: Object.freeze({
     status: () => ipcRenderer.invoke("claude:status"),
+    loginStart: () => ipcRenderer.invoke("claude:login-start"),
+    loginWait: () => ipcRenderer.invoke("claude:login-wait"),
   }),
   codex: Object.freeze({
     account: () => ipcRenderer.invoke("codex:account"),

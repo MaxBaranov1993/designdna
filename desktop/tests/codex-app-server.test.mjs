@@ -99,6 +99,34 @@ test("quality repair uses the repair Codex profile", async () => {
   assert.doesNotMatch(turnInput, /Generate the requested Design IR/);
 });
 
+test("envelope part-arrays flatten into prompt text (not [object Object])", async () => {
+  const server = new CodexAppServer({ cwd: "C:\workspace" });
+  let sentPrompt = "";
+  server.start = async () => ({});
+  server.startThread = async () => ({ thread: { id: "thread-parts" } });
+  server.startTurn = async (params) => {
+    sentPrompt = String(params.input?.[0]?.text ?? params.prompt ?? JSON.stringify(params));
+    queueMicrotask(() => {
+      server.emit("notification", {
+        method: "item/completed",
+        params: { threadId: "thread-parts", item: { type: "agentMessage", text: "{}" } },
+      });
+      server.emit("notification", {
+        method: "turn/completed",
+        params: { threadId: "thread-parts", turn: { status: "completed" } },
+      });
+    });
+    return { turn: { id: "turn-parts" } };
+  };
+  await server.chat([
+    { role: "system", content: [{ type: "text", text: "contract line" }] },
+    { role: "user", content: [{ type: "text", text: "edit request" }] },
+  ], { profile: "editor" });
+  assert.ok(!sentPrompt.includes("[object Object]"), sentPrompt.slice(0, 200));
+  assert.ok(sentPrompt.includes("contract line"));
+  assert.ok(sentPrompt.includes("edit request"));
+});
+
 test("Codex chat surfaces provider failure with a readable error", async () => {
   const server = new CodexAppServer({ cwd: "C:\workspace" });
   server.start = async () => ({});

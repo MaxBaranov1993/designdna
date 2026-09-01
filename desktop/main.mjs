@@ -400,6 +400,10 @@ function createWorkers() {
     cwd: repositoryRoot,
     env: pythonWorkerEnvironment({ isPackaged: app.isPackaged, runtimeRoot, userDataPath: app.getPath("userData") }),
     timeoutMs: 120_000,
+    // Интерактивные вызовы короткие: таймаут = мёртвый канал. Авто-респаун
+    // вместо «перезапустите приложение» (симптом: все /api/generate и
+    // editor/assist виснут по 120с при живом и свободном воркере).
+    restartOnTimeout: true,
   });
   // Лимиты параллельной полосы = размер ThreadPoolExecutor воркера (3);
   // интерактивному оставляем слот под серийную project-полосу.
@@ -413,9 +417,13 @@ function createWorkers() {
     env: { DESIGNDNA_PROJECT_ROOT: repositoryRoot, ELECTRON_RUN_AS_NODE: "1" },
     timeoutMs: 180_000,
   });
-  // Claude — headless-запуск Claude Code CLI. Подписочный OAuth живёт внутри
-  // самого CLI, приложение секрета не видит и не хранит.
-  claude = new ClaudeAgentServer({ cwd: repositoryRoot });
+  // Claude — headless-запуск Claude Code CLI. Вход ведёт само приложение
+  // (`claude setup-token`); долгоживущий токен лежит в safeStorage и уходит
+  // только в env спауна CLI — renderer секрета не видит.
+  claude = new ClaudeAgentServer({
+    cwd: repositoryRoot,
+    getStoredToken: () => { try { return credentials?.get("claude"); } catch { return null; } },
+  });
   codex = new CodexAppServer({ cwd: repositoryRoot });
   codex.on("notification", (message) => broadcast("codex:event", message));
   codex.on("request", async (message) => {
@@ -702,9 +710,11 @@ function registerIpc() {
     providerChats.delete(id);
     return { cancelled: true, requestId: id };
   });
-  // Claude: только проба состояния. Интерактивный /login ведёт сам CLI —
-  // приложение не участвует в OAuth и не касается секрета.
   handleTrusted("claude:status", () => claude.account());
+  // Вход Claude из приложения: открываем окно терминала с `claude /login`
+  // (OAuth и сохранение кредов ведёт сам CLI), затем ждём валидные креды.
+  handleTrusted("claude:login-start", () => claude.loginStart());
+  handleTrusted("claude:login-wait", () => claude.waitForLogin());
   handleTrusted("codex:account", () => codex.account());
   handleTrusted("codex:login", async (_event, { type }) => {
     const result = await codex.login({ type, apiKey: type === "apiKey" ? credentials.get("openai") : undefined });

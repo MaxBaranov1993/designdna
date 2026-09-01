@@ -82,11 +82,17 @@ export class CodexAppServer extends EventEmitter {
       generator: "Generate the requested Design IR. The SYSTEM section below is the complete, authoritative design specification — follow it exactly, including the design craft rules and any locked Style DNA tokens: token colors (primary for CTAs and key accents, alternating background/surface sections) are mandatory, a plain white-and-grey wireframe is a failure.",
       quality_judge: "Evaluate the supplied Design IR exactly as requested.",
       quality_repair: "Repair the supplied Design IR exactly as requested.",
+      editor: "Apply the requested visual edit to the supplied Design IR scope. The SYSTEM section below defines the exact output contract - follow it precisely and return only the JSON object it specifies. Do not generate a full page, do not restructure anything outside the selected scope.",
     };
     if (!Object.hasOwn(profileInstructions, profile)) throw new Error(`Unsupported Codex chat profile: ${profile}`);
+    // Envelope нормализует строковый content в массив частей [{type:"text",text}]:
+    // String(частей) давал "[object Object]", и Codex получал пустой промпт.
+    const textOf = (content) => (Array.isArray(content)
+      ? content.map((part) => (part && part.type === "text" ? String(part.text || "") : "")).filter(Boolean).join("\n")
+      : String(content || ""));
     const prompt = [
       `${profileInstructions[profile]} Do not inspect files, run commands, or call tools. Return only the JSON object.`,
-      ...messages.map((message) => `${String(message.role || "user").toUpperCase()}:\n${String(message.content || "")}`),
+      ...messages.map((message) => `${String(message.role || "user").toUpperCase()}:\n${textOf(message.content)}`),
     ].join("\n\n");
     const started = await this.startThread({
       cwd: this.cwd,

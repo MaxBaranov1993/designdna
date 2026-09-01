@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -104,7 +104,7 @@ export function claudeProcessSpec({
   return { command: "claude", args, resolved: false };
 }
 
-/** Путь к файлу учётных данных Claude Code (наличие = пользователь залогинен). */
+/** Путь к файлу учётных данных Claude Code. */
 export function claudeCredentialPaths(environment = process.env) {
   const home = environment.USERPROFILE || environment.HOME || "";
   if (!home) return [];
@@ -114,31 +114,54 @@ export function claudeCredentialPaths(environment = process.env) {
   ];
 }
 
+/** Файл кредов может существовать с ПУСТЫМИ токенами (logout оставляет
+ *  каркас) — «залогинен» значит непустой accessToken, а не наличие файла. */
+export function claudeCredentialsValid(environment = process.env, readFile = readFileSync, fileExists = existsSync) {
+  for (const file of claudeCredentialPaths(environment)) {
+    if (!fileExists(file)) continue;
+    try {
+      const oauth = JSON.parse(String(readFile(file, "utf8")))?.claudeAiOauth;
+      if (oauth && String(oauth.accessToken || "").length > 0) return true;
+    } catch { /* битый файл = не залогинен */ }
+  }
+  return false;
+}
+
 const PROFILE_INSTRUCTIONS = {
   generator: "Generate the requested Design IR. The SYSTEM section below is the complete, authoritative design specification — follow it exactly, including the design craft rules and any locked Style DNA tokens: token colors (primary for CTAs and key accents, alternating background/surface sections) are mandatory, a plain white-and-grey wireframe is a failure.",
   quality_judge: "Evaluate the supplied Design IR exactly as requested.",
   quality_repair: "Repair the supplied Design IR exactly as requested.",
+  editor: "Apply the requested visual edit to the supplied Design IR scope. The SYSTEM section below defines the exact output contract - follow it precisely and return only the JSON object it specifies. Do not generate a full page, do not restructure anything outside the selected scope.",
 };
 
 export class ClaudeAgentServer {
-  constructor({ cwd, spawnProcess = spawn, environment = process.env, fileExists = existsSync } = {}) {
+  constructor({ cwd, spawnProcess = spawn, environment = process.env, fileExists = existsSync, readFile = readFileSync, getStoredToken = null } = {}) {
     this.cwd = cwd;
     this.spawnProcess = spawnProcess;
     this.environment = environment;
     this.fileExists = fileExists;
+    this.readFile = readFile;
+    // Долгоживущий OAuth-токен из safeStorage приложения (claude setup-token):
+    // секрет живёт в main-процессе и уходит только в env спауна CLI.
+    this.getStoredToken = getStoredToken;
   }
 
-  /** Статус подключения: бинарь найден + креды Claude Code на месте.
-   *  Интерактивный вход из приложения не ведём — это работа самого CLI. */
+  #storedToken() {
+    try { return String(this.getStoredToken?.() || "").trim() || null; } catch { return null; }
+  }
+
+  /** Статус подключения: бинарь найден + (токен приложения ИЛИ валидные креды CLI). */
   account() {
     const spec = claudeProcessSpec({ environment: this.environment, fileExists: this.fileExists });
     const installed = Boolean(spec.resolved);
-    const loggedIn = claudeCredentialPaths(this.environment).some((file) => this.fileExists(file));
+    const viaApp = Boolean(this.#storedToken());
+    const loggedIn = viaApp || claudeCredentialsValid(this.environment, this.readFile, this.fileExists);
     const ready = installed && loggedIn;
     return {
       provider: "claude",
       installed,
       loggedIn,
+      viaApp,
       ready,
       model: CLAUDE_MODEL,
       binary: installed ? spec.command : null,
@@ -146,8 +169,47 @@ export class ClaudeAgentServer {
       // именно то, чего не хватает, а не общее «не подключён».
       hint: ready ? null
         : !installed ? "Claude CLI не найден. Установите Claude Code — бинарь ожидается в ~/.local/bin — либо задайте путь в DESIGNDNA_CLAUDE."
-          : "Запустите `claude` в терминале и выполните /login, затем нажмите «Проверить».",
+          : "Нажмите «Подключить Claude» — приложение проведёт вход само.",
     };
+  }
+
+  /** Вход из приложения: CLI-логин — интерактивный TUI, поэтому открываем
+   *  НАСТОЯЩЕЕ окно терминала с `claude /login` (браузерный OAuth ведёт сам
+   *  CLI и сам сохраняет креды). Приложению остаётся дождаться валидных
+   *  кредов через waitForLogin(). */
+  loginStart() {
+    const spec = claudeProcessSpec({ environment: this.environment, fileExists: this.fileExists });
+    if (!spec.resolved) throw new Error("Claude CLI не найден — установите Claude Code, затем подключайте.");
+    const platform = this.environment.USERPROFILE && !this.environment.HOME ? "win32" : process.platform;
+    if (platform === "win32") {
+      const comspec = this.environment.ComSpec || this.environment.COMSPEC || "cmd.exe";
+      // start: первый аргумент в кавычках — заголовок окна; /k держит окно
+      // открытым, чтобы пользователь видел результат входа.
+      // windowsVerbatimArguments обязателен: без него Node экранирует кавычки
+      // (\"Claude Login\") и start принимал заголовок за имя файла — кнопка
+      // «Подключить Claude» падала диалогом «Не удаётся найти "Claude Login"».
+      const child = this.spawnProcess(comspec,
+        ["/d", "/s", "/c", `start "Claude Login" ${comspec} /k "${spec.command}" /login`],
+        { cwd: this.cwd, env: this.environment, stdio: "ignore", detached: true,
+          windowsHide: false, windowsVerbatimArguments: true });
+      child.unref?.();
+    } else {
+      const child = this.spawnProcess(spec.command, ["/login"],
+        { cwd: this.cwd, env: this.environment, stdio: "ignore", detached: true });
+      child.unref?.();
+    }
+    return { opened: true };
+  }
+
+  /** Дождаться завершения входа: креды становятся валидными, когда CLI
+   *  сохранит OAuth после браузера. Poll — файловый, секретов не читаем. */
+  async waitForLogin({ timeoutMs = 300_000, intervalMs = 3_000 } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (claudeCredentialsValid(this.environment, this.readFile, this.fileExists)) return this.account();
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    throw new Error("Вход не завершён за 5 минут. Завершите /login в окне терминала и нажмите «Проверить».");
   }
 
   /** Одноразовый headless-запрос. messages — тот же формат, что у Codex.
@@ -183,6 +245,8 @@ export class ClaudeAgentServer {
     });
     const env = { ...this.environment };
     if (budget > 0) env.MAX_THINKING_TOKENS = String(budget);
+    const token = this.#storedToken();
+    if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
 
     try {
       const raw = await this.#run(spec, { prompt, timeoutMs, env, signal });
@@ -277,7 +341,7 @@ export class ClaudeAgentServer {
         }
         finish(new Error(
           /login|authenticat|credential|unauthor/i.test(detail)
-            ? "Claude не подключён. Запустите `claude` в терминале и выполните /login."
+            ? "Claude не подключён. Откройте Agents → Connections и нажмите «Подключить Claude»."
             : `Claude CLI завершился с кодом ${code}${detail ? `: ${detail}` : ""}`,
         ));
       });

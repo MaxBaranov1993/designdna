@@ -12,13 +12,17 @@ import { spawn } from "node:child_process";
  * repo-canvas worker и health/configure-вызовы.
  */
 export class JsonlProcess {
-  constructor({ command, args = [], cwd, env = {}, name = command, timeoutMs = 30_000 }) {
+  constructor({ command, args = [], cwd, env = {}, name = command, timeoutMs = 30_000, restartOnTimeout = false }) {
     this.command = command;
     this.args = args;
     this.cwd = cwd;
     this.env = env;
     this.name = name;
     this.timeoutMs = timeoutMs;
+    // Таймаут на коротком интерактивном канале означает мёртвый транспорт
+    // (десинк/битый pipe), а не медленный запрос: канал не оживает сам, и до
+    // этого флага лечился только перезапуском всего приложения.
+    this.restartOnTimeout = restartOnTimeout;
     this.child = null;
     this.pending = new Map();
     this.sequence = 0;
@@ -73,6 +77,7 @@ export class JsonlProcess {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`${this.name} request timed out: ${method}`));
+        if (this.restartOnTimeout) this.abort(`${this.name}: канал перезапущен после таймаута ${method}`);
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.child.stdin.write(frame, (error) => {

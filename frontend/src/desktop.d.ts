@@ -53,6 +53,8 @@ type ChatRequestEnvelope = {
   topP?: number | null;
   maxOutputTokens?: number | null;
   reasoning?: { effort: SolEffort } | null;
+  /** Профиль инструкции CLI-транспортов (codex/claude): generator | quality_judge | quality_repair | editor. */
+  profile?: string;
   responseFormat?: { type: "json_object" | "json_schema" | "text"; jsonSchema?: { name: string; schema: Record<string, any> } } | null;
   stop?: string[] | null;
   seed?: number | null;
@@ -112,7 +114,9 @@ declare global {
         cancel(requestId: string): Promise<{ cancelled: boolean; requestId?: string }>;
       };
       claude: {
-        status(): Promise<{ provider: "claude"; installed: boolean; loggedIn: boolean; model: string; hint: string | null }>;
+        status(): Promise<{ provider: "claude"; installed: boolean; loggedIn: boolean; viaApp?: boolean; model: string; hint: string | null }>;
+        loginStart(): Promise<{ opened: boolean }>;
+        loginWait(): Promise<{ provider: "claude"; installed: boolean; loggedIn: boolean; viaApp?: boolean; model: string; hint: string | null }>;
       };
       codex: {
         account(): Promise<Record<string, any>>; login(type?: "chatgpt" | "apiKey"): Promise<Record<string, any>>;

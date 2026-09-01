@@ -106,8 +106,9 @@ async def asgi_request(params: dict[str, Any]) -> dict[str, Any]:
         "client": ("desktop", 0),
         "server": ("127.0.0.1", 8420),
     }
-    with contextlib.redirect_stdout(sys.stderr):
-        await ASGI_APP(scope, receive, send)
+    # stdout уже глобально перенаправлен в stderr (см. main) — локальный
+    # redirect_stdout не нужен и был источником гонки между потоками пула.
+    await ASGI_APP(scope, receive, send)
     content = b"".join(response_parts)
     normalized_headers = {key.decode("latin-1"): value.decode("latin-1") for key, value in response_headers}
     content_type = normalized_headers.get("content-type", "")
@@ -174,6 +175,13 @@ def _read_exact(stream, count: int) -> bytes:
     return b"".join(chunks)
 
 
+# Канал протокола. Устанавливается в main(): dup исходного stdout. После этого
+# fd1 и sys.stdout переводятся в stderr, поэтому НИКАКОЙ print из app-кода
+# или сабпроцесса не может попасть в протокольный поток и десинхронизировать
+# ридер бинарных фреймов.
+_PROTOCOL_OUT: Any = None
+
+
 def write_frame(frame: dict[str, Any]) -> None:
     """Протокол v2: header-строка JSON; если в result есть bytes (bodyBytes),
     они уходят сырыми байтами сразу после header (bodyLen). Чистые JSON-фреймы
@@ -184,7 +192,7 @@ def write_frame(frame: dict[str, Any]) -> None:
         raw = bytes(payload.pop("bodyBytes"))
         payload["bodyLen"] = len(raw)
     header = json.dumps(frame, ensure_ascii=True, separators=(",", ":")) + "\n"
-    out = sys.stdout.buffer
+    out = _PROTOCOL_OUT if _PROTOCOL_OUT is not None else sys.stdout.buffer
     out.write(header.encode("ascii"))
     if raw is not None:
         out.write(raw)
@@ -192,7 +200,16 @@ def write_frame(frame: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    global _PROTOCOL_OUT
     stdin = sys.stdin.buffer
+    # Протокол забирает СВОЮ копию stdout-дескриптора; fd1 навсегда становится
+    # stderr. Прежний per-request redirect_stdout был потоко-небезопасен: два
+    # перекрывшихся запроса восстанавливали чужое значение, sys.stdout навсегда
+    # указывал в stderr, и ВСЕ ответы протокола молча терялись — интерактивный
+    # канал «умирал» до перезапуска приложения.
+    _PROTOCOL_OUT = os.fdopen(os.dup(sys.stdout.fileno()), "wb")
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    sys.stdout = sys.stderr
     # http.request обрабатывается ограниченным пулом потоков: Source Import
     # занимает минуты (Chromium × viewports, LLM), а серийная обработка
     # замораживала ВЕСЬ UI — даже /api/design-system/list ждал окончания

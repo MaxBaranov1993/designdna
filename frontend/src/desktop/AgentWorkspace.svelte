@@ -193,6 +193,25 @@
     }
   }
 
+  /* Вход Claude из приложения: открывается окно терминала с `claude /login`,
+   * приложение ждёт, пока CLI сохранит креды, и обновляет статус само. */
+  let claudeLoginActive = $state(false);
+  let claudeLoginError = $state("");
+
+  async function startClaudeLogin() {
+    if (!desktop?.claude?.loginStart) return;
+    claudeLoginError = "";
+    try {
+      await desktop.claude.loginStart();
+      claudeLoginActive = true;
+      claudeStatus = await desktop.claude.loginWait();
+      claudeLoginActive = false;
+    } catch (reason) {
+      claudeLoginActive = false;
+      claudeLoginError = reason instanceof Error ? reason.message : String(reason);
+    }
+  }
+
   async function saveKey(provider: "openai" | "openrouter", value: string) {
     if (!desktop || !value.trim()) return;
     await desktop.providers.setCredential(provider, value.trim());
@@ -234,6 +253,12 @@
           {#if claudeStatus && !claudeStatus.loggedIn}
             <p class="agent-runtime-hint">{claudeStatus.hint || "Установите Claude Code и выполните вход."}</p>
           {/if}
+          {#if claudeLoginActive}
+            <p class="agent-runtime-hint">Открыто окно терминала — завершите вход там (браузер откроется сам). Статус обновится автоматически.</p>
+          {:else if claudeStatus?.installed && !claudeStatus.loggedIn}
+            <Button variant="outline" onclick={() => void startClaudeLogin()}>Подключить Claude</Button>
+          {/if}
+          {#if claudeLoginError}<p class="agent-runtime-hint">{claudeLoginError}</p>{/if}
           <Button variant="outline" onclick={() => void refreshClaude()}>Проверить Claude</Button>
         </div>
       </div>

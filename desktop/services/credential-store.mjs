@@ -3,8 +3,9 @@ import path from "node:path";
 
 // OpenRouter is a separate paid video boundary. It is intentionally not a
 // selectable text provider, but its key receives the same OS-encrypted storage
-// and main-process-only treatment as OpenAI.
-const PROVIDERS = new Set(["openai", "openrouter"]);
+// and main-process-only treatment as OpenAI. "claude" хранит долгоживущий
+// OAuth-токен `claude setup-token` — приложение подключает CLI само.
+const PROVIDERS = new Set(["openai", "openrouter", "claude"]);
 
 export class CredentialStore {
   /* Расшифрованные креды кэшируются в памяти main-процесса: get() вызывается

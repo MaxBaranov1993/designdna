@@ -19,7 +19,7 @@ test("OpenAI and OpenRouter credentials are stored and status exposes only prese
     assert.deepEqual(store.set("openrouter", "secret-openrouter-key"), { provider: "openrouter", configured: true });
     assert.equal(store.get("openai"), "secret-openai-key");
     assert.equal(store.get("openrouter"), "secret-openrouter-key");
-    assert.deepEqual(store.status(), { openai: true, openrouter: true });
+    assert.deepEqual(store.status(), { openai: true, openrouter: true, claude: false });
     assert.doesNotMatch(JSON.stringify(store.status()), /secret-openai-key/);
     assert.doesNotMatch(JSON.stringify(store.status()), /secret-openrouter-key/);
   } finally {
@@ -48,7 +48,7 @@ test("loading credentials deletes retired secrets and preserves OpenAI plus Open
       kimi: "deleted-kimi", glm: "deleted-glm", grok: "deleted-grok",
     })));
     const store = new CredentialStore({ userDataPath: directory, safeStorage });
-    assert.deepEqual(store.status(), { openai: true, openrouter: true });
+    assert.deepEqual(store.status(), { openai: true, openrouter: true, claude: false });
     assert.equal(store.get("openai"), "kept-openai-key");
     assert.equal(store.get("openrouter"), "kept-openrouter-key");
     const persisted = JSON.parse(safeStorage.decryptString(fs.readFileSync(file)));
