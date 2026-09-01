@@ -879,6 +879,19 @@ app.on("window-all-closed", () => {
 const allowDevelopmentMultiInstance = !app.isPackaged && process.env.DESIGNDNA_ALLOW_MULTI_INSTANCE === "1";
 const gotSingleInstanceLock = allowDevelopmentMultiInstance || app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
+  // Быстрый перезапуск после закрытия: прежний экземпляр ещё освобождает
+  // lock, и молчаливый quit выглядел как «приложение не открылось».
+  // Перезапускаемся с ограниченным числом попыток — к следующему старту
+  // lock обычно уже свободен; настоящий второй экземпляр (живое окно)
+  // получает second-instance-фокус в старом процессе и здесь не зациклится.
+  const restartFlag = "--ddna-restart-attempt=";
+  const attempt = Number((process.argv.find((arg) => arg.startsWith(restartFlag)) || "").slice(restartFlag.length) || 0);
+  if (attempt < 5) {
+    app.relaunch({
+      args: process.argv.slice(1).filter((arg) => !arg.startsWith(restartFlag))
+        .concat([restartFlag + String(attempt + 1)]),
+    });
+  }
   app.quit();
 } else {
   app.on("second-instance", () => {

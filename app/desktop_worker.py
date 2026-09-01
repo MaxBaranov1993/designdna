@@ -199,6 +199,34 @@ def write_frame(frame: dict[str, Any]) -> None:
     out.flush()
 
 
+def _start_host_watchdog() -> None:
+    """Выход вместе с Electron-хостом (DESIGNDNA_HOST_PID).
+
+    Прямой родитель воркера — venv-шим python.exe: он переживает жёсткое
+    убийство Electron и держит унаследованный write-конец stdin-пайпа, поэтому
+    EOF не приходит и пара «шим+воркер» оставалась зомби, удерживая ресурсы и
+    локи SQLite. Ждём завершения именно хост-процесса ядровым ожиданием.
+    """
+    try:
+        host_pid = int(os.environ.get("DESIGNDNA_HOST_PID") or 0)
+    except ValueError:
+        host_pid = 0
+    if host_pid <= 0 or sys.platform != "win32":
+        return
+    import ctypes
+    import threading
+    SYNCHRONIZE = 0x00100000
+    handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, host_pid)
+    if not handle:
+        return
+
+    def wait_and_exit() -> None:
+        ctypes.windll.kernel32.WaitForSingleObject(handle, 0xFFFFFFFF)
+        os._exit(0)
+
+    threading.Thread(target=wait_and_exit, name="host-watchdog", daemon=True).start()
+
+
 def main() -> int:
     global _PROTOCOL_OUT
     stdin = sys.stdin.buffer
@@ -210,6 +238,7 @@ def main() -> int:
     _PROTOCOL_OUT = os.fdopen(os.dup(sys.stdout.fileno()), "wb")
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     sys.stdout = sys.stderr
+    _start_host_watchdog()
     # http.request обрабатывается ограниченным пулом потоков: Source Import
     # занимает минуты (Chromium × viewports, LLM), а серийная обработка
     # замораживала ВЕСЬ UI — даже /api/design-system/list ждал окончания
