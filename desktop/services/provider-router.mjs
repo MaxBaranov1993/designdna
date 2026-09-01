@@ -1,3 +1,4 @@
+import { claudeModel } from "./claude-agent-server.mjs";
 import { chatWithOpenAI } from "./provider-chat.mjs";
 import { createEnvelope } from "./provider-envelope.mjs";
 
@@ -60,12 +61,14 @@ export async function chatWithProvider({
 
   if (resolved === "claude") {
     if (!claude) throw new Error("Claude не подключён. Откройте Agents → Connections.");
-    const content = await claude.chat(source.messages || messages || [], { profile, effort, signal });
+    const claudeResolvedModel = claudeModel(source.model);
+    const content = await claude.chat(source.messages || messages || [],
+      { profile, effort, signal, model: claudeResolvedModel });
     return {
       content,
       toolCalls: [],
       provider: "claude",
-      transport: { provider: "claude", model: "opus", requestId: source.id || null, dropped: [], fallback },
+      transport: { provider: "claude", model: claudeResolvedModel, requestId: source.id || null, dropped: [], fallback },
     };
   }
 

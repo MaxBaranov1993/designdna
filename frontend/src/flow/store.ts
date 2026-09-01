@@ -103,8 +103,9 @@ async function qualityPassCycle(
   provider: NodeProvider,
   effort: "medium" | "high" | "max",
   onStage: (stage: string) => void,
+  { minScore = 85, repair = true }: { minScore?: number; repair?: boolean } = {},
 ): Promise<QualityPassResp> {
-  const request = { ir, brief, min_score: 85, repair: true, rejudge: true };
+  const request = { ir, brief, min_score: minScore, repair, rejudge: repair };
   const desktop = window.designDNA;
   if (!desktop) return api<QualityPassResp>("/api/quality-pass", request);
   const outputs: Partial<Record<"judge" | "repair" | "rejudge", string>> = {};
@@ -122,6 +123,9 @@ async function qualityPassCycle(
       // Усилие судьи наследует ноду: на CLI-провайдерах high — это минуты
       // thinking на каждый вариант, выбор скорости/строгости за пользователем.
       ...chatRoute(provider, effort),
+      // Судья/починка — механическая оценка по жёсткому контракту: на Claude
+      // быстрый sonnet вместо opus сокращает цикл в разы без потери смысла.
+      ...(provider === "claude" ? { model: "sonnet" } : {}),
       profile: pending.profile,
       messages: pending.messages,
     });
@@ -1620,38 +1624,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     get().setStatus(id, "Quality Pass: judge + проверка правил… 30–120 сек");
     get().setBusy(id, true);
     try {
-      const request = {
-        ir,
-        brief: data.brief,
-        min_score: data.minScore,
-        repair: data.repair,
-        rejudge: data.repair,
-      };
-      const desktop = window.designDNA;
-      let res: QualityPassResp;
-      if (!desktop) {
-        res = await api<QualityPassResp>("/api/quality-pass", request);
-      } else {
-        const outputs: Partial<Record<"judge" | "repair" | "rejudge", string>> = {};
-        const seen = new Set<string>();
-        for (;;) {
-          res = await api<QualityPassResp>("/api/quality-pass/codex-step", { ...request, outputs });
-          const pending = res.pending;
-          if (!pending) break;
-          if (seen.has(pending.stage) || seen.size >= 3) {
-            throw new Error("Quality Pass: некорректная последовательность этапов Codex");
-          }
-          seen.add(pending.stage);
-          get().setStatus(id, `Quality Pass: ${pending.stage} через подключённый аккаунт…`);
-          const answer = await desktop.providers.chatRequest({
-            provider: "openai",
-            model: "gpt-5.6-sol",
-            messages: pending.messages,
-            reasoning: { effort: "high" },
-          });
-          outputs[pending.stage] = answer.content;
-        }
-      }
+      // Общий цикл с генератором: судья/починка идут выбранным на ноде
+      // провайдером (раньше нода была прибита к Sol).
+      const provider = nodeProvider(data.provider);
+      const res = await qualityPassCycle(ir, data.brief, provider, "high",
+        (stage) => get().setStatus(id, `Quality Pass: ${stage} через подключённый аккаунт…`),
+        { minScore: data.minScore, repair: data.repair });
       const score = Number(res.scorecard?.score ?? 0);
       const passed = Boolean(res.passed);
       const repairNote = res.repair?.applied ? " · repair применён" : "";

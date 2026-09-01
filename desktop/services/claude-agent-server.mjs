@@ -13,6 +13,14 @@ import path from "node:path";
  */
 
 const CLAUDE_MODEL = "opus";
+/* Модели, которые принимает headless CLI. Неизвестное значение тихо падает
+ * в дефолт: адаптер не должен ронять запрос из-за опечатки в маршруте. */
+const CLAUDE_MODELS = new Set(["opus", "sonnet", "haiku"]);
+
+export function claudeModel(value) {
+  const model = String(value || "").trim().toLowerCase();
+  return CLAUDE_MODELS.has(model) ? model : CLAUDE_MODEL;
+}
 
 /* Усилие → бюджет extended thinking. Claude не знает про medium|high|max —
  * это продуктовый контракт DesignDNA, поэтому маппинг живёт в одном месте. */
@@ -219,7 +227,7 @@ export class ClaudeAgentServer {
    * поэтому каждое изображение пишется во временный PNG, в промпт попадает
    * его путь, и ровно для таких запросов разрешается ОДИН инструмент Read.
    * Без изображений контракт прежний: без tools и файловых операций. */
-  async chat(messages, { timeoutMs = 180_000, profile = "generator", effort = "medium", signal = null } = {}) {
+  async chat(messages, { timeoutMs = 180_000, profile = "generator", effort = "medium", signal = null, model = null } = {}) {
     if (!Object.hasOwn(PROFILE_INSTRUCTIONS, profile)) {
       throw new Error(`Unsupported Claude chat profile: ${profile}`);
     }
@@ -238,7 +246,7 @@ export class ClaudeAgentServer {
     if (!status.installed) { cleanup(); throw new Error(status.hint); }
 
     const budget = claudeEffortBudget(effort);
-    const args = ["-p", "--output-format", "json", "--model", CLAUDE_MODEL];
+    const args = ["-p", "--output-format", "json", "--model", claudeModel(model)];
     if (imageFiles.length) args.push("--allowedTools", "Read");
     const spec = claudeProcessSpec({
       environment: this.environment, args, fileExists: this.fileExists,

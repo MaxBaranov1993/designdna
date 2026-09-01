@@ -197,6 +197,18 @@ test("chat sends a headless JSON request and returns the result field", async ()
   assert.match(calls[0].stdin, /Return only the JSON object/);
 });
 
+test("chat passes a supported model through and falls back on unknown", async () => {
+  for (const [requested, expected] of [["sonnet", "sonnet"], ["Opus", "opus"], ["gpt-5.6-sol", "opus"], [null, "opus"]]) {
+    const { spawnProcess, calls } = fakeSpawn({ stdout: JSON.stringify({ result: "ok" }) });
+    const server = new ClaudeAgentServer({
+      cwd: "/repo", spawnProcess,
+      environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+    });
+    await server.chat([{ role: "user", content: "hi" }], { model: requested });
+    assert.deepEqual(calls[0].args, ["-p", "--output-format", "json", "--model", expected]);
+  }
+});
+
 test("high effort sets a thinking budget, medium leaves it unset", async () => {
   const envelope = JSON.stringify({ result: "ok" });
   for (const [effort, expected] of [["medium", undefined], ["high", String(claudeEffortBudget("high"))]]) {

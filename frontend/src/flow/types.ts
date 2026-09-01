@@ -313,6 +313,8 @@ export type QualityPassNodeData = {
   brief: string;
   minScore: number;
   repair: boolean;
+  /** Провайдер судьи/починки; легаси-сейвы без поля судят через Sol. */
+  provider?: NodeProvider;
   ir: IRObject | null;
   result: Record<string, unknown> | null;
 };

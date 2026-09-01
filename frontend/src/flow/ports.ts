@@ -196,7 +196,7 @@ export function defaultData(type: NodeType): AnyNodeData {
         log: [],
       };
     case "qualitypass":
-      return { brief: "", minScore: 85, repair: true, ir: null, result: null };
+      return { brief: "", minScore: 85, repair: true, provider: "openai", ir: null, result: null };
     case "recorder":
       return {
         ir: null, interaction: null, recording: false, selectedTarget: "", selectedPath: "",

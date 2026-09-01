@@ -3,6 +3,7 @@
   import IrPreview from "../components/IrPreview.svelte";
   import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
+  import ProviderPicker from "../components/ProviderPicker.svelte";
   import type { QualityPassFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -37,6 +38,11 @@
     }}
     onblur={() => flushNodeText(`qualitypass:${id}:brief`)}
   ></textarea>
+  <ProviderPicker
+    provider={data.provider || "openai"}
+    effort="high"
+    onChange={(next) => $flow.setNodeData(Number(id), { provider: next.provider, result: null })}
+  />
   <div class="ctl-row qp-controls">
     <label class="qp-label nodrag"
       >порог

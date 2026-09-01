@@ -110,6 +110,24 @@ def _check_single_h1(ir) -> list:
             for p, _ in h1]
 
 
+def _fix_single_h1(ir) -> list:
+    """Несколько h1: первый остаётся, остальные понижаются до h2.
+
+    Отсутствие h1 не чиним автоматически — повышение произвольного заголовка
+    может исказить смысл; это остаётся находкой для судьи."""
+    journal = []
+    seen = False
+    for path, el in _iter_all_elements(ir):
+        if el.get("type") != "heading" or el.get("level") != 1:
+            continue
+        if not seen:
+            seen = True
+            continue
+        el["level"] = 2
+        journal.append(f"rule single-h1 понизило {path}.level: 1 -> 2")
+    return journal
+
+
 # ---------- правило 2: кнопки/cta ----------
 
 def _iter_buttons(ir):
@@ -501,7 +519,7 @@ def _fix_min_font_size(ir) -> list:
 RULES = [
     {"id": "single-h1", "severity": SEVERITY_ERROR,
      "description": "ровно один h1 среди heading-элементов",
-     "check": _check_single_h1},
+     "check": _check_single_h1, "fix": _fix_single_h1},
     {"id": "button-text", "severity": SEVERITY_ERROR,
      "description": f"у всех кнопок/cta непустой текст длиной не более {MAX_BUTTON_LEN}",
      "check": _check_button_text},
