@@ -101,6 +101,7 @@ async function qualityPassCycle(
   ir: IRObject,
   brief: string,
   provider: NodeProvider,
+  effort: "medium" | "high" | "max",
   onStage: (stage: string) => void,
 ): Promise<QualityPassResp> {
   const request = { ir, brief, min_score: 85, repair: true, rejudge: true };
@@ -118,7 +119,9 @@ async function qualityPassCycle(
     seen.add(pending.stage);
     onStage(pending.stage);
     const answer = await desktop.providers.chatRequest({
-      ...chatRoute(provider, "high"),
+      // Усилие судьи наследует ноду: на CLI-провайдерах high — это минуты
+      // thinking на каждый вариант, выбор скорости/строгости за пользователем.
+      ...chatRoute(provider, effort),
       profile: pending.profile,
       messages: pending.messages,
     });
@@ -1150,7 +1153,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         get().setStatus(id, `Quality Pass${label}: судья…`);
         get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}` });
         try {
-          const qp = await qualityPassCycle(variants[i], brief, provider, (stage) =>
+          const qp = await qualityPassCycle(variants[i], brief, provider, effort, (stage) =>
             get().setStatus(id, `Quality Pass${label}: ${stage}…`));
           if (qp.ir) variants[i] = qp.ir;
           qualityScores.push(Number(qp.scorecard?.score ?? 0));
