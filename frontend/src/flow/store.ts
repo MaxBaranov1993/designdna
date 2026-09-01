@@ -93,6 +93,39 @@ function chatRoute(provider: NodeProvider, effort: unknown) {
   return { provider, model: "gpt-5.6-sol", reasoning };
 }
 
+/* Quality Pass — судья + починка + пересуд одного IR. Встроен в прогон
+ * генератора (отдельная нода снята с палитры создания; легаси-графы с нодой
+ * продолжают работать). Web-режим судит сервером; desktop гоняет этапы через
+ * подключённый аккаунт ноды с профилями quality_judge/quality_repair. */
+async function qualityPassCycle(
+  ir: IRObject,
+  brief: string,
+  provider: NodeProvider,
+  onStage: (stage: string) => void,
+): Promise<QualityPassResp> {
+  const request = { ir, brief, min_score: 85, repair: true, rejudge: true };
+  const desktop = window.designDNA;
+  if (!desktop) return api<QualityPassResp>("/api/quality-pass", request);
+  const outputs: Partial<Record<"judge" | "repair" | "rejudge", string>> = {};
+  const seen = new Set<string>();
+  for (;;) {
+    const res = await api<QualityPassResp>("/api/quality-pass/codex-step", { ...request, outputs });
+    const pending = res.pending;
+    if (!pending) return res;
+    if (seen.has(pending.stage) || seen.size >= 3) {
+      throw new Error("Quality Pass: некорректная последовательность этапов");
+    }
+    seen.add(pending.stage);
+    onStage(pending.stage);
+    const answer = await desktop.providers.chatRequest({
+      ...chatRoute(provider, "high"),
+      profile: pending.profile,
+      messages: pending.messages,
+    });
+    outputs[pending.stage] = answer.content;
+  }
+}
+
 const MOTION_DESIGN_TERMINAL = new Set(["completed", "failed", "cancelled", "expired"]);
 const motionDesignPollTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -1107,11 +1140,36 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       }
       const variants = Array.isArray(res.variants) ? res.variants : [];
       get().setNodeData(id, { variants, active: 0 });
+      // Quality Pass встроен: судья + починка каждого варианта тем же
+      // провайдером. Провал судьи не теряет вариант — он остаётся как есть
+      // с прочерком в статусе.
+      const qualityScores: (number | null)[] = [];
+      let repairedCount = 0;
+      for (let i = 0; i < variants.length; i += 1) {
+        const label = variants.length > 1 ? ` ${i + 1}/${variants.length}` : "";
+        get().setStatus(id, `Quality Pass${label}: судья…`);
+        get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}` });
+        try {
+          const qp = await qualityPassCycle(variants[i], brief, provider, (stage) =>
+            get().setStatus(id, `Quality Pass${label}: ${stage}…`));
+          if (qp.ir) variants[i] = qp.ir;
+          qualityScores.push(Number(qp.scorecard?.score ?? 0));
+          if (qp.repair?.applied) repairedCount += 1;
+        } catch (qpError) {
+          console.warn("Quality Pass: вариант оставлен без оценки", qpError);
+          qualityScores.push(null);
+        }
+      }
+      get().setNodeData(id, { variants, active: 0, qualityScores });
       const errNote = res.errors && res.errors.length ? `, ошибок: ${res.errors.length}` : "";
       const fixedCount = (res.qa || []).reduce((s, q) => s + (q.fixed || 0), 0);
       const qaNote = fixedCount ? `, автофиксов QA: ${fixedCount}` : "";
       const designNote = res.design?.label ? `, тип: ${res.design.label}` : "";
-      get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
+      const qpNote = qualityScores.length
+        ? ` · QP ${qualityScores.map((score) => (score == null ? "—" : score)).join("/")}`
+        + (repairedCount ? ` (починок: ${repairedCount})` : "")
+        : "";
+      get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote}${qpNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
       get().propagate(id);
     } catch (e) {
       const msg = friendlyProviderError(e);

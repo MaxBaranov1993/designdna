@@ -90,6 +90,8 @@ export type GeneratorNodeData = {
   preset: string;
   variants: IRObject[];
   active: number;
+  /** Оценки встроенного Quality Pass по вариантам (null — судья не ответил). */
+  qualityScores?: (number | null)[];
 };
 export type SourceRecordView = {
   id: string;

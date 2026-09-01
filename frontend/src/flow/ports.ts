@@ -266,7 +266,8 @@ export const CTX_GROUPS: { label: string; color: string; items: { type: NodeType
     label: "КОНТРОЛЬ И ДВИЖЕНИЕ",
     color: "#22C55E",
     items: [
-      { type: "qualitypass", note: "judge + repair + scorecard" },
+      // qualitypass снят с палитры: судья+починка встроены в прогон генератора
+      // (легаси-графы с нодой Quality Pass по-прежнему загружаются).
       // recorder исключён из меню по хендоффу: Motion сам строит Interaction IR
       // из Design IR (легаси-графы с нодой Recorder по-прежнему загружаются).
       { type: "motion", note: "Design IR → editable timeline" },
@@ -288,7 +289,6 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "mix", note: "смешение по весам" },
   { type: "page", note: "страница из блоков" },
   { type: "reskin", note: "вариант с локом структуры" },
-  { type: "qualitypass", note: "judge + repair + scorecard" },
   { type: "motion", note: "Design IR -> editable timeline" },
   { type: "timeline", note: "компоненты -> ролик: слои и кейфреймы" },
   { type: "motiondesign", note: "prompt / готовое видео -> Seedance 2.5" },

@@ -475,7 +475,8 @@ def generate(req: GenerateReq):
                 f"Do NOT invent content not present in the reference."
             )
         else:
-            vary = ("своя композиция, раскладка и настроение в рамках токенов DNA" if dna
+            vary = ("своя композиция и раскладка в рамках токенов DNA; настроение, "
+                    "тема и характер ИСХОДНИКА сохраняются" if dna
                     else "своя палитра, типографика, настроение и композиция")
             user = (
                 f"## Brief\n{brief}\n\n"
@@ -500,6 +501,31 @@ def generate(req: GenerateReq):
                        "всё бело-серое и primary нигде не виден, — провал (wireframe, "
                        "а не дизайн). Изображения — только с imagePrompt и конкретным "
                        "арт-дирекшном (объект, свет, палитра).")
+            dna_color = dna.get("color") if isinstance(dna.get("color"), dict) else {}
+            dna_mode = str(dna.get("mode") or "")
+            if not dna_mode:
+                bg_hex = str(dna_color.get("background") or "").lstrip("#")
+                try:
+                    lum = sum(int(bg_hex[i:i + 2], 16) * w for i, w in
+                              ((0, .2126), (2, .7152), (4, .0722))) / 255.0
+                    dna_mode = "dark" if lum < .45 else "light"
+                except (ValueError, IndexError):
+                    dna_mode = ""
+            if dna_mode == "dark":
+                user += ("\nТема исходника ТЁМНАЯ: фон каждой секции — "
+                         "tokens.color.background/surface, текст светлый "
+                         "(text/textMuted). Светлая страница или белые секции "
+                         "— провал соответствия стилю.")
+            elif dna_mode == "light":
+                user += ("\nТема исходника светлая: фон секций — "
+                         "background/surface, тёмный текст. Не уводи страницу "
+                         "в тёмную тему.")
+            user += ("\nГраницы — только tokens.color.border и тонкие (1px): "
+                     "яркие контрастные рамки вокруг карточек — провал.")
+            if dna_color and dna_color.get("background") == dna_color.get("surface"):
+                user += ("\nbackground и surface совпадают — это характер "
+                         "исходника: секции разделяй воздухом (spacing) и "
+                         "тонкими границами, НЕ выдумывай новые фоновые цвета.")
             if preset:
                 user += (f"\n\nСтилевое направление «{preset['label']}»: "
                          + preset["prompt"])
