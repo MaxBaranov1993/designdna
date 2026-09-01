@@ -9,6 +9,7 @@ import { DesignAIFontCatalog } from "../engine/fontCatalog";
 import { findByKey, isSourceKeyPath, locateByKey, parentKeyByKey } from "../engine/sourcepath";
 import type { AssistPreview, AssistRequest } from "./aiTypes";
 import { EDITOR_ACTION_GROUPS } from "./actionInventory";
+import { toast } from "../flow/toast";
 
 /* ---------- DOM-refs: регистрируются React-компонентами ---------- */
 
@@ -175,8 +176,18 @@ export function getAiAssistFormState(): AssistRequest {
   return deepClone(aiAssistFormState);
 }
 
+/* Провайдеры инспектора. Claude идёт через локальный CLI, который живёт только
+ * в desktop-мосте, поэтому в браузере выбор схлопывается на Sol: там запрос
+ * исполняет сервер, а он умеет один провайдер. */
+export const ASSIST_PROVIDERS = ["openai", "claude", "codex"] as const;
+
+export function assistProviderAvailable(provider: string): boolean {
+  if (provider === "openai") return true;
+  return Boolean(window.designDNA?.providers);
+}
+
 export function setAiAssistFormState(next: Partial<AssistRequest>) {
-  if (next.provider !== undefined) next.provider = "openai";
+  if (next.provider !== undefined && !assistProviderAvailable(String(next.provider))) next.provider = "openai";
   if (next.effort !== undefined && !["medium", "high", "max"].includes(String(next.effort))) next.effort = "medium";
   aiAssistFormState = {
     ...aiAssistFormState,
@@ -475,6 +486,8 @@ function fontOptionsHtml(selected?: string, autoLabel?: string | null) {
 
 /* Инструменты, которые geoedit уже умеет; ellipse/line/image добавляются в движок
  * параллельно — rail зовёт setTool всегда, а при отказе движка откатываемся на select. */
+const DRAW_TOOLS = new Set(["rect", "text", "frame", "ellipse", "line", "image"]);
+
 export function setTool(tool: string) {
   if (!state) return;
   state.tool = tool;
@@ -482,7 +495,10 @@ export function setTool(tool: string) {
   dom.overlay?.querySelectorAll<HTMLElement>(".fe-rail [data-tool]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tool === tool);
   });
-  if (dom.canvas) dom.canvas.style.cursor = tool === "hand" ? "grab" : "default";
+  // Курсор — единственный признак включённого режима на самом холсте:
+  // без него рисующий инструмент неотличим от обычного выделения.
+  if (dom.canvas) dom.canvas.style.cursor = tool === "hand" ? "grab"
+    : DRAW_TOOLS.has(tool) ? "crosshair" : "default";
   // синхронизируем geoedit: создание rect/text/frame и hand-панорама
   if (state.geo && state.geo.getTool() !== tool) {
     try {
@@ -1705,6 +1721,8 @@ function friendlyAiError(detail: string) {
   if (/outside|вне текущего выделения|не найден элемент/i.test(detail)) return "Выделение изменилось. Выберите объект ещё раз.";
   if (/schema|невалидн|структурн|children|sourceKey|patch|команд/i.test(detail)) return "AI предложил небезопасную правку. Уточните запрос.";
   if (/429|лимит|очередь/i.test(detail)) return "AI занят. Повторите через минуту.";
+  // Ошибки дизайн-системы содержат готовое объяснение и действие — не прячем их
+  if (/Design System/i.test(detail)) return detail;
   if (/timed out|timeout|время ожидания/i.test(detail)) return "AI не ответил за 3 минуты. Запрос остановлен — попробуйте ещё раз или сократите задачу.";
   return "Не удалось подготовить результат. Попробуйте уточнить запрос.";
 }
@@ -1780,11 +1798,19 @@ export async function requestAiAssist(request: AssistRequest) {
         const effort = ["medium", "high", "max"].includes(String(request.effort))
           ? request.effort as "medium" | "high" | "max"
           : "medium";
+        // Claude — подписочный CLI (opus + маппинг усилия в thinking-бюджет),
+        // Codex — текстовый CLI без reasoning; Sol — дефолт для прочих значений.
+        const provider = assistProviderAvailable(String(request.provider)) ? request.provider! : "openai";
+        const route = provider === "codex"
+          ? { provider, model: null }
+          : { provider, model: provider === "claude" ? "opus" : "gpt-5.6-sol", reasoning: { effort } };
         const answer = await window.designDNA.providers.chatRequest({
-          provider: "openai",
-          model: "gpt-5.6-sol",
+          ...route,
+          // CLI-транспорты оборачивают сообщения профильной инструкцией;
+          // generator-профиль просил «сгенерируй Design IR» и ломал контракт
+          // {summary, commands} инспектора — правкам нужен профиль editor.
+          profile: "editor",
           messages: prepared.messages,
-          reasoning: { effort },
         });
         if (signal.aborted) return;
         ui.setAiProgress({ stage: "validate", label: "Проверяю ответ и строю предпросмотр", startedAt });
@@ -2421,6 +2447,7 @@ function attachGeoEdit() {
     isLocked: (ref: GeoRef) => refFlag(ref, "locked"), // locked-слои не выделяются на канвасе
     scrollEl: panAdapter,
     onToolChange: (t: string) => { if (state && state.tool !== t) setTool(t); },
+    onNotice: (message: string) => toast(message),
     getIR: () => (state ? state.activeIR || state.ir : null),
     getScale: () => {
       const irEl = inner.querySelector('[class^="ir-"]') as HTMLElement | null;
@@ -2604,12 +2631,28 @@ function addLayerItem(
           ? parentKeyByKey(state!.ir.tree[Number(x.si)], x.p)
           : x.p.split(".").slice(0, -2).join(".");
       };
-      if (a.si !== b.si || parentOf(a) !== parentOf(b)) return; // только внутри одного родителя
+      const fromRef = { secIdx: a.si === "null" ? null : Number(a.si), path: a.p } as GeoRef;
+      const toRef = { secIdx: b.si === "null" ? null : Number(b.si), path: b.p } as GeoRef;
       const section = state.ir.tree[Number(b.si)];
-      const located: any = section && b.p && isSourceKeyPath(b.p) ? locateByKey(section, b.p) : null;
-      const to = located ? located.index : parseInt((b.p || "0").split(".").pop()!);
-      if (!Number.isInteger(to)) return;
-      state.geo.moveSibling({ secIdx: a.si === "null" ? null : Number(a.si), path: a.p }, to);
+      const targetNode: any = toRef.path == null
+        ? section
+        : (section && isSourceKeyPath(String(toRef.path))
+            ? findByKey(section, String(toRef.path))
+            : getByPath(section, String(toRef.path)));
+      // Цель-контейнер (секция или card) принимает узел внутрь — как в Figma.
+      // reparent сам откажется, если цель уже родитель источника: тогда это
+      // обычная перестановка соседей ниже.
+      const targetIsContainer = toRef.path == null || (targetNode && targetNode.type === "card");
+      if (targetIsContainer && state.geo.reparent(fromRef, toRef)) return;
+      // тот же родитель — reorder по индексу цели
+      if (a.si === b.si && parentOf(a) === parentOf(b)) {
+        const located: any = section && b.p && isSourceKeyPath(b.p) ? locateByKey(section, b.p) : null;
+        const to = located ? located.index : parseInt((b.p || "0").split(".").pop()!);
+        if (!Number.isInteger(to)) return;
+        state.geo.moveSibling(fromRef, to);
+        return;
+      }
+      toast("Перетащите на секцию или карточку — внутрь текста и картинки вложить нельзя");
     });
   }
   if (fl.hidden) div.classList.add("flag-hidden");

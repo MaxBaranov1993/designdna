@@ -10,6 +10,7 @@
  *   onCommit,    // () => void — перед мутацией IR (владелец пишет историю)
  *   onMutated,   // () => void — после мутации (владелец перерисовывает превью)
  *   onSelect,    // (selections[]) => void — массив выделенных {ref,label,node}
+ *   onNotice,    // (message) => void — короткое сообщение пользователю (отказ жеста)
  * });
  * handle: { select(ref), selectMulti(refs), clear(), setFrame(obj), resetFrame(),
  *           alignLeft(), alignCenterH(), alignRight(),
@@ -172,6 +173,10 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
     return Number.isFinite(n) ? n : 0;
   }
 
+  /* Заливка новых фигур рейки. Один акцент на все инструменты: цвет не берётся
+   * из темы макета, поэтому свежий объект виден и на светлом, и на тёмном. */
+  const NEW_SHAPE_FILL = "#8B5CF6";
+
   /* ---------- attach ---------- */
 
   function attach(opts) {
@@ -180,6 +185,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
     const cancelCommit = opts.cancelCommit || null;
     const scrollEl = opts.scrollEl || null;          // скролл-контейнер для инструмента «рука»
     const onToolChange = opts.onToolChange || null; // уведомление владельца о смене инструмента
+    const notice = opts.onNotice || function(){};   // короткое сообщение пользователю
     const toolsEnabled = !!opts.tools;              // хоткеи V/R/T/F/H только там, где есть панель
     // если владелец сам опрашивает consumeEscape() с handle (DNA-редактор),
     // собственный document-обработчик Esc не срабатывает — порядок не должен быть контрактом
@@ -1250,6 +1256,14 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
     }
 
     /** Глубочайший контейнер под точкой (секция или card); на корне не создаём. */
+    /** Контейнер под курсором для вставки новой фигуры.
+     *
+     *  Годится только узел, чьи дети РЕАЛЬНО рисуются: секция и card. Проверка
+     *  «есть массив children» пускала внутрь heading и синтетические ::bg-слои
+     *  (у них дети появляются от inline-акцентов и построчных текст-слоёв) —
+     *  рендер таких детей не показывает, и фигура молча пропадала: в IR она
+     *  есть, на канвасе её нет. Не подошёл верхний слой — спускаемся к
+     *  следующему под курсором, а не вставляем куда попало. */
     function containerAt(pt) {
       const targets = collectHitTargets();
       for (let i = targets.length - 1; i >= 0; i--) {
@@ -1257,28 +1271,25 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         if (!(pt.x >= t.x && pt.x <= t.x + t.w && pt.y >= t.y && pt.y <= t.y + t.h)) continue;
         if (t.ref.secIdx == null) continue;
         const node = irNodeAt(t.ref);
-        if (node && (t.ref.path == null || node.type === "card" || Array.isArray(node.children))) {
+        if (node && (t.ref.path == null || node.type === "card")) {
           return t;
         }
       }
       return null;
     }
 
-    /** Фолбэк для startCreate: под курсором нет контейнера (пустое место артборда) —
-     *  рисуем в корневую секцию. Возвращает target в формате collectHitTargets. */
+    /** Фолбэк для startCreate: под курсором нет контейнера. Рисуем в корневую
+     *  секцию — в том числе когда точка ВНЕ артборда (как холст в Figma:
+     *  объект создаётся всегда, а уложить его в нужный блок можно потом
+     *  перетаскиванием в панели слоёв). Возвращает target в формате
+     *  collectHitTargets. */
     function rootSectionFallback(pt) {
       const ir = getIR();
       if (!ir || !ir.tree || !ir.tree.length) return null;
-      const board = artboardEl();
       const secEl = previewEl.querySelector('[data-ir-sec="0"]');
-      if (!board || !secEl) return null;
-      // только если точка внутри артборда — клик по серому канвасу вокруг не создаёт элементы
+      if (!secEl) return null;
       const base = previewEl.getBoundingClientRect();
       const s = scale();
-      const br = board.getBoundingClientRect();
-      const bx = (br.left - base.left ) / s;
-      const by = (br.top - base.top ) / s;
-      if (!(pt.x >= bx && pt.x <= bx + br.width / s && pt.y >= by && pt.y <= by + br.height / s)) return null;
       const r = secEl.getBoundingClientRect();
       return {
         ref: { secIdx: 0, path: null },
@@ -1292,7 +1303,9 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
     function startCreate(e) {
       const pt = screenToCanvas(e.clientX, e.clientY);
       const cont = containerAt(pt) || rootSectionFallback(pt);
-      if (!cont) return;
+      // Клик мимо артборда раньше не давал НИЧЕГО: ни фигуры, ни объяснения —
+      // инструмент выглядел сломанным. Говорим, почему ничего не создалось.
+      if (!cont) { notice("Рисовать можно внутри артборда — начните перетаскивание на макете."); return; }
       const el = document.createElement("div");
       el.className = "geo-marquee";
       overlay().appendChild(el);
@@ -1340,18 +1353,20 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       if (tool === "rect") {
         fr.width = Math.round(clicked ? 120 : Math.max(16, rw));
         fr.height = Math.round(clicked ? 90 : Math.max(16, rh));
-        child = { type: "rect", sourceKey: nextUid(), fill: "#8B5CF6", radius: 8, frame: fr };
+        child = { type: "rect", sourceKey: nextUid(), fill: NEW_SHAPE_FILL, radius: 8, frame: fr };
       } else if (tool === "ellipse") {
         // как rect, но pill/эллипс: renderer читает node.radius
         fr.width = Math.round(clicked ? 120 : Math.max(16, rw));
         fr.height = Math.round(clicked ? 90 : Math.max(16, rh));
-        child = { type: "rect", sourceKey: nextUid(), fill: "#8B5CF6", radius: 9999, frame: fr };
+        child = { type: "rect", sourceKey: nextUid(), fill: NEW_SHAPE_FILL, radius: 9999, frame: fr };
       } else if (tool === "line") {
-        // линия — тонкий rect; доминантная ось drag'а задаёт направление
+        // линия — тонкий rect; доминантная ось drag'а задаёт направление.
+        // Цвет — общий акцент новых фигур: серый #6b7280 в 2px на тёмном
+        // макете давал контраст ~1.9:1, и линия читалась как «не нарисовалось».
         const horizontal = clicked || rw >= rh;
         if (horizontal) { fr.width = Math.round(clicked ? 120 : Math.max(8, rw)); fr.height = 2; }
         else { fr.width = 2; fr.height = Math.round(Math.max(8, rh)); }
-        child = { type: "rect", sourceKey: nextUid(), fill: "#6b7280", frame: fr };
+        child = { type: "rect", sourceKey: nextUid(), fill: NEW_SHAPE_FILL, frame: fr };
       } else if (tool === "image") {
         fr.width = Math.round(clicked ? 240 : Math.max(40, rw));
         fr.height = Math.round(clicked ? 160 : Math.max(40, rh));
@@ -1361,7 +1376,11 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       } else {
         fr.width = Math.round(clicked ? 240 : Math.max(40, rw));
         fr.height = Math.round(clicked ? 160 : Math.max(40, rh));
-        child = { type: "card", sourceKey: nextUid(), children: [], frame: fr };
+        // Пустая карточка берёт фон темы (--c-surface): на тёмном макете он
+        // совпадает с фоном страницы, и свежий фрейм был неотличим от пустоты.
+        // Даём ему прозрачную заливку и видимую рамку — как фрейм в редакторах.
+        child = { type: "card", sourceKey: nextUid(), children: [], frame: fr,
+          style: { background: "#00000000", borderColor: NEW_SHAPE_FILL, borderWidth: 1 } };
       }
       contNode.children = contNode.children || [];
       contNode.children.push(child);
@@ -1371,8 +1390,22 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         ? (cont.ref.path ? cont.ref.path + "." : "") + "children." + (contNode.children.length - 1)
         : String(child.sourceKey);
       selections = [];
-      select({ secIdx: cont.ref.secIdx, path: newPath });
+      const createdRef = { secIdx: cont.ref.secIdx, path: newPath };
+      select(createdRef);
       onMutated();
+      if (tool === "text") {
+        // как в Figma: инструмент отработал — курсор возвращается к выделению,
+        // а свежий текст сразу под кареткой, с выделенным placeholder'ом.
+        setTool("select");
+        // Ждём именно появления узла в DOM, а не фиксированные два кадра:
+        // в desktop перерисовка превью успевает позже, и каретка не вставала.
+        let waits = 40;
+        const enter = () => {
+          if (domAt(createdRef)) { beginTextEdit(createdRef); return; }
+          if (--waits > 0) setTimeout(enter, 25);
+        };
+        setTimeout(enter, 0);
+      }
     }
 
     /* --- мутации IR --- */
@@ -2124,6 +2157,55 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
 
     /** Reorder: переставить ref на newIndex среди сиблингов (drag&drop в layers).
      *  Конвенция: перетаскиваемый занимает слот цели (цель сдвигается к источнику). */
+    /** Перенос узла в ДРУГОГО родителя (drag-n-drop в панели слоёв, как в Figma).
+     *
+     *  targetRef — контейнер-приёмник (секция или card). Экранная позиция узла
+     *  сохраняется: x/y пересчитываются от нового родителя, поэтому объект не
+     *  прыгает при переносе. Возвращает true, если перенос выполнен.
+     */
+    function reparent(ref, targetRef, index) {
+      if (!ref || !targetRef || ref.secIdx == null) return false;
+      if (refuseLocked(ref) || refuseLocked(targetRef)) return false;
+      const node = irNodeAt(ref);
+      const targetNode = irNodeAt(targetRef);
+      if (!node || !targetNode || node === targetNode) return false;
+      // запрет переноса внутрь собственного поддерева — иначе дерево зациклится
+      let cycle = false;
+      (function scan(n) {
+        if (cycle || !n || typeof n !== "object") return;
+        if (n === targetNode) { cycle = true; return; }
+        (n.children || []).forEach(scan);
+      })(node);
+      if (cycle) return false;
+      const parent = parentOf(ref);
+      if (!parent || !Array.isArray(parent.siblings)) return false;
+      // цель уже является родителем — переносить нечего (вызывающий сделает reorder)
+      if (parent.node === targetNode) return false;
+      const from = parent.index;
+      if (!Number.isInteger(from) || parent.siblings[from] !== node) return false;
+
+      // экранная позиция ДО мутации: и старый, и новый родитель ещё в DOM
+      const beforeEl = domAt(ref);
+      const targetDom = domAt(targetRef);
+      const keepPos = beforeEl && targetDom ? relPos(beforeEl, targetDom) : null;
+
+      onCommit();
+      parent.siblings.splice(from, 1);
+      const kids = targetNode.children || (targetNode.children = []);
+      const at = Number.isInteger(index) && index >= 0 && index <= kids.length ? index : kids.length;
+      kids.splice(at, 0, node);
+      // в auto-раскладке приёмника flow сам расставит детей: пиннить нечего
+      const targetFrame = targetNode.frame || {};
+      if (keepPos && node.frame && targetFrame.layout === "free") {
+        node.frame.x = keepPos.x;
+        node.frame.y = keepPos.y;
+        node.frame.absolute = true;
+      }
+      selections = [];
+      onMutated();
+      return true;
+    }
+
     function moveSibling(ref, newIndex) {
       if (ref.secIdx == null) return;
       if (refuseLocked(ref)) return; // editable:false: reorder заблокирован
@@ -3047,7 +3129,13 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         return;
       }
 
-      // inline-редактирование текста
+      beginTextEdit(ref);
+    }
+
+    /** Inline-редактирование текстового узла: каретка прямо на канвасе.
+     *  Вызывается двойным кликом и сразу после создания текста инструментом T
+     *  (в Figma текст пишут сразу, а не после отдельного двойного клика). */
+    function beginTextEdit(ref) {
       const el = domAt(ref);
       if (!el) return;
 
@@ -3181,6 +3269,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       bringForward,
       sendBackward,
       moveSibling,
+      reparent,
       groupSelection,
       ungroupSelection,
       selectAll: selectAllInContext,

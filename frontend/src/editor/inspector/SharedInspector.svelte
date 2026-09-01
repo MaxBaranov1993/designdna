@@ -56,9 +56,9 @@ import ColorPicker from "./ColorPicker.svelte";
   }
   function run(action: AssistAction, text: string) {
     confirmed = false;
-    ctl.setAiAssistFormState({ prompt: text, action, scopeMode, provider: "openai", effort, designSystemSelection: dsSelection, constraints: { allowContent, allowStyle, allowFrame, allowColor } });
+    ctl.setAiAssistFormState({ prompt: text, action, scopeMode, provider, effort, designSystemSelection: dsSelection, constraints: { allowContent, allowStyle, allowFrame, allowColor } });
     void ctl.requestAiAssist({
-      action, prompt: text, scopeMode, provider: "openai", effort,
+      action, prompt: text, scopeMode, provider, effort,
       constraints: { allowContent, allowStyle, allowFrame, allowColor },
     });
   }
@@ -91,6 +91,34 @@ import ColorPicker from "./ColorPicker.svelte";
   const savedAiForm = ctl.getAiAssistFormState();
   let scopeMode = $state<AssistScopeMode>(sels.length > 1 ? (ctl.hasExplicitAiAssistScopeMode() ? savedAiForm.scopeMode : "selection") : "single");
   let effort = $state<"medium" | "high" | "max">(["medium", "high", "max"].includes(String(savedAiForm.effort)) ? savedAiForm.effort as "medium" | "high" | "max" : "medium");
+  /* Модель и усилие — один селект: пара значений «провайдер:усилие». Claude
+   * доступен только там, где есть desktop-мост (запрос исполняет локальный
+   * CLI); в браузере остаётся Sol, потому что там отвечает сервер. */
+  const MODEL_LABELS: Record<string, string> = { openai: "GPT-5.6 Sol", claude: "Claude Opus", codex: "Codex" };
+  const modelOptions = ctl.ASSIST_PROVIDERS
+    .filter((item) => ctl.assistProviderAvailable(item))
+    .flatMap((item) => (item === "codex"
+      // Codex — текстовый транспорт без reasoning: один пункт без усилий
+      ? [{ value: "codex:medium", label: MODEL_LABELS[item] }]
+      : (["medium", "high", "max"] as const).map((level) => ({
+          value: `${item}:${level}`,
+          label: `${MODEL_LABELS[item]} · ${level[0].toUpperCase()}${level.slice(1)}`,
+        }))));
+  let provider = $state<"openai" | "claude" | "codex">(
+    ctl.assistProviderAvailable(String(savedAiForm.provider)) ? savedAiForm.provider as "openai" | "claude" | "codex" : "openai",
+  );
+  // bind:value, а не value={...}: атрибут выставляется до монтирования <option>,
+  // и селект оставался визуально пустым, хотя значение в состоянии было.
+  let modelChoice = $state(
+    `${ctl.assistProviderAvailable(String(savedAiForm.provider)) ? savedAiForm.provider : "openai"}`
+    + `:${["medium", "high", "max"].includes(String(savedAiForm.effort)) ? savedAiForm.effort : "medium"}`,
+  );
+  function applyModelChoice() {
+    const [nextProvider, nextEffort] = modelChoice.split(":");
+    provider = nextProvider as "openai" | "claude" | "codex";
+    effort = nextEffort as "medium" | "high" | "max";
+    ctl.setAiAssistFormState({ provider, effort });
+  }
   let dsSelection = $state<string>((savedAiForm as any).designSystemSelection || "inherit");
   let prompt = $state(savedAiForm.prompt);
   let allowContent = $state(savedAiForm.constraints.allowContent);
@@ -133,10 +161,10 @@ import ColorPicker from "./ColorPicker.svelte";
   </section>
   <div class="ai-provider-row" aria-label="Модель">
     <span class="ai-scope-kicker">Модель</span>
-    <select bind:value={effort} onchange={() => ctl.setAiAssistFormState({ provider: "openai", effort })} disabled={busy || !!preview}>
-      <option value="medium">GPT-5.6 Sol · Medium</option>
-      <option value="high">GPT-5.6 Sol · High</option>
-      <option value="max">GPT-5.6 Sol · Max</option>
+    <select bind:value={modelChoice} onchange={applyModelChoice} disabled={busy || !!preview}>
+      {#each modelOptions as option (option.value)}
+        <option value={option.value}>{option.label}</option>
+      {/each}
     </select>
   </div>
   <div class="ai-scope-list" aria-label="Элементы для AI">

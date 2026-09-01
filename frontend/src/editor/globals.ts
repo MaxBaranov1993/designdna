@@ -31,6 +31,8 @@ export interface GeoHandle {
   bringForward: () => void;
   sendBackward: () => void;
   moveSibling: (ref: GeoRef, to: number) => void;
+  /** Перенос узла в другого родителя (drag-n-drop в слоях). true — перенос выполнен. */
+  reparent: (ref: GeoRef, target: GeoRef, index?: number) => boolean;
   groupSelection: () => void;
   ungroupSelection: () => void;
   destroy: () => void;

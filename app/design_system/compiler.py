@@ -68,6 +68,11 @@ def component_handle(component: dict, system_ref: dict) -> dict:
     }
 
 
+def _has_masters(components) -> bool:
+    return any(isinstance(c, dict) and isinstance(c.get("masterIr"), dict)
+               for c in components or [])
+
+
 def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", token_budget: int = 1200) -> dict:
     # Потолок поднят с 4000: exact master IR целой секции сам по себе занимает
     # тысячи токенов, и strict-режим падал «master не помещается в бюджет».
@@ -215,5 +220,8 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
         "validationPlan": [str(t.get("id")) for t in tests],
         "componentHandles": component_handles,
         "includedMasterKeys": included_master_keys,
-        "strictReady": mode != "strict" or bool(included_master_keys),
+        # Пустой реестр в strict — не провал бюджета: копировать нечего,
+        # обязательными остаются foundations/токены. Провал — только когда
+        # мастера СУЩЕСТВУЮТ, но ни один не поместился в контекст.
+        "strictReady": mode != "strict" or not _has_masters(components) or bool(included_master_keys),
     }

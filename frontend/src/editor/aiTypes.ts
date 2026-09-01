@@ -37,7 +37,7 @@ export interface AssistRequest {
   action: AssistAction;
   scopeMode: AssistScopeMode;
   constraints: AssistConstraints;
-  provider?: "openai";
+  provider?: "openai" | "claude" | "codex";
   effort?: "medium" | "high" | "max";
   designSystemSelection?: string;
   designSystemUsageMode?: string;

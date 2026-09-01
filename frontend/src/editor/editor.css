@@ -280,6 +280,10 @@
 .pi select { width:100%; min-width:0; background:var(--fe-input); border:1px solid var(--border);
   color:var(--text); border-radius:6px; padding:4px 6px; font-size:11.5px; outline:none; }
 .pi select:focus { border-color:hsl(var(--ring)); }
+/* Раскрытый список рисует ОС: полупрозрачный --fe-input ложится на белую
+   подложку, и светлый --text становится нечитаемым. Опциям нужны
+   непрозрачные цвета — иначе выбор модели виден только по подсветке. */
+.pi select option, .fe-inspector select option { background:var(--fe-panel); color:hsl(var(--foreground)); }
 .pi .pi-btnrow { display:flex; gap:4px; }
 .pi .pi-ibtn { flex:1; height:24px; display:inline-flex; align-items:center; justify-content:center;
   background:var(--fe-input); border:1px solid var(--border); border-radius:6px;

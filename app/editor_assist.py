@@ -198,7 +198,29 @@ def _scoped_ir_for_prompt(base: dict, kept_paths: list[str]) -> dict:
     if isinstance(meta, dict):
         scoped["meta"] = {key: value for key, value in meta.items() if key not in _PRUNED_META_FIELDS}
     scoped["tree"] = prune(base.get("tree") or [], "/tree")
-    return scoped
+    return _strip_bulk_payloads(scoped)
+
+
+_BULK_VALUE_CHARS = 256
+
+
+def _strip_bulk_payloads(value):
+    """Убрать из промпта пиксельные данные: data:-URL и «сырые» base64 не несут
+    информации для команд правки (адресация — по sourceKey), но раздували
+    сообщение до сотен КБ — CLI-транспорты (Codex/Claude) не укладывались в
+    таймаут, а длинный контекст ухудшал качество правок у любого провайдера.
+    Применяется ТОЛЬКО к промпт-копии — команды исполняются против полного IR."""
+    if isinstance(value, dict):
+        return {key: _strip_bulk_payloads(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_strip_bulk_payloads(item) for item in value]
+    if isinstance(value, str) and len(value) > _BULK_VALUE_CHARS:
+        if value.startswith("data:"):
+            head, _, _ = value.partition(",")
+            return f"{head},<omitted {len(value)} chars>"
+        if value.startswith("blob:"):
+            return value  # короткая ссылка — и так компактна
+    return value
 
 
 def _inside(path: str, prefixes: list[str]) -> bool:
@@ -510,10 +532,15 @@ def _messages(base: dict, req: AssistRequest) -> list[dict]:
             raise ValueError(f"Design System: {ds_error}")
         ds_ctx = ds_resolver.resolve_context(ds_doc, req.prompt,
             usage_mode=str(req.designSystem.get("usageMode") or "strict"))
+        # Strict обязан вместить exact master целиком — на 4000 токенов он не
+        # помещался и КАЖДЫЙ AI-запрос в редакторе падал 422 (генератору этот
+        # же бюджет уже подняли, см. server.generate).
+        ds_mode = str(req.designSystem.get("usageMode") or "strict")
         compiled = ds_resolver.compiled_context(
             ds_ctx, brief=req.prompt,
             archetype_id=str(req.designSystem.get("archetypeId") or ""),
-            token_budget=int(req.designSystem.get("tokenBudget") or 4000),
+            token_budget=int(req.designSystem.get("tokenBudget")
+                             or (24_000 if ds_mode == "strict" else 4000)),
         )
         if str(req.designSystem.get("usageMode") or "strict") == "strict" and not compiled.get("strictReady"):
             raise ValueError("Design System Strict: exact master не помещается в выбранный context budget")
@@ -561,13 +588,24 @@ def editor_assist(req: AssistRequest):
             ds_ctx = ds_resolver.resolve_context(ds_doc, req.prompt,
                 usage_mode=usage_mode)
             check = ds_resolver.validate_generation(candidate, ds_ctx)
-            if usage_mode == "strict" and check["errors"]:
+            # Правка отвечает только за СВОЮ дельту: импортированный макет несёт
+            # точные цвета исходника, и полная проверка документа отклоняла любой
+            # AI edit (даже чисто текстовый) за унаследованные «нарушения».
+            # Сравниваем с базой — блокируют только нарушения, ВНЕСЁННЫЕ правкой.
+            base_check = ds_resolver.validate_generation(req.ir, ds_ctx)
+            inherited = {str(item.get("message")) for item in
+                         base_check["errors"] + base_check["warnings"]}
+            introduced = [item for item in check["errors"]
+                          if str(item.get("message")) not in inherited]
+            if usage_mode == "strict" and introduced:
                 return _error(
                     422,
                     "Design System Strict отклонил AI edit: "
-                    + "; ".join(item["message"] for item in check["errors"][:4]),
+                    + "; ".join(item["message"] for item in introduced[:4]),
                 )
-            warnings.extend(check["errors"] + check["warnings"])
+            warnings.extend(introduced
+                            + [item for item in check["warnings"]
+                               if str(item.get("message")) not in inherited])
         if dropped_scope:
             warnings.append({"code": "nested_scope_normalized", "message": "Родительский контейнер исключён: AI изменяет выбранные вложенные элементы."})
         if len(ops) > 8 or any(_is_high_impact_op(op) for op in ops):
