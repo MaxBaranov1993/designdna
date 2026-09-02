@@ -251,7 +251,9 @@ def _persist_on(
         "SELECT payload, updated_at FROM projects WHERE user_id=? AND project_id=?",
         (user_id, project_id),
     ).fetchone()
-    if row and isinstance(row[0], str) and revision_of_raw(row[0]) == digest:
+    # Равенство строк дешевле второго SHA-256 по старому payload (мегабайты на
+    # каждом автосейве); ревизия — хэш точного текста, так что это эквивалент.
+    if row and isinstance(row[0], str) and row[0] == store:
         return {"ok": True, "bytes": size, "updated_at": row[1], "unchanged": True,
                 "revision": digest}
     profile = build_taste_profile(payload)

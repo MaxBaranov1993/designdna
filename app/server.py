@@ -4,8 +4,10 @@
 Запуск:  .venv/Scripts/python app/server.py   (порт 8420)
 """
 import base64
+import asyncio
 import concurrent.futures
 import contextlib
+import contextvars
 import copy
 import io
 import json
@@ -28,7 +30,7 @@ mimetypes.add_type("font/woff", ".woff")
 
 from fastapi import FastAPI
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from interaction_capture import capture_live_flow
@@ -47,6 +49,7 @@ from scraper import analyze_url
 from reproduce import run_pipeline as reproduce_pipeline
 from urlguard import fetch_public_bytes, validate_public_url
 import cache_store
+import run_registry
 import blockparse
 import mergeback
 import qualitygate
@@ -179,21 +182,52 @@ def parse_ir_response(raw: str):
 
 
 def call_llm_ir(provider: str, user_content: str, temperature: float = 0.8,
-                mode: str = "generate", effort: str = "medium"):
+                mode: str = "generate", effort: str = "medium",
+                run_id: str | None = None):
     """Вызов LLM с системным промптом генератора -> (ir, error)."""
+    pending_chars = 0
+
+    def on_delta(delta: str) -> None:
+        nonlocal pending_chars
+        if run_registry.is_cancelled(run_id):
+            raise RuntimeError("cancelled")
+        pending_chars += len(delta)
+        if pending_chars >= 512:
+            run_registry.add_received_chars(run_id, pending_chars)
+            pending_chars = 0
+
     try:
         raw = llm.chat(provider, [
             {"role": "system", "content": llm.build_system_prompt(mode)},
             {"role": "user", "content": user_content},
         ], temperature, role="generator" if mode == "generate" else "edit",
-            reasoning_effort=effort)
+            reasoning_effort=effort, on_delta=on_delta)
     except Exception as e:
         return None, str(e)
+    finally:
+        run_registry.add_received_chars(run_id, pending_chars)
     return parse_ir_response(raw)
 
 
 def err(status: int, message: str) -> JSONResponse:
     return JSONResponse({"detail": message}, status_code=status)
+
+
+# 499 — клиент отменил запуск (кооперативная отмена через run_registry)
+CANCELLED_STATUS = 499
+
+
+def _finish_run(run_id: str | None, resp) -> None:
+    """Закрыть запись реестра по итогу хендлера: отмена > ошибка > успех."""
+    if not run_id:
+        return
+    if run_registry.is_cancelled(run_id):
+        status = "cancelled"
+    elif isinstance(resp, JSONResponse) and resp.status_code >= 400:
+        status = "error"
+    else:
+        status = "complete"
+    run_registry.finish(run_id, status)
 
 
 # Поле provider в запросах сохранено для совместимости со старыми сейвами;
@@ -216,6 +250,8 @@ class GenerateReq(BaseModel):
     rawOutputs: list[str] | None = None
     # ТЗ §19: закреплённая ревизия дизайн-системы {systemId, revision, contentHash, usageMode}
     designSystem: dict | None = None
+    # Клиентский id запуска для стадий/отмены (run_registry); старые клиенты не шлют
+    runId: str | None = None
 
 
 class MixReq(BaseModel):
@@ -279,6 +315,7 @@ class QualityPassReq(BaseModel):
     min_score: int = 85
     repair: bool = True
     rejudge: bool = True
+    runId: str | None = None
 
 
 class QualityPassCodexOutputs(BaseModel):
@@ -412,6 +449,18 @@ class TasteOutcomeReq(BaseModel):
 
 @app.post("/api/generate")
 def generate(req: GenerateReq):
+    """Обёртка: регистрирует запуск (стадии/отмена) и закрывает его по итогу."""
+    run_id = run_registry.start(req.runId, "generate")
+    run_registry.stage(run_id, "prompt", "Собираю промпт")
+    resp = None
+    try:
+        resp = _generate(req, run_id)
+        return resp
+    finally:
+        _finish_run(run_id, resp)
+
+
+def _generate(req: GenerateReq, run_id: str | None):
     # Browser mode may explicitly select a direct API account. Codex is a
     # desktop-only transport, so unknown/desktop values fall back to ROUTING.
     provider = "openai"
@@ -547,10 +596,18 @@ def generate(req: GenerateReq):
             user += "\n\n" + ds_prompt_block
         if req.prepareOnly:
             return user, None, None
+        if run_registry.is_cancelled(run_id):
+            return None, "cancelled", None
         if req.rawOutputs is not None:
+            run_registry.stage(run_id, "parse", "Разбираю ответ модели")
             ir, error = parse_ir_response(req.rawOutputs[n - 1])
         else:
-            ir, error = call_llm_ir(provider, user, 0.8 if mode == "generate" else 0.3, mode, effort)
+            run_registry.stage(run_id, "llm", f"Модель генерирует IR ({count} вар.)" if count > 1 else "Модель генерирует IR")
+            ir, error = call_llm_ir(
+                provider, user, 0.8 if mode == "generate" else 0.3,
+                mode, effort, run_id=run_id,
+            )
+            run_registry.stage(run_id, "validate", "Проверка схемы и автофиксы")
         qa = None
         if ir is not None:
             ir = sanitize_generated_ir(ir)
@@ -600,7 +657,9 @@ def generate(req: GenerateReq):
                if ds_context is not None and ds_compiled else {}),
         }
 
-    futures = [EXECUTOR.submit(gen_one, i + 1) for i in range(count)]
+    # copy_context: contextvar-токен отмены десктопного воркера (cancel_token)
+    # иначе не виден в потоках пула — LLM-вызовы дорабатывали бы после отмены.
+    futures = [EXECUTOR.submit(contextvars.copy_context().run, gen_one, i + 1) for i in range(count)]
     variants, errors, qa = [], [], []
     for i, f in enumerate(futures):
         ir, error, q = f.result()
@@ -609,8 +668,11 @@ def generate(req: GenerateReq):
             qa.append(q)
         else:
             errors.append({"index": i + 1, "error": error})
+    if run_registry.is_cancelled(run_id):
+        return err(CANCELLED_STATUS, "Генерация отменена")
     if not variants:
         return err(502, f"Ни один вариант не сгенерирован. {errors[0]['error'] if errors else ''}")
+    run_registry.stage(run_id, "design-system", "Проверка дизайн-системы и сборка ответа")
     design_system_report = None
     if ds_context is not None:
         from design_system import resolver as ds_resolver
@@ -933,6 +995,11 @@ def block_parse_job(job_id: str):
         job = SOURCE_IMPORT_JOBS.get(job_id)
         if not job:
             return err(404, "Source Import job не найден.")
+        # Завершённый job больше не мутирует, а его результат — мегабайты
+        # артефакта: deepcopy под глобальным локом на каждом финальном полле
+        # был заметной паузой. Копируем только живые (маленькие) записи.
+        if job.get("status") in {"complete", "error"}:
+            return job
         return copy.deepcopy(job)
 
 
@@ -1403,6 +1470,17 @@ def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None,
 
 @app.post("/api/quality-pass")
 def quality_pass(req: QualityPassReq):
+    """Обёртка run_registry: стадии judge → repair → rejudge и кооперативная отмена."""
+    run_id = run_registry.start(req.runId, "quality-pass")
+    resp = None
+    try:
+        resp = _quality_pass(req, run_id)
+        return resp
+    finally:
+        _finish_run(run_id, resp)
+
+
+def _quality_pass(req: QualityPassReq, run_id: str | None):
     """Премиальный контур: детерминированные правила → независимый judge → repair → rejudge.
 
     API всегда возвращает исходный валидный IR, если repair не удался: результат
@@ -1412,10 +1490,13 @@ def quality_pass(req: QualityPassReq):
     if schema_errors:
         return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
     deterministic_before = qualitygate.check(req.ir)
+    run_registry.stage(run_id, "judge", "Судья оценивает")
     try:
         initial = _quality_scorecard(req.ir, req.brief)
     except Exception as e:
         return err(502, f"Quality Pass judge недоступен: {e}")
+    if run_registry.is_cancelled(run_id):
+        return err(CANCELLED_STATUS, "Quality Pass отменён")
     min_score = max(0, min(int(req.min_score), 100))
     important = any(i["severity"] in {"critical", "major"} for i in initial["issues"])
     needs_repair = bool(deterministic_before) or important or initial["score"] < min_score
@@ -1424,6 +1505,7 @@ def quality_pass(req: QualityPassReq):
     final = initial
     if req.repair and needs_repair:
         repair["attempted"] = True
+        run_registry.stage(run_id, "repair", "Починка по замечаниям судьи")
         repaired, repair_error = _quality_repair(req.ir, initial, req.brief)
         if repaired is None:
             repair["error"] = repair_error
@@ -1431,6 +1513,9 @@ def quality_pass(req: QualityPassReq):
             output_ir = repaired
             repair["applied"] = True
             if req.rejudge:
+                if run_registry.is_cancelled(run_id):
+                    return err(CANCELLED_STATUS, "Quality Pass отменён")
+                run_registry.stage(run_id, "rejudge", "Повторная оценка")
                 try:
                     final = _quality_scorecard(output_ir, req.brief)
                 except Exception as e:
@@ -1798,6 +1883,49 @@ def project_load(req: ProjectLoadReq):
         "updated_at": record["updated_at"],
         "revision": record["revision"],
     }
+
+
+@app.get("/api/runs/{run_id}")
+def run_status(run_id: str):
+    """Стадия длинного запуска (generate/quality-pass) — клиент поллит параллельно POST."""
+    run = run_registry.get(run_id)
+    if not run:
+        return err(404, "Запуск не найден")
+    return run
+
+
+@app.get("/api/runs/{run_id}/events")
+async def run_events(run_id: str):
+    """Push run stage changes to browser clients; polling remains a client fallback."""
+    async def events():
+        revision = 0
+        empty_waits = 0
+        while True:
+            run = await asyncio.to_thread(run_registry.wait_for_update, run_id, revision, 15.0)
+            if run is None:
+                empty_waits += 1
+                yield ": keep-alive\n\n"
+                if revision == 0 and empty_waits >= 2:
+                    break
+                continue
+            empty_waits = 0
+            revision = int(run.get("revision") or revision)
+            payload = json.dumps(run, ensure_ascii=False, separators=(",", ":"))
+            yield f"id: {revision}\ndata: {payload}\n\n"
+            if run.get("status") in {"complete", "error", "cancelled"}:
+                break
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/runs/{run_id}/cancel")
+def run_cancel(run_id: str):
+    """Кооперативная отмена: хендлер прервётся на следующей проверке между стадиями."""
+    return {"cancelled": run_registry.cancel(run_id), "runId": run_id}
 
 
 @app.get("/api/project/taste")

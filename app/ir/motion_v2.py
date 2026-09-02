@@ -2,26 +2,15 @@
 from __future__ import annotations
 
 import copy
-import json
-from pathlib import Path
 from typing import Any, Callable
 
 import jsonschema
 
 from .hash import content_hash
+from .schema import load_aux_schema
 
-
-_ROOT = Path(__file__).resolve().parents[2]
-_V1_SCHEMA_PATH = _ROOT / "schema" / "motion-ir.schema.json"
-_V2_SCHEMA_PATH = _ROOT / "schema" / "motion-ir-2.0.schema.json"
-
-
-def _load_schema(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-_V1_VALIDATOR = jsonschema.Draft7Validator(_load_schema(_V1_SCHEMA_PATH))
-_V2_VALIDATOR = jsonschema.Draft7Validator(_load_schema(_V2_SCHEMA_PATH))
+_V1_VALIDATOR = jsonschema.Draft7Validator(load_aux_schema("motion-ir"))
+_V2_VALIDATOR = jsonschema.Draft7Validator(load_aux_schema("motion-ir-2.0"))
 
 
 def motion_v2_content_hash(document: dict[str, Any]) -> str:

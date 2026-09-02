@@ -10,9 +10,13 @@ import dataclasses
 import json
 import os
 import re
+import threading
 import urllib.request
 import uuid
+from collections.abc import Callable
 from pathlib import Path
+
+import cancel_token
 
 
 ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
@@ -170,8 +174,8 @@ class ChatRequest:
             issues.append("timeout_s: expected an integer in 1..600")
         if not isinstance(self.request_id, str) or not _REQUEST_ID_RE.fullmatch(self.request_id):
             issues.append("request_id: expected [A-Za-z0-9-]{1,64}")
-        if self.stream:
-            issues.append("stream: streaming is not supported by this transport")
+        if not isinstance(self.stream, bool):
+            issues.append("stream: expected a boolean")
         if self.max_output_tokens is not None and (not isinstance(self.max_output_tokens, int) or self.max_output_tokens <= 0):
             issues.append("max_output_tokens: expected a positive integer")
         if self.provider_options:
@@ -202,6 +206,8 @@ class ChatRequest:
             "reasoning": {"effort": effort},
             "store": False,
         }
+        if self.stream:
+            payload["stream"] = True
         if instructions:
             payload["instructions"] = instructions
         if self.max_output_tokens is not None:
@@ -252,6 +258,71 @@ def _post_json(url: str, payload: dict, key: str | None, timeout: int, extra_hea
         return json.loads(response.read())
 
 
+def _post_stream(
+    url: str,
+    payload: dict,
+    key: str | None,
+    timeout: int,
+    on_delta: Callable[[str], None] | None = None,
+    extra_headers: dict | None = None,
+) -> dict:
+    """Consume a Responses SSE stream and return its completed response object."""
+    body = json.dumps({**payload, "stream": True}).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    if extra_headers:
+        headers.update(extra_headers)
+    request = urllib.request.Request(url, data=body, headers=headers)
+    completed: dict | None = None
+    event_name = ""
+    data_lines: list[str] = []
+
+    def dispatch() -> None:
+        nonlocal completed, event_name, data_lines
+        if not data_lines:
+            event_name = ""
+            return
+        raw_data = "\n".join(data_lines)
+        data_lines = []
+        if raw_data == "[DONE]":
+            event_name = ""
+            return
+        event = json.loads(raw_data)
+        event_type = str(event.get("type") or event_name)
+        event_name = ""
+        cancel_token.check()
+        if event_type == "response.output_text.delta":
+            delta = event.get("delta")
+            if isinstance(delta, str) and delta and on_delta:
+                on_delta(delta)
+        elif event_type == "response.completed":
+            response = event.get("response")
+            if isinstance(response, dict):
+                completed = response
+        elif event_type in {"error", "response.failed", "response.incomplete"}:
+            error = event.get("error")
+            if not isinstance(error, dict):
+                response = event.get("response")
+                error = response.get("error") if isinstance(response, dict) else None
+            message = error.get("message") if isinstance(error, dict) else event.get("message")
+            raise RuntimeError(str(message or f"OpenAI stream failed: {event_type}"))
+
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        for raw_line in response:
+            line = raw_line.decode("utf-8").rstrip("\r\n")
+            if not line:
+                dispatch()
+            elif line.startswith("event:"):
+                event_name = line[6:].strip()
+            elif line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+        dispatch()
+    if completed is None:
+        raise RuntimeError("OpenAI stream ended before response.completed")
+    return completed
+
+
 def _extract_response(data: dict) -> tuple[str, list[dict] | None]:
     texts = []
     tool_calls = []
@@ -276,13 +347,31 @@ def _extract_response(data: dict) -> tuple[str, list[dict] | None]:
     return content, tool_calls or None
 
 
-def chat_envelope(request: ChatRequest, role: str = "mechanics") -> dict:
+def chat_envelope(
+    request: ChatRequest,
+    role: str = "mechanics",
+    on_delta: Callable[[str], None] | None = None,
+) -> dict:
     """Execute one fixed Sol Responses request and return transport diagnostics."""
+    # Кооперативная отмена (cancel_token): отменённый запрос не начинает
+    # следующий LLM-вызов — покрывает генератор, quality-pass и импорт разом.
+    cancel_token.check()
     payload, dropped = request.to_responses_payload()
     key = os.environ.get("OPENAI_API_KEY", "")
     if not key:
         raise RuntimeError("OpenAI is not connected: set OPENAI_API_KEY")
-    data = _post_json(os.environ.get("OPENAI_RESPONSES_URL", OPENAI_URL), payload, key, request.timeout_s or TIMEOUT)
+    streamed = bool(request.stream or on_delta)
+    post = _post_stream if streamed else _post_json
+    if streamed:
+        data = post(
+            os.environ.get("OPENAI_RESPONSES_URL", OPENAI_URL), payload, key,
+            request.timeout_s or TIMEOUT, on_delta=on_delta,
+        )
+    else:
+        data = post(
+            os.environ.get("OPENAI_RESPONSES_URL", OPENAI_URL), payload, key,
+            request.timeout_s or TIMEOUT,
+        )
     content, tool_calls = _extract_response(data)
     return {
         "content": content,
@@ -292,13 +381,15 @@ def chat_envelope(request: ChatRequest, role: str = "mechanics") -> dict:
             "model": SOL_MODEL,
             "request_id": request.request_id,
             "dropped": dropped,
+            "streamed": streamed,
         },
     }
 
 
 def chat(provider: str | None, messages: list, temperature: float, timeout: int | None = None,
          role: str = "mechanics", model: str | None = None,
-         reasoning_effort: str | None = None) -> str:
+         reasoning_effort: str | None = None,
+         on_delta: Callable[[str], None] | None = None) -> str:
     request = ChatRequest(
         messages=messages,
         provider=provider,
@@ -306,8 +397,9 @@ def chat(provider: str | None, messages: list, temperature: float, timeout: int 
         temperature=temperature,
         timeout_s=timeout,
         reasoning_effort=reasoning_effort,
+        stream=on_delta is not None,
     )
-    return chat_envelope(request, role=role)["content"]
+    return chat_envelope(request, role=role, on_delta=on_delta)["content"]
 
 
 def chat_vision(provider: str | None, image_data_url: str, text_prompt: str,
@@ -326,13 +418,52 @@ def chat_vision(provider: str | None, image_data_url: str, text_prompt: str,
     return chat_envelope(request, role=role)["content"]
 
 
+# Кэш промпт-файлов и собранных системных промптов: сервер многопоточный,
+# файлы читаются на каждый LLM-вызов, поэтому ключ — (path, mtime_ns, size).
+_PROMPT_FILES = (
+    "spike/system-prompt.md", "schema/design-ir.schema.json",
+    "app/prompts/BLOCKS.md", "app/prompts/DESIGN.md",
+)
+_PROMPT_LOCK = threading.Lock()
+_FILE_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
+_PROMPT_CACHE: dict[tuple[str, tuple[tuple[int, int], ...]], str] = {}
+
+
+def _file_stamp(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def invalidate_prompt_cache() -> None:
+    """Сбросить оба кэша (для тестов и горячей смены ROOT)."""
+    with _PROMPT_LOCK:
+        _FILE_CACHE.clear()
+        _PROMPT_CACHE.clear()
+
+
 def load(name: str) -> str:
-    return (ROOT / name).read_text(encoding="utf-8")
+    path = ROOT / name
+    stamp = _file_stamp(path)
+    key = str(path)
+    with _PROMPT_LOCK:
+        cached = _FILE_CACHE.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+    text = path.read_text(encoding="utf-8")
+    with _PROMPT_LOCK:
+        _FILE_CACHE[key] = (stamp, text)
+    return text
 
 
 def build_system_prompt(mode: str = "generate") -> str:
+    signature = tuple(_file_stamp(ROOT / name) for name in _PROMPT_FILES)
+    key = (mode, signature)
+    with _PROMPT_LOCK:
+        cached = _PROMPT_CACHE.get(key)
+    if cached is not None:
+        return cached
     template = load("spike/system-prompt.md").split("---", 1)[-1]
-    return (
+    prompt = (
         template.replace("{{SCHEMA}}", load("schema/design-ir.schema.json"))
         .replace("{{BLOCKS}}", load("app/prompts/BLOCKS.md"))
         .replace("{{DESIGN}}", load("app/prompts/DESIGN.md") if mode == "generate" else "")
@@ -341,6 +472,12 @@ def build_system_prompt(mode: str = "generate") -> str:
         .replace("{{MODE}}", mode)
         .strip()
     )
+    with _PROMPT_LOCK:
+        # Старые сигнатуры больше не нужны — держим только актуальный вариант mode.
+        for stale in [k for k in _PROMPT_CACHE if k[0] == mode and k != key]:
+            del _PROMPT_CACHE[stale]
+        _PROMPT_CACHE[key] = prompt
+    return prompt
 
 
 def extract_json(text: str) -> str:

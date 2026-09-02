@@ -22,6 +22,7 @@ from bs4 import BeautifulSoup
 
 import llm_client as llm
 import cache_store
+import cancel_token
 import fidelity_harness
 import ir
 from ir import ensure_current as ensure_current_ir
@@ -678,6 +679,8 @@ def parse_blocks(url: str, blocks: list | None = None,
         timings_ms[name] = duration
         if on_stage is not None:
             on_stage(name, duration, dict(timings_ms))
+        # граница стадии импорта — точка кооперативной отмены (cancel_token)
+        cancel_token.check()
 
     url = url.strip()
     authenticated = auth_cookies is not None
@@ -763,6 +766,7 @@ def parse_blocks(url: str, blocks: list | None = None,
 
     def capture_progress(viewport_name: str, viewport_index: int,
                          viewport_count: int, elapsed_ms: int) -> None:
+        cancel_token.check()  # между viewport'ами захвата
         if on_stage is None:
             return
         stage_name = "capture" + viewport_name[:1].upper() + viewport_name[1:]

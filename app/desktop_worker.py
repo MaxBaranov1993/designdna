@@ -14,6 +14,7 @@ import io
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -21,6 +22,8 @@ from urllib.parse import urlencode
 APP_DIRECTORY = Path(__file__).resolve().parent
 if str(APP_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(APP_DIRECTORY))
+
+import cancel_token  # noqa: E402  (после sys.path — общий с server.py модуль)
 
 
 def _load_application():
@@ -154,9 +157,16 @@ async def dispatch(method: str, params: dict[str, Any]) -> dict[str, Any]:
     if method == "http.request":
         return await asgi_request(params)
     if method == "debug.sleep":
-        # Только для регрессионного теста конкурентности (worker_protocol private
-        # surface): рендерер не имеет доступа к stdio-методам воркера.
-        await asyncio.sleep(max(0.0, min(30.0, float(params.get("seconds", 1.0)))))
+        # Только для регрессионных тестов конкурентности и отмены (worker_protocol
+        # private surface): рендерер не имеет доступа к stdio-методам воркера.
+        # Спим тиками и проверяем cancel-token — как серверный код между стадиями.
+        deadline = time.monotonic() + max(0.0, min(30.0, float(params.get("seconds", 1.0))))
+        while True:
+            cancel_token.check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(0.05, remaining))
         return {"ok": True}
     if method == "shutdown":
         return {"ok": True, "shutdown": True}
@@ -263,21 +273,107 @@ def main() -> int:
             thread_loops.loop = loop
         return loop.run_until_complete(coro)
 
+    def write_cancelled(request_id: Any) -> None:
+        # Единый формат ответа на отменённый запрос: code=cancelled + флаг,
+        # main.mjs по нему отличает кооперативную отмену от падения воркера.
+        with write_lock:
+            write_frame({
+                "id": request_id,
+                "cancelled": True,
+                "error": {"code": "cancelled", "message": "cancelled", "cancelled": True,
+                          "data": {"cancelled": True}},
+            })
+
     def process(message: dict[str, Any]) -> None:
         method = str(message.get("method", ""))
         params = message.get("params") or {}
+        request_id = message.get("id")
+        # Привязываем поток (и через copy_context — anyio-поток sync-эндпоинта)
+        # к id фрейма: серверный код видит отмену через cancel_token.check().
+        cancel_token.set_current(str(request_id) if request_id is not None else None)
         try:
+            if cancel_token.is_cancelled():
+                # отмена пришла, пока фрейм ждал свободный поток пула
+                write_cancelled(request_id)
+                return
             result = run_async(dispatch(method, params))
+            if cancel_token.is_cancelled():
+                # хендлер доработал (например, LLM-вызов уже шёл), но запрос
+                # отменён — рендерер ждёт именно cancelled, а не устаревший ответ
+                write_cancelled(request_id)
+                return
             with write_lock:
-                write_frame({"id": message.get("id"), "result": result})
+                write_frame({"id": request_id, "result": result})
             if result.get("shutdown"):
                 os._exit(0)
+        except cancel_token.Cancelled:
+            write_cancelled(request_id)
         except Exception as error:  # protocol boundary: structured failure
+            if cancel_token.is_cancelled():
+                write_cancelled(request_id)
+                return
             with write_lock:
                 write_frame({
-                    "id": message.get("id"),
+                    "id": request_id,
                     "error": {"code": type(error).__name__, "message": str(error)},
                 })
+        finally:
+            cancel_token.clear(str(request_id) if request_id is not None else None)
+
+    def handle_cancel(message: dict[str, Any]) -> None:
+        """Служебный фрейм {"type":"cancel","requestId":…[,"id":…]}: выставляет
+        флаг в реестре; если у фрейма есть id — подтверждаем приём (known —
+        запрос был активен или ждал в очереди)."""
+        target = message.get("requestId")
+        known = cancel_token.cancel(str(target)) if target is not None else False
+        if message.get("id") is not None:
+            with write_lock:
+                write_frame({"id": message.get("id"),
+                             "result": {"ok": True, "cancel": True, "known": known,
+                                        "requestId": target}})
+
+    # Читатель stdin — отдельный поток: основной цикл может стоять в ожидании
+    # drain перед runtime.configure, а отмена обязана доходить до реестра
+    # немедленно — иначе cancel ждал бы завершения того самого запроса.
+    import queue as queue_module
+
+    inbox: "queue_module.Queue[dict[str, Any] | None]" = queue_module.Queue()
+
+    def is_cancel_frame(message: dict[str, Any]) -> bool:
+        return message.get("type") == "cancel" or str(message.get("method", "")) == "cancel"
+
+    def read_loop() -> None:
+        try:
+            while True:
+                line = stdin.readline()
+                if not line:
+                    break
+                try:
+                    message = json.loads(line)
+                except Exception as error:
+                    with write_lock:
+                        write_frame({"id": None, "error": {"code": type(error).__name__, "message": str(error)}})
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                params = message.get("params") or {}
+                body_len = params.pop("bodyLen", 0) if isinstance(params, dict) else 0
+                if isinstance(body_len, int) and body_len > 0:
+                    try:
+                        params["bodyBytes"] = _read_exact(stdin, body_len)
+                    except EOFError as error:
+                        with write_lock:
+                            write_frame({"id": message.get("id"),
+                                         "error": {"code": type(error).__name__, "message": str(error)}})
+                        break
+                if is_cancel_frame(message):
+                    handle_cancel(message)
+                    continue
+                inbox.put(message)
+        finally:
+            inbox.put(None)
+
+    threading.Thread(target=read_loop, name="stdin-reader", daemon=True).start()
 
     with ThreadPoolExecutor(max_workers=3, thread_name_prefix="asgi") as pool:
         pending = 0
@@ -293,27 +389,10 @@ def main() -> int:
                     drained.notify_all()
 
         while True:
-            line = stdin.readline()
-            if not line:
+            message = inbox.get()
+            if message is None:
                 pool.shutdown(wait=True)
                 return 0
-            try:
-                message = json.loads(line)
-            except Exception as error:
-                with write_lock:
-                    write_frame({"id": None, "error": {"code": type(error).__name__, "message": str(error)}})
-                continue
-            params = message.get("params") or {}
-            body_len = params.pop("bodyLen", 0)
-            if isinstance(body_len, int) and body_len > 0:
-                try:
-                    params["bodyBytes"] = _read_exact(stdin, body_len)
-                except EOFError as error:
-                    with write_lock:
-                        write_frame({"id": message.get("id"),
-                                     "error": {"code": type(error).__name__, "message": str(error)}})
-                    pool.shutdown(wait=True)
-                    return 0
             if str(message.get("method", "")) in ("runtime.configure", "shutdown"):
                 # env-мутации не гоняются с запросами: ждём, пока активные
                 # и уже поставленные в очередь задачи пула завершатся

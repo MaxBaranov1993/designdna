@@ -4,18 +4,17 @@ from __future__ import annotations
 import copy
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import jsonschema
 
 from .hash import content_hash
+from .schema import load_aux_schema
 
 INTERACTION_VERSION = "1.0"
 ALLOWED_EVENTS = {"click", "type", "scroll", "navigate", "focus", "blur", "submit"}
 ALLOWED_PATCH_ROOTS = {"tree", "tokens", "frame", "responsive", "meta"}
-_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / "interaction-ir.schema.json"
 _SENSITIVE_KEY = re.compile(r"(?:pass(?:word)?|secret|token|cookie|authorization|api[_-]?key|session|credential|first[_-]?name|last[_-]?name|full[_-]?name)", re.I)
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
 _PHONE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)")
@@ -174,8 +173,7 @@ def apply_patch(document: dict, patch: list[dict]) -> dict:
 
 
 def load_schema() -> dict:
-    import json
-    return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    return load_aux_schema("interaction-ir")
 
 
 def validate(document: dict) -> list[str]:

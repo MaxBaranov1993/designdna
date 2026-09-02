@@ -35,6 +35,73 @@ def test_chat_posts_responses_payload_and_returns_text(monkeypatch):
     assert "temperature" not in seen["payload"]
 
 
+def test_chat_streams_deltas_and_returns_completed_response(monkeypatch):
+    seen = {}
+    deltas = []
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def __iter__(self):
+            return iter([
+                b"event: response.output_text.delta\n",
+                b'data: {"type":"response.output_text.delta","delta":"{\\\"ok\\\":"}\n',
+                b"\n",
+                b"event: response.output_text.delta\n",
+                b'data: {"type":"response.output_text.delta","delta":"true}"}\n',
+                b"\n",
+                b"event: response.completed\n",
+                b'data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"{\\\"ok\\\":true}"}]}]}}\n',
+                b"\n",
+            ])
+
+    def fake_urlopen(request, timeout):
+        seen["payload"] = json.loads(request.data)
+        seen["accept"] = request.get_header("Accept")
+        seen["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(llm_client.urllib.request, "urlopen", fake_urlopen)
+    result = llm_client.chat(
+        "openai", [{"role": "user", "content": "hi"}], 0.8,
+        on_delta=deltas.append,
+    )
+    assert result == '{"ok":true}'
+    assert deltas == ['{"ok":', "true}"]
+    assert seen["payload"]["stream"] is True
+    assert seen["accept"] == "text/event-stream"
+
+
+def test_stream_requires_completed_event(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+
+    class TruncatedResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def __iter__(self):
+            return iter([
+                b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n",
+                b"\n",
+            ])
+
+    monkeypatch.setattr(llm_client.urllib.request, "urlopen", lambda *_args, **_kwargs: TruncatedResponse())
+    try:
+        llm_client.chat("openai", [{"role": "user", "content": "hi"}], 0.8, on_delta=lambda _delta: None)
+    except RuntimeError as error:
+        assert "before response.completed" in str(error)
+    else:
+        raise AssertionError("truncated stream must fail")
+
+
 def test_vision_uses_responses_input_image(monkeypatch):
     seen = {}
     monkeypatch.setenv("OPENAI_API_KEY", "secret")

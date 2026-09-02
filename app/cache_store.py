@@ -7,6 +7,8 @@ Bounded desktop-safe SQLite cache:
   - canonical UTF-8 JSON payload bytes + SHA-256 integrity + byte_size
   - created_at / accessed_at, TTL expiry, deterministic LRU under a byte budget
   - WAL + busy_timeout; old llm_cache rows migrate in one transaction
+  - одно соединение на поток, миграция один раз на процесс; чтения без
+    глобального lock, write-транзакции — под ним
 
 Env (invalid or out-of-range values fall back to the documented defaults):
   DESIGNDNA_CACHE_TTL_SECONDS      default 2592000 (30 days), allowed 1..315360000
@@ -40,7 +42,15 @@ TTL_SECONDS_RANGE = (1, 315_360_000)     # 1s .. 10 years
 MAX_BYTES_RANGE = (1, 68_719_476_736)    # 1 byte .. 64 GiB
 BUSY_TIMEOUT_MS_RANGE = (1, 60_000)
 
+# глобальный lock — только для миграции и write-транзакций: SQLite сам
+# сериализует запись, но DEFERRED-транзакция, начатая чтением, при апгрейде
+# до записи в WAL получает BUSY_SNAPSHOT без busy-wait; lock убирает эту гонку.
+# Чтения идут без него.
 _lock = threading.Lock()
+# по одному соединению на поток (переиспользуется); пути, где миграция
+# уже выполнена в этом процессе
+_local = threading.local()
+_migrated: set[str] = set()
 
 
 def _log(msg: str) -> None:
@@ -162,31 +172,74 @@ def _migrate(con: sqlite3.Connection) -> None:
     con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
-def _conn() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+def _open(path: str) -> sqlite3.Connection:
+    """Открытие соединения (раз на поток) целиком под _lock: переключение
+    journal_mode в WAL берёт exclusive lock без busy-wait, а миграция —
+    один раз на процесс."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     timeout = max(busy_timeout_ms() / 1000.0, 0.001)
-    con = sqlite3.connect(str(DB_PATH), timeout=timeout, isolation_level="DEFERRED")
-    try:
-        con.execute("PRAGMA journal_mode=WAL")
-        con.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms())}")
-        con.execute("PRAGMA synchronous=NORMAL")
-        _migrate(con)
-        return con
-    except Exception:
+    with _lock:
+        con = sqlite3.connect(path, timeout=timeout, isolation_level="DEFERRED")
+        try:
+            con.execute("PRAGMA journal_mode=WAL")
+            con.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms())}")
+            con.execute("PRAGMA synchronous=NORMAL")
+            if path not in _migrated:
+                _migrate(con)
+                con.commit()
+                _migrated.add(path)
+            return con
+        except Exception:
+            with contextlib.suppress(sqlite3.Error):
+                con.rollback()
+            con.close()
+            raise
+
+
+def _drop_local() -> None:
+    con = getattr(_local, "con", None)
+    _local.con = None
+    _local.path = None
+    if con is not None:
         with contextlib.suppress(sqlite3.Error):
-            con.rollback()
-        con.close()
+            con.close()
+
+
+def _conn() -> sqlite3.Connection:
+    """Соединение текущего потока; переоткрывается при смене DB_PATH (тесты)."""
+    path = str(DB_PATH)
+    con = getattr(_local, "con", None)
+    if con is not None and getattr(_local, "path", None) == path:
+        return con
+    _drop_local()
+    con = _open(path)
+    _local.con = con
+    _local.path = path
+    return con
+
+
+@contextmanager
+def _read():
+    """Чтение без глобального lock: SELECT в autocommit, снимок — WAL."""
+    con = _conn()
+    try:
+        yield con
+    except sqlite3.Error:
+        _drop_local()  # битое соединение не переиспользуем
         raise
 
 
 @contextmanager
-def _session():
-    con = _conn()
-    try:
-        with con:
-            yield con
-    finally:
-        con.close()
+def _write():
+    """Write-транзакция под глобальным lock, commit/rollback через `with con`."""
+    con = _conn()  # до lock: открытие/миграция сами берут _lock (не reentrant)
+    with _lock:
+        try:
+            with con:
+                yield con
+        except sqlite3.Error:
+            _drop_local()
+            raise
 
 
 def key_image(image_data_url: str) -> str:
@@ -253,51 +306,56 @@ def _evict_lru(con: sqlite3.Connection, keep_kind: str, keep_key: str, budget: i
     return removed
 
 
+def _validate_row(row: tuple) -> tuple[dict | None, str | None]:
+    """(payload, None) для годной строки, (None, счётчик eviction) — для негодной.
+    Чистый CPU (hash + json) — выполняется вне lock и вне транзакции."""
+    payload_text, created_at, integrity, byte_size = row
+    created = _parse_ts(created_at)
+    if created is None or created <= _now() - timedelta(seconds=ttl_seconds()):
+        return None, "evicted_expired"
+    if not isinstance(payload_text, str):
+        return None, "evicted_integrity"
+    blob = payload_text.encode("utf-8")
+    if int(byte_size or 0) != len(blob):
+        return None, "evicted_integrity"
+    if str(integrity or "") != _integrity_of(blob):
+        return None, "evicted_integrity"
+    try:
+        loaded = json.loads(payload_text)
+    except (ValueError, TypeError):
+        return None, "evicted_integrity"
+    if not isinstance(loaded, dict):
+        return None, "evicted_integrity"
+    # хэш считаем один раз: replay == blob уже гарантирует тот же digest
+    if _canonical_bytes(loaded) != blob:
+        return None, "evicted_integrity"
+    return loaded, None
+
+
 def get(kind: str, key: str) -> dict | None:
-    with _lock:
-        with _session() as con:
-            row = con.execute(
-                "SELECT payload, created_at, integrity, byte_size FROM llm_cache "
-                "WHERE kind=? AND key=?",
-                (kind, key)).fetchone()
-            if not row:
-                return None
-            payload_text, created_at, integrity, byte_size = row
-
-            def drop(counter: str) -> None:
-                con.execute("DELETE FROM llm_cache WHERE kind=? AND key=?", (kind, key))
+    with _read() as con:
+        row = con.execute(
+            "SELECT payload, created_at, integrity, byte_size FROM llm_cache "
+            "WHERE kind=? AND key=?",
+            (kind, key)).fetchone()
+    if not row:
+        return None
+    loaded, counter = _validate_row(row)
+    created_at, integrity = row[1], row[2]
+    with _write() as con:
+        if counter:
+            # удаляем ровно прочитанную версию: конкурентный put мог уже
+            # положить под этот ключ свежую строку
+            cur = con.execute(
+                "DELETE FROM llm_cache WHERE kind=? AND key=? AND created_at=? AND integrity=?",
+                (kind, key, created_at, integrity))
+            if cur.rowcount:
                 _meta_add(con, counter)
-
-            created = _parse_ts(created_at)
-            if created is None or created <= _now() - timedelta(seconds=ttl_seconds()):
-                drop("evicted_expired")
-                return None
-            if not isinstance(payload_text, str):
-                drop("evicted_integrity")
-                return None
-            blob = payload_text.encode("utf-8")
-            if int(byte_size or 0) != len(blob):
-                drop("evicted_integrity")
-                return None
-            if str(integrity or "") != _integrity_of(blob):
-                drop("evicted_integrity")
-                return None
-            try:
-                loaded = json.loads(payload_text)
-            except (ValueError, TypeError):
-                drop("evicted_integrity")
-                return None
-            if not isinstance(loaded, dict):
-                drop("evicted_integrity")
-                return None
-            replay = _canonical_bytes(loaded)
-            if replay != blob or _integrity_of(replay) != integrity:
-                drop("evicted_integrity")
-                return None
-            con.execute(
-                "UPDATE llm_cache SET hits = hits + 1, accessed_at=? WHERE kind=? AND key=?",
-                (_now_iso(), kind, key))
-            return loaded
+            return None
+        con.execute(
+            "UPDATE llm_cache SET hits = hits + 1, accessed_at=? WHERE kind=? AND key=?",
+            (_now_iso(), kind, key))
+    return loaded
 
 
 def put(kind: str, key: str, payload: dict) -> None:
@@ -308,27 +366,26 @@ def put(kind: str, key: str, payload: dict) -> None:
     digest = _integrity_of(blob)
     size = len(blob)
     budget = max_bytes()
-    with _lock:
-        with _session() as con:
-            if size > budget:
-                # Do not cache oversized bytes; drop any stale row for this key
-                # so a later get cannot return the previous payload.
-                con.execute("DELETE FROM llm_cache WHERE kind=? AND key=?", (kind, key))
-                _evict_expired(con, _now())
-                return
-            now = _now_iso()
-            text = blob.decode("utf-8")
-            con.execute(
-                "INSERT OR REPLACE INTO llm_cache "
-                "(kind, key, payload, created_at, accessed_at, hits, integrity, byte_size) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (kind, key, text, now, now, 0, digest, size))
+    with _write() as con:
+        if size > budget:
+            # Do not cache oversized bytes; drop any stale row for this key
+            # so a later get cannot return the previous payload.
+            con.execute("DELETE FROM llm_cache WHERE kind=? AND key=?", (kind, key))
             _evict_expired(con, _now())
-            _evict_lru(con, kind, key, budget)
-            remaining = con.execute(
-                "SELECT byte_size FROM llm_cache WHERE kind=? AND key=?", (kind, key)).fetchone()
-            if remaining and int(remaining[0]) > budget:
-                con.execute("DELETE FROM llm_cache WHERE kind=? AND key=?", (kind, key))
+            return
+        now = _now_iso()
+        text = blob.decode("utf-8")
+        con.execute(
+            "INSERT OR REPLACE INTO llm_cache "
+            "(kind, key, payload, created_at, accessed_at, hits, integrity, byte_size) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (kind, key, text, now, now, 0, digest, size))
+        _evict_expired(con, _now())
+        _evict_lru(con, kind, key, budget)
+        remaining = con.execute(
+            "SELECT byte_size FROM llm_cache WHERE kind=? AND key=?", (kind, key)).fetchone()
+        if remaining and int(remaining[0]) > budget:
+            con.execute("DELETE FROM llm_cache WHERE kind=? AND key=?", (kind, key))
 
 
 def put_gated(kind: str, key: str, payload: dict, fidelity_report: dict | None = None) -> bool:
@@ -370,17 +427,16 @@ def put_gated(kind: str, key: str, payload: dict, fidelity_report: dict | None =
 
 def stats() -> dict:
     """Сколько запросов отдано из кэша (≈ сэкономленные LLM-вызовы)."""
-    with _lock:
-        with _session() as con:
-            total = con.execute("SELECT COALESCE(SUM(hits), 0) FROM llm_cache").fetchone()[0]
-            rows = con.execute(
-                "SELECT kind, COUNT(*), COALESCE(SUM(hits), 0), COALESCE(SUM(byte_size), 0) "
-                "FROM llm_cache GROUP BY kind").fetchall()
-            entries = con.execute("SELECT COUNT(*) FROM llm_cache").fetchone()[0]
-            bytes_total = _total_bytes(con)
-            evicted_expired = _meta_get(con, "evicted_expired")
-            evicted_integrity = _meta_get(con, "evicted_integrity")
-            evicted_lru = _meta_get(con, "evicted_lru")
+    with _read() as con:
+        total = con.execute("SELECT COALESCE(SUM(hits), 0) FROM llm_cache").fetchone()[0]
+        rows = con.execute(
+            "SELECT kind, COUNT(*), COALESCE(SUM(hits), 0), COALESCE(SUM(byte_size), 0) "
+            "FROM llm_cache GROUP BY kind").fetchall()
+        entries = con.execute("SELECT COUNT(*) FROM llm_cache").fetchone()[0]
+        bytes_total = _total_bytes(con)
+        evicted_expired = _meta_get(con, "evicted_expired")
+        evicted_integrity = _meta_get(con, "evicted_integrity")
+        evicted_lru = _meta_get(con, "evicted_lru")
     return {
         "hits_total": int(total or 0),
         "by_kind": {k: {"entries": n, "hits": h, "bytes": b} for k, n, h, b in rows},

@@ -1,21 +1,16 @@
 """Motion IR construction and validation for editable product-flow videos."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import jsonschema
 
 from .hash import content_hash
+from .schema import load_aux_schema
 
 MOTION_VERSION = "1.0"
 ALLOWED_TRANSITIONS = {"cut", "fade", "slide-left", "slide-up", "zoom"}
 ALLOWED_EASINGS = {"linear", "ease", "ease-in", "ease-out", "ease-in-out"}
-_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / "motion-ir.schema.json"
-
-
 def load_schema() -> dict:
-    return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    return load_aux_schema("motion-ir")
 
 
 def validate(document: dict, interaction: dict | None = None) -> list[str]:
