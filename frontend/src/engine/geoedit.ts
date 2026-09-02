@@ -216,6 +216,9 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
 
     let selections = [];   // [{ref, label, node}]
     let drag = null;
+    // Последний дроп лёг на смарт-гайд (выравнивание/равные зазоры): хост не
+    // округляет его к сетке — как в Figma, смарт-привязка сильнее grid snap.
+    let lastDragSmartSnapped = false;
     let marquee = null;
     let tool = "select";   // select | rect | ellipse | line | image | text | frame | hand (панель как в pen.dev)
     let hand = null;
@@ -2012,6 +2015,9 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
           const guidesData = computeGuides(d0.ref, moving);
           tx += guidesData.snaps.dx;
           ty += guidesData.snaps.dy;
+          // Смарт-гайды (выравнивание, равные зазоры) приоритетнее сетки: хост
+          // не должен округлять такой дроп к 8px (см. lastDragSmartSnapped)
+          drag.smartSnapped = !!(guidesData.snaps.dx || guidesData.snaps.dy || (guidesData.eq && guidesData.eq.length));
           // snap не должен возрождать заблокированную Shift-ом ось
           if (constrain === "y") ty = 0; else if (constrain === "x") tx = 0;
           renderGuides(guidesData);
@@ -2045,6 +2051,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       pendingPointer = e;
       applyDragFrame();
       const d = drag;
+      lastDragSmartSnapped = !!(d && d.smartSnapped);
       drag = null;
       pendingPointer = null;
       if (!d) return;
@@ -3270,6 +3277,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       sizeOf,
       setTool,
       getTool: () => tool,
+      lastDragSmartSnapped: () => lastDragSmartSnapped,
       syncZoom: () => syncZoom(),
       resetFrame,
       stretchWidth,

@@ -2470,6 +2470,9 @@ function captureMoveSnapBase() {
 function applyMoveGridSnap() {
   if (!state || !snapEnabled) return;
   if (lastCanvasUp.alt || performance.now() - lastCanvasUp.t > 150) return;
+  // Смарт-гайды (выравнивание по соседям, равные зазоры) точнее сетки: дроп,
+  // который лёг на гайд, не округляем к 8px — иначе x=500 превращался в 504.
+  if (state.geo?.lastDragSmartSnapped?.()) return;
   const ir = state.activeIR || state.ir;
   state.sel.forEach((sel) => {
     const f = frameAtRef(ir, sel.ref);

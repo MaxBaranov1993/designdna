@@ -9,6 +9,8 @@ export interface GeoHandle {
   selectMulti: (refs: GeoRef[]) => void;
   clear: () => void;
   consumeEscape: () => boolean;
+  /* Последний дроп лёг на смарт-гайд — grid snap хоста не применяется */
+  lastDragSmartSnapped?: () => boolean;
   setFrame: (f: Record<string, unknown>) => void;
   setFrameProps: (f: Record<string, unknown>) => void;
   setNodeStyle: (s: Record<string, unknown>) => void;
