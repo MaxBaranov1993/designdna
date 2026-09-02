@@ -95,7 +95,7 @@ def main():
         # ---------- ctx-Р СР ВµР Р…РЎР‹: 14 РЎвЂљР С‘Р С—Р С•Р Р†, Р ВµРЎРѓРЎвЂљРЎРЉ Page ----------
         pg.click(".svelte-flow__pane", button="right")
         check("Р Р† Р СР ВµР Р…РЎР‹ 14 РЎвЂљР С‘Р С—Р С•Р Р† Р Р…Р С•Р Т‘",
-              pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 16"))
+              pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
         check("Р Р† Р СР ВµР Р…РЎР‹ Р ВµРЎРѓРЎвЂљРЎРЉ Р РЋРЎвЂљРЎР‚Р В°Р Р…Р С‘РЎвЂ Р В°",
               pg.evaluate("!!document.querySelector('#ctx-menu .ctx-item[data-type=\"page\"]')"))
         pg.click("#ctx-menu .ctx-item[data-type='page']")
@@ -182,7 +182,7 @@ def main():
               str(dna_applied))
 
         # ---------- reorder Р С”Р Р…Р С•Р С—Р С”Р С•Р в„– РІвЂ вЂњ Р СР ВµР Р…РЎРЏР ВµРЎвЂљ Р С—Р С•РЎР‚РЎРЏР Т‘Р С•Р С” РЎРѓР ВµР С”РЎвЂ Р С‘Р в„– ----------
-        pg.click(".n-page .page-row[data-port='a'] .page-row-ctl button:nth-child(2)")
+        pg.click(".n-page .merge-row[data-port='a'] .merge-ctl button:nth-child(2)")
         pg.evaluate("(id) => window.GraphDev.run(id)", page_id)
         pg.wait_for_timeout(300)
         texts = pg.evaluate(f"window.GraphDev.node({page_id}).data.ir.tree.map(s => s.props.heading)")
@@ -347,11 +347,12 @@ def main():
             const art = inner.querySelector('div[class^="ir-"]');
             const r = art.getBoundingClientRect();
             return {{ innerW: inner.clientWidth, designW: Number(art.dataset.designWidth),
-                      rectW: Math.round(r.width) }};
+                      rectW: Math.round(r.width), scale: new DOMMatrix(getComputedStyle(art).transform).a }};
         }})()""")
         check("mobile Page preview uses fitPreview without upscaling",
               pv["designW"] == 390 and
-              abs(pv["rectW"] - min(pv["designW"], pv["innerW"])) <= 2,
+              0 < pv["rectW"] <= min(pv["designW"], pv["innerW"]) + 2 and
+              abs(pv["scale"] - min(1, pv["innerW"] / pv["designW"])) <= 0.01,
               str(pv))
 
         # 6) РЎР‚Р ВµР Т‘Р В°Р С”РЎвЂљР С•РЎР‚: Р С”Р Р…Р С•Р С—Р С”Р С‘ D/T/M РЎР‚Р ВµР В°Р В»РЎРЉР Р…Р С• Р СР ВµР Р…РЎРЏРЎР‹РЎвЂљ Р СР В°РЎвЂљР ВµРЎР‚Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎР‹ (1440/768/390)
@@ -368,9 +369,14 @@ def main():
             pg.wait_for_timeout(400)
             widths[vp] = pg.evaluate(
                 "document.querySelector(\".dna-editor .fe-canvas-inner div[class^='ir-']\").offsetWidth")
-        check("РЎР‚Р ВµР Т‘Р В°Р С”РЎвЂљР С•РЎР‚: D/T/M Р СР ВµР Р…РЎРЏРЎР‹РЎвЂљ Р В°РЎР‚РЎвЂљР В±Р С•РЎР‚Р Т‘ (1440/768/390)",
-              widths == {"desktop": 1440, "tablet": 768, "mobile": 390}, str(widths))
+        check("РЎР‚Р ВµР Т‘Р В°Р С”РЎвЂљР С•РЎР‚: D/T/M Р СР ВµР Р…РЎРЏРЎР‹РЎвЂљ Р В°РЎР‚РЎвЂљР В±Р С•РЎР‚Р Т‘ (1440/834/390)",
+              widths == {"desktop": 1440, "tablet": 834, "mobile": 390}, str(widths))
         pg.click('.dna-editor [data-act="close"]')
+        # защита черновика: редактор с правками спрашивает — закрываем без сохранения
+        try:
+            pg.wait_for_selector('[data-act="close-discard"]', timeout=1000).click()
+        except Exception:
+            pass
 
         browser.close()
 

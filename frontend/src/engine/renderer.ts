@@ -861,11 +861,131 @@ import { isLockedNode } from "./locked";
   /* ---------- публичное API ---------- */
 
   let uidCounter = 0;
+  const renderStates = new WeakMap();
+
+  function nowMs() {
+    return typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+  }
+
+  function cachedRenderIsLive(container, cached) {
+    return !!cached && cached.styleEl && cached.rootEl &&
+      cached.styleEl.parentElement === container && cached.rootEl.parentElement === container;
+  }
+
+  function replaceRenderedSection(root, index, html) {
+    const current = root.children[index];
+    if (!current) return false;
+    const template = document.createElement("template");
+    template.innerHTML = html.trim();
+    const next = template.content.firstElementChild;
+    if (!next) return false;
+    current.replaceWith(next);
+    return true;
+  }
+
+  function localFingerprint(value, omitFrames) {
+    const local = {};
+    for (const key of Object.keys(value || {})) {
+      if (key === "children" || (omitFrames && key === "_frames")) continue;
+      local[key] = value[key];
+    }
+    return JSON.stringify(local);
+  }
+
+  function snapshotSection(section) {
+    const nodes = new Map();
+    const sectionFree = !!(section && section.frame && section.frame.layout === "free");
+    const roots = Array.isArray(section && section.children) ? section.children : [];
+    function visit(node, parentFree, parentFrame, depth) {
+      if (!node || typeof node !== "object" || !node.__path) return;
+      const children = Array.isArray(node.children) ? node.children : [];
+      const childPaths = children.map((child) => child && child.__path || "");
+      nodes.set(node.__path, {
+        fingerprint: localFingerprint(node, false),
+        childPaths,
+        node,
+        parentFree,
+        parentFrame,
+        depth,
+      });
+      const childParentFree = !!(node.frame && node.frame.layout === "free");
+      children.forEach((child) => visit(child, childParentFree, node.frame, depth + 1));
+    }
+    roots.forEach((node) => visit(node, sectionFree, section && section.frame, 0));
+    return {
+      fingerprint: localFingerprint(section, true),
+      frameFingerprint: JSON.stringify(section && section._frames || null),
+      childPaths: roots.map((child) => child && child.__path || ""),
+      nodes,
+    };
+  }
+
+  function planNodePatches(before, after) {
+    if (!before || !after || before.fingerprint !== after.fingerprint ||
+      before.frameFingerprint !== after.frameFingerprint || after.frameFingerprint !== "null") return null;
+    const patches = [];
+    function walk(beforePaths, afterPaths, parentPath) {
+      if (beforePaths.length !== afterPaths.length ||
+        beforePaths.some((path, index) => path !== afterPaths[index])) {
+        if (!parentPath || !after.nodes.has(parentPath)) return false;
+        patches.push(after.nodes.get(parentPath));
+        return true;
+      }
+      for (let index = 0; index < afterPaths.length; index += 1) {
+        const path = afterPaths[index];
+        const oldNode = before.nodes.get(path);
+        const nextNode = after.nodes.get(path);
+        if (!path || !oldNode || !nextNode) {
+          if (!parentPath || !after.nodes.has(parentPath)) return false;
+          patches.push(after.nodes.get(parentPath));
+          return true;
+        }
+        if (oldNode.fingerprint !== nextNode.fingerprint) {
+          patches.push(nextNode);
+          continue;
+        }
+        if (!walk(oldNode.childPaths, nextNode.childPaths, path)) return false;
+      }
+      return true;
+    }
+    return walk(before.childPaths, after.childPaths, null) ? patches : null;
+  }
+
+  function renderedNodeAt(sectionElement, path) {
+    for (const element of sectionElement.querySelectorAll("[data-ir-path]")) {
+      if (element.dataset.irPath === path) return element;
+    }
+    return null;
+  }
+
+  function replaceRenderedNode(sectionElement, entry, uid) {
+    const current = renderedNodeAt(sectionElement, entry.node.__path);
+    if (!current) return false;
+    const template = document.createElement("template");
+    template.innerHTML = renderElement(entry.node, uid, entry.parentFree, entry.parentFrame).trim();
+    const next = template.content.firstElementChild;
+    if (!next) return false;
+    current.replaceWith(next);
+    return true;
+  }
+
+  /* Глубокий клон IR на каждый рендер. Именно JSON-раундтрип, не structuredClone:
+   * JSON выбрасывает ключи со значением undefined, а геометрия (constraints,
+   * z-order, группы) различает «ключа нет» и «ключ есть, но undefined» —
+   * structuredClone ломал эти проверки (ui_p2_test). */
+  const cloneIr = (value) => JSON.parse(JSON.stringify(value));
+
+  /* Шрифты источника, чью загрузку document.fonts уже подтвердил: повторный
+   * load на каждый ререндер — лишние промисы и шум в консоли. */
+  const confirmedFontSpecs = new Set<string>();
+  let lastFontFacesCss = "";
 
   function materializeResponsiveIR(source, viewport) {
     if (!source || !source.responsive || !source.responsive.viewports) return source;
     (source.tree || []).forEach(sec => annotatePaths(sec, "", false));
-    return materializeResponsiveInPlace(JSON.parse(JSON.stringify(source)), viewport);
+    return materializeResponsiveInPlace(cloneIr(source), viewport);
   }
 
   /* Вариант для IR, уже принадлежащего рендереру (клон из renderIR):
@@ -902,10 +1022,11 @@ import { isLockedNode } from "./locked";
 
   /** Рендерит IR в container (внутри .preview-clip). Масштабирует под ширину контейнера. */
   function renderIR(container, ir, options) {
+    const startedAt = nowMs();
     // работаем на глубокой копии: mergeDefaults/__path/sourcePreview — рантайм-данные,
     // они не должны протекать в канонический IR вызывающего (editor.buildActiveIR
     // передаёт state.ir напрямую)
-    if (ir) ir = JSON.parse(JSON.stringify(ir));
+    if (ir) ir = cloneIr(ir);
     const responsiveSource = !!(ir && ir.responsive && ir.responsive.viewports);
     // приватная копия принадлежит рендереру: annotate + viewport-мутации на месте,
     // второй deep clone не нужен (внешние клиенты materializeResponsiveIR
@@ -914,7 +1035,10 @@ import { isLockedNode } from "./locked";
       (ir.tree || []).forEach((sec) => annotatePaths(sec, "", false));
       ir = materializeResponsiveInPlace(ir, options && options.viewport ? options.viewport : "desktop");
     }
-    const uid = ++uidCounter;
+    const cached = renderStates.get(container);
+    const incremental = !!(options && options.incremental);
+    const reuseCachedRoot = incremental && cachedRenderIsLive(container, cached);
+    const uid = reuseCachedRoot ? cached.uid : ++uidCounter;
     const tokens = (ir.tokens = mergeDefaults(ir.tokens));
     const tree = ir.tree || [];
 
@@ -929,8 +1053,8 @@ import { isLockedNode } from "./locked";
     // из локальных @font-face ниже, внешний каталог не запрашивается вовсе
     const offline = !!(options && options.offline);
     const href = tokens.font && !offline ? fontsUrl(tokens, ir) : "";
-    if (href) styleEl.href = href;
-    else styleEl.removeAttribute("href");
+    if (href && styleEl.getAttribute("href") !== href) styleEl.setAttribute("href", href);
+    else if (!href && styleEl.hasAttribute("href")) styleEl.removeAttribute("href");
 
     // кастомные шрифты источника (база /fonts из Source Import): инжект
     // @font-face + preload, чтобы метрики текста совпали с исходным сайтом
@@ -954,7 +1078,7 @@ import { isLockedNode } from "./locked";
       ffEl.id = "ir-fontfaces";
       document.head.appendChild(ffEl);
     }
-    ffEl.textContent = customFaces.map((f) => {
+    const fontFacesCss = customFaces.map((f) => {
       const rawUrl = String(f.url);
       const format = /\.woff2$/i.test(rawUrl) ? "woff2" : /\.woff$/i.test(rawUrl) ? "woff" : "truetype";
       const unicode = f.unicodeRange ? "unicode-range:" + String(f.unicodeRange) + ";" : "";
@@ -967,18 +1091,29 @@ import { isLockedNode } from "./locked";
         "font-style:" + String(f.style) + ";font-weight:" + String(f.weight) + ";" +
         unicode + "src:url('" + url + "') format('" + format + "');font-display:swap;}";
     }).join("\n");
-    if (customFaces.length) {
+    // Перезапись <style> при том же тексте заставляет браузер перечитать все
+    // @font-face — на каждую правку в редакторе. Меняем только при отличии.
+    if (fontFacesCss !== lastFontFacesCss) {
+      ffEl.textContent = fontFacesCss;
+      lastFontFacesCss = fontFacesCss;
+    }
+    const unconfirmedFaces = customFaces.filter((f) => {
+      const w = parseInt(String(f.weight), 10) || 400;
+      return !confirmedFontSpecs.has(w + ' 16px "' + f.family + '"');
+    });
+    if (unconfirmedFaces.length) {
       try {
         // Загрузку подтверждаем, а не выстреливаем вслепую: молчаливый отказ
         // (404 протокола, битый файл) раньше выглядел как «шрифт не применился»
         // без единого следа в логах.
-        const pending = customFaces.map((f) => {
+        const pending = unconfirmedFaces.map((f) => {
           const w = parseInt(String(f.weight), 10) || 400;
           const spec = w + ' 16px "' + f.family + '"';
           return document.fonts.load(spec).then((faces) => ({ spec, ok: faces.length > 0 }))
             .catch((error) => ({ spec, ok: false, error: String(error && error.message || error) }));
         });
         void Promise.all(pending).then((results) => {
+          for (const r of results) if (r.ok) confirmedFontSpecs.add(r.spec);
           const failed = results.filter((r) => !r.ok);
           if (failed.length) {
             console.error("[ir] source fonts failed to load: " +
@@ -1012,7 +1147,7 @@ import { isLockedNode } from "./locked";
 
     const css = `.ir-${uid}{${cssVars(tokens)}}` + baseCss(uid);
     const rootSourcePreview = ir.sourcePreview || (ir.meta && ir.meta.sourcePreview);
-    const body = tree.map((sec, i) => {
+    const sections = tree.map((sec, i) => {
       if (rootSourcePreview && sec &&
         (sec.type === "source-block" || sec.variant === "dom-capture") &&
         !sec.preview && !sec.sourcePreview && !(sec.props && sec.props.sourcePreview)) {
@@ -1021,7 +1156,13 @@ import { isLockedNode } from "./locked";
       annotatePaths(sec, "", responsiveSource);
       // помечаем корневой тег секции её индексом — нужно редактору для точной записи в IR
       return renderSection(sec, uid, rootFree).replace(/^<(\w+)/, `<$1 data-ir-sec="${i}"`);
-    }).join("");
+    });
+    const body = sections.join("");
+    // _frames are applied after HTML generation, so include them explicitly in
+    // the diff. Replacing that section also clears obsolete inline overrides.
+    const sectionFingerprints = sections.map((html, index) =>
+      html + "\u0000" + JSON.stringify(tree[index] && tree[index]._frames || null));
+    const sectionSnapshots = tree.map(snapshotSection);
 
     // Класс вьюпорта — из ЯВНО запрошенного режима (редактор передаёт
     // options.viewport). Вывод из ширины артборда ломал редактор: дефолтный
@@ -1032,18 +1173,90 @@ import { isLockedNode } from "./locked";
     const vpName = (options && options.viewport) ||
       (artW <= 639 ? "mobile" : artW <= 1023 ? "tablet" : "desktop");
     const viewportClass = "ir-" + vpName;
-    container.innerHTML = `<style>${css}</style><div class="ir-${uid} ${viewportClass}" data-design-width="${artW}" style="${artStyle.join(";")}">${body}</div>`;
-    const inner = container.firstElementChild ? container.querySelector(".ir-" + uid) : null;
-    applyFrameOverrides(container, tree);
+    const rootStyle = artStyle.join(";");
+    let inner = null;
+    let mode = "full";
+    let patchedSections = sections.length;
+    let patchedNodes = 0;
+    const canPatch = reuseCachedRoot && cached.sectionFingerprints && cached.sectionSnapshots &&
+      cached.sections.length === sections.length &&
+      cached.rootEl.children.length === sections.length;
+
+    if (canPatch) {
+      const changed = [];
+      let replaceFailed = false;
+      if (cached.css !== css) cached.styleEl.textContent = css;
+      cached.rootEl.className = `ir-${uid} ${viewportClass}`;
+      cached.rootEl.dataset.designWidth = String(artW);
+      if (cached.rootStyle !== rootStyle) cached.rootEl.style.cssText = rootStyle;
+      for (let i = 0; i < sections.length; i += 1) {
+        if (cached.sectionFingerprints[i] === sectionFingerprints[i]) continue;
+        const nodePatches = planNodePatches(cached.sectionSnapshots[i], sectionSnapshots[i]);
+        if (nodePatches && nodePatches.length) {
+          const sectionElement = cached.rootEl.children[i];
+          let nodePatchFailed = false;
+          for (const entry of nodePatches) {
+            if (!replaceRenderedNode(sectionElement, entry, uid)) {
+              nodePatchFailed = true;
+              break;
+            }
+          }
+          if (!nodePatchFailed) {
+            patchedNodes += nodePatches.length;
+            continue;
+          }
+        }
+        if (!replaceRenderedSection(cached.rootEl, i, sections[i])) {
+          replaceFailed = true;
+          break;
+        }
+        changed.push(i);
+      }
+      if (!replaceFailed) {
+        inner = cached.rootEl;
+        mode = "incremental";
+        patchedSections = changed.length;
+        if (changed.length) applyFrameOverrides(container, tree, new Set(changed));
+      }
+    }
+
+    if (!inner) {
+      patchedNodes = 0;
+      container.innerHTML = `<style>${css}</style><div class="ir-${uid} ${viewportClass}" data-design-width="${artW}" style="${rootStyle}">${body}</div>`;
+      inner = container.firstElementChild ? container.querySelector(".ir-" + uid) : null;
+      applyFrameOverrides(container, tree);
+    }
+
+    const containerStyle = container.firstElementChild;
+    const stats = {
+      mode,
+      patchedSections,
+      patchedNodes,
+      totalSections: sections.length,
+      durationMs: nowMs() - startedAt,
+    };
+    renderStates.set(container, {
+      uid,
+      styleEl: containerStyle,
+      rootEl: inner,
+      css,
+      rootStyle,
+      sections,
+      sectionFingerprints,
+      sectionSnapshots,
+      stats,
+    });
     // fitPreview сжимает артборд под ширину контейнера — нужно только в превью нод;
     // DNA-редактор управляет масштабом сам (zoom/pan), двойной scale ломал геометрию
     if (!options || options.fit !== false) requestAnimationFrame(() => fitPreview(container, inner));
+    return stats;
   }
 
   /** Применяет sec._frames (frame-оверрайды props-элементов) как inline-стили.
    *  Раньше это делал только полноэкранный редактор — теперь и нода Edit, и превью. */
-  function applyFrameOverrides(container, tree) {
+  function applyFrameOverrides(container, tree, sectionIndexes) {
     (tree || []).forEach((sec, si) => {
+      if (sectionIndexes && !sectionIndexes.has(si)) return;
       if (!sec._frames || !Object.keys(sec._frames).length) return;
       const secEl = container.querySelector(`[data-ir-sec="${si}"]`);
       if (!secEl) return;
@@ -1054,6 +1267,11 @@ import { isLockedNode } from "./locked";
         if (css) el.style.cssText = (el.style.cssText || "") + ";" + css;
       }
     });
+  }
+
+  function getRenderStats(container) {
+    const cached = renderStates.get(container);
+    return cached && cached.stats ? Object.assign({}, cached.stats) : null;
   }
 
   function fitPreview(container, inner) {
@@ -1087,7 +1305,7 @@ import { isLockedNode } from "./locked";
     });
   }
 
-export const IRRenderer = { renderIR, materializeResponsiveIR, fitPreview, DESIGN_WIDTH };
+export const IRRenderer = { renderIR, materializeResponsiveIR, fitPreview, getRenderStats, DESIGN_WIDTH };
 
 /** Чистые строковые инструменты рендерера для headless regression-тестов
  *  (frontend/tests/engine.regression.test.mjs) — без DOM. */

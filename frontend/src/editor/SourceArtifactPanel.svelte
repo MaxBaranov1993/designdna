@@ -265,7 +265,21 @@
     </section>
   </div>
 {:else}
-  <div class="source-empty large"><strong>No Source Artifact</strong><span>Connect or Sync a completed Source import to inspect screens and measured components.</span></div>
+  <div class="source-empty large">
+    <strong>No Source Artifact</strong>
+    <span>Connect or Sync a completed Source import to inspect screens and measured components.</span>
+    {#if catalogEntries.length}
+      <div class="component-sheet" data-source-component-catalog>
+        {#each catalogEntries as entry (entry.pool + ":" + entry.key)}
+          <article data-catalog-component={entry.key}>
+            <strong>{entry.component.name || entry.key}</strong>
+            <span>{entry.component.category || entry.pool}</span>
+            <button type="button" onclick={() => onOpen?.(entry.key, entry.pool)}>Открыть</button>
+          </article>
+        {/each}
+      </div>
+    {/if}
+  </div>
 {/if}
 
 <style>

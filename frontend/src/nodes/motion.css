@@ -9,6 +9,11 @@
   flex-direction: column;
   background: var(--dna-bg);
   color: var(--dna-text);
+  /* Локальные цвета данных: белая сцена превью и белые ручки/плейхед на тёмной
+   * ленте — намеренно вне темы, чтобы не зависеть от панельных токенов. */
+  --motion-stage-bg: #fdfdfd;
+  --motion-handle: #fff;
+  --motion-kf-idle: #4a4a55;
   font-family: "Manrope Variable", Manrope, "Inter", sans-serif;
   font-weight: 500;
   overflow: hidden;
@@ -260,6 +265,8 @@
   border-radius: 6px;
   font-size: 10px;
   font-weight: 700;
+  color: var(--group-color, var(--dna-dim));
+  background: color-mix(in srgb, var(--group-color, var(--dna-dim)) 15%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -298,7 +305,7 @@
 }
 .motion-dropzone:hover {
   border-color: var(--dna-violet-l);
-  background: #131318;
+  background: var(--dna-node);
 }
 .motion-dropzone-icon {
   font-size: 17px;
@@ -358,7 +365,7 @@
   color: var(--dna-text);
 }
 .motion-clips button.active {
-  background: #2a2a32;
+  background: var(--dna-hover-2);
   color: var(--dna-text);
   font-weight: 700;
 }
@@ -380,7 +387,7 @@
   gap: 7px;
   padding: 6px 12px;
   border-radius: 8px;
-  background: #151519;
+  background: var(--dna-node);
   border: 1px solid var(--dna-border);
   font-size: 11.5px;
   font-weight: 600;
@@ -424,7 +431,7 @@
   flex: none;
   border-radius: 10px;
   overflow: hidden;
-  background: #fdfdfd;
+  background: var(--motion-stage-bg);
   border: 1px solid var(--dna-border);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
 }
@@ -480,9 +487,9 @@
   max-width: 100%;
   padding: 0.55em 1.4em;
   border-radius: 0.5em;
-  background: #17171b;
-  border: 1px solid #26262d;
-  color: #f5f5f6;
+  background: var(--dna-elevated);
+  border: 1px solid var(--dna-border);
+  color: var(--dna-text);
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -541,7 +548,7 @@
   height: 11px;
   margin-top: -4px;
   border-radius: 999px;
-  background: #fff;
+  background: var(--motion-handle);
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
 }
 .motion-timebar input::-moz-range-track {
@@ -554,7 +561,7 @@
   height: 11px;
   border: none;
   border-radius: 999px;
-  background: #fff;
+  background: var(--motion-handle);
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
 }
 .motion-ruler {
@@ -605,7 +612,7 @@
   top: 0;
   bottom: 0;
   width: 2px;
-  background: #fff;
+  background: var(--motion-handle);
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
   z-index: 5;
   pointer-events: none;
@@ -629,6 +636,7 @@
   top: 9px;
   height: 3px;
   border-radius: 999px;
+  background: color-mix(in srgb, var(--group-color, var(--dna-dim)) 23%, transparent);
 }
 
 /* строка-слой */
@@ -697,7 +705,7 @@
   height: 9px;
   transform: translate(-50%, -50%) rotate(45deg);
   border-radius: 2px;
-  background: #4a4a55;
+  background: var(--motion-kf-idle);
   cursor: pointer;
 }
 .motion-layer-row.on .motion-key {
@@ -735,7 +743,7 @@
   height: 9px;
   flex: none;
   border-radius: 999px;
-  border: 1.5px solid #4a4a55;
+  border: 1.5px solid var(--motion-kf-idle);
   background: transparent;
 }
 .motion-stopwatch.animated {
@@ -756,8 +764,8 @@
 .motion-prop-lane {
   height: 22px;
   border-radius: 6px;
-  background: #0c0c0f;
-  border: 1px solid #171720;
+  background: var(--dna-sunken);
+  border: 1px solid var(--dna-border-soft);
 }
 .motion-prop-row.on .motion-prop-lane {
   border-color: rgba(155, 92, 255, 0.3);
@@ -787,7 +795,7 @@
   transition: color 0.15s ease;
 }
 .motion-del-layer:hover {
-  color: #ffb0c4;
+  color: var(--dna-text);
 }
 .motion-layer-chip {
   padding: 10px 12px;
@@ -812,7 +820,7 @@
   gap: 8px;
   padding: 7px 8px 7px 12px;
   border-radius: 9px;
-  background: #121216;
+  background: var(--dna-node);
   border: 1px solid var(--dna-border);
 }
 .motion-stepper-k {
@@ -844,12 +852,12 @@
   transition: background 0.15s ease;
 }
 .motion-stepper button:hover {
-  background: #1d1d22;
+  background: var(--dna-hover);
 }
 .motion-kf-card {
   padding: 12px;
   border-radius: 11px;
-  background: #121216;
+  background: var(--dna-node);
   border: 1px solid var(--dna-border);
 }
 .motion-kf-title {
@@ -892,7 +900,7 @@
   color: var(--dna-muted);
 }
 .motion-kf-del:hover {
-  background: #1d1d22;
+  background: var(--dna-hover);
   color: var(--dna-text);
 }
 .motion-divider {
@@ -929,7 +937,7 @@
   transition: background 0.15s ease, color 0.15s ease;
 }
 .motion-chips button:hover {
-  background: #1d1d22;
+  background: var(--dna-hover);
   color: var(--dna-text-3);
 }
 .motion-chips button.active {
@@ -961,7 +969,7 @@
   width: 100%;
   padding: 9px 11px;
   border-radius: 9px;
-  background: #121216;
+  background: var(--dna-node);
   border: 1px solid var(--dna-border);
   color: var(--dna-text);
   font: inherit;

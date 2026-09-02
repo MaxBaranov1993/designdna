@@ -186,10 +186,12 @@
     }
   });
   let groupMeta = $derived<Record<MotionCompLayer["group"], { label: string; color: string }>>({
-    src: { label: `Source Import${srcDomain ? " · " + srcDomain : ""}`, color: "#FF691D" },
-    kit: { label: "Design System / UI Kit", color: "#7018E6" },
-    gen: { label: "Генератор · Design IR", color: "#9B5CFF" },
-    media: { label: "Медиа · загружено", color: "#35B8A0" },
+    // Цвета групп — семейство токенов DNA (index.css); в разметку уходят как
+    // --group-color, полупрозрачные варианты считает CSS через color-mix.
+    src: { label: `Source Import${srcDomain ? " · " + srcDomain : ""}`, color: "var(--dna-action)" },
+    kit: { label: "Design System / UI Kit", color: "var(--dna-violet)" },
+    gen: { label: "Генератор · Design IR", color: "var(--dna-violet-l)" },
+    media: { label: "Медиа · загружено", color: "var(--dna-artifact)" },
   });
   let projectGroups = $derived.by(() => {
     const src: Array<{ name: string; kind: string }> = [];
@@ -389,7 +391,7 @@
       if (!order.includes(l.group)) order.push(l.group);
     });
     order.forEach((gk) => {
-      const meta = groupMeta[gk] || { label: gk, color: "#8A8A93" };
+      const meta = groupMeta[gk] || { label: gk, color: "var(--dna-dim)" };
       const inGroup = sceneLayers.filter((l) => l.group === gk);
       rows.push({ kind: "group", id: `g-${gk}`, label: meta.label, color: meta.color, count: inGroup.length, left: pct(b0), width: pct(scene.duration) });
       inGroup.forEach((l) => {
@@ -611,7 +613,7 @@
             <div class="motion-project-head"><i style="background:{groupMeta[group.key].color}"></i><span>{groupMeta[group.key].label}</span></div>
             {#each group.items as item, i (group.key + "-" + i)}
               <button class="motion-project-item" title="Добавить слоем" onclick={() => addAssetLayer(item.name, group.key)}>
-                <span class="motion-project-glyph" style="background:{groupMeta[group.key].color}26; color:{groupMeta[group.key].color}">◈</span>
+                <span class="motion-project-glyph" style="--group-color:{groupMeta[group.key].color}">◈</span>
                 <span class="motion-project-name">{item.name}</span>
                 <span class="motion-project-kind">{item.kind}</span>
               </button>
@@ -622,7 +624,7 @@
           <div class="motion-project-head"><i style="background:{groupMeta.media.color}"></i><span>{groupMeta.media.label}</span></div>
           {#each mediaLayers as layer (layer.id)}
             <button class="motion-project-item" onclick={() => (moLayerSel = layer.id)}>
-              <span class="motion-project-glyph" style="background:{groupMeta.media.color}26; color:{groupMeta.media.color}">▣</span>
+              <span class="motion-project-glyph" style="--group-color:{groupMeta.media.color}">▣</span>
               <span class="motion-project-name">{layer.name}</span>
               <span class="motion-project-kind">слой</span>
             </button>
@@ -708,7 +710,7 @@
               <div class="motion-row motion-group-row">
                 <div class="motion-row-name" style="color:{row.color}">{row.label} · {row.count}</div>
                 <div class="motion-lane motion-group-lane" role="presentation" onclick={seekLane}>
-                  <i class="motion-group-bar" style="left:{row.left}%; width:{row.width}%; background:{row.color}3A"></i>
+                  <i class="motion-group-bar" style="left:{row.left}%; width:{row.width}%; --group-color:{row.color}"></i>
                   <i class="motion-playhead-line" style="left:{pct(playhead)}%"></i>
                 </div>
               </div>

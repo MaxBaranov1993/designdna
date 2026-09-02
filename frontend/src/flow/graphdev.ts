@@ -32,6 +32,9 @@ export interface GraphDevApi {
     | { id: number; type: string; x: number; y: number; data: unknown }
     | undefined;
   fit: () => void;
+  /* Взгляд самого Svelte Flow на ноды (selected/measured) — для тестов выделения */
+  canvasNodes: () => { id: string; selected: boolean }[];
+  selectNode: (id: number | string, selected?: boolean) => void;
 }
 
 declare global {
@@ -43,6 +46,8 @@ declare global {
 /* Минимальный интерфейс инстанса канваса, нужный GraphDev.fit (Svelte Flow) */
 export interface FlowInstanceLike {
   fitView: (options?: { padding?: number; duration?: number }) => unknown;
+  getNodes?: () => Array<{ id: string; selected?: boolean }>;
+  updateNode?: (id: string, update: Record<string, unknown>) => void;
 }
 
 let rfInstance: FlowInstanceLike | null = null;
@@ -144,6 +149,11 @@ export function installGraphDev() {
     },
     fit: () => {
       if (rfInstance) void rfInstance.fitView();
+    },
+    canvasNodes: () =>
+      (rfInstance?.getNodes?.() || []).map((node) => ({ id: String(node.id), selected: !!node.selected })),
+    selectNode: (id, selected = true) => {
+      rfInstance?.updateNode?.(String(id), { selected });
     },
   };
 }

@@ -166,6 +166,11 @@ def main():
             "document.querySelector('.dna-editor .fe-rail [data-tool=\"select\"]').classList.contains('active')"))
 
         pg.click('.fe-toolbar [data-act="close"]')
+        # защита черновика: редактор с правками спрашивает — закрываем без сохранения
+        try:
+            pg.wait_for_selector('[data-act="close-discard"]', timeout=1000).click()
+        except Exception:
+            pass
         pg.wait_for_timeout(300)
         check("редактор закрыт", pg.evaluate("document.querySelector('.dna-editor').style.display === 'none'"))
         browser.close()

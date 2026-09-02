@@ -29,6 +29,8 @@ interface EditorUIState {
   aiError: string;
   aiPreview: AssistPreview | null;
   aiProgress: AssistProgress | null;
+  /* Модалка «сохранить / не сохранять / остаться» при закрытии с правками */
+  closeConfirmOpen: boolean;
   /** Открыть React-редактор для ноды. false — движки недоступны, зовите legacy fallback. */
   openEditor: (nodeId: number) => boolean;
 }
@@ -51,6 +53,7 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
   aiError: "",
   aiPreview: null,
   aiProgress: null,
+  closeConfirmOpen: false,
 
   openEditor: (nodeId) => {
     const st = useFlowStore.getState();
@@ -125,8 +128,9 @@ ctl.bindUi({
   setSnapStep: (snapStep) => useEditorStore.setState({ snapStep }),
   setOpen: (v) => {
     if (ctl.dom.overlay) ctl.dom.overlay.style.display = v ? "flex" : "none";
-    useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null, aiProgress: null }) });
+    useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null, aiProgress: null, closeConfirmOpen: false }) });
   },
+  setCloseConfirm: (closeConfirmOpen) => useEditorStore.setState({ closeConfirmOpen }),
   // queueMicrotask: setState синхронно внутри стека события geoedit (onSelect)
   // флашит подписчиков Svelte в контексте, где пересоздание {#key tick}-инспектора
   // даёт state_unsafe_mutation; в микротаске контекст события уже снят

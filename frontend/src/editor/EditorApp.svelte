@@ -18,6 +18,7 @@
   import ResponsiveAutopilotPanel from "./ResponsiveAutopilotPanel.svelte";
   import IntentLocksPanel from "./IntentLocksPanel.svelte";
   import SemanticSelectPanel from "./SemanticSelectPanel.svelte";
+  import CloseConfirmPanel from "./CloseConfirmPanel.svelte";
 
   let overlay: HTMLDivElement | null = $state(null);
 
@@ -56,4 +57,5 @@
   <ResponsiveAutopilotPanel />
   <IntentLocksPanel />
   <SemanticSelectPanel />
+  <CloseConfirmPanel />
 </div>

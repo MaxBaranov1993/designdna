@@ -19,3 +19,5 @@ export const flowDesignSystemPicker = selectReadable(useFlowStore, (s) => s.desi
 export const flowStatuses = selectReadable(useFlowStore, (s) => s.statuses, shallowRecordEquals);
 export const flowBusy = selectReadable(useFlowStore, (s) => s.busy, shallowRecordEquals);
 export const flowProgresses = selectReadable(useFlowStore, (s) => s.progresses, shallowRecordEquals);
+export const flowGraphHistory = selectReadable(useFlowStore, (s) => s.graphHistory);
+export const flowStatusLog = selectReadable(useFlowStore, (s) => s.statusLog, shallowRecordEquals);

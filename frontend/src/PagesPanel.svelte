@@ -1,6 +1,7 @@
 <script lang="ts">
   import { flow, flowActivePageId, flowChannels, flowNodes, flowPages } from "./flow/state";
   import { leftPanelOpen } from "./flow/ui";
+  import { confirmDialog } from "./flow/confirm";
 
   let editingId = $state<string | null>(null);
   let pages = $derived($flowPages);
@@ -57,7 +58,14 @@
           title="Удалить страницу"
           onclick={(event) => {
             event.stopPropagation();
-            if (window.confirm(`Удалить страницу «${page.name}»?`)) $flow.deletePage(page.id);
+            void confirmDialog({
+              title: `Удалить страницу «${page.name}»?`,
+              message: "Ноды и связи этой страницы будут удалены. Действие нельзя отменить.",
+              confirmLabel: "Удалить",
+              danger: true,
+            }).then((ok) => {
+              if (ok) $flow.deletePage(page.id);
+            });
           }}
         >✕</button>
       </div>

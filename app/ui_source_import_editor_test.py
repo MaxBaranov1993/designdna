@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -108,7 +109,7 @@ def main() -> None:
         }""", node_id)
         check("Edit node preview hugs the rendered source artboard",
               compact_preview["previewHeight"] < 100 and
-              abs(compact_preview["previewHeight"] - compact_preview["renderedHeight"]) <= 2,
+              compact_preview["previewHeight"] == max(32, math.ceil(compact_preview["renderedHeight"])),
               json.dumps(compact_preview))
         page.click(f'.svelte-flow__node[data-id="{node_id}"] .f-open-editor')
         page.wait_for_selector('.dna-editor [data-ir-path="root/button:1::text0"]')
@@ -156,7 +157,7 @@ def main() -> None:
                   activeLayout:window.DNAEditor.getIR().tree[0].frame.layout};
         }""")
         check("tablet keeps imported auto-layout",
-              tablet["art"] == [768, 72] and tablet["display"] == "flex" and
+              tablet["art"] == [834, 72] and tablet["display"] == "flex" and
               tablet["direction"] == "row" and tablet["activeLayout"] == "auto",
               json.dumps(tablet))
 

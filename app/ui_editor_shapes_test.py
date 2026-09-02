@@ -134,7 +134,7 @@ def main():
         line_h = pg.evaluate(
             kids_js + ".find(c => c.type === 'rect' && c.frame && c.frame.height === 2) || null")
         check("line: горизонтальный drag -> height 2", bool(line_h), str(line_h))
-        check("line: fill по умолчанию #6b7280", bool(line_h and line_h.get("fill") == "#6b7280"),
+        check("line: fill по умолчанию #8B5CF6", bool(line_h and line_h.get("fill") == "#8B5CF6"),
               str(line_h and line_h.get("fill")))
         sb = sec_box()
         drag(sb["x"] + sb["width"] * 0.94, sb["y"] + 40,
@@ -246,6 +246,11 @@ def main():
         check("IR с фигурами проходит схему (style-dna/extract)", resp == 200, str(resp))
 
         pg.click('.fe-toolbar [data-act="close"]')
+        # защита черновика: редактор с правками спрашивает — закрываем без сохранения
+        try:
+            pg.wait_for_selector('[data-act="close-discard"]', timeout=1000).click()
+        except Exception:
+            pass
         pg.wait_for_timeout(300)
         check("редактор закрыт", pg.evaluate("document.querySelector('.dna-editor').style.display === 'none'"))
         browser.close()

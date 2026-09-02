@@ -2,12 +2,16 @@ import type { IRObject, ParserSourceEnvelope, SourceArtifact, SourceViewport } f
 
 export type ApiChatMessage = { role: "system" | "user" | "assistant" | "tool"; content: string };
 
-/* Зеркало api() (nodes.js:61-71): JSON-вызов к бэкенду, Error с data.detail при !ok */
-export async function api<T>(path: string, body: unknown): Promise<T> {
+/* Зеркало api() (nodes.js:61-71): JSON-вызов к бэкенду, Error с data.detail при !ok.
+ * init.signal — отмена ожидания на клиенте (AbortError), сервер запрос не прерывает. */
+export async function api<T>(path: string, body: unknown, init?: { signal?: AbortSignal; runId?: string }): Promise<T> {
   const resp = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // runId в заголовке: десктопный мост (desktop/bridge.ts) превращает его в
+    // requestId IPC-запроса, чтобы api.cancel отменял адресно, а не рестартом воркера
+    headers: { "Content-Type": "application/json", ...(init?.runId ? { "x-designdna-run-id": init.runId } : {}) },
     body: JSON.stringify(body || {}),
+    signal: init?.signal,
   });
   let data: Record<string, unknown> = {};
   try {

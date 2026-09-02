@@ -22,9 +22,9 @@
    * возвращает пользователя кнопкой «К компонентам». */
   let activeTab = $state<"source" | "styleguide" | "foundations" | "components" | "suggestions" | "mock" | "identity" | "archetypes" | "tests" | "proof" | "validation">("source");
   const DIAGNOSTIC_LABELS: Record<string, string> = {
-    foundations: "Foundations", suggestions: "Suggestions", mock: "Mock data",
-    identity: "Identity", archetypes: "Archetypes", tests: "Tests",
-    proof: "Proof", validation: "Validation", components: "Библиотека",
+    foundations: "Основы", suggestions: "Предложения", mock: "Mock-данные",
+    identity: "Identity", archetypes: "Архетипы", tests: "Тесты identity",
+    proof: "Proof · перенос", validation: "Валидация", components: "Библиотека",
   };
   const isDiagnosticView = $derived(activeTab !== "source" && activeTab !== "styleguide");
   type CatalogPool = "components" | "review" | "suggestions";
@@ -199,7 +199,6 @@
 
   let previewHost = $state<HTMLElement | null>(null);
   let snapshot = $state("");
-  let snapshotRef: Record<string, unknown> | null = null;
   let undoStack = $state<string[]>([]);
   let appliedEdit = $state<{ editNodeId: number; previousIr: IRObject | null } | null>(null);
   let previewIr = $state<IRObject | null>(null);
@@ -255,8 +254,9 @@
 
   $effect(() => {
     const document = data.document;
-    if (document && document !== snapshotRef) {
-      snapshotRef = document;
+    // Capture the opening baseline once. Regular document updates are edits and
+    // must not silently move the Cancel target forward.
+    if (document && !snapshot) {
       snapshot = memoJson(document);
     }
   });
@@ -466,6 +466,9 @@
           revision: Number(next.revision),
         });
         if (!ok) actionError = String(data.lastError || "Не удалось восстановить опубликованную ревизию");
+        if (ok) {
+          snapshot = "";
+        }
         return ok;
       } finally {
         saving = false;
@@ -718,6 +721,9 @@
         await validate();
         return;
       }
+      snapshot = "";
+      undoStack = [];
+      appliedEdit = null;
       // документ в ноде сбрасывается публикацией в ссылку; ref-load эффект
       // подтянет опубликованную ревизию и переустановит snapshot
     } finally {
@@ -876,24 +882,25 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<div class="ds-editor-overlay" role="dialog" aria-modal="true" aria-label="Design System Editor" data-ds-editor>
+<div class="ds-editor-overlay" role="dialog" aria-modal="true" aria-label="Редактор Design System" data-ds-editor>
   <header class="ds-editor-top">
     <div>
       <strong>◈ {data.name}</strong>
-      <span class="ds-editor-meta">
-        {data.status === "published" ? `Published · v${data.revision}` : "Draft"}
+      <span class="ds-editor-meta" title="Мастер — точный компонент, извлечённый из Source (импортированного сайта) и хранимый как Design IR, промежуточное представление макета">
+        {data.status === "published" ? `Опубликовано · v${data.revision}` : "Черновик"}
         {data.defaultSet ? " · проект по умолчанию" : ""}
-        · {catalogEntries.length} source masters · {components.length} accepted · {semanticSuggestions.length} suggestions
+        · мастеров из Source: {catalogEntries.length} · принято: {components.length} · предложений: {semanticSuggestions.length}
         {dirty ? " · несохранённые правки" : ""}
       </span>
     </div>
     <div class="ds-editor-actions">
       <button type="button" data-ds-action="styleguide" aria-label="Собрать живой UI Kit и открыть в разделе «Компоненты»"
+              title="UI Kit — живой набор компонентов дизайн-системы (DS), собранный из мастеров Source"
               aria-busy={exportingKit} onclick={() => void openStyleguide()} disabled={busy || !catalogEntries.length}>
         {exportingKit ? "Сборка…" : "UI Kit"}
       </button>
       <button type="button" data-ds-action="validate" aria-label="Проверить документ" aria-busy={validating} onclick={validate} disabled={busy || !components.length}>
-        {validating ? "Проверка…" : "Validate"}
+        {validating ? "Проверка…" : "Проверить"}
       </button>
       <button type="button" data-ds-action="publish" aria-label="Опубликовать immutable-ревизию" aria-busy={publishing} onclick={publish} disabled={busy || !components.length}>
         {publishing ? "Публикация…" : "Опубликовать ревизию"}
@@ -902,12 +909,12 @@
         По умолчанию
       </button>
       <button type="button" data-ds-action="undo" aria-label="Отменить последнее изменение" onclick={() => void undo()} disabled={busy || (!undoStack.length && !appliedEdit)}>
-        Undo
+        Отменить шаг
       </button>
       <button type="button" data-ds-action="cancel" aria-label="Отменить правки и закрыть" onclick={() => void cancel()} disabled={publishing}>
         Отмена
       </button>
-      <button type="button" class="dna-btn-sell" data-ds-action="to-generator" aria-label="Передать систему в Генератор как style DNA" onclick={sendToGenerator} disabled={publishing}>
+      <button type="button" class="dna-btn-sell" data-ds-action="to-generator" aria-label="Передать систему в Генератор как style DNA" title="Style DNA — стилевой профиль системы (токены, правила, компоненты), по которому Генератор собирает новые страницы" onclick={sendToGenerator} disabled={publishing}>
         Передать в Генератор
       </button>
       <button type="button" class="close" data-ds-action="close" aria-label="Закрыть редактор" onclick={() => void cancel()}>✕</button>
@@ -942,6 +949,12 @@
                   onclick={() => void (kitUrl ? (sourceView = "kit") : openStyleguide())}>
             Живой UI Kit{#if kitReport}<span>{kitReport.components}</span>{/if}
           </button>
+          {#if semanticSuggestions.length}
+            <button type="button" role="tab" data-ds-tab="suggestions" aria-selected="false"
+                    onclick={() => (activeTab = "suggestions")}>
+              Предложения <span>{semanticSuggestions.length}</span>
+            </button>
+          {/if}
           {#if sourceView === "kit"}
             <div class="ds-kit-tools">
               {#if kitReport}
@@ -978,16 +991,16 @@
         {/if}
       {:else if activeTab === "components"}
         <div class="ds-lib-heading">
-          <div><strong>Component library</strong><small>Exact Source families, without content duplicates</small></div>
+          <div><strong>Библиотека компонентов</strong><small>Точные семейства из Source, без дублей по контенту</small></div>
           <span>{catalogEntries.length}</span>
         </div>
-        <section class="ds-ai-organizer" aria-label="AI component catalog organizer">
+        <section class="ds-ai-organizer" aria-label="AI-раскладка каталога компонентов">
           <div>
-            <strong>AI catalog logic</strong>
-            <small>Groups header, controls, button variants and cards. Exact masters stay locked.</small>
+            <strong>AI-раскладка каталога</strong>
+            <small>Группирует шапку, контролы, варианты кнопок и карточки. Точные мастера не меняются.</small>
           </div>
           <label>
-            <span>Sol effort</span>
+            <span>Усилие Sol</span>
             <select bind:value={organizerEffort} disabled={busy}>
               <option value="medium">medium</option>
               <option value="high">high</option>
@@ -995,15 +1008,15 @@
             </select>
           </label>
           <button type="button" data-ds-action="organize" onclick={() => void organizeCatalog()} disabled={busy || !catalogEntries.length}>
-            {organizing ? "Organizing…" : "Organize with Sol"}
+            {organizing ? "Раскладываю…" : "Разложить с Sol"}
           </button>
           <span class="ds-organizer-state" data-kind={catalog.organizer?.kind || "deterministic"}>
-            {catalog.organizer?.kind === "ai" ? `gpt-5.6-sol · ${catalog.organizer.reasoningEffort}` : "deterministic baseline"}
+            {catalog.organizer?.kind === "ai" ? `gpt-5.6-sol · ${catalog.organizer.reasoningEffort}` : "детерминированная база"}
           </span>
         </section>
         <label class="ds-library-search">
-          <span>Search components</span>
-          <input type="search" placeholder="Search by name or category" bind:value={componentSearch} />
+          <span>Поиск компонентов</span>
+          <input type="search" placeholder="По названию или категории" bind:value={componentSearch} />
         </label>
         <!-- Категории вместо вертикального списка: сами компоненты — карточками в центре. -->
         <nav class="ds-cat-list" aria-label="Категории компонентов">
@@ -1016,13 +1029,13 @@
             </button>
           {/each}
         </nav>
-        <div class="ds-strict-note">
+        <div class="ds-strict-note" title="Strict — Генератор не выходит за пределы дизайн-системы (DS): ни новых компонентов, ни чужих стилей">
           <strong>Strict-набор</strong>
           <small>Генератор собирает страницы только из этих компонентов.</small>
         </div>
       {:else if activeTab === "suggestions"}
-        <div class="ds-lib-heading"><div><strong>Suggestions</strong><small>Semantic hypotheses, separate from exact Source masters</small></div><span>{semanticSuggestions.length}</span></div>
-        <div class="ds-suggestion-intro">Exact observed masters are always visible in Components. This queue contains only inferred additions that require an explicit Promote.</div>
+        <div class="ds-lib-heading"><div><strong>Предложения</strong><small>Семантические гипотезы, отдельно от точных мастеров Source</small></div><span>{semanticSuggestions.length}</span></div>
+        <div class="ds-suggestion-intro">Точные наблюдаемые мастера всегда видны в «Компонентах». В этой очереди — только выведенные дополнения, которые нужно явно включить в UI Kit.</div>
         <ul class="ds-comp-list">
           {#each semanticSuggestions as [key, comp] (key)}
             <li>
@@ -1063,7 +1076,7 @@
               {reviewing ? "Ревью…" : styleReview ? "Переснять ревью" : "Запустить вручную"}
             </button>
             <span class="ds-organizer-state" data-kind={styleGuide.origin === "ai" ? "ai" : "deterministic"}>
-              {styleGuide.origin === "ai" ? `AI · ${styleGuide.provider || "openai"}` : "measured baseline"}
+              {styleGuide.origin === "ai" ? `AI · ${styleGuide.provider || "openai"}` : "измеренная база"}
             </span>
           </section>
 
@@ -1116,13 +1129,13 @@
               <div class="ds-sg-rules">
                 {#if styleReview.doRules?.length}
                   <div>
-                    <h4>Do</h4>
+                    <h4>Можно</h4>
                     <ul>{#each styleReview.doRules as rule}<li class="do">{rule}</li>{/each}</ul>
                   </div>
                 {/if}
                 {#if styleReview.dontRules?.length}
                   <div>
-                    <h4>Don't</h4>
+                    <h4>Нельзя</h4>
                     <ul>{#each styleReview.dontRules as rule}<li class="dont">{rule}</li>{/each}</ul>
                   </div>
                 {/if}
@@ -1148,20 +1161,20 @@
           </div>
           <h4>Типографика</h4>
           <p>{(foundations.typography?.families || []).join(", ") || "—"} · веса {(foundations.typography?.weights || []).join("/")}</p>
-          <h4>Spacing</h4>
+          <h4>Отступы</h4>
           <p>{Object.entries(foundations.spacing || {}).map(([k, v]) => `${k}=${v}`).join(" · ")}</p>
           <h4>Радиусы</h4>
           <p>{(foundations.radii || []).join(", ")}</p>
-          <h4>Breakpoints</h4>
+          <h4>Брейкпоинты</h4>
           <p>{Object.entries(foundations.breakpoints || {}).map(([k, v]) => `${k}≥${v}`).join(" · ")}</p>
         </div>
       {:else if activeTab === "identity"}
         <div class="ds-identity">
-          <label>Soul · one line
+          <label>Soul · одной строкой
             <textarea value={identity.soul?.oneLine?.value || ""} onblur={(event) => void updateSoul(event.currentTarget.value)}></textarea>
           </label>
-          <small>Status: {identity.status || "not-extracted"} · palette evidence {Math.round((identity.paletteCoverage?.confidence || 0) * 100)}%</small>
-          <h4>Signatures</h4>
+          <small>Статус: {identity.status || "not-extracted"} · подтверждение палитры {Math.round((identity.paletteCoverage?.confidence || 0) * 100)}%</small>
+          <h4>Сигнатуры</h4>
           {#each identity.signatures || [] as signature (signature.id)}
             <article>
               <strong>{signature.name}</strong>
@@ -1170,13 +1183,13 @@
               {#if !signature.confirmed}<button type="button" onclick={() => void confirmIdentityItem("signatures", signature.id)}>Подтвердить</button>{/if}
             </article>
           {/each}
-          <h4>Bans</h4>
+          <h4>Запреты</h4>
           {#each identity.bans || [] as ban (ban.id)}
             <article><strong>{ban.severity} · {ban.rule}</strong><small>{ban.provenance} · {Math.round((ban.confidence || 0) * 100)}%</small>
               {#if !ban.confirmed}<button type="button" onclick={() => void confirmIdentityItem("bans", ban.id)}>Подтвердить</button>{/if}
             </article>
           {/each}
-          {#if identity.uncertainty?.length}<h4>Uncertainty</h4>{/if}
+          {#if identity.uncertainty?.length}<h4>Неопределённость</h4>{/if}
           {#each identity.uncertainty || [] as item}
             <p class="ds-uncertain">◐ {item.field}: {item.reason}</p>
           {/each}
@@ -1192,7 +1205,7 @@
       {:else if activeTab === "tests"}
         <div class="ds-identity">
           <button type="button" onclick={() => void runIdentityTests()} disabled={validating || !components.length}>{validating ? "Проверяю…" : "Запустить на мастере"}</button>
-          {#if identityResult}<p class:ds-test-fail={!identityResult.passed}>Score {identityResult.score}% · {identityResult.passed ? "hard rules passed" : "hard failure"}</p>{/if}
+          {#if identityResult}<p class:ds-test-fail={!identityResult.passed}>Оценка {identityResult.score}% · {identityResult.passed ? "жёсткие правила пройдены" : "нарушено жёсткое правило"}</p>{/if}
           {#each identityTests as test (test.id)}
             {@const result = identityResult?.results?.find((item: any) => item.id === test.id)}
             <article class:ds-test-fail={result && !result.passed}><strong>{result ? (result.passed ? "✓" : "⛔") : "○"} {test.severity} · {test.description}</strong><small>{test.id} · {test.provenance} · {Math.round((test.confidence || 0) * 100)}%</small></article>
@@ -1201,10 +1214,10 @@
       {:else if activeTab === "proof"}
         <div class="ds-identity">
           <p>Reconstruction проверяет перенос identity тем же валидатором, который используется после генерации.</p>
-          <button type="button" onclick={() => void runProof("source")} disabled={proofRunning || !components.length}>{proofRunning ? "Проверяю…" : "Source proof"}</button>
-          <button type="button" onclick={() => void runProof("transfer")} disabled={proofRunning || !components.length}>Transfer proof</button>
+          <button type="button" onclick={() => void runProof("source")} disabled={proofRunning || !components.length}>{proofRunning ? "Проверяю…" : "Proof по Source"}</button>
+          <button type="button" onclick={() => void runProof("transfer")} disabled={proofRunning || !components.length}>Proof переноса</button>
           {#if reconstruction.sourceProof}<article><strong>Source · {reconstruction.sourceProof.status}</strong><p>Identity {reconstruction.sourceProof.identityScore}%</p></article>{/if}
-          {#if reconstruction.transferProof}<article><strong>Transfer · {reconstruction.transferProof.status}</strong><p>Identity {reconstruction.transferProof.identityScore}%</p></article>{/if}
+          {#if reconstruction.transferProof}<article><strong>Перенос · {reconstruction.transferProof.status}</strong><p>Identity {reconstruction.transferProof.identityScore}%</p></article>{/if}
         </div>
       {:else if activeTab === "mock"}
         <div class="ds-mock-list">
@@ -1224,7 +1237,7 @@
           {:else if validationResult}
             <div class="ds-val-ok">✓ Блокирующих ошибок нет — можно публиковать</div>
           {:else}
-            <p>Запустите Validate для проверки перед публикацией.</p>
+            <p>Нажмите «Проверить» перед публикацией.</p>
           {/if}
         </div>
       {/if}
@@ -1239,7 +1252,7 @@
             {@const variantCount = Object.keys(comp.variants || {}).length}
             {@const fidelity = fidelityOf(comp)}
             <button type="button" class="ds-card" class:active={selectedPool === entry.pool && selectedKey === entry.key}
-                    data-ds-component={entry.key} aria-label={`Выбрать компонент ${comp.name}`}
+                    data-ds-component={entry.key} data-ds-pool={entry.pool} aria-label={`Выбрать компонент ${comp.name}`}
                     onclick={() => selectCatalogComponent(entry.key, entry.pool)}>
               <span class="ds-card-preview" aria-hidden="true">
                 <span class="ds-card-render" use:cardPreview={comp.masterIr || comp.templateIr}></span>
@@ -1290,21 +1303,21 @@
           <div class="ds-viewport-switch" role="group" aria-label="Режим сравнения с Source">
             {#each ["reference", "master", "compare"] as mode (mode)}
               <button type="button" class:active={previewMode === mode} aria-pressed={previewMode === mode} onclick={() => { previewMode = mode as "reference" | "master" | "compare"; }}>
-                {mode === "reference" ? "Source" : mode === "master" ? "Master" : "Сравнить"}
+                {mode === "reference" ? "Source" : mode === "master" ? "Мастер" : "Сравнить"}
               </button>
             {/each}
           </div>
           <label class="ds-fixture">
             Данные
             <select data-ds-field="preview-fixture" aria-label="Профиль mock в превью" bind:value={fixtureProfile}>
-              <option value="source">Source exact</option>
-              <option value="typical">Typical</option>
-              <option value="short">Short</option>
-              <option value="long">Long</option>
-              <option value="empty">Empty</option>
-              <option value="loading">Loading</option>
-              <option value="error">Error</option>
-              <option value="edge-case">Edge case</option>
+              <option value="source">Точно как в Source</option>
+              <option value="typical">Типичные</option>
+              <option value="short">Короткие</option>
+              <option value="long">Длинные</option>
+              <option value="empty">Пустые</option>
+              <option value="loading">Загрузка</option>
+              <option value="error">Ошибка</option>
+              <option value="edge-case">Крайний случай</option>
             </select>
           </label>
         </div>
@@ -1324,14 +1337,14 @@
           </div>
         {/if}
       {/if}
-      <div class="ds-canvas-empty" style:display={hasSelection ? "none" : "grid"}>Выберите master или suggestion слева</div>
+      <div class="ds-canvas-empty" style:display={hasSelection ? "none" : "grid"}>Выберите мастер или предложение слева</div>
       <div class="ds-canvas-preview" data-ds-preview-host data-ds-preview-fixture={previewMeta?.fixture || fixtureProfile} bind:this={previewHost}></div>
     </main>
 
     <aside class="ds-editor-inspector">
       {#if hasSelection && selectedComp}
         <div class="ds-inspector-content">
-          <span class="ds-inspector-kicker">Inspector</span>
+          <span class="ds-inspector-kicker">Инспектор</span>
           <h3>{selectedComp.name}</h3>
           <p class="ds-inspector-description">{selectedComp.description || "Точный мастер, извлечённый из Source."}</p>
           <section class="ds-inspector-section">
@@ -1354,12 +1367,12 @@
           <section class="ds-inspector-section">
             <h4>Источник и точность</h4>
           <dl>
-            <dt>Key</dt><dd><code>{selectedComp.componentKey}</code></dd>
-            <dt>Origin</dt><dd>{originIcon(selectedComp.origin)} {selectedComp.origin} {selectedComp.confidence != null ? `· ${Math.round(selectedComp.confidence * 100)}%` : ""}</dd>
-            <dt>Status</dt><dd class:ds-fidelity-fail={selectedComp.status !== "verified"}>{selectedComp.status || "draft"}</dd>
-            <dt>Category</dt><dd>{selectedComp.category}</dd>
-            <dt>Props</dt><dd>{Object.keys(selectedComp.propsSchema || {}).join(", ") || "—"}</dd>
-            <dt>States</dt>
+            <dt>Ключ</dt><dd><code>{selectedComp.componentKey}</code></dd>
+            <dt>Происхождение</dt><dd>{originIcon(selectedComp.origin)} {selectedComp.origin} {selectedComp.confidence != null ? `· ${Math.round(selectedComp.confidence * 100)}%` : ""}</dd>
+            <dt>Статус</dt><dd class:ds-fidelity-fail={selectedComp.status !== "verified"}>{selectedComp.status || "draft"}</dd>
+            <dt>Категория</dt><dd>{selectedComp.category}</dd>
+            <dt title="Props — параметры компонента в Design IR (промежуточном представлении макета), которыми его наполняет Генератор">Props</dt><dd>{Object.keys(selectedComp.propsSchema || {}).join(", ") || "—"}</dd>
+            <dt>Состояния</dt>
             <dd>
               {#each Object.entries((selectedComp.states || {}) as Record<string, any>) as [name, st]}
                 <button
@@ -1375,15 +1388,15 @@
             </dd>
             {#if selectedComp.dependencies?.length}<dt>Зависимости</dt><dd>{selectedComp.dependencies.join(", ")}</dd>{/if}
             {#if selectedSourceRef.sourceBlock || selectedComp.provenance?.sourceBlock}<dt>Source</dt><dd>{selectedSourceRef.sourceBlock || selectedComp.provenance.sourceBlock}</dd>{/if}
-            {#if selectedComp.provenance?.sourceBlocks?.length}<dt>Blocks</dt><dd>{selectedComp.provenance.sourceBlocks.join(", ")}</dd>{/if}
+            {#if selectedComp.provenance?.sourceBlocks?.length}<dt>Блоки</dt><dd>{selectedComp.provenance.sourceBlocks.join(", ")}</dd>{/if}
             {#if Object.keys(fidelityMetrics).length}
-              <dt>Fidelity</dt>
+              <dt title="Fidelity — точность воспроизведения мастера относительно Source: сходство пикселей, покрытие краски, ошибка рамок">Fidelity</dt>
               <dd class:ds-fidelity-fail={selectedComp.status !== "verified"}>
                 similarity {fidelityMetrics.pixelSimilarity ?? "—"}% · paint {fidelityMetrics.paintCoverage ?? "—"}%<br />
                 bbox p95 {fidelityMetrics.bboxP95 ?? "—"}px · origin {fidelityMetrics.originError ?? "—"}px · losses {fidelityMetrics.unexplainedLosses ?? "—"}
               </dd>
             {/if}
-            {#if selectedSourceRef.sourceRevisionHash}<dt>Revision</dt><dd><code>{String(selectedSourceRef.sourceRevisionHash).slice(0, 20)}…</code></dd>{/if}
+            {#if selectedSourceRef.sourceRevisionHash}<dt>Ревизия</dt><dd><code>{String(selectedSourceRef.sourceRevisionHash).slice(0, 20)}…</code></dd>{/if}
           </dl>
           </section>
         </div>

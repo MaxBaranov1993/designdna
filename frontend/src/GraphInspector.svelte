@@ -1,6 +1,6 @@
 <script lang="ts">
   import { NODE_DEFS, portsOfNode } from "./flow/ports";
-  import { flow, flowBusy, flowNodes, flowStatuses } from "./flow/state";
+  import { flow, flowBusy, flowNodes, flowStatusLog, flowStatuses } from "./flow/state";
   import { loadEditorController } from "./editor/runtime";
   import { toast } from "./flow/toast";
 
@@ -11,6 +11,8 @@
   let def = $derived(selectedNode ? NODE_DEFS[selectedNode.type] : null);
   let status = $derived(nodeId == null ? null : $flowStatuses[nodeId] ?? null);
   let busy = $derived(nodeId == null ? false : Boolean($flowBusy[nodeId]));
+  /* Журнал статусов за сессию, свежие сверху */
+  let log = $derived(nodeId == null ? [] : ($flowStatusLog[nodeId] ?? []).slice().reverse());
   let ports = $derived(selectedNode ? portsOfNode(selectedNode) : { in: [], out: [] });
 
   const preferredKeys: Record<string, string[]> = {
@@ -86,7 +88,8 @@
         {#each fields as field (field.key)}
           <div class="dna-field">
             <div class="dna-field-cap">{field.key.replaceAll("_", " ").toUpperCase()}</div>
-            <div class="dna-field-value"><span>{field.value}</span><span class="dna-field-chevron">⌄</span></div>
+            <!-- Только чтение: декоративный «шеврон» выглядел кликабельным, но ничего не открывал -->
+            <div class="dna-field-value"><span>{field.value}</span></div>
           </div>
         {/each}
         {#if !fields.length}<div class="dna-insp-empty">У этой ноды нет настраиваемых параметров.</div>{/if}
@@ -112,7 +115,13 @@
       </div>
     {:else}
       <div class="dna-insp-fields">
-        <div class:err={status?.kind === "err"} class="dna-insp-log">{status?.text || "Запусков в этой сессии ещё не было."}</div>
+        {#each log as entry (entry.at + entry.text)}
+          <div class:err={entry.kind === "err"} class="dna-insp-log">
+            <span class="dna-insp-log-time">{new Date(entry.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+            {entry.text}
+          </div>
+        {/each}
+        {#if !log.length}<div class="dna-insp-log">Запусков в этой сессии ещё не было.</div>{/if}
       </div>
     {/if}
 

@@ -84,7 +84,7 @@
        панели Design System, система активна по умолчанию. -->
   <div class="ds-actions">
     <button type="button" class="btn-node primary small nodrag" data-ds-action="open"
-      aria-label="Open Design System and Source UI editor" disabled={!canOpen} onclick={openEditor}>Открыть</button>
+      aria-label="Открыть редактор Design System и Source UI" disabled={!canOpen} onclick={openEditor}>Открыть</button>
   </div>
   <NodeStatus {id} />
   <OutPorts type="designsystem" />

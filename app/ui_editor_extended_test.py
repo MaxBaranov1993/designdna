@@ -127,6 +127,11 @@ def main():
             pg.wait_for_timeout(400)
             check("gap=77 применился", pg.evaluate(node_expr(".tree[0].children[0].frame.gap")) == 77)
         pg.click('[data-act="close"]')
+        # защита черновика: редактор с правками спрашивает — закрываем без сохранения
+        try:
+            pg.wait_for_selector('[data-act="close-discard"]', timeout=1000).click()
+        except Exception:
+            pass
         pg.wait_for_timeout(300)
         check("редактор закрылся", pg.evaluate("document.querySelector('.dna-editor').style.display === 'none'"))
         closed_gap = pg.evaluate(node_expr(".tree[0].children[0].frame.gap"))

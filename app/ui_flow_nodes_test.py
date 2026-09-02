@@ -220,7 +220,8 @@ def main():
 
         pg.click(".svelte-flow__pane", button="right", position={"x": 520, "y": 100})
         pg.wait_for_selector("#ctx-menu")
-        check("menu has 16 current node types", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 16"))
+        # 14 типов в палитре: qualitypass/recorder/designui живут только в legacy-графах
+        check("menu has 14 current node types", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
         check("old nodes are removed from menu", pg.locator("#ctx-menu .ctx-item[data-type='clone']").count() == 0
               and pg.locator("#ctx-menu .ctx-item[data-type='reproduce']").count() == 0
               and pg.locator("#ctx-menu .ctx-item[data-type='blockparse']").count() == 0)

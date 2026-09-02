@@ -249,6 +249,44 @@ async function flushDbProject(): Promise<void> {
   }
 }
 
+/* ---------- разрешение конфликта 409 (ConflictDialog в App) ----------
+ * Fail-closed сейв выше только сообщает о конфликте; решение — за пользователем. */
+export type ProjectConflictDetail = {
+  expectedRevision: string | null;
+  currentRevision: string | null;
+  error: string;
+};
+
+/** «Оставить мои правки»: ревизия сервера становится базой CAS и ожидающий
+ *  payload уходит повторно. Если сервер ревизию не вернул — безусловная
+ *  запись (save_project без expectedRevision). Повторный конфликт снова
+ *  поднимет designdna:project-conflict. */
+export async function resolveConflictKeepMine(currentRevision: string | null): Promise<boolean> {
+  lastKnownRevision = currentRevision;
+  dbRevisionSynced = true;
+  if (dbSaveTimer) {
+    clearTimeout(dbSaveTimer);
+    dbSaveTimer = null;
+  }
+  if (lastDbProjectText === null && lastProjectProvider) {
+    lastDbProjectText = JSON.stringify(compactForStorage(lastProjectProvider()));
+  }
+  if (lastDbProjectText === null) return false;
+  await flushDbProject();
+  // flushDbProject обнуляет текст на старте и возвращает его только при неудаче
+  return lastDbProjectText === null;
+}
+
+/** «Загрузить их версию»: локальный ожидающий payload больше не нужен —
+ *  store.replaceProjectFromDb перечитает БД, ревизия обновится в load. */
+export function discardPendingDbSave(): void {
+  if (dbSaveTimer) {
+    clearTimeout(dbSaveTimer);
+    dbSaveTimer = null;
+  }
+  lastDbProjectText = null;
+}
+
 /* Дебаунс 300 мс, затем idle-слот */
 export function scheduleProjectSave(provider: () => PagesProjectPayload) {
   lastProjectProvider = provider;

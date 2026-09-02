@@ -2,9 +2,13 @@
   import { useSvelteFlow, useViewport } from "@xyflow/svelte";
   import { onMount } from "svelte";
   import { buildExportPayload, downloadJson, parseLegacyPayload } from "./flow/serialize";
+  import { flowGraphHistory } from "./flow/state";
   import { useFlowStore } from "./flow/store";
   import { toast } from "./flow/toast";
   import { leftPanelOpen, requestNodeMenu } from "./flow/ui";
+
+  const canUndo = $derived($flowGraphHistory.past.length > 0);
+  const canRedo = $derived($flowGraphHistory.future.length > 0);
 
   const { fitView, setViewport } = useSvelteFlow();
   const viewport = useViewport();
@@ -77,6 +81,24 @@
       <button class="dna-zoom-fit" id="btn-fit" onclick={onFit}>Всё</button>
     </div>
     <div class="dna-tools">
+      <button
+        class="dna-tool-btn dna-undo-btn"
+        id="btn-undo"
+        title="Отменить (Ctrl+Z)"
+        aria-label="Отменить последнее изменение графа"
+        aria-keyshortcuts="Control+Z"
+        disabled={!canUndo}
+        onclick={() => useFlowStore.getState().undoGraph()}
+      >↶</button>
+      <button
+        class="dna-tool-btn dna-undo-btn"
+        id="btn-redo"
+        title="Повторить (Ctrl+Y)"
+        aria-label="Повторить отменённое изменение графа"
+        aria-keyshortcuts="Control+Y"
+        disabled={!canRedo}
+        onclick={() => useFlowStore.getState().redoGraph()}
+      >↷</button>
       <button class="dna-tool-btn" id="btn-import" onclick={() => fileInput?.click()}>Импорт</button>
       <button class="dna-tool-btn" id="btn-export" onclick={onExport}>Экспорт JSON</button>
       <button class="dna-btn-primary" onclick={requestNodeMenu}>+ Нода</button>

@@ -1,0 +1,95 @@
+/* Тосты графового экрана — дополнение к базовым правилам #toasts/.toast в index.css.
+ * Здесь: раскладка с кнопками, info-вариант, sticky, hover-пауза. */
+
+#toasts .toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  pointer-events: auto;
+  max-width: 380px;
+}
+
+#toasts .toast.info {
+  border-left-color: var(--dna-violet-l);
+}
+
+#toasts .toast.sticky {
+  border-color: var(--dna-border-strong);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(155, 92, 255, 0.12);
+}
+
+#toasts .toast.error.sticky {
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(229, 48, 92, 0.18);
+}
+
+#toasts .toast-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+  padding-top: 1px;
+}
+
+#toasts .toast-action,
+#toasts .toast-close {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  border-radius: 6px;
+  transition:
+    background-color 0.12s,
+    color 0.12s;
+}
+
+#toasts .toast-action {
+  padding: 2px 8px;
+  margin: -2px 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--dna-violet-text);
+  white-space: nowrap;
+}
+#toasts .toast-action:hover {
+  color: var(--dna-text);
+  background: rgba(155, 92, 255, 0.16);
+}
+#toasts .toast.error .toast-action {
+  color: var(--dna-danger-text);
+}
+#toasts .toast.error .toast-action:hover {
+  background: rgba(229, 48, 92, 0.16);
+}
+#toasts .toast.ok .toast-action {
+  color: var(--dna-success-text);
+}
+#toasts .toast.ok .toast-action:hover {
+  background: rgba(34, 197, 94, 0.16);
+}
+
+#toasts .toast-close {
+  width: 20px;
+  height: 20px;
+  margin: -3px -6px -3px 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dna-faint);
+}
+#toasts .toast-close:hover {
+  color: var(--dna-text);
+  background: var(--dna-hover);
+}
+
+#toasts .toast-action:focus-visible,
+#toasts .toast-close:focus-visible {
+  outline: 2px solid var(--dna-violet-l);
+  outline-offset: 1px;
+}

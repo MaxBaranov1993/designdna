@@ -9,7 +9,7 @@
   } from "@xyflow/svelte";
   import type { Connection } from "@xyflow/svelte";
   import "@xyflow/svelte/dist/style.css";
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
 
   import { CTX_GROUPS, NODE_DEFS, portsOfNode } from "./flow/ports";
   import { flow, flowActivePageId, flowEdges, flowNodes } from "./flow/state";
@@ -18,6 +18,8 @@
   import { reachable } from "./flow/dataflow";
   import type { FlowEdge, FlowNode, NodeType } from "./flow/types";
   import { OPEN_NODE_MENU_EVENT } from "./flow/ui";
+  import { selectReadable } from "./lib/zustand";
+  import EmptyState from "./flow/EmptyState.svelte";
 
   import PromptNode from "./nodes/PromptNode.svelte";
   import ReferenceNode from "./nodes/ReferenceNode.svelte";
@@ -85,6 +87,23 @@
   const updateNodeInternals = useUpdateNodeInternals();
   let measuredNodeIds = "";
 
+  // Пустое состояние: страница без нод, и проект уже гидратирован (иначе на
+  // desktop-профиле подсказка мигнёт, пока SQLite-снимок едет по IPC).
+  const flowHydrated = selectReadable(useFlowStore, (s) => s.projectHydrated);
+  let showEmptyState = $derived($flowHydrated && $flowNodes.length === 0);
+
+  // Автофокус поиска в меню «Создать ноду»: действие вместо атрибута
+  // autofocus (a11y-предупреждение svelte-check). Кадр спустя — меню уже
+  // спозиционировано, фокус не дёргает скролл.
+  const focusOnMount = (node: HTMLInputElement) => {
+    const frame = requestAnimationFrame(() => node.focus());
+    return {
+      destroy() {
+        cancelAnimationFrame(frame);
+      },
+    };
+  };
+
   onMount(() => {
     setReactFlowInstance(rf);
     const openNodeMenu = () => {
@@ -112,18 +131,28 @@
     if (nodeDragActive) return;
     const nextNodes = $flowNodes;
     const nextEdges = $flowEdges;
-    if (nodes !== nextNodes) nodes = nextNodes;
-    if (edges !== nextEdges) edges = nextEdges;
+    // bind-массивы читаем без подписки: иначе любое изменение из Svelte Flow
+    // (клик → selected) будило этот эффект первым, и он откатывал канвас к
+    // массиву стора раньше, чем эффект ниже успевал донести выделение до стора.
+    // Симптом: ноды никогда не выделялись, Delete и инспектор были мертвы.
+    const currentNodes = untrack(() => nodes);
+    const currentEdges = untrack(() => edges);
+    if (currentNodes !== nextNodes) nodes = nextNodes;
+    if (currentEdges !== nextEdges) edges = nextEdges;
   });
 
   // канвас → zustand (drag/select/remove применены библиотекой к массивам)
   $effect(() => {
     if (nodeDragActive) return;
-    const st = useFlowStore.getState();
+    // Зависимости читаем ДО ранних выходов: выход по «не гидратирован» раньше
+    // чтения nodes/edges оставлял эффект без подписок до первого drag.
+    const currentNodes = nodes;
+    const currentEdges = edges;
     // A clean desktop profile starts with an empty presentation while the
     // canonical SQLite snapshot loads over IPC.
-    if (!st.projectHydrated) return;
-    if (st.nodes !== nodes || st.edges !== edges) st.syncFromCanvas(nodes, edges);
+    if (!$flowHydrated) return;
+    const st = useFlowStore.getState();
+    if (st.nodes !== currentNodes || st.edges !== currentEdges) st.syncFromCanvas(currentNodes, currentEdges);
   });
 
   // Custom Svelte Flow nodes need one explicit post-DOM measurement when the
@@ -285,12 +314,27 @@
 <svelte:window
   onkeydown={(e) => {
     if ((menu || nodeMenu) && e.key === "Escape") closeMenu();
+    // Undo/redo структуры графа. Не перехватываем в полях ввода (у них свой
+    // undo) и когда сверху открыт модальный оверлей (DNA-редактор, DS-панель,
+    // таймлайн) — у них собственные стеки истории.
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const key = e.key.toLowerCase();
+    const isUndo = (key === "z" || key === "я") && !e.shiftKey;
+    const isRedo = key === "y" || key === "н" || ((key === "z" || key === "я") && e.shiftKey);
+    if (!isUndo && !isRedo) return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+    if (document.querySelector('[role="dialog"][aria-modal="true"], .dna-editor[data-editor-open="true"]')) return;
+    e.preventDefault();
+    const st = useFlowStore.getState();
+    if (isUndo) st.undoGraph();
+    else st.redoGraph();
   }}
 />
 
 <div
   bind:this={canvasHost}
-  class="h-full w-full"
+  class="relative h-full w-full"
   class:flow-drag-active={nodeDragActive}
   role="presentation"
   onmousemove={(e) => updateSnapTarget(e.clientX, e.clientY)}
@@ -346,12 +390,36 @@
     onnodedragstart={() => {
       nodeDragActive = true;
     }}
-    onnodedragstop={({ nodes: dragged }) => {
+    onnodedragstop={({ targetNode, nodes: dragged }) => {
       // конец drag: округляем позицию (legacy Math.round, nodes.js:336-337)
       useFlowStore.getState().moveNodes(
         dragged.map((node) => ({ id: Number(node.id), x: node.position.x, y: node.position.y })),
       );
       nodeDragActive = false;
+      // Выделение, которое Svelte Flow сделал на старте drag, живёт только в
+      // bind-массиве (эффект «канвас → стор» на время drag выключен). Переносим
+      // его в стор сами, иначе «стор → канвас» вернёт старый массив и снимет
+      // выделение с только что перетащенной ноды. Позиции — из стора (округлены).
+      const st = useFlowStore.getState();
+      const byId = new Map(st.nodes.map((node) => [node.id, node.position]));
+      // The drag event is sourced from Svelte Flow's internal lookup and is
+      // therefore authoritative for selection even when the controlled
+      // `nodes` binding has not published its pointer-down update yet.
+      const selectedIds = new Set(
+        dragged.filter((node) => node.selected).map((node) => node.id),
+      );
+      // Defensive fallback for library versions that omit `selected` from the
+      // drag payload: a single-node drag still selects its target.
+      if (!selectedIds.size && targetNode) selectedIds.add(targetNode.id);
+      const merged = nodes.map((node) => {
+        const position = byId.get(node.id);
+        const selected = selectedIds.has(node.id);
+        if ((position && position !== node.position) || node.selected !== selected) {
+          return { ...node, ...(position ? { position } : {}), selected };
+        }
+        return node;
+      });
+      if (st.nodes !== nodes || st.edges !== edges) st.syncFromCanvas(merged, edges);
     }}
     {initialViewport}
     onmoveend={(_event, vp) => useFlowStore.getState().setView(vp)}
@@ -372,7 +440,7 @@
     /* SF сам гасит клавиши в полях ввода (isInputDOMNode) — зеркало гарда nodes.js:1147-1151 */
     deleteKey={["Delete", "Backspace"]}
     /* Shift+drag оставляем свободным для внутренних/оверлейных редакторских жестов. */
-    selectionKey={null}
+    selectionKey={[]}
     connectionLineStyle="stroke: #d4d4d8; stroke-width: 2; stroke-dasharray: 5 4;"
   >
     <Background variant={BackgroundVariant.Dots} gap={26} size={1} patternColor="#1B1B22" />
@@ -385,6 +453,9 @@
     />
     <div class="dna-minimap-label"></div>
   </SvelteFlow>
+  {#if showEmptyState}
+    <EmptyState onfit={() => void rf.fitView({ padding: 0.12, duration: 250 })} />
+  {/if}
   {#if menu}
     <!-- Контекстное меню создания ноды — зеркало showCtxMenu/CTX_ITEMS (nodes.js:1096-1122) -->
     <div
@@ -393,7 +464,13 @@
     >
       <div class="ctx-head"><div class="ctx-cap">СОЗДАТЬ НОДУ</div><span class="ctx-esc">ESC</span></div>
       <div class="ctx-search-wrap">
-        <input class="ctx-search" bind:value={menuSearch} placeholder="Найти тип ноды…" aria-label="Найти тип ноды" />
+        <input
+          class="ctx-search"
+          bind:value={menuSearch}
+          use:focusOnMount
+          placeholder="Найти тип ноды…"
+          aria-label="Найти тип ноды"
+        />
       </div>
       <div class="ctx-list">
         {#each visibleGroups as group (group.label)}

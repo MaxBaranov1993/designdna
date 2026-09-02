@@ -103,15 +103,15 @@ async function qualityPassCycle(
   provider: NodeProvider,
   effort: "medium" | "high" | "max",
   onStage: (stage: string) => void,
-  { minScore = 85, repair = true }: { minScore?: number; repair?: boolean } = {},
+  { minScore = 85, repair = true, signal, runId }: { minScore?: number; repair?: boolean; signal?: AbortSignal; runId?: string } = {},
 ): Promise<QualityPassResp> {
   const request = { ir, brief, min_score: minScore, repair, rejudge: repair };
   const desktop = window.designDNA;
-  if (!desktop) return api<QualityPassResp>("/api/quality-pass", request);
+  if (!desktop) return api<QualityPassResp>("/api/quality-pass", { ...request, runId }, { signal, runId });
   const outputs: Partial<Record<"judge" | "repair" | "rejudge", string>> = {};
   const seen = new Set<string>();
   for (;;) {
-    const res = await api<QualityPassResp>("/api/quality-pass/codex-step", { ...request, outputs });
+    const res = await api<QualityPassResp>("/api/quality-pass/codex-step", { ...request, outputs }, { signal });
     const pending = res.pending;
     if (!pending) return res;
     if (seen.has(pending.stage) || seen.size >= 3) {
@@ -135,6 +135,30 @@ async function qualityPassCycle(
 
 const MOTION_DESIGN_TERMINAL = new Set(["completed", "failed", "cancelled", "expired"]);
 const motionDesignPollTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const MOTION_DESIGN_POLL_MS = 30_000;
+
+/* Поллинг Seedance-джоба: раз в 30 с, но только пока вкладка видима и нода
+ * ещё есть на активной странице. Скрытая вкладка — ждём visibilitychange,
+ * а не дёргаем провайдера вхолостую; удалённая/чужая нода — таймер снимается. */
+function scheduleMotionDesignPoll(id: number, refresh: () => void): void {
+  const oldTimer = motionDesignPollTimers.get(id);
+  if (oldTimer) clearTimeout(oldTimer);
+  const fire = () => {
+    motionDesignPollTimers.delete(id);
+    const st = useFlowStore.getState();
+    if (!st.nodes.some((node) => Number(node.id) === id && node.type === "motiondesign")) return;
+    if (typeof document !== "undefined" && document.hidden) {
+      const resume = () => {
+        document.removeEventListener("visibilitychange", resume);
+        if (!document.hidden) fire();
+      };
+      document.addEventListener("visibilitychange", resume);
+      return;
+    }
+    refresh();
+  };
+  motionDesignPollTimers.set(id, setTimeout(fire, MOTION_DESIGN_POLL_MS));
+}
 
 function motionDesignDigest(motion: IRObject | null, timeline: IRObject | null, video: VideoArtifact | null) {
   const motionScenes = Array.isArray(motion?.scenes) ? motion.scenes.slice(0, 16) : [];
@@ -494,7 +518,13 @@ export interface FlowStoreState {
   statuses: Record<number, NodeStatus>;
   /* run-based ноды в полёте запроса (спиннер на ноде); runtime-поле, в сейв не попадает */
   busy: Record<number, boolean>;
-  progresses: Record<number, { startedAt: number; expectedMs: number; label: string; percent?: number }>;
+  progresses: Record<number, { startedAt: number; expectedMs: number; label: string; percent?: number; stage?: string }>;
+  /* Undo/redo структуры графа (ноды, рёбра, позиции). Снимки держат ссылки на
+   * иммутабельные массивы стора — память O(1) на шаг сверх самих изменений.
+   * Правки полей нод (setNodeData) в стек не попадают: у инпутов свой undo. */
+  graphHistory: GraphHistory;
+  /* Журнал статусов ноды за сессию (вкладка «Логи» инспектора); runtime, в сейв не попадает */
+  statusLog: Record<number, StatusLogEntry[]>;
 
   addNode: (
     type: NodeType,
@@ -514,7 +544,12 @@ export interface FlowStoreState {
   commitEditorDraft: (id: number, expectedRevision: number, ir: IRObject) => boolean;
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void;
   setBusy: (id: number, v: boolean) => void;
-  setProgress: (id: number, progress: { expectedMs: number; label: string; percent?: number } | null) => void;
+  setProgress: (id: number, progress: { expectedMs: number; label: string; percent?: number; stage?: string } | null) => void;
+  /* Отмена идущего запроса ноды: в браузере — AbortController у fetch,
+   * в десктопе — рестарт long-воркера через designDNA.api.cancel. */
+  cancelRun: (id: number) => Promise<void>;
+  undoGraph: () => boolean;
+  redoGraph: () => boolean;
   propagate: (startId: number, visited?: Set<number>) => void;
   runNode: (id: number) => void;
   runGenerator: (id: number) => Promise<void>;
@@ -552,6 +587,9 @@ export interface FlowStoreState {
   renamePage: (id: string, name: string) => void;
   deletePage: (id: string) => void;
   loadPersistedProject: () => Promise<void>;
+  /* Разрешение конфликта 409 «взять версию из БД»: безусловная замена
+   * локального проекта серверным (в отличие от loadPersistedProject без гардов). */
+  replaceProjectFromDb: () => Promise<boolean>;
   refreshDesignSystems: () => Promise<void>;
   createDesignSystemFromSource: (sourceId: number, options?: { name?: string }) => Promise<number | null>;
   promoteVariantToDesignSystem: (generatorId: number) => Promise<number | null>;
@@ -568,7 +606,10 @@ export interface FlowStoreState {
 
 /* Стартовое состояние — из сейва designai-flow-v1 (битый сейв → пустой граф) */
 const emptyGraph = { nodes: [] as FlowNode[], edges: [] as FlowEdge[], view: { ...DEFAULT_VIEW }, nextId: 1 };
-compactLegacyLocalStorage();
+// Компактизация legacy-блоба (parse + stringify мегабайт) не нужна для
+// первой отрисовки — уводим в idle-слот после boot, а не блокируем FCP.
+if (typeof requestIdleCallback === "function") requestIdleCallback(() => compactLegacyLocalStorage(), { timeout: 8_000 });
+else setTimeout(compactLegacyLocalStorage, 1_500);
 const projectSaved = loadPagesProjectFromStorage();
 if (projectSaved) {
   /* pages-проект полностью заменяет legacy-ключ: убираем мёртвый блоб,
@@ -747,6 +788,154 @@ function summarizeStyleDna(tokens: Record<string, unknown>): string {
 
 let localDirtySinceInit = false;
 
+/* ---------- undo/redo графа ----------
+ * Стек снимков {nodes, edges}: стор обновляет массивы иммутабельно, поэтому
+ * снимок — две ссылки, а не копия проекта. Запись — ДО структурной мутации
+ * (add/delete/connect/move); правки data нод не пишутся (у полей ввода свой
+ * нативный undo, а смешивать их со структурой — терять текст по Ctrl+Z). */
+export type GraphSnapshot = { nodes: FlowNode[]; edges: FlowEdge[] };
+export type GraphHistory = { past: GraphSnapshot[]; future: GraphSnapshot[] };
+export type StatusLogEntry = { at: number; text: string; kind?: "ok" | "err" };
+const STATUS_LOG_LIMIT = 30;
+const EMPTY_GRAPH_HISTORY: GraphHistory = { past: [], future: [] };
+const GRAPH_HISTORY_LIMIT = 50;
+let graphHistoryMuted = 0;
+
+function recordGraphHistory(): void {
+  if (graphHistoryMuted > 0) return;
+  const st = useFlowStore.getState();
+  const past = st.graphHistory.past.length >= GRAPH_HISTORY_LIMIT
+    ? st.graphHistory.past.slice(1)
+    : st.graphHistory.past;
+  useFlowStore.setState({
+    graphHistory: { past: [...past, { nodes: st.nodes, edges: st.edges }], future: [] },
+  });
+}
+
+/* Составные операции (удаление с рёбрами, sync канваса) пишут один снимок,
+ * внутренние deleteNode/deleteEdge — молчат. */
+function withGraphHistoryMuted<T>(fn: () => T): T {
+  graphHistoryMuted += 1;
+  try {
+    return fn();
+  } finally {
+    graphHistoryMuted -= 1;
+  }
+}
+
+/* После восстановления снимка данные по восстановленным рёбрам нужно
+ * протолкнуть заново (зеркало connect/deleteEdge), иначе downstream-ноды
+ * остаются с устаревшим входом. */
+function resyncAfterGraphRestore(before: FlowEdge[], after: FlowEdge[]): void {
+  const beforeIds = new Set(before.map((edge) => edge.id));
+  const afterIds = new Set(after.map((edge) => edge.id));
+  withGraphHistoryMuted(() => {
+    const st = useFlowStore.getState();
+    for (const edge of after) {
+      if (!beforeIds.has(edge.id)) st.propagate(Number(edge.source));
+    }
+    for (const edge of before) {
+      if (afterIds.has(edge.id)) continue;
+      const target = useFlowStore.getState().nodes.find((node) => node.id === edge.target);
+      if (target?.type === "edit") {
+        st.refreshEdit(Number(target.id));
+        st.propagate(Number(target.id));
+      }
+    }
+  });
+}
+
+/* AbortController идущих fetch-запросов нод (браузерный режим): отмена
+ * обрывает ожидание на клиенте, сервер дорабатывает запрос в фоне. */
+const runAborts = new Map<number, AbortController>();
+
+function beginRunAbort(id: number): AbortSignal {
+  runAborts.get(id)?.abort();
+  const controller = new AbortController();
+  runAborts.set(id, controller);
+  return controller.signal;
+}
+
+function endRunAbort(id: number, signal: AbortSignal): void {
+  if (runAborts.get(id)?.signal === signal) runAborts.delete(id);
+}
+
+/* Для кнопки отмены на ноде: контроллер регистрируется до setBusy(true),
+ * поэтому реактивного busy достаточно как триггера перепроверки. */
+export function hasRunAbort(id: number): boolean {
+  return runAborts.has(id);
+}
+
+/* Серверные стадии длинных запусков (app/run_registry.py): web слушает SSE,
+ * polling включается только как fallback. Desktop получает собственные IPC-
+ * события. Отмена web-запуска кооперативно закрывает LLM stream на дельте. */
+const runIds = new Map<number, string>();
+
+function newRunId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function watchRunStages(id: number, runId: string, expectedMs: number, label: string): () => void {
+  runIds.set(id, runId);
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  let source: EventSource | null = null;
+  type RunProgress = { status?: string; stageLabel?: string; percent?: number | null; receivedChars?: number };
+  const applyRun = (run: RunProgress) => {
+    if (runIds.get(id) !== runId || !run || run.status !== "running") return;
+    const st = useFlowStore.getState();
+    if (!st.busy[id]) return;
+    const received = typeof run.receivedChars === "number" ? run.receivedChars : 0;
+    const receivedLabel = received >= 1000
+      ? `${(received / 1000).toFixed(received >= 10_000 ? 0 : 1)}k`
+      : String(received);
+    st.setProgress(id, {
+      expectedMs,
+      label,
+      ...(run.stageLabel ? {
+        stage: `${run.stageLabel}${received > 0 && run.status === "running" ? ` · получено ${receivedLabel} зн.` : ""}`,
+      } : {}),
+      ...(typeof run.percent === "number" ? { percent: run.percent } : {}),
+    });
+  };
+  const startPolling = () => {
+    if (pollTimer) return;
+    pollTimer = setInterval(() => {
+    void apiGet<RunProgress>(`/api/runs/${runId}`)
+      .then(applyRun)
+      .catch(() => undefined);
+    }, 900);
+  };
+  if (!window.designDNA && typeof EventSource !== "undefined") {
+    source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
+    source.onmessage = (event) => {
+      try {
+        const run = JSON.parse(event.data) as RunProgress;
+        if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        applyRun(run);
+        if (run.status && run.status !== "running") source?.close();
+      } catch { /* malformed event: fallback watchdog will poll */ }
+    };
+    source.onerror = startPolling;
+    fallbackTimer = setTimeout(startPolling, 2_500);
+  } else {
+    startPolling();
+  }
+  return () => {
+    source?.close();
+    if (pollTimer) clearInterval(pollTimer);
+    if (fallbackTimer) clearTimeout(fallbackTimer);
+    if (runIds.get(id) === runId) runIds.delete(id);
+  };
+}
+
+function isAbortError(error: unknown): boolean {
+  return !!error && typeof error === "object" && (error as { name?: string }).name === "AbortError";
+}
+
 export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   designSystems: initialDesignSystems,
   designSystemPicker: emptyPicker,
@@ -765,6 +954,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   /* Прогресс длинных операций (импорт/генерация): асимптотическая кривая в
    * UI, реальное завершение снимает прогресс и пишет итоговое время в статус */
   progresses: {},
+  graphHistory: EMPTY_GRAPH_HISTORY,
+  statusLog: {},
 
   /* Зеркало addNode (nodes.js:256-264): id из nextId, координаты Math.round */
   addNode: (type, x, y) => {
@@ -782,6 +973,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       initialHeight: 120,
       data,
     } as FlowNode;
+    recordGraphHistory();
     set({ nodes: [...get().nodes, node], nextId: id + 1 });
     return { id, type, x: rx, y: ry, data: node.data };
   },
@@ -796,8 +988,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const positions = new Map(
       updates.map(({ id, x, y }) => [String(id), { x: Math.round(x), y: Math.round(y) }]),
     );
+    const current = get().nodes;
+    const moved = current.some((node) => {
+      const position = positions.get(node.id);
+      return !!position && (position.x !== node.position.x || position.y !== node.position.y);
+    });
+    if (!moved) return; // dragstop без смещения: ни снимка в историю, ни автосейва
+    recordGraphHistory();
     set({
-      nodes: get().nodes.map((node) => {
+      nodes: current.map((node) => {
         const position = positions.get(node.id);
         return position ? { ...node, position } : node;
       }),
@@ -833,15 +1032,25 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       ...state.edges.filter((e) => !(e.target === sidTarget && e.targetHandle === to.port)),
       makeRfEdge(state.nodes, { node: fromNode, port: from.port }, { node: toNode, port: to.port }),
     ];
+    recordGraphHistory();
     set({ edges: nextEdges });
     // зеркало nodes.js:1067: propagate от источника
     get().propagate(fromNode);
     return true;
   },
 
-  /* Зеркало removeNode (nodes.js:298-311): вместе с нодой снимаются её рёбра */
+  /* Зеркало removeNode (nodes.js:298-311): вместе с нодой снимаются её рёбра.
+   * Без подтверждения: удаление обратимо через undoGraph, тост даёт «Вернуть». */
   deleteNode: (id) => {
     const sid = String(id);
+    if (!get().nodes.some((node) => node.id === sid)) return;
+    recordGraphHistory();
+    if (graphHistoryMuted === 0) {
+      toast("Нода удалена · Ctrl+Z вернёт", "info", {
+        key: "graph-delete",
+        action: { label: "Вернуть", run: () => void get().undoGraph() },
+      });
+    }
     set((state) => {
       const statuses = { ...state.statuses };
       delete statuses[id];
@@ -858,21 +1067,25 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   deleteEdge: (edgeId) => {
     const removed = get().edges.find((edge) => edge.id === edgeId);
+    if (!removed) return;
+    recordGraphHistory();
     set({ edges: get().edges.filter((edge) => edge.id !== edgeId) });
-    if (removed) {
-      const target = get().nodes.find((node) => node.id === removed.target);
-      if (target?.type === "edit") {
-        get().refreshEdit(Number(target.id));
-        get().propagate(Number(target.id));
-      }
+    const target = get().nodes.find((node) => node.id === removed.target);
+    if (target?.type === "edit") {
+      get().refreshEdit(Number(target.id));
+      get().propagate(Number(target.id));
     }
   },
 
   disconnectNode: (id) => {
     const sid = String(id);
     const connected = get().edges.filter((edge) => edge.source === sid || edge.target === sid);
-    for (const edge of connected) get().deleteEdge(edge.id);
-    if (connected.length) get().setStatus(id, `Разорвано связей: ${connected.length}`, "ok");
+    if (!connected.length) return 0;
+    recordGraphHistory(); // один шаг undo на все рёбра ноды
+    withGraphHistoryMuted(() => {
+      for (const edge of connected) get().deleteEdge(edge.id);
+    });
+    get().setStatus(id, `Разорвано связей: ${connected.length}`, "ok");
     return connected.length;
   },
 
@@ -950,7 +1163,18 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   setStatus: (id, text, kind) => {
-    set((state) => ({ statuses: { ...state.statuses, [id]: { text, kind } } }));
+    set((state) => {
+      const previous = state.statusLog[id] || [];
+      const last = previous[previous.length - 1];
+      // Дубли подряд (поллинг стадий) в журнал не пишем
+      const entries = last && last.text === text && last.kind === kind
+        ? previous
+        : [...previous.slice(-(STATUS_LOG_LIMIT - 1)), { at: Date.now(), text, kind }];
+      return {
+        statuses: { ...state.statuses, [id]: { text, kind } },
+        statusLog: entries === previous ? state.statusLog : { ...state.statusLog, [id]: entries },
+      };
+    });
   },
 
   setBusy: (id, v) => {
@@ -966,10 +1190,54 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             startedAt: state.progresses[id]?.startedAt ?? Date.now(),
             expectedMs: Math.max(1_000, progress.expectedMs),
             label: progress.label,
+            ...(progress.stage ? { stage: progress.stage } : {}),
             ...(Number.isFinite(progress.percent) ? { percent: Math.max(0, Math.min(100, Number(progress.percent))) } : {}),
           } }
         : Object.fromEntries(Object.entries(state.progresses).filter(([key]) => Number(key) !== id)),
     }));
+  },
+
+  cancelRun: async (id) => {
+    // Сначала серверу: кооперативная отмена не даст начать следующую стадию
+    // (следующий LLM-вызов), затем обрываем ожидание на клиенте.
+    const runId = runIds.get(id);
+    if (runId) void api(`/api/runs/${runId}/cancel`, {}).catch(() => undefined);
+    const controller = runAborts.get(id);
+    controller?.abort();
+    // Десктоп: с известным runId main.mjs шлёт воркеру адресный cancel
+    // (cancel_token, кооперативно между стадиями); без него — прежний рестарт
+    // long-воркера как последний рубеж.
+    const desktopCancel = window.designDNA?.api?.cancel;
+    if (desktopCancel) await desktopCancel("long", runId).catch(() => undefined);
+    if (controller || desktopCancel) get().setStatus(id, "Отменено", "err");
+  },
+
+  undoGraph: () => {
+    const st = get();
+    const prev = st.graphHistory.past[st.graphHistory.past.length - 1];
+    if (!prev) return false;
+    const current: GraphSnapshot = { nodes: st.nodes, edges: st.edges };
+    set({
+      nodes: prev.nodes,
+      edges: prev.edges,
+      graphHistory: { past: st.graphHistory.past.slice(0, -1), future: [...st.graphHistory.future, current] },
+    });
+    resyncAfterGraphRestore(current.edges, prev.edges);
+    return true;
+  },
+
+  redoGraph: () => {
+    const st = get();
+    const next = st.graphHistory.future[st.graphHistory.future.length - 1];
+    if (!next) return false;
+    const current: GraphSnapshot = { nodes: st.nodes, edges: st.edges };
+    set({
+      nodes: next.nodes,
+      edges: next.edges,
+      graphHistory: { past: [...st.graphHistory.past, current], future: st.graphHistory.future.slice(0, -1) },
+    });
+    resyncAfterGraphRestore(current.edges, next.edges);
+    return true;
   },
 
   /* Зеркало propagate (nodes.js:943-968): edit/reference получают КЛОН IR,
@@ -1110,9 +1378,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       ? PROVIDER_LABELS.codex
       : `${PROVIDER_LABELS[provider]} · ${effort}`;
     get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
+    const signal = beginRunAbort(id);
+    let stopPoll: () => void = () => {};
     get().setBusy(id, true);
     const startedAt = Date.now();
-    get().setProgress(id, { expectedMs: 90_000, label: `Генерация · ${providerLabel}` });
+    const progressLabel = `Генерация · ${providerLabel}`;
+    // Стадии честные: клиент знает только «ждём модель» и «Quality Pass»,
+    // процента у синхронного POST нет — NodeShell показывает indeterminate.
+    get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Готовлю промпт" });
     try {
       const designSystemRef = pinnedDesignSystemRef(
         data as unknown as Record<string, unknown>,
@@ -1131,19 +1404,30 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       };
       let res: GenerateResp;
       if (!desktop) {
-        res = await api<GenerateResp>("/api/generate", request);
+        const runId = newRunId();
+        get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Модель генерирует IR" });
+        stopPoll = watchRunStages(id, runId, 90_000, progressLabel);
+        try {
+          res = await api<GenerateResp>("/api/generate", { ...request, runId }, { signal, runId });
+        } finally {
+          stopPoll();
+        }
       } else {
-        const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true });
+        const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true }, { signal });
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы генератора");
         const rawOutputs: string[] = [];
-        for (const prompt of prepared.prompts) {
+        for (let i = 0; i < prepared.prompts.length; i += 1) {
+          const many = prepared.prompts.length > 1 ? ` ${i + 1}/${prepared.prompts.length}` : "";
+          get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: `Модель генерирует IR${many}` });
           const answer = await desktop.providers.chatRequest({
             ...chatRoute(provider, effort),
-            messages: prompt.messages,
+            messages: prepared.prompts[i].messages,
           });
+          if (signal.aborted) throw new DOMException("cancelled", "AbortError");
           rawOutputs.push(answer.content);
         }
-        res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs });
+        get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Проверка схемы и автофиксы" });
+        res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs }, { signal });
       }
       const variants = Array.isArray(res.variants) ? res.variants : [];
       get().setNodeData(id, { variants, active: 0 });
@@ -1155,16 +1439,23 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       for (let i = 0; i < variants.length; i += 1) {
         const label = variants.length > 1 ? ` ${i + 1}/${variants.length}` : "";
         get().setStatus(id, `Quality Pass${label}: судья…`);
-        get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}` });
+        get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage: "Судья оценивает" });
+        const qpRunId = newRunId();
+        const stopQpPoll = desktop ? () => {} : watchRunStages(id, qpRunId, 60_000, `Quality Pass${label}`);
         try {
-          const qp = await qualityPassCycle(variants[i], brief, provider, effort, (stage) =>
-            get().setStatus(id, `Quality Pass${label}: ${stage}…`));
+          const qp = await qualityPassCycle(variants[i], brief, provider, effort, (stage) => {
+            get().setStatus(id, `Quality Pass${label}: ${stage}…`);
+            get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage });
+          }, { signal, runId: qpRunId });
           if (qp.ir) variants[i] = qp.ir;
           qualityScores.push(Number(qp.scorecard?.score ?? 0));
           if (qp.repair?.applied) repairedCount += 1;
         } catch (qpError) {
+          if (isAbortError(qpError) || signal.aborted) throw qpError;
           console.warn("Quality Pass: вариант оставлен без оценки", qpError);
           qualityScores.push(null);
+        } finally {
+          stopQpPoll();
         }
       }
       get().setNodeData(id, { variants, active: 0, qualityScores });
@@ -1179,10 +1470,16 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote}${qpNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
       get().propagate(id);
     } catch (e) {
-      const msg = friendlyProviderError(e);
-      get().setStatus(id, "Ошибка: " + msg, "err");
-      toast("Генератор: " + msg, "error");
+      if (isAbortError(e) || signal.aborted) {
+        get().setStatus(id, `Отменено · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "err");
+      } else {
+        const msg = friendlyProviderError(e);
+        get().setStatus(id, "Ошибка: " + msg, "err");
+        toast("Генератор: " + msg, "error");
+      }
     } finally {
+      stopPoll();
+      endRunAbort(id, signal);
       get().setProgress(id, null);
       get().setBusy(id, false);
     }
@@ -1622,14 +1919,21 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       return;
     }
     get().setStatus(id, "Quality Pass: judge + проверка правил… 30–120 сек");
+    const signal = beginRunAbort(id);
     get().setBusy(id, true);
+    get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage: "Судья оценивает" });
+    const runId = newRunId();
+    const stopPoll = window.designDNA ? () => {} : watchRunStages(id, runId, 60_000, "Quality Pass");
     try {
       // Общий цикл с генератором: судья/починка идут выбранным на ноде
       // провайдером (раньше нода была прибита к Sol).
       const provider = nodeProvider(data.provider);
       const res = await qualityPassCycle(ir, data.brief, provider, "high",
-        (stage) => get().setStatus(id, `Quality Pass: ${stage} через подключённый аккаунт…`),
-        { minScore: data.minScore, repair: data.repair });
+        (stage) => {
+          get().setStatus(id, `Quality Pass: ${stage} через подключённый аккаунт…`);
+          get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage });
+        },
+        { minScore: data.minScore, repair: data.repair, signal, runId });
       const score = Number(res.scorecard?.score ?? 0);
       const passed = Boolean(res.passed);
       const repairNote = res.repair?.applied ? " · repair применён" : "";
@@ -1637,10 +1941,17 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, `${passed ? "Готово" : "Нужна проверка"}: ${score}/100${repairNote}`, passed ? "ok" : "err");
       get().propagate(id);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      get().setStatus(id, "Ошибка: " + msg, "err");
-      toast("Quality Pass: " + msg, "error");
+      if (isAbortError(e) || signal.aborted) {
+        get().setStatus(id, "Отменено", "err");
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        get().setStatus(id, "Ошибка: " + msg, "err");
+        toast("Quality Pass: " + msg, "error");
+      }
     } finally {
+      stopPoll();
+      endRunAbort(id, signal);
+      get().setProgress(id, null);
       get().setBusy(id, false);
     }
   },
@@ -1916,7 +2227,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, `Seedance job ${job.id} · ${job.status}`, "ok");
       const oldTimer = motionDesignPollTimers.get(id);
       if (oldTimer) clearTimeout(oldTimer);
-      motionDesignPollTimers.set(id, setTimeout(() => void get().refreshMotionDesign(id), 30_000));
+      scheduleMotionDesignPoll(id, () => void get().refreshMotionDesign(id));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       get().setStatus(id, "Seedance: " + message, "err");
@@ -1964,7 +2275,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         get().setStatus(id, `Seedance job ${job.id} · ${job.status}`);
         const oldTimer = motionDesignPollTimers.get(id);
         if (oldTimer) clearTimeout(oldTimer);
-        motionDesignPollTimers.set(id, setTimeout(() => void get().refreshMotionDesign(id), 30_000));
+        scheduleMotionDesignPoll(id, () => void get().refreshMotionDesign(id));
       }
     } catch (error) {
       // A failed poll must never resubmit the paid generation. Keep the job id
@@ -1973,7 +2284,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, `Seedance status: ${message} · job сохранён`, "err");
       const oldTimer = motionDesignPollTimers.get(id);
       if (oldTimer) clearTimeout(oldTimer);
-      motionDesignPollTimers.set(id, setTimeout(() => void get().refreshMotionDesign(id), 30_000));
+      scheduleMotionDesignPoll(id, () => void get().refreshMotionDesign(id));
     } finally {
       get().setBusy(id, false);
     }
@@ -2220,8 +2531,22 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   syncFromCanvas: (nextNodes, nextEdges) => {
     const removedNodes = get().nodes.filter((n) => !nextNodes.some((x) => x.id === n.id));
     const removedEdges = get().edges.filter((e) => !nextEdges.some((x) => x.id === e.id));
-    for (const n of removedNodes) get().deleteNode(Number(n.id));
-    for (const e of removedEdges) get().deleteEdge(e.id);
+    if (removedNodes.length || removedEdges.length) {
+      // Del/Backspace на канвасе: одно нажатие — один шаг undo, сколько бы
+      // нод и рёбер ни было выделено.
+      recordGraphHistory();
+      withGraphHistoryMuted(() => {
+        for (const n of removedNodes) get().deleteNode(Number(n.id));
+        for (const e of removedEdges) get().deleteEdge(e.id);
+      });
+      if (removedNodes.length) {
+        toast(
+          removedNodes.length === 1 ? "Нода удалена · Ctrl+Z вернёт" : `Удалено нод: ${removedNodes.length} · Ctrl+Z вернёт`,
+          "info",
+          { key: "graph-delete", action: { label: "Вернуть", run: () => void get().undoGraph() } },
+        );
+      }
+    }
     const alive = new Set(get().edges.map((e) => e.id));
     set({ nodes: nextNodes, edges: nextEdges.filter((e) => alive.has(e.id)) });
   },
@@ -2236,6 +2561,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       ),
       statuses: {},
       progresses: {},
+      graphHistory: EMPTY_GRAPH_HISTORY,
     }));
   },
 
@@ -2673,6 +2999,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       statuses: {},
       busy: {},
       progresses: {},
+      graphHistory: EMPTY_GRAPH_HISTORY,
     }));
   },
 
@@ -2746,6 +3073,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       statuses: {},
       busy: {},
       progresses: {},
+      graphHistory: EMPTY_GRAPH_HISTORY,
     }));
     // вписать цепочку в экран: ноды измеряются асинхронно, поэтому дважды
     setTimeout(fitFlowView, 80);
@@ -2768,6 +3096,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       statuses: {},
       busy: {},
       progresses: {},
+      graphHistory: EMPTY_GRAPH_HISTORY,
     });
     // каждая страница начинается с полного вида: без ручного зума
     setTimeout(fitFlowView, 80);
@@ -2799,6 +3128,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       statuses: {},
       busy: {},
       progresses: {},
+      graphHistory: EMPTY_GRAPH_HISTORY,
     });
   },
 
@@ -2838,6 +3168,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       statuses: {},
       busy: {},
       progresses: {},
+      graphHistory: EMPTY_GRAPH_HISTORY,
     });
     // Keep the canvas->store mirror closed for one task after publishing the
     // loaded arrays. Svelte effects may otherwise observe `projectHydrated`
@@ -2848,6 +3179,29 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       fitFlowView();
       setTimeout(fitFlowView, 350);
     }, 0);
+  },
+
+  replaceProjectFromDb: async () => {
+    const project = await loadPagesProjectFromDb();
+    if (!project) return false;
+    const activePage = project.pages.find((page) => page.id === project.activePageId) || project.pages[0];
+    if (!activePage) return false;
+    set({
+      pages: project.pages,
+      activePageId: activePage.id,
+      nodes: hydratePageBridgeNodes(activePage.nodes, project.channels),
+      edges: activePage.edges,
+      view: activePage.view,
+      nextId: activePage.nextId,
+      channels: project.channels,
+      statuses: {},
+      busy: {},
+      progresses: {},
+      graphHistory: EMPTY_GRAPH_HISTORY,
+      projectHydrated: true,
+    });
+    setTimeout(fitFlowView, 0);
+    return true;
   },
 }));
 
