@@ -1728,13 +1728,20 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         if (mode === "full" && typeof out.borderRadius === "number") out.borderRadius = Math.max(0, Math.round(out.borderRadius * fontK));
         return out;
       };
-      const walk = (node) => {
+      // Free-родитель: позиционированные дети (x/y) без constraints остаются на
+      // месте — дефолт Figma left/top (см. applyConstraints). Масштабировать их
+      // значит ломать ручную раскладку; кто хочет растяжение — ставит scale.
+      const freeParent = root.frame && root.frame.layout === "free";
+      const walk = (node, depth) => {
         if (!node || typeof node !== "object" || node.editable === false) return; // locked — не трогаем
+        const positioned = depth === 0 && freeParent && node.frame
+          && (typeof node.frame.x === "number" || typeof node.frame.y === "number");
+        if (positioned) return;
         if (node.frame && !(node.frame.constraints)) node.frame = scaleFrame(node.frame);
         if (fontK !== 1 && node.style) node.style = scaleStyle(node.style);
-        (node.children || []).forEach(walk);
+        (node.children || []).forEach((child) => walk(child, depth + 1));
       };
-      root.children.forEach(walk);
+      root.children.forEach((child) => walk(child, 0));
     }
 
     /** Constraints (модель Figma): как дети реагируют на resize родителя.
@@ -3070,9 +3077,9 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         return;
       }
 
-      // Z-order: ] вверх, [ вниз (Shift — сразу наверх/вниз не делаем, как в Figma)
-      if (e.key === "]" && selections.length === 1) { bringForward(); return; }
-      if (e.key === "[" && selections.length === 1) { sendBackward(); return; }
+      // Z-order ] / [ обрабатывает controller.onKeydown (handleAct forward/backward,
+      // плюс русская раскладка ъ/х). Дублирующий обработчик здесь давал два шага
+      // за одно нажатие: слой улетал в конец/начало вместо соседней позиции.
 
       // Group / Ungroup
       if ((e.key === "g" || e.key === "G" || e.key === "п" || e.key === "П") && (e.ctrlKey || e.metaKey)) {

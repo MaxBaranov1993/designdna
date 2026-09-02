@@ -45,7 +45,8 @@ IR = {
     ],
 }
 
-NODE_IR = ("window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir")
+# Правки редактора до «Сохранить» живут в черновике _editorDraft.ir (revision guard)
+NODE_IR = ("(d => d._editorDraft?.ir || d.ir)(window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data)")
 
 
 def check(name, cond, extra=""):
