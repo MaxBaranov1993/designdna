@@ -200,6 +200,9 @@ def main():
         pg.route("**/api/mix", route_mix)
         pg.route("**/api/block-parse", route_block_parse)
         pg.route("**/api/quality-pass", route_quality_pass)
+        # проект живёт в localStorage теста; общая SQLite сервера не должна подменять граф после reload
+        pg.route("**/api/project/load", lambda r: r.fulfill(status=200, content_type="application/json", body='{"project":null,"updated_at":null,"revision":"r1"}'))
+        pg.route("**/api/project/save", lambda r: r.fulfill(status=200, content_type="application/json", body='{"ok":true,"revision":"r2"}'))
 
         for _ in range(30):
             try:
@@ -257,6 +260,10 @@ def main():
         pg.select_option(".n-generator .f-effort-select", "high")
         wait_for_saved_generator_value(pg, "effort", "high")
         pg.reload()
+        # виртуализованный канвас: после reload генератор может быть вне вьюпорта — вписываем граф
+        pg.wait_for_function("window.GraphDev && typeof window.GraphDev.fit === 'function'")
+        pg.evaluate("window.GraphDev.fit()")
+        pg.wait_for_timeout(400)
         pg.wait_for_selector(".n-generator .f-effort-select")
         check("Generator effort survives reload",
               pg.locator(".n-generator .f-effort-select").input_value() == "high")
@@ -265,6 +272,9 @@ def main():
         pg.select_option(".n-generator .f-provider-select", "claude")
         wait_for_saved_generator_value(pg, "provider", "claude")
         pg.reload()
+        pg.wait_for_function("window.GraphDev && typeof window.GraphDev.fit === 'function'")
+        pg.evaluate("window.GraphDev.fit()")
+        pg.wait_for_timeout(400)
         pg.wait_for_selector(".n-generator .f-provider-select")
         check("Generator provider survives reload",
               pg.locator(".n-generator .f-provider-select").input_value() == "claude")
