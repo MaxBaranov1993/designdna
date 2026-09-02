@@ -54,24 +54,197 @@ const codexRequests = new Map();
 /* Активные provider-чаты по requestId: отмена (providers:cancel) гасит
  * HTTP-запрос и CLI-процессы через AbortController. */
 const providerChats = new Map();
-const pythonApiQueue = new SerialRequestQueue();
-const pythonInteractiveQueue = new SerialRequestQueue();
 const repoCanvasQueue = new SerialRequestQueue();
 const liveMutationQueue = new SerialRequestQueue();
 let prewarmed = false;
 
+/* ---------- состояние движка (Python-воркеры) ----------
+ * Честный статус вместо косметического «Runner онлайн»: starting → ready/busy
+ * по health и числу запросов в полёте, dead — процесс упал и не поднялся.
+ * Рассылается в рендерер как engine:status; IPC engine:status:get / engine:restart. */
+const ENGINE_SCOPES = ["interactive", "long"];
+const ENGINE_RESTART_BACKOFF_MS = [1_000, 3_000, 8_000];
+const ENGINE_MAX_CONSECUTIVE_RESTARTS = 3;
+// Прожил дольше — считаем предыдущие падения не серией (счётчик обнуляется)
+const ENGINE_STABLE_UPTIME_MS = 60_000;
+const engineState = {
+  interactive: "starting",
+  long: "starting",
+  lastError: null,
+  restartCount: 0,
+  updatedAt: 0,
+  workers: Object.fromEntries(ENGINE_SCOPES.map((scope) => [scope, {
+    status: "starting", pid: null, spawnCount: 0, pending: 0, lastError: null, failures: 0,
+  }])),
+};
+/* scope -> { worker, failures, timer } */
+const engineWorkers = new Map();
+
+function engineSnapshot() {
+  return JSON.parse(JSON.stringify(engineState));
+}
+
+function publishEngineStatus() {
+  engineState.updatedAt = Date.now();
+  broadcast("engine:status", engineSnapshot());
+}
+
+function setEngineStatus(scope, status, { error = undefined } = {}) {
+  const entry = engineWorkers.get(scope);
+  const worker = entry?.worker;
+  const info = engineState.workers[scope];
+  info.status = status;
+  info.pid = worker?.pid ?? null;
+  info.spawnCount = worker?.spawnCount ?? info.spawnCount;
+  info.pending = worker?.pendingCount ?? 0;
+  info.failures = entry?.failures ?? 0;
+  if (error !== undefined) {
+    const message = error ? String(error?.message || error) : null;
+    info.lastError = message;
+    engineState.lastError = message;
+  }
+  engineState[scope] = status;
+  publishEngineStatus();
+}
+
+function recordEngineError(scope, error, { log = true } = {}) {
+  const message = String(error?.message || error);
+  if (log) console.error(`[engine:${scope}] ${message}`);
+  engineState.workers[scope].lastError = message;
+  engineState.lastError = message;
+  publishEngineStatus();
+}
+
+/* ready ↔ busy по числу запросов в полёте; в starting/dead не трогаем. */
+function refreshEngineBusy(scope) {
+  const entry = engineWorkers.get(scope);
+  if (!entry) return;
+  const info = engineState.workers[scope];
+  info.pending = entry.worker.pendingCount;
+  if (info.status !== "ready" && info.status !== "busy") { publishEngineStatus(); return; }
+  const next = entry.worker.pendingCount > 0 ? "busy" : "ready";
+  if (next !== info.status) setEngineStatus(scope, next);
+  else publishEngineStatus();
+}
+
+/* Health-запрос после спауна: воркер отвечает — ready; ошибка не глотается,
+ * а попадает в лог и lastError (падение процесса обработает exited). */
+async function warmEngineWorker(scope) {
+  const entry = engineWorkers.get(scope);
+  if (!entry || quitting) return;
+  const { worker } = entry;
+  try {
+    worker.start();
+    const spawnCount = worker.spawnCount;
+    await worker.request("health", {}, 30_000);
+    // ответ от уже другого (перезапущенного) процесса не должен «оживить» статус
+    if (worker.spawnCount !== spawnCount) return;
+    entry.failures = 0;
+    setEngineStatus(scope, worker.pendingCount > 0 ? "busy" : "ready", { error: null });
+  } catch (error) {
+    if (error?.cancelled) return;
+    recordEngineError(scope, error);
+    // Процесс жив, но health не ответил (таймаут/десинк канала): гасим и
+    // перезапускаем с backoff — как падение, а не как отмену пользователя.
+    if (worker.alive && !quitting) {
+      entry.suppressAbortRestart = true;
+      worker.abort(`${worker.name}: health не ответил (${error.message})`);
+      scheduleEngineRestart(scope, { reason: error.message });
+    }
+  }
+}
+
+function scheduleEngineRestart(scope, { immediate = false, reason = null } = {}) {
+  const entry = engineWorkers.get(scope);
+  if (!entry || quitting) return;
+  if (entry.timer) return;
+  if (!immediate) {
+    entry.failures += 1;
+    if (entry.failures > ENGINE_MAX_CONSECUTIVE_RESTARTS) {
+      setEngineStatus(scope, "dead", {
+        error: `${entry.worker.name}: ${ENGINE_MAX_CONSECUTIVE_RESTARTS} перезапуска подряд не помогли${reason ? ` — ${reason}` : ""}`,
+      });
+      return;
+    }
+  }
+  const delay = immediate ? 0 : ENGINE_RESTART_BACKOFF_MS[Math.min(entry.failures, ENGINE_RESTART_BACKOFF_MS.length) - 1];
+  engineState.restartCount += 1;
+  setEngineStatus(scope, "starting");
+  if (!immediate) console.warn(`[engine:${scope}] перезапуск ${entry.failures}/${ENGINE_MAX_CONSECUTIVE_RESTARTS} через ${delay} мс`);
+  entry.timer = setTimeout(() => {
+    entry.timer = null;
+    if (quitting) return;
+    // request() тоже лениво спаунит — start() идемпотентен
+    try {
+      entry.worker.start();
+    } catch (error) {
+      recordEngineError(scope, error);
+      scheduleEngineRestart(scope, { reason: error.message });
+      return;
+    }
+    void warmEngineWorker(scope);
+  }, delay);
+}
+
+function attachEngineSupervisor(scope, worker) {
+  const entry = { worker, failures: 0, timer: null, suppressAbortRestart: false };
+  engineWorkers.set(scope, entry);
+  worker.on("spawned", () => setEngineStatus(scope, "starting"));
+  worker.on("pending", () => refreshEngineBusy(scope));
+  worker.on("failed", ({ error }) => recordEngineError(scope, error));
+  // abort (отмена пользователем / таймаут канала / ручной рестарт): поднимаем
+  // свежий процесс сразу, чтобы следующий запрос не платил холодный старт
+  worker.on("aborted", ({ reason }) => {
+    if (quitting) return;
+    if (entry.suppressAbortRestart) { entry.suppressAbortRestart = false; return; }
+    engineState.workers[scope].lastError = null;
+    setEngineStatus(scope, "starting");
+    console.warn(`[engine:${scope}] ${reason}`);
+    scheduleEngineRestart(scope, { immediate: true });
+  });
+  worker.on("exited", ({ expected, error }) => {
+    if (expected || quitting) { setEngineStatus(scope, "dead"); return; }
+    // долгий аптайм — серия падений прервана, счётчик с нуля
+    if (worker.spawnedAt && Date.now() - worker.spawnedAt > ENGINE_STABLE_UPTIME_MS) entry.failures = 0;
+    recordEngineError(scope, error);
+    scheduleEngineRestart(scope, { reason: error.message });
+  });
+}
+
+function restartEngine(scope = "all") {
+  const scopes = scope === "all" ? ENGINE_SCOPES : [String(scope)];
+  for (const target of scopes) {
+    const entry = engineWorkers.get(target);
+    if (!entry) throw new Error(`Unknown engine scope: ${target}`);
+    entry.failures = 0;
+    if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+    engineState.workers[target].lastError = null;
+    if (entry.worker.alive) {
+      entry.worker.abort("перезапуск движка по запросу пользователя");
+    } else {
+      scheduleEngineRestart(target, { immediate: true });
+    }
+  }
+  engineState.lastError = null;
+  publishEngineStatus();
+  return { ok: true, scope, state: engineSnapshot() };
+}
+
 /* Прогрев: холодный старт Python-воркера (импорт FastAPI-стека) стоит ~1.5 с;
  * гоняем health-запрос обоим воркерам сразу после показа окна, чтобы первый
- * реальный вызов не платил этот тариф. Через очереди — чтобы не спорить с
- * пользовательскими запросами. */
+ * реальный вызов не платил этот тариф. Ошибки не глотаются: warmEngineWorker
+ * пишет их в лог и в engineState.lastError. */
 function prewarmWorkers() {
   if (prewarmed) return;
   prewarmed = true;
-  void pythonInteractiveQueue.run(() => pythonInteractiveWorker.request("health", {}, 30_000))
-    .catch(() => undefined);
-  void pythonApiQueue.run(() => pythonWorker.request("health", {}, 30_000))
-    .catch(() => undefined);
+  for (const scope of ENGINE_SCOPES) void warmEngineWorker(scope);
 }
+
+/* Активные /api-запросы по requestId рендерера: отмена адресует cancel-фрейм
+ * конкретному запросу воркера вместо убийства процесса. */
+const apiRequests = new Map();
+let apiSequence = 0;
+const CANCEL_GRACE_MS = 8_000;
 const SOURCE_AUTH_PARTITION = "designdna-source-auth";
 let sourceAuthWindow = null;
 let quitting = false;
@@ -409,6 +582,8 @@ function createWorkers() {
   // интерактивному оставляем слот под серийную project-полосу.
   apiScheduler.registerWorker(pythonWorker, 3);
   apiScheduler.registerWorker(pythonInteractiveWorker, 2);
+  attachEngineSupervisor("long", pythonWorker);
+  attachEngineSupervisor("interactive", pythonInteractiveWorker);
   repoCanvasWorker = new JsonlProcess({
     name: "Repo Canvas runtime",
     command: process.execPath,
@@ -535,22 +710,45 @@ function registerIpc() {
   });
   // Скачать бинарник (видео Motion и т.п.): в desktop нет HTTP, якорь href
   // "/api/.../download" под file:// не работает — сохраняем через диалог.
-  // Отмена длинных задач (Source Import / reproduce минутами держат серийный
-  // Python-воркер). Воркер stateless: честная отмена = рестарт процесса — все
-  // ожидающие запросы длинной очереди отклоняются как cancelled, кэш и проект
-  // живут в SQLite/файлах и переживают рестарт. configure-фингерпринт
-  // сбрасывается автоматически через spawnCount.
-  handleTrusted("api:cancel", (_event, payload) => {
-    // scope "long" (по умолчанию) рестартует длинный воркер; "interactive"
-    // трогает интерактивный только по явной просьбе — он держит project-полосу
-    // и не должен рестартоваться заодно с отменой импорта.
+  // Отмена длинных задач (Source Import / generate / quality-pass минутами
+  // держат воркер). С requestId — кооперативно: воркеру уходит служебный
+  // фрейм {type:"cancel", requestId}, хендлер прерывается на следующей
+  // стадии и отвечает error.code=cancelled; соседние запросы живут. Если за
+  // CANCEL_GRACE_MS ответа нет (хендлер застрял в сетевом вызове) — прежний
+  // рубеж: abort процесса, все его запросы отклоняются как cancelled, кэш и
+  // проект живут в SQLite/файлах; супервизор тут же поднимает свежий процесс.
+  handleTrusted("api:cancel", async (_event, payload) => {
     const scope = String(payload?.scope || "long");
+    const requestId = payload?.requestId == null ? "" : String(payload.requestId);
+    const tracked = requestId ? apiRequests.get(requestId) : null;
+    if (tracked) {
+      const { worker, frameId, settled } = tracked;
+      if (worker.alive && worker.sendControl({ type: "cancel", requestId: frameId })) {
+        const outcome = await Promise.race([
+          settled.then(() => "settled"),
+          new Promise((resolve) => setTimeout(() => resolve("timeout"), CANCEL_GRACE_MS)),
+        ]);
+        if (outcome === "settled") return { cancelled: true, scope: tracked.scope, requestId, mode: "cooperative" };
+        console.warn(`[api:cancel] ${requestId}: воркер не подтвердил отмену за ${CANCEL_GRACE_MS} мс — abort`);
+      }
+      if (apiRequests.has(requestId)) worker.abort("cancelled by user");
+      return { cancelled: true, scope: tracked.scope, requestId, mode: "abort" };
+    }
+    // Без requestId (legacy-вызов) — как раньше: scope "long" (по умолчанию)
+    // рестартует длинный воркер; "interactive" трогает интерактивный только по
+    // явной просьбе — он держит project-полосу.
     if (scope === "interactive") {
       pythonInteractiveWorker.abort("cancelled by user");
     } else {
       pythonWorker.abort("cancelled by user");
     }
-    return { cancelled: true, scope };
+    return { cancelled: true, scope, mode: "abort" };
+  });
+  handleTrusted("engine:status:get", () => engineSnapshot());
+  handleTrusted("engine:restart", (_event, payload) => {
+    const scope = String(payload?.scope || "all");
+    if (!new Set(["all", ...ENGINE_SCOPES]).has(scope)) throw new Error(`Unknown engine scope: ${scope}`);
+    return restartEngine(scope);
   });
   // Вынос inline-блобов из localStorage: рендерер кладёт содержимое, LS хранит
   // только ddna://blobs/<name>. getMany возвращает ПОЛНЫЕ data:-URL обратно —
@@ -622,7 +820,24 @@ function registerIpc() {
         delete requestParams.body;
         delete requestParams.encoding;
       }
-      const response = await worker.request("http.request", requestParams, interactive ? 120_000 : 600_000);
+      // requestId рендерера (опционально) → id фрейма воркера: api:cancel
+      // адресует cancel-фрейм именно этому запросу.
+      const rendererRequestId = requestParams.requestId == null ? "" : String(requestParams.requestId).slice(0, 128);
+      delete requestParams.requestId;
+      const frameId = `api-${++apiSequence}`;
+      const pending = worker.request("http.request", requestParams, interactive ? 120_000 : 600_000, { id: frameId });
+      if (rendererRequestId) {
+        apiRequests.set(rendererRequestId, {
+          worker, frameId, scope: interactive ? "interactive" : "long",
+          settled: pending.then(() => undefined, () => undefined),
+        });
+      }
+      let response;
+      try {
+        response = await pending;
+      } finally {
+        if (rendererRequestId && apiRequests.get(rendererRequestId)?.frameId === frameId) apiRequests.delete(rendererRequestId);
+      }
       liveProjects.synchronize(liveProjectContext, response);
       if (response && response.bodyBytes instanceof Uint8Array) {
         return { ...response, body: response.bodyBytes, encoding: "raw" };
@@ -640,7 +855,7 @@ function registerIpc() {
   // снапшоты Project Map напрямую
   handleTrusted("repo-canvas:refresh", (_event, options) => repoCanvasQueue.run(() => repoCanvasWorker.request("architect.refresh", options || {}, 180_000)));
   handleTrusted("providers:status", async () => ({
-    runtimes: await getProviderStatus(),
+    runtimes: await getProviderStatus({ hasCredential: (id) => { try { return Boolean(credentials.get(id)); } catch { return false; } } }),
     credentials: credentials.status(),
     encryptedStorage: credentials.available(),
   }));

@@ -34,6 +34,27 @@ type RepoCanvasSnapshot = {
   work: Array<{ id: string; title?: string; task?: string; status?: string; actor?: string }>;
 };
 
+/** Состояние Python-движка десктопа (engine:status). */
+type EngineScope = "interactive" | "long";
+type EngineWorkerStatus = "starting" | "ready" | "busy" | "dead";
+type EngineWorkerInfo = {
+  status: EngineWorkerStatus;
+  pid: number | null;
+  spawnCount: number;
+  pending: number;
+  lastError: string | null;
+  failures: number;
+};
+type EngineState = {
+  interactive: EngineWorkerStatus;
+  long: EngineWorkerStatus;
+  lastError: string | null;
+  restartCount: number;
+  updatedAt: number;
+  workers: Record<EngineScope, EngineWorkerInfo>;
+};
+type ApiCancelResult = { cancelled: boolean; scope?: string; requestId?: string; mode?: "cooperative" | "abort" };
+
 type DesktopProvider = "openai" | "codex" | "claude";
 type SolEffort = "medium" | "high" | "max";
 
@@ -94,7 +115,18 @@ declare global {
         onRequest(listener: (request: { requestId: string; command: Record<string, unknown> }) => void): DesktopUnsubscribe;
         respond(requestId: string, response: { ok: boolean; result?: Record<string, unknown>; error?: { code: string; message: string } }): Promise<{ accepted: boolean }>;
       };
-      api: { request(request: Record<string, unknown>): Promise<Record<string, unknown>>; cancel(scope?: "long" | "interactive"): Promise<{ cancelled: boolean; scope?: string }> };
+      api: {
+        /** request.requestId (опционально) — ключ адресной отмены через cancel. */
+        request(request: Record<string, unknown>): Promise<Record<string, unknown>>;
+        /** Без requestId — abort воркера (legacy); с requestId — кооперативная отмена одного запроса. */
+        cancel(scope?: EngineScope, requestId?: string | null): Promise<ApiCancelResult>;
+        cancel(options: { scope?: EngineScope; requestId?: string | null }): Promise<ApiCancelResult>;
+      };
+      engine: {
+        status(): Promise<EngineState>;
+        onStatus(listener: (state: EngineState) => void): DesktopUnsubscribe;
+        restart(scope?: EngineScope | "all"): Promise<{ ok: boolean; scope: string; state: EngineState }>;
+      };
       files: { save(name: string, base64: string): Promise<{ saved: boolean; path?: string }> };
       blobs: {
         put(mime: string, base64: string): Promise<{ stored: boolean; name: string; sha256: string; mime: string; bytes: number }>;

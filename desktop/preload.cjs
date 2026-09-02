@@ -24,8 +24,25 @@ contextBridge.exposeInMainWorld("designDNA", Object.freeze({
     respond: (requestId, response) => ipcRenderer.invoke("live-command:response", { requestId, ...response }),
   }),
   api: Object.freeze({
+    // request.requestId (опционально) — ключ для адресной отмены через cancel
     request: (request) => ipcRenderer.invoke("api:request", request),
-    cancel: (scope = "long") => ipcRenderer.invoke("api:cancel", { scope }),
+    // cancel("long") — legacy: abort воркера; cancel("long", requestId) или
+    // cancel({ scope, requestId }) — кооперативная отмена одного запроса.
+    cancel: (scope = "long", requestId = null) => ipcRenderer.invoke(
+      "api:cancel",
+      scope && typeof scope === "object" ? scope : { scope, requestId },
+    ),
+  }),
+  // Состояние движка (Python-воркеры): starting|ready|busy|dead на каждую
+  // полосу, lastError, restartCount; onStatus — push из main при изменениях.
+  engine: Object.freeze({
+    status: () => ipcRenderer.invoke("engine:status:get"),
+    restart: (scope = "all") => ipcRenderer.invoke("engine:restart", { scope }),
+    onStatus: (listener) => {
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on("engine:status", wrapped);
+      return () => ipcRenderer.removeListener("engine:status", wrapped);
+    },
   }),
   blobs: Object.freeze({
     put: (mime, base64) => ipcRenderer.invoke("blobs:put", { mime, base64 }),

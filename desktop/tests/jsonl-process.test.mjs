@@ -50,3 +50,61 @@ test("JsonlProcess abort rejects pending and respawns on next request", async ()
   assert.ok(worker.spawnCount > spawnsBefore);
   await worker.stop();
 });
+
+test("JsonlProcess emits spawned/exited for an unexpected death and expected stop", async () => {
+  const dying = new JsonlProcess({
+    command: process.execPath,
+    args: ["-e", "setTimeout(() => process.exit(3), 30)"],
+    name: "dying fixture",
+  });
+  const events = [];
+  dying.on("spawned", (info) => events.push(["spawned", info.spawnCount]));
+  const exited = new Promise((resolve) => dying.once("exited", resolve));
+  dying.start();
+  const exit = await exited;
+  assert.deepEqual(events, [["spawned", 1]]);
+  assert.equal(exit.code, 3);
+  assert.equal(exit.expected, false);
+  assert.match(exit.error.message, /exited \(3\)/);
+  assert.equal(dying.alive, false);
+
+  const worker = new JsonlProcess({
+    command: process.execPath,
+    args: [path.join(directory, "fixtures", "echo-worker.mjs")],
+    name: "echo fixture",
+  });
+  const stopped = new Promise((resolve) => worker.once("exited", resolve));
+  await worker.request("ping", {});
+  await worker.stop();
+  assert.equal((await stopped).expected, true);
+});
+
+test("JsonlProcess honours caller-provided frame ids, control frames and pending events", async () => {
+  const worker = new JsonlProcess({
+    command: process.execPath,
+    args: [path.join(directory, "fixtures", "echo-worker.mjs")],
+    name: "echo fixture",
+  });
+  const pendingCounts = [];
+  worker.on("pending", ({ count }) => pendingCounts.push(count));
+  const response = await worker.request("ping", { value: 7 }, 5_000, { id: "api-42" });
+  assert.deepEqual(response, { method: "ping", params: { value: 7 } });
+  assert.deepEqual(pendingCounts, [1, 0]);
+  // служебный фрейм без ответа: echo просто вернёт его как обычный фрейм с id=undefined — нас
+  // интересует только, что канал принял запись
+  assert.equal(worker.sendControl({ type: "cancel", requestId: "api-42" }), true);
+  const aborted = new Promise((resolve) => worker.once("aborted", resolve));
+  worker.abort("test abort");
+  assert.deepEqual(await aborted, { reason: "test abort", hadProcess: true });
+  assert.equal(worker.sendControl({ type: "cancel" }), false);
+});
+
+test("JsonlProcess marks cancelled worker errors", async () => {
+  const worker = new JsonlProcess({
+    command: process.execPath,
+    args: [path.join(directory, "fixtures", "cancelling-worker.mjs")],
+    name: "cancelling fixture",
+  });
+  await assert.rejects(worker.request("http.request", {}), (error) => error.code === "cancelled" && error.cancelled === true);
+  await worker.stop();
+});

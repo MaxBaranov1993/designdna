@@ -223,23 +223,23 @@
 </script>
 
 {#if !desktop}
-  <div class="agent-empty">Agents available in the desktop app.</div>
+  <div class="agent-empty">Агенты доступны в десктоп-приложении.</div>
 {:else}
   <section class="agent-shell">
     <aside class="agent-sidebar">
-      <div><span class="agent-eyebrow">GPT-5.6 Sol</span><h1>Agent + MCP</h1><p>One model, three explicit reasoning profiles.</p></div>
+      <div><span class="agent-eyebrow">GPT-5.6 Sol</span><h1>Агент + MCP</h1><p>Одна модель, три явных профиля рассуждения.</p></div>
       <div class="agent-backend">
-        <button class:active={agentEffort === "medium"} onclick={() => (agentEffort = "medium")} disabled={busy || agentRunning}>Medium</button>
-        <button class:active={agentEffort === "high"} onclick={() => (agentEffort = "high")} disabled={busy || agentRunning}>High</button>
-        <button class:active={agentEffort === "max"} onclick={() => (agentEffort = "max")} disabled={busy || agentRunning}>Max</button>
+        <button class:active={agentEffort === "medium"} onclick={() => (agentEffort = "medium")} disabled={busy || agentRunning}>Среднее</button>
+        <button class:active={agentEffort === "high"} onclick={() => (agentEffort = "high")} disabled={busy || agentRunning}>Высокое</button>
+        <button class:active={agentEffort === "max"} onclick={() => (agentEffort = "max")} disabled={busy || agentRunning}>Макс</button>
       </div>
-      <Button variant="outline" onclick={() => { agentHistory = []; }} disabled={busy || agentRunning}>New session</Button>
+      <Button variant="outline" onclick={() => { agentHistory = []; }} disabled={busy || agentRunning}>Новая сессия</Button>
       <div class="agent-connections">
-        <h2>Connections</h2>
-        <label><span>OpenAI API key {providerState.credentials?.openai ? "· saved" : ""}</span><input type="password" bind:value={openaiKey} placeholder="sk-…" /></label>
-        <Button variant="outline" onclick={() => void saveKey("openai", openaiKey)}>Save OpenAI key</Button>
-        <label><span>OpenRouter video key {providerState.credentials?.openrouter ? "· saved" : ""}</span><input type="password" bind:value={openrouterKey} placeholder="sk-or-v1-…" /></label>
-        <Button variant="outline" onclick={() => void saveKey("openrouter", openrouterKey)}>Save OpenRouter key</Button>
+        <h2>Подключения</h2>
+        <label><span>Ключ OpenAI API {providerState.credentials?.openai ? "· сохранён" : ""}</span><input type="password" bind:value={openaiKey} placeholder="sk-…" /></label>
+        <Button variant="outline" onclick={() => void saveKey("openai", openaiKey)}>Сохранить ключ OpenAI</Button>
+        <label><span>Ключ OpenRouter (видео) {providerState.credentials?.openrouter ? "· сохранён" : ""}</span><input type="password" bind:value={openrouterKey} placeholder="sk-or-v1-…" /></label>
+        <Button variant="outline" onclick={() => void saveKey("openrouter", openrouterKey)}>Сохранить ключ OpenRouter</Button>
         <div class="agent-runtime" data-provider="claude">
           <span class={claudeStatus?.loggedIn ? "ok" : "bad"}>
             Claude Opus: {claudeStatus === null
@@ -262,12 +262,12 @@
           <Button variant="outline" onclick={() => void refreshClaude()}>Проверить Claude</Button>
         </div>
       </div>
-      <h2>MCP servers</h2>
+      <h2>MCP-серверы</h2>
       <textarea class="agent-config" bind:value={mcpConfig} spellcheck="false"></textarea>
-      <Button variant="outline" onclick={() => void saveMcp()}>Save and connect</Button>
+      <Button variant="outline" onclick={() => void saveMcp()}>Сохранить и подключить</Button>
       <div class="agent-mcp-list">
         {#each mcpStatus as server (server.id)}
-          <span class={server.connected ? "ok" : "bad"}>{server.name}: {server.connected ? `${server.tools} tools` : server.error}</span>
+          <span class={server.connected ? "ok" : "bad"}>{server.name}: {server.connected ? `инструментов: ${server.tools}` : server.error}</span>
         {/each}
         {#each tools as tool (tool.qualifiedName)}
           <code>{tool.serverName}/{tool.name}</code>
@@ -278,27 +278,27 @@
       {#if error}<div class="agent-error">{error}</div>{/if}
       <div class="agent-timeline">
         {#if agentHistory.length === 0}
-          <div class="agent-welcome"><h2>DesignDNA working session</h2><p>Ask the agent to analyze the project, change code, or use a connected MCP tool.</p></div>
+          <div class="agent-welcome"><h2>Рабочая сессия DesignDNA</h2><p>Попросите агента проанализировать проект, изменить код или использовать подключённый MCP-инструмент.</p></div>
         {/if}
         {#each agentHistory as message, index (index)}
           <article class="agent-message" class:agent-tool-message={message.role === "tool"}>
-            <span>{message.role === "user" ? "You" : message.role === "tool" ? `MCP · ${message.toolName || message.toolCallId || ""}` : `GPT-5.6 Sol · ${agentEffort}`}</span>
+            <span>{message.role === "user" ? "Вы" : message.role === "tool" ? `MCP · ${message.toolName || message.toolCallId || ""}` : `GPT-5.6 Sol · ${agentEffort}`}</span>
             <div>{message.content}</div>
           </article>
         {/each}
         {#if agentRunning}
-          <article class="agent-message"><span>GPT-5.6 Sol · {agentEffort}</span><div>thinking… {tools.length ? `· ${tools.length} MCP tools` : ""}</div></article>
+          <article class="agent-message"><span>GPT-5.6 Sol · {agentEffort}</span><div>думаю… {tools.length ? `· MCP-инструментов: ${tools.length}` : ""}</div></article>
         {/if}
       </div>
       <div class="agent-composer">
-        <textarea bind:value={prompt} placeholder="What should DesignDNA do?" onkeydown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void send(); }}></textarea>
-        {#if agentRunning}<Button variant="outline" onclick={() => void cancelAgent()}>Cancel</Button>{/if}
-        <Button onclick={() => void send()} disabled={busy || agentRunning || !prompt.trim()}>Send</Button>
+        <textarea bind:value={prompt} placeholder="Что должен сделать DesignDNA?" onkeydown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void send(); }}></textarea>
+        {#if agentRunning}<Button variant="outline" onclick={() => void cancelAgent()}>Отменить</Button>{/if}
+        <Button onclick={() => void send()} disabled={busy || agentRunning || !prompt.trim()}>Отправить</Button>
       </div>
     </main>
     {#if mcpApproval}
       {@const request = mcpApproval}
-      <div class="agent-modal"><div><span class="agent-eyebrow">MCP tool approval</span><h2>{request.server} / {request.tool}</h2><pre>{JSON.stringify(request.arguments || {}, null, 2)}</pre><div class="agent-modal-actions"><Button variant="outline" onclick={() => { void desktop.mcp.respondToApproval(String(request.id), false); mcpApproval = null; }}>Decline</Button><Button onclick={() => { void desktop.mcp.respondToApproval(String(request.id), true); mcpApproval = null; }}>Execute</Button></div></div></div>
+      <div class="agent-modal"><div><span class="agent-eyebrow">Подтверждение MCP-инструмента</span><h2>{request.server} / {request.tool}</h2><pre>{JSON.stringify(request.arguments || {}, null, 2)}</pre><div class="agent-modal-actions"><Button variant="outline" onclick={() => { void desktop.mcp.respondToApproval(String(request.id), false); mcpApproval = null; }}>Отклонить</Button><Button onclick={() => { void desktop.mcp.respondToApproval(String(request.id), true); mcpApproval = null; }}>Выполнить</Button></div></div></div>
     {/if}
   </section>
 {/if}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Button from "../components/ui/Button.svelte";
+  import { confirmDialog } from "../flow/confirm";
   import "./project-map.css";
 
   type Snapshot = Awaited<ReturnType<NonNullable<Window["designDNA"]>["repoCanvas"]["snapshot"]>>;
@@ -38,7 +39,13 @@
   });
 
   const refreshArchitecture = async () => {
-    if (!desktop || !window.confirm("Перестроить семантическую карту проекта через Codex?")) return;
+    if (!desktop) return;
+    const ok = await confirmDialog({
+      title: "Перестроить семантическую карту?",
+      message: "Codex заново проанализирует проект и заменит текущую карту. Это займёт время.",
+      confirmLabel: "Перестроить",
+    });
+    if (!ok) return;
     busy = true;
     error = "";
     try {

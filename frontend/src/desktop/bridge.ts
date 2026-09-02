@@ -47,12 +47,16 @@ export function installDesktopFetchBridge(): void {
       requestText = await expandBlobRefs(requestText);
     }
     const requestBody = requestText ? new TextEncoder().encode(requestText) : "";
+    // runId из flow/api.ts → requestId IPC-фрейма: main.mjs шлёт воркеру
+    // адресный cancel по нему (cancel_token), без рестарта всего воркера.
+    const runId = request.headers.get("x-designdna-run-id") || "";
     const response = await bridge.request({
       method,
       path: `${url.pathname}${url.search}`,
       headers: Object.fromEntries(request.headers.entries()),
       body: requestBody,
       encoding: "raw",
+      ...(runId ? { requestId: runId } : {}),
     }) as DesktopHttpResponse;
     // main отдаёт бинарные тела уже Uint8Array (structured clone без base64);
     // строка с encoding=base64 — fallback для старых main-процессов
