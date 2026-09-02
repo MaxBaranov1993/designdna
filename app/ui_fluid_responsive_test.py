@@ -118,6 +118,11 @@ def main():
         check("Copy to breakpoint writes explicit tablet frame", isinstance(tablet_frame, dict) and tablet_frame.get("width") == 100, str(tablet_frame))
 
         page.click('.dna-editor [data-act="close"]')
+        # защита черновика: редактор с правками спрашивает — закрываем без сохранения
+        try:
+            page.wait_for_selector('[data-act="close-discard"]', timeout=1000).click()
+        except Exception:
+            pass
         page.evaluate("(args) => window.GraphDev.setIR(args.id, args.ir)", {"id": node_id, "ir": copy.deepcopy(CARD_ROW_IR)})
         page.click(".n-edit .f-open-editor")
         page.click('.dna-editor [data-viewport="tablet"]')

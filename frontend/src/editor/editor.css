@@ -584,6 +584,14 @@
 .fe-responsive-validation.warn { background:#78350f55; color:#fde68a; }
 .fe-responsive-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
 
+/* Подтверждение закрытия с несохранёнными правками (CloseConfirmPanel). */
+.fe-close-backdrop { z-index:160; }
+.fe-close-card { border-color:#7a2e2e; background:#1d1516; }
+.fe-close-card .fe-locks-kicker { color:#fca5a5; }
+.fe-close-card > p { font-size:12px; color:#d4d4d8; }
+.fe-close-actions { display:flex; align-items:center; gap:8px; }
+.fe-close-spacer { flex:1; }
+
 /* Intent Locks. */
 .fe-locks-trigger { border-color:#665b32; background:#312b17; color:#fef3c7; white-space:nowrap; }
 .fe-locks-trigger:hover { border-color:#a58b3f; color:#fff; }

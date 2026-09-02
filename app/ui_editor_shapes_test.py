@@ -246,6 +246,11 @@ def main():
         check("IR с фигурами проходит схему (style-dna/extract)", resp == 200, str(resp))
 
         pg.click('.fe-toolbar [data-act="close"]')
+        # защита черновика: редактор с правками спрашивает — закрываем без сохранения
+        try:
+            pg.wait_for_selector('[data-act="close-discard"]', timeout=1000).click()
+        except Exception:
+            pass
         pg.wait_for_timeout(300)
         check("редактор закрыт", pg.evaluate("document.querySelector('.dna-editor').style.display === 'none'"))
         browser.close()

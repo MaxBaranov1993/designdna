@@ -38,9 +38,17 @@
     return subscribeTick((value) => (now = value));
   });
   const elapsedMs = $derived(progress ? Math.max(0, now - progress.startedAt) : 0);
-  const percent = $derived(progress
-    ? progress.percent ?? Math.min(97, 100 * (1 - Math.exp((-1.7 * elapsedMs) / progress.expectedMs)))
-    : 0);
+  /* Процент показываем только измеренный (Source Import отдаёт стадии с
+   * бэкенда). Синтетическая кривая от времени «висла на 97%» — вместо неё
+   * indeterminate-полоса, стадия и честная подсказка «обычно до N мин». */
+  const measured = $derived(!!progress && Number.isFinite(progress.percent));
+  const percent = $derived(measured ? Number(progress!.percent) : 0);
+  const overdue = $derived(!!progress && elapsedMs > progress.expectedMs);
+  const expectedHint = $derived((() => {
+    if (!progress) return "";
+    const min = Math.max(1, Math.round(progress.expectedMs / 60_000));
+    return overdue ? "дольше обычного" : `обычно до ${min} мин`;
+  })());
   const clock = $derived((() => {
     const total = Math.floor(elapsedMs / 1000);
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
@@ -60,17 +68,18 @@
   <div class="node-body">{@render children?.()}</div>
   {#if progress}
     <div
-      class="n-progress"
+      class={cn("n-progress", !measured && "indeterminate", overdue && "overdue")}
       role="progressbar"
       aria-label={progress.label}
       aria-valuemin="0"
       aria-valuemax="100"
-      aria-valuenow={Math.round(percent)}
+      aria-valuenow={measured ? Math.round(percent) : undefined}
+      aria-valuetext={measured ? `${Math.round(percent)}%` : `${progress.stage || progress.label}, ${clock}`}
     >
-      <div class="n-progress-track"><div class="n-progress-fill" style="width: {percent}%"></div></div>
+      <div class="n-progress-track"><div class="n-progress-fill" style={measured ? `width: ${percent}%` : ""}></div></div>
       <div class="n-progress-caption">
-        <span class="n-progress-label">{progress.label}…</span>
-        <span>{Math.round(percent)}% · {clock}</span>
+        <span class="n-progress-label">{progress.stage ? `${progress.label} · ${progress.stage}` : progress.label}…</span>
+        <span>{measured ? `${Math.round(percent)}% · ${clock}` : `${clock} · ${expectedHint}`}</span>
       </div>
     </div>
   {/if}

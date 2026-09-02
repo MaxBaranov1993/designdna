@@ -64,6 +64,8 @@ interface Session {
   baseUpstreamRevision: number;
   draftRevision: number;
   persistedFingerprint: string;
+  /* Отпечаток IR, совпадающий с нодой: расхождение = несохранённые правки */
+  cleanFingerprint: string;
   sessionId: number;
   layerFlags: Record<string, { hidden?: boolean; locked?: boolean }>;
   layerQuery: string;
@@ -146,7 +148,7 @@ let aiAssistFormState: AssistRequest = {
 };
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setSnap: (v: boolean) => void; setSnapStep: (v: SnapStep) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void; setAiBusy: (busy: boolean) => void; setAiError: (error: string) => void; setAiPreview: (preview: AssistPreview | null) => void; setAiProgress: (progress: import("./aiTypes").AssistProgress | null) => void } = {
+let ui: { setTool: (t: string) => void; setSnap: (v: boolean) => void; setSnapStep: (v: SnapStep) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void; setAiBusy: (busy: boolean) => void; setAiError: (error: string) => void; setAiPreview: (preview: AssistPreview | null) => void; setAiProgress: (progress: import("./aiTypes").AssistProgress | null) => void; setCloseConfirm: (open: boolean) => void } = {
   setTool: () => {},
   setSnap: () => {},
   setSnapStep: () => {},
@@ -163,6 +165,7 @@ let ui: { setTool: (t: string) => void; setSnap: (v: boolean) => void; setSnapSt
   setAiError: () => {},
   setAiPreview: () => {},
   setAiProgress: () => {},
+  setCloseConfirm: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -577,7 +580,10 @@ function activateViewport(viewport: string, width: number) {
 export function handleAct(act: string) {
   if (!state) return;
   if (act === "save") save();
-  else if (act === "close") close();
+  else if (act === "close") requestClose();
+  else if (act === "close-discard") discardAndClose();
+  else if (act === "close-stay") dismissCloseConfirm();
+  else if (act === "close-save") saveAndClose();
   else if (act === "undo") undo();
   else if (act === "redo") redo();
   else if (act === "style-dna") openStyleDnaInspector();
@@ -1030,6 +1036,7 @@ export function open(
     baseUpstreamRevision: restoredDraft ? restoredDraft.baseRevision : upstreamRevision,
     draftRevision: restoredDraft ? restoredDraft.draftRevision : 0,
     persistedFingerprint: JSON.stringify(startingIr),
+    cleanFingerprint: "",
     sessionId: nextSessionId++,
     layerFlags: {}, // refKey -> {hidden, locked}; сессия редактора, не часть IR
     layerQuery: "",
@@ -1043,6 +1050,9 @@ export function open(
   };
   const upgraded = upgradeSourceNesting(state.ir);
   if (upgraded) persistDraft();
+  // Чистая база — IR после нормализации открытия (иначе апгрейд вложенности
+  // считался бы правкой); восстановленный черновик по определению грязный.
+  state.cleanFingerprint = restoredDraft ? JSON.stringify(node.data.ir ?? null) : JSON.stringify(state.ir);
   const st = state;
   const responsive = !!(st.ir && st.ir.responsive && st.ir.responsive.viewports);
   // вьюпорт из графа: Page/Source Import прокидывают meta.activeViewport вниз —
@@ -1898,7 +1908,44 @@ function save() {
   if (saved) close(true);
 }
 
+/* ---------- защита несохранённых правок ----------
+ * Раньше Esc/«Закрыть» молча стирали черновик (clearEditorDraft в onClose).
+ * Теперь грязная сессия сначала спрашивает; «Не сохранять» — прежний путь. */
+let closeConfirmOpen = false;
+
+export function isDirty(): boolean {
+  if (!state) return false;
+  syncActiveIR();
+  return JSON.stringify(state.ir) !== state.cleanFingerprint;
+}
+
+export function requestClose() {
+  if (!state) return;
+  if (!isDirty()) {
+    close();
+    return;
+  }
+  closeConfirmOpen = true;
+  ui.setCloseConfirm(true);
+}
+
+export function dismissCloseConfirm() {
+  closeConfirmOpen = false;
+  ui.setCloseConfirm(false);
+}
+
+export function discardAndClose() {
+  dismissCloseConfirm();
+  close();
+}
+
+export function saveAndClose() {
+  dismissCloseConfirm();
+  save(); // при конфликте ревизий onSave вернёт false и редактор останется открытым
+}
+
 export function close(saved?: boolean) {
+  closeConfirmOpen = false;
   if (state && state.onClose) state.onClose(!!saved);
   if (state && state.geo) { state.geo.destroy(); state.geo = null; }
   state = null;
@@ -2865,6 +2912,10 @@ export function commitActiveIrEdits() {
 /* ---------- клавиатура ---------- */
 
 function dismissOpenOverlays(): boolean {
+  if (closeConfirmOpen) {
+    dismissCloseConfirm();
+    return true;
+  }
   if (aiAssistAbort || aiAssistState) {
     cancelAiAssist();
     return true;
@@ -2894,7 +2945,7 @@ export function onKeydown(e: KeyboardEvent) {
     e.preventDefault();
     if (dismissOpenOverlays()) return;
     if (state.geo && state.geo.consumeEscape()) return;
-    close();
+    requestClose();
     return;
   }
   if (typing) return;

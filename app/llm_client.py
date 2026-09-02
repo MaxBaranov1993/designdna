@@ -10,6 +10,7 @@ import dataclasses
 import json
 import os
 import re
+import threading
 import urllib.request
 import uuid
 from pathlib import Path
@@ -326,13 +327,52 @@ def chat_vision(provider: str | None, image_data_url: str, text_prompt: str,
     return chat_envelope(request, role=role)["content"]
 
 
+# Кэш промпт-файлов и собранных системных промптов: сервер многопоточный,
+# файлы читаются на каждый LLM-вызов, поэтому ключ — (path, mtime_ns, size).
+_PROMPT_FILES = (
+    "spike/system-prompt.md", "schema/design-ir.schema.json",
+    "app/prompts/BLOCKS.md", "app/prompts/DESIGN.md",
+)
+_PROMPT_LOCK = threading.Lock()
+_FILE_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
+_PROMPT_CACHE: dict[tuple[str, tuple[tuple[int, int], ...]], str] = {}
+
+
+def _file_stamp(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def invalidate_prompt_cache() -> None:
+    """Сбросить оба кэша (для тестов и горячей смены ROOT)."""
+    with _PROMPT_LOCK:
+        _FILE_CACHE.clear()
+        _PROMPT_CACHE.clear()
+
+
 def load(name: str) -> str:
-    return (ROOT / name).read_text(encoding="utf-8")
+    path = ROOT / name
+    stamp = _file_stamp(path)
+    key = str(path)
+    with _PROMPT_LOCK:
+        cached = _FILE_CACHE.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+    text = path.read_text(encoding="utf-8")
+    with _PROMPT_LOCK:
+        _FILE_CACHE[key] = (stamp, text)
+    return text
 
 
 def build_system_prompt(mode: str = "generate") -> str:
+    signature = tuple(_file_stamp(ROOT / name) for name in _PROMPT_FILES)
+    key = (mode, signature)
+    with _PROMPT_LOCK:
+        cached = _PROMPT_CACHE.get(key)
+    if cached is not None:
+        return cached
     template = load("spike/system-prompt.md").split("---", 1)[-1]
-    return (
+    prompt = (
         template.replace("{{SCHEMA}}", load("schema/design-ir.schema.json"))
         .replace("{{BLOCKS}}", load("app/prompts/BLOCKS.md"))
         .replace("{{DESIGN}}", load("app/prompts/DESIGN.md") if mode == "generate" else "")
@@ -341,6 +381,12 @@ def build_system_prompt(mode: str = "generate") -> str:
         .replace("{{MODE}}", mode)
         .strip()
     )
+    with _PROMPT_LOCK:
+        # Старые сигнатуры больше не нужны — держим только актуальный вариант mode.
+        for stale in [k for k in _PROMPT_CACHE if k[0] == mode and k != key]:
+            del _PROMPT_CACHE[stale]
+        _PROMPT_CACHE[key] = prompt
+    return prompt
 
 
 def extract_json(text: str) -> str:

@@ -285,6 +285,21 @@
 <svelte:window
   onkeydown={(e) => {
     if ((menu || nodeMenu) && e.key === "Escape") closeMenu();
+    // Undo/redo структуры графа. Не перехватываем в полях ввода (у них свой
+    // undo) и когда сверху открыт модальный оверлей (DNA-редактор, DS-панель,
+    // таймлайн) — у них собственные стеки истории.
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const key = e.key.toLowerCase();
+    const isUndo = (key === "z" || key === "я") && !e.shiftKey;
+    const isRedo = key === "y" || key === "н" || ((key === "z" || key === "я") && e.shiftKey);
+    if (!isUndo && !isRedo) return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+    if (document.querySelector('[role="dialog"][aria-modal="true"], .dna-editor[data-editor-open="true"]')) return;
+    e.preventDefault();
+    const st = useFlowStore.getState();
+    if (isUndo) st.undoGraph();
+    else st.redoGraph();
   }}
 />
 

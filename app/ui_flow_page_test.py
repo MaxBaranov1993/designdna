@@ -371,6 +371,11 @@ def main():
         check("РЎР‚Р ВµР Т‘Р В°Р С”РЎвЂљР С•РЎР‚: D/T/M Р СР ВµР Р…РЎРЏРЎР‹РЎвЂљ Р В°РЎР‚РЎвЂљР В±Р С•РЎР‚Р Т‘ (1440/768/390)",
               widths == {"desktop": 1440, "tablet": 768, "mobile": 390}, str(widths))
         pg.click('.dna-editor [data-act="close"]')
+        # защита черновика: редактор с правками спрашивает — закрываем без сохранения
+        try:
+            pg.wait_for_selector('[data-act="close-discard"]', timeout=1000).click()
+        except Exception:
+            pass
 
         browser.close()
 

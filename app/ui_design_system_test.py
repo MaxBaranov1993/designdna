@@ -223,6 +223,11 @@ def main() -> None:
 
             if page.locator(".dna-editor [data-act='close']").count():
                 page.locator(".dna-editor [data-act='close']").click()
+                # защита черновика: редактор с правками спрашивает — закрываем без сохранения
+                try:
+                    page.wait_for_selector('[data-act="close-discard"]', timeout=1000).click()
+                except Exception:
+                    pass
                 page.wait_for_function("() => { const el = document.querySelector('.dna-editor'); return !el || getComputedStyle(el).display === 'none'; }")
             page.wait_for_function("() => { const b = document.querySelector(\"[data-ds-editor] [data-ds-action='undo']\"); return b && !b.disabled; }")
             undo_btn.click()

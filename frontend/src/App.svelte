@@ -8,6 +8,8 @@
   import FlowCanvas from "./FlowCanvas.svelte";
   import GraphInspector from "./GraphInspector.svelte";
   import ToastViewport from "./flow/ToastViewport.svelte";
+  import ConflictDialog from "./flow/ConflictDialog.svelte";
+  import type { ProjectConflictDetail } from "./flow/serialize";
   import { installGraphDev } from "./flow/graphdev";
   import { toast } from "./flow/toast";
   import { useFlowStore } from "./flow/store";
@@ -23,6 +25,8 @@
   let AgentComponent = $state<LazyComponent | null>(null);
   let editorLoad: Promise<LazyComponent> | null = null;
   let dsEditorNodeId = $state<number | null>(null);
+  /* Конфликт 409 автосейва: пока не null — модалка ConflictDialog */
+  let projectConflict = $state<ProjectConflictDetail | null>(null);
   let DsEditorComponent: any = $state(null);
   const isDesktop = typeof window !== "undefined" && !!window.designDNA;
   async function ensureDsEditor() {
@@ -69,12 +73,9 @@
     window.addEventListener("designdna:ensure-editor", onEditorRequest);
     // Fail-closed сейв (serialize.ts): после 409 автосохранение в БД молчит,
     // пока пользователь не решит конфликт — без слушателя это тихая потеря работы.
-    const onProjectConflict = () => {
-      toast(
-        "Проект изменён в другом окне: автосохранение приостановлено. " +
-          "Экспортируйте JSON для страховки и перезагрузите страницу.",
-        "error",
-      );
+    const onProjectConflict = (event: Event) => {
+      const detail = (event as CustomEvent<ProjectConflictDetail>).detail;
+      projectConflict = detail || { expectedRevision: null, currentRevision: null, error: "stale_revision" };
     };
     window.addEventListener("designdna:project-conflict", onProjectConflict);
     // «Передать в Генератор» из панели DS: система становится выбором проекта,
@@ -137,6 +138,9 @@
             </div>
           </SvelteFlowProvider>
           <ToastViewport />
+          {#if projectConflict}
+            <ConflictDialog detail={projectConflict} onclose={() => (projectConflict = null)} />
+          {/if}
           {#if EditorComponent}<EditorComponent />{/if}
           {#if DsEditorComponent && dsEditorNodeId != null}
             <DsEditorComponent nodeId={dsEditorNodeId} onClose={() => (dsEditorNodeId = null)} />

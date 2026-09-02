@@ -85,6 +85,11 @@ def main() -> None:
             "id => window.GraphDev.node(id).data._editorDraft.ir.tree[0].frame.gap === 16", edit_id))
 
         page.click('.dna-editor [data-act="close"]')
+        # защита черновика: редактор с правками спрашивает — закрываем без сохранения
+        try:
+            page.wait_for_selector('[data-act="close-discard"]', timeout=1000).click()
+        except Exception:
+            pass
         check("Cancel closes without restoring the opening snapshot", not page.evaluate("window.DNAEditor.isOpen()"))
         check("Cancel keeps upstream IR and only clears draft", page.evaluate(
             "id => window.GraphDev.node(id).data.ir.tree[0].children[0].text === 'Upstream replacement' && !window.GraphDev.node(id).data._editorDraft", edit_id))
