@@ -52,6 +52,8 @@ export interface GeoAttachOpts {
   isLocked?: (ref: GeoRef) => boolean;
   scrollEl?: { scrollLeft: number; scrollTop: number } | null;
   onToolChange?: (tool: string) => void;
+  /* Двойной клик по image-элементу: хост открывает выбор файла (заглушка → картинка) */
+  onImageUpload?: (ref: GeoRef) => void;
 }
 
 export interface IRHistoryHandle {

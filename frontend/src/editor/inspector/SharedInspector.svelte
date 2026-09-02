@@ -74,6 +74,20 @@ import ColorPicker from "./ColorPicker.svelte";
   const isFormLabel = !!first?.ref.path && /^props\.fields\.\d+\.parts\.label$/.test(first.ref.path);
   const isFormControl = !!first?.ref.path && /^props\.fields\.\d+\.parts\.control$/.test(first.ref.path);
   const isFormSubmit = first?.ref.path === "props.submit" && node.role === "form-submit";
+  const isImage = sels.length === 1 && node.type === "image";
+  let imageBusy = $state(false);
+  async function onImageFile(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = "";
+    if (!file) return;
+    imageBusy = true;
+    try {
+      await ctl.uploadImageForSelection(file);
+    } finally {
+      imageBusy = false;
+    }
+  }
   const formFieldPath = first?.ref.path?.match(/^(props\.fields\.\d+)/)?.[1];
   const formField = formFieldPath && first?.ref.secIdx != null ? getByPath(sess?.ir?.tree?.[first.ref.secIdx], formFieldPath) || {} : {};
   const frame = first && geo ? geo.frameOf(first.ref) || {} : {};
@@ -260,6 +274,24 @@ import ColorPicker from "./ColorPicker.svelte";
         {#if isFormLabel}<div class="manual-group field-content"><span class="manual-label">Подпись</span><label><span>Текст</span><input data-el-prop="text" value={node.text ?? formField.label ?? ""} /></label></div>{/if}
         {#if isFormControl}<div class="manual-group field-content"><span class="manual-label">Поле ввода</span><label><span>Подсказка</span><input data-el-prop="placeholder" value={node.placeholder ?? formField.placeholder ?? ""} /></label></div>{/if}
         {#if isFormSubmit}<div class="manual-group field-content"><span class="manual-label">Кнопка формы</span><label><span>Текст</span><input data-el-prop="text" value={node.text ?? sess?.ir?.tree?.[first.ref.secIdx!]?.props?.submitText ?? "Отправить"} /></label></div>{/if}
+        {#if isImage}
+          <div class="manual-group field-content pi-image" data-pi-image>
+            <span class="manual-label">Изображение</span>
+            {#if node.src}
+              <img class="pi-image-preview" src={node.src} alt={node.alt || ""} />
+            {:else}
+              <div class="pi-image-empty">Заглушка{node.imagePrompt ? `: ${String(node.imagePrompt).slice(0, 80)}` : ""}. Загрузите свою картинку — или двойной клик по заглушке на холсте.</div>
+            {/if}
+            <div class="pi-image-actions">
+              <label class="fe-btn primary pi-image-upload">
+                {imageBusy ? "Загружаю…" : node.src ? "Заменить…" : "Загрузить…"}
+                <input type="file" accept="image/*" data-act="upload-image" hidden disabled={imageBusy} onchange={onImageFile} />
+              </label>
+              {#if node.src}<button class="fe-btn" type="button" data-act="clear-image" onclick={() => ctl.clearImageForSelection()}>Убрать</button>{/if}
+            </div>
+            <label><span>Alt</span><input data-el-prop="alt" value={node.alt ?? ""} placeholder={node.imagePrompt ?? ""} /></label>
+          </div>
+        {/if}
         <div class="manual-group"><span class="manual-label">Align</span><div class="align-grid">
           <button data-act="align-left" title="По левому краю" aria-label="По левому краю">⇤</button><button data-act="align-center-h" title="По центру горизонтали" aria-label="По центру горизонтали">↔</button><button data-act="align-right" title="По правому краю" aria-label="По правому краю">⇥</button>
           <button data-act="align-top" title="По верхнему краю" aria-label="По верхнему краю">↥</button><button data-act="align-center-v" title="По центру вертикали" aria-label="По центру вертикали">↕</button><button data-act="align-bottom" title="По нижнему краю" aria-label="По нижнему краю">↧</button>

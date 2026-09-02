@@ -584,6 +584,16 @@
 .fe-responsive-validation.warn { background:#78350f55; color:#fde68a; }
 .fe-responsive-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
 
+/* Картинка в инспекторе: превью, загрузка, замена (SharedInspector). */
+.pi-image { display:flex; flex-direction:column; gap:8px; }
+.pi-image-preview { width:100%; max-height:140px; object-fit:contain; border:1px solid #2a2a33; border-radius:8px; background:#101014; }
+.pi-image-empty { padding:10px; border:1px dashed #3a3a44; border-radius:8px; color:#a1a1aa; font-size:11px; line-height:1.45; }
+.pi-image-actions { display:flex; gap:8px; }
+.pi-image-upload { cursor:pointer; }
+/* Заглушка генератора на холсте редактора: подсказка о загрузке */
+.fe-canvas .img-ph { position:relative; cursor:pointer; }
+.fe-canvas .img-ph::after { content:"⤓ двойной клик — загрузить фото"; position:absolute; left:50%; bottom:10px; transform:translateX(-50%); padding:3px 9px; border-radius:999px; background:rgba(10,10,14,.72); color:#e4e4e7; font:600 10px/1.4 system-ui, sans-serif; letter-spacing:.02em; white-space:nowrap; pointer-events:none; opacity:.85; }
+
 /* Подтверждение закрытия с несохранёнными правками (CloseConfirmPanel). */
 .fe-close-backdrop { z-index:160; }
 .fe-close-card { border-color:#7a2e2e; background:#1d1516; }

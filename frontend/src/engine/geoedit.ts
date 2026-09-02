@@ -3129,6 +3129,14 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         return;
       }
 
+      // Картинка (в т.ч. заглушка генератора): двойной клик = загрузить файл,
+      // текстового редактирования у неё нет.
+      if (node && node.type === "image" && opts.onImageUpload) {
+        select(ref);
+        opts.onImageUpload(ref);
+        return;
+      }
+
       beginTextEdit(ref);
     }
 

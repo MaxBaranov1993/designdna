@@ -48,12 +48,33 @@ def sanitize_generated_ir(ir: dict) -> dict:
     if isinstance(meta, dict):
         out["meta"] = {key: value for key, value in meta.items() if key in _GENERATED_META_KEYS}
 
+    def strip_invented_src(media: object) -> None:
+        """Модель не умеет давать реальные картинки: выдуманный http/относительный
+        src ломается битой ссылкой в превью. Оставляем заглушку (imagePrompt),
+        которую пользователь заменяет своим файлом в редакторе. Встроенные
+        data:-URL и внутренние ddna:// сохраняем."""
+        if not isinstance(media, dict):
+            return
+        src = media.get("src")
+        if not isinstance(src, str):
+            return
+        if src.startswith(("data:", "ddna://")):
+            return
+        media.pop("src", None)
+        if not media.get("imagePrompt"):
+            media["imagePrompt"] = str(media.get("alt") or "изображение")
+
     def normalize_node(node: object) -> None:
         if not isinstance(node, dict):
             return
         raw_size = node.get("size")
         if isinstance(raw_size, str) and raw_size in _GENERATED_SIZE_ALIASES:
             node["size"] = _GENERATED_SIZE_ALIASES[raw_size]
+        if node.get("type") == "image":
+            strip_invented_src(node)
+        props = node.get("props")
+        if isinstance(props, dict):
+            strip_invented_src(props.get("media"))
         children = node.get("children")
         if isinstance(children, list):
             for child in children:

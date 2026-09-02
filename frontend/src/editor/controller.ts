@@ -2512,6 +2512,9 @@ function attachGeoEdit() {
       state.history.cancelLast();
       updateUndoBtn();
     },
+    onImageUpload: () => {
+      void uploadImageForSelection();
+    },
     onMutated: () => {
       if (!state) return;
       applyMoveGridSnap();
@@ -2910,6 +2913,56 @@ export function commitActiveIrEdits() {
   if (!state) return;
   syncActiveIR();
   persistDraft();
+}
+
+/* ---------- картинка в выделенный элемент ----------
+ * Заглушка генератора (imagePrompt без src) — место для своей картинки:
+ * инспектор («Загрузить…») и двойной клик по заглушке зовут одно и то же. */
+function selectedImageNode(): any | null {
+  if (!state || !state.sel.length) return null;
+  const node = state.sel[0].node;
+  if (!node || node.type !== "image") return null;
+  return node;
+}
+
+export function selectedIsImage(): boolean {
+  return !!selectedImageNode();
+}
+
+export async function uploadImageForSelection(file?: File | null): Promise<boolean> {
+  const node = selectedImageNode();
+  if (!node) return false;
+  const { pickImageFile, prepareImageForIr, formatBytes } = await import("../lib/imageUpload");
+  const picked = file ?? (await pickImageFile());
+  if (!picked) return false;
+  // Сессия могла смениться, пока открыт диалог выбора файла
+  if (selectedImageNode() !== node) return false;
+  try {
+    const prepared = await prepareImageForIr(picked);
+    if (selectedImageNode() !== node) return false;
+    pushHistory();
+    node.src = prepared.dataUrl;
+    if (!node.alt && node.imagePrompt) node.alt = String(node.imagePrompt).slice(0, 160);
+    commitActiveIrEdits();
+    rerenderEditorCanvas();
+    ui.bumpInspector();
+    toast(`Картинка вставлена · ${prepared.width}×${prepared.height}, ${formatBytes(prepared.bytes)}`, "ok");
+    return true;
+  } catch (error) {
+    toast(`Не удалось загрузить картинку: ${error instanceof Error ? error.message : String(error)}`, "error");
+    return false;
+  }
+}
+
+export function clearImageForSelection(): boolean {
+  const node = selectedImageNode();
+  if (!node || !node.src) return false;
+  pushHistory();
+  delete node.src;
+  commitActiveIrEdits();
+  rerenderEditorCanvas();
+  ui.bumpInspector();
+  return true;
 }
 
 /* ---------- клавиатура ---------- */
