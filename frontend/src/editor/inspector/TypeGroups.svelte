@@ -5,6 +5,9 @@
    * (data-color / data-font / data-token). События навешивает wireInspector.ts. */
   import * as ctl from "../controller";
   import FontOptions from "./FontOptions.svelte";
+  import {
+    COLOR_ROLE_LABELS, COLOR_ROLE_ORDER, TYPE_ROLE_LABELS, TYPE_ROLE_ORDER,
+  } from "../../engine/tokensV2";
 
   const COLOR_KEYS = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"];
   const COLOR_LABELS: Record<string, string> = {
@@ -37,6 +40,12 @@
   const fontSize = typeof st.fontSize === "number" ? st.fontSize : "";
   const fontWeight = typeof st.fontWeight === "number" ? st.fontWeight : "";
   const colorKeys = COLOR_KEYS.filter((k) => t.color && t.color[k]);
+  // Токены v2 — источник правды для документов после миграции; v1-группы
+  // остаются для документов, у которых v2 ещё нет.
+  const v2 = t.v2 && typeof t.v2 === "object" ? t.v2 : null;
+  const v2ColorRoles = COLOR_ROLE_ORDER.filter((r) => v2?.color && v2.color[r]);
+  const v2Type = v2?.type && v2.type.roles ? v2.type : null;
+  const v2TypeRoles = v2Type ? TYPE_ROLE_ORDER.filter((r) => v2Type.roles[r]) : [];
 </script>
 
 <!-- svelte-ignore a11y_label_has_associated_control -->
@@ -114,7 +123,15 @@
   {/if}
 
   {#if isRoot}
-    {#if t.color}
+    {#if v2ColorRoles.length}
+      <div class="fe-insp-group"><span class="fe-glabel">Цвета (роли v2)</span>
+        {#each v2ColorRoles as role (role)}
+          <div class="fe-color-row"><label>{COLOR_ROLE_LABELS[role] || role}</label>
+            <input type="color" data-color-v2={role} value={toFullHex(v2.color[role])} /><span class="fe-hex">{v2.color[role]}</span>
+          </div>
+        {/each}
+      </div>
+    {:else if t.color}
       <div class="fe-insp-group"><span class="fe-glabel">Цвета (токены)</span>
         {#each colorKeys as k (k)}
           <div class="fe-color-row"><label>{COLOR_LABELS[k] || k}</label>
@@ -123,7 +140,33 @@
         {/each}
       </div>
     {/if}
-    {#if t.font}
+    {#if v2Type}
+      <div class="fe-insp-group"><span class="fe-glabel">Типографика (роли v2)</span>
+        <div class="fe-field" style="margin-bottom: 4px"><label>D</label>
+          <select data-font-v2="display" value={v2Type.families?.display?.family || ""}><FontOptions /></select>
+        </div>
+        <div class="fe-field" style="margin-bottom: 4px"><label>B</label>
+          <select data-font-v2="body" value={v2Type.families?.body?.family || ""}><FontOptions /></select>
+        </div>
+        <div class="fe-row">
+          <div class="fe-field"><label>Base</label>
+            <input type="text" inputmode="decimal" data-token-num="v2.type.base" value={v2Type.base} />
+          </div>
+          <div class="fe-field"><label>Ratio</label>
+            <input type="text" inputmode="decimal" data-token-num="v2.type.ratio" value={v2Type.ratio} />
+          </div>
+        </div>
+        <div class="fe-type-ladder">
+          {#each v2TypeRoles as role (role)}
+            <div class="fe-type-role">
+              <span>{TYPE_ROLE_LABELS[role] || role}</span>
+              <input type="text" inputmode="decimal" data-type-role={role} data-type-field="size" value={v2Type.roles[role].size} />
+              <input type="text" inputmode="decimal" data-type-role={role} data-type-field="weight" value={v2Type.roles[role].weight} />
+            </div>
+          {/each}
+        </div>
+      </div>
+    {:else if t.font}
       <div class="fe-insp-group"><span class="fe-glabel">Шрифты</span>
         <div class="fe-field" style="margin-bottom: 4px"><label>D</label><select data-font="display" value={t.font.display.family}><FontOptions /></select></div>
         <div class="fe-field" style="margin-bottom: 4px"><label>B</label><select data-font="body" value={t.font.body.family}><FontOptions /></select></div>
@@ -156,3 +199,11 @@
     </div>
   {/if}
 {/if}
+
+<style>
+  /* Лестница ролей: кегль и вес рядом, чтобы иерархия читалась одним взглядом. */
+  .fe-type-ladder { display: grid; gap: 3px; margin-top: 6px; }
+  .fe-type-role { display: grid; grid-template-columns: 1fr 52px 52px; gap: 4px; align-items: center; }
+  .fe-type-role > span { color: var(--dna-faint, #888); font-size: 10.5px; }
+  .fe-type-role > input { min-width: 0; }
+</style>

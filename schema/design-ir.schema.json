@@ -178,6 +178,138 @@
       "type": "string",
       "pattern": "^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$"
     },
+    "typeRole": {
+      "type": "object",
+      "required": ["size", "lineHeight", "tracking", "weight"],
+      "additionalProperties": false,
+      "properties": {
+        "size": { "type": "number", "minimum": 8, "maximum": 200, "description": "px" },
+        "lineHeight": { "type": "number", "minimum": 0.8, "maximum": 3 },
+        "tracking": { "type": "number", "minimum": -0.2, "maximum": 0.5, "description": "em" },
+        "weight": { "type": "integer", "minimum": 100, "maximum": 900 }
+      }
+    },
+    "typeFamily": {
+      "type": "object",
+      "required": ["family", "stack"],
+      "additionalProperties": false,
+      "properties": {
+        "family": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "stack": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Полный CSS font-stack с fallback: \"Fraunces\", Georgia, serif"
+        },
+        "weight": { "type": "integer", "minimum": 100, "maximum": 900 }
+      }
+    },
+    "shadowValue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[0-9a-zA-Z ,.()#%/-]+$"
+    },
+    "tokensV2": {
+      "type": "object",
+      "required": ["color", "type", "space", "radius", "shadow", "motion"],
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "type": "object",
+          "required": [
+            "bg", "bg2", "surface", "surface2",
+            "ink", "ink2", "inkMuted", "line",
+            "accent", "accentInk", "accent2"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "bg": { "$ref": "#/$defs/hexColor" },
+            "bg2": { "$ref": "#/$defs/hexColor" },
+            "surface": { "$ref": "#/$defs/hexColor" },
+            "surface2": { "$ref": "#/$defs/hexColor" },
+            "ink": { "$ref": "#/$defs/hexColor" },
+            "ink2": { "$ref": "#/$defs/hexColor" },
+            "inkMuted": { "$ref": "#/$defs/hexColor" },
+            "line": { "$ref": "#/$defs/hexColor" },
+            "accent": { "$ref": "#/$defs/hexColor" },
+            "accentInk": { "$ref": "#/$defs/hexColor" },
+            "accent2": { "$ref": "#/$defs/hexColor" }
+          }
+        },
+        "type": {
+          "type": "object",
+          "required": ["families", "base", "ratio", "roles"],
+          "additionalProperties": false,
+          "properties": {
+            "families": {
+              "type": "object",
+              "required": ["display", "body"],
+              "additionalProperties": false,
+              "properties": {
+                "display": { "$ref": "#/$defs/typeFamily" },
+                "body": { "$ref": "#/$defs/typeFamily" }
+              }
+            },
+            "base": { "type": "number", "minimum": 10, "maximum": 32, "description": "px основного текста" },
+            "ratio": { "type": "number", "minimum": 1.05, "maximum": 2, "description": "шаг модульной шкалы" },
+            "roles": {
+              "type": "object",
+              "required": ["display", "h1", "h2", "h3", "lead", "body", "small", "eyebrow"],
+              "additionalProperties": false,
+              "properties": {
+                "display": { "$ref": "#/$defs/typeRole" },
+                "h1": { "$ref": "#/$defs/typeRole" },
+                "h2": { "$ref": "#/$defs/typeRole" },
+                "h3": { "$ref": "#/$defs/typeRole" },
+                "lead": { "$ref": "#/$defs/typeRole" },
+                "body": { "$ref": "#/$defs/typeRole" },
+                "small": { "$ref": "#/$defs/typeRole" },
+                "eyebrow": { "$ref": "#/$defs/typeRole" }
+              }
+            }
+          }
+        },
+        "space": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 20,
+          "items": { "type": "number", "minimum": 4, "maximum": 160 },
+          "description": "Возрастающая шкала отступов в px, 4…160"
+        },
+        "radius": {
+          "type": "object",
+          "required": ["sm", "md", "lg", "pill"],
+          "additionalProperties": false,
+          "properties": {
+            "sm": { "type": "number", "minimum": 0, "maximum": 64 },
+            "md": { "type": "number", "minimum": 0, "maximum": 64 },
+            "lg": { "type": "number", "minimum": 0, "maximum": 96 },
+            "pill": { "type": "number", "minimum": 0, "maximum": 999 }
+          }
+        },
+        "shadow": {
+          "type": "object",
+          "required": ["sm", "md", "lg"],
+          "additionalProperties": false,
+          "properties": {
+            "sm": { "$ref": "#/$defs/shadowValue" },
+            "md": { "$ref": "#/$defs/shadowValue" },
+            "lg": { "$ref": "#/$defs/shadowValue" }
+          }
+        },
+        "motion": {
+          "type": "object",
+          "required": ["name", "durationMs", "easing"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "enum": ["none", "fade", "fade-up", "rise", "blur-in"] },
+            "durationMs": { "type": "integer", "minimum": 0, "maximum": 2000 },
+            "easing": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[0-9a-z ,.()-]+$" }
+          }
+        }
+      }
+    },
     "tokens": {
       "type": "object",
       "required": [
@@ -192,6 +324,10 @@
       "properties": {
         "provenance": {
           "$ref": "#/$defs/documentProvenance"
+        },
+        "v2": {
+          "$ref": "#/$defs/tokensV2",
+          "description": "Токены v2: роли цвета/типографики, шкалы space/radius/shadow и одна reveal-анимация. Необязателен — документы без него остаются валидными и рендерятся по v1-токенам."
         },
         "mode": {
           "enum": [
