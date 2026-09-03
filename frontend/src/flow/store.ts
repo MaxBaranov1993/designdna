@@ -535,7 +535,7 @@ async function repairSourceWithAi(
 const DESIGN_SYSTEM_SECTION_TYPES = new Set([
   "navbar", "hero", "logo-cloud", "feature-grid", "feature-alternating", "stats", "steps",
   "gallery", "testimonials", "pricing", "comparison", "team", "blog-grid", "faq", "cta",
-  "contact-form", "newsletter", "banner", "footer", "source-block",
+  "contact-form", "newsletter", "banner", "footer", "composition", "source-block",
 ]);
 
 function renderableDesignSystemMaster(component: { templateIr?: IRObject; masterIr?: IRObject }): IRObject | null {

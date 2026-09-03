@@ -1,0 +1,259 @@
+{
+  "version": "1.1",
+  "meta": {
+    "name": "Оборот — торги промышленным оборудованием",
+    "description": "Маркетплейс б/у станков: страница построена вокруг конкретного лота недели, а не вокруг обещания «широкого выбора».",
+    "styleTags": ["industrial", "catalog", "bold"],
+    "direction": {
+      "name": "Торговый зал",
+      "motivation": "На такой площадке решение принимают по одному лоту, а не по описанию сервиса — поэтому первый экран занимает афиша конкретных торгов",
+      "tradeoff": "Продавцы оборудования, которым нужен рассказ про размещение лота, находят себя только во втором экране"
+    }
+  },
+  "tokens": {
+    "mode": "light",
+    "color": {
+      "primary": "#B34A15",
+      "secondary": "#2E2A22",
+      "accent": "#1F6F5C",
+      "background": "#FBFAF6",
+      "surface": "#FFFFFF",
+      "text": "#1A1712",
+      "textMuted": "#6B6353",
+      "border": "#E3DED0"
+    },
+    "font": {
+      "display": { "family": "Oswald", "weight": 600 },
+      "body": { "family": "Inter", "weight": 400 },
+      "scale": "default"
+    },
+    "radius": { "card": "sm", "button": "sm", "input": "sm" },
+    "spacing": { "section": "md", "container": "wide" },
+    "shadow": "sm"
+  },
+  "tree": [
+    {
+      "id": "nav",
+      "type": "navbar",
+      "variant": "split",
+      "props": {
+        "logoText": "Оборот",
+        "sticky": true,
+        "links": [
+          { "label": "Торги", "href": "#lot" },
+          { "label": "Каталог", "href": "#shelf" },
+          { "label": "Сделка", "href": "#deal" },
+          { "label": "Проверка", "href": "#check" }
+        ],
+        "cta": { "text": "Выставить лот", "variant": "primary" }
+      }
+    },
+    {
+      "id": "lot",
+      "type": "hero",
+      "variant": "poster",
+      "props": {
+        "badge": "Торги недели · закрытие в пятницу 18:00",
+        "heading": "Обрабатывающий центр Haas VF-4, 2014 год, Тольятти",
+        "subheading": "Наработка 11 400 часов, шпиндель менян в 2022-м, паспорт и протокол геометрии в лоте. Стартовая 4 850 000 ₽, семь участников допущено.",
+        "ctaPrimary": { "text": "Смотреть лот", "variant": "primary" },
+        "ctaSecondary": { "text": "Все торги недели", "variant": "outline" },
+        "media": {
+          "alt": "Обрабатывающий центр Haas VF-4 в цехе перед вывозом",
+          "aspect": "4:3",
+          "imagePrompt": "Обрабатывающий центр Haas VF-4 в полупустом цехе перед вывозом: облупленная жёлто-серая краска на кожухе, стружка на поддоне, разметка на бетонном полу, боковой дневной свет из высокого окна, честная документальная съёмка на 50 мм без ретуши, тёплые охристые полутона"
+        }
+      }
+    },
+    {
+      "id": "numbers",
+      "type": "stats",
+      "variant": "with-heading",
+      "props": {
+        "heading": "Площадка за прошлый квартал",
+        "items": [
+          { "value": "1 284", "label": "лота продано" },
+          { "value": "17 дней", "label": "медианный срок от публикации до сделки" },
+          { "value": "94%", "label": "лотов прошли выездную проверку без замечаний" }
+        ]
+      }
+    },
+    {
+      "id": "deal",
+      "type": "feature-grid",
+      "variant": "list-rail",
+      "props": {
+        "heading": "Как проходит сделка",
+        "subheading": "Порядок жёсткий: следующий шаг не открывается, пока не закрыт предыдущий."
+      },
+      "children": [
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 8 },
+          "children": [
+            { "type": "heading", "level": 3, "text": "Допуск к торгам" },
+            { "type": "text", "text": "Покупатель подтверждает юрлицо и вносит задаток 5% на номинальный счёт. Задаток возвращается в течение суток после закрытия торгов, если лот ушёл другому." }
+          ]
+        },
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 8 },
+          "children": [
+            { "type": "heading", "level": 3, "text": "Осмотр или выездная проверка" },
+            { "type": "text", "text": "Приезжаете сами либо отправляете нашего инженера: два часа на станке, протокол геометрии, фото узлов и запись работы под нагрузкой. Отчёт видят все участники торгов." }
+          ]
+        },
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 8 },
+          "children": [
+            { "type": "heading", "level": 3, "text": "Торги и подписание" },
+            { "type": "text", "text": "Ставки идут открыто, шаг фиксированный. Победитель подписывает договор в тот же день, деньги остаются на номинальном счёте до приёмки." }
+          ]
+        },
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 8 },
+          "children": [
+            { "type": "heading", "level": 3, "text": "Демонтаж, вывоз, приёмка" },
+            { "type": "text", "text": "Такелаж заказывается через площадку и стоит по прайсу, а не по договорённости. Деньги уходят продавцу после того, как покупатель подписал приёмку на своей территории." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "shelf",
+      "type": "composition",
+      "variant": "category-shelf",
+      "props": {
+        "background": "surface",
+        "density": "normal",
+        "heading": "Что берут чаще всего",
+        "subheading": "Шесть разделов, в которых лоты не задерживаются дольше трёх недель."
+      },
+      "children": [
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "row", "gap": 24, "wrap": true },
+          "children": [
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
+              "children": [
+                { "type": "heading", "level": 3, "text": "Фрезерные центры" },
+                { "type": "text", "size": "sm", "text": "214 лотов · от 1,2 до 14 млн ₽" },
+                { "type": "divider" }
+              ]
+            },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
+              "children": [
+                { "type": "heading", "level": 3, "text": "Токарные с ЧПУ" },
+                { "type": "text", "size": "sm", "text": "188 лотов · от 900 тыс. до 9 млн ₽" },
+                { "type": "divider" }
+              ]
+            },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
+              "children": [
+                { "type": "heading", "level": 3, "text": "Листогибы и прессы" },
+                { "type": "text", "size": "sm", "text": "141 лот · от 600 тыс. до 6 млн ₽" },
+                { "type": "divider" }
+              ]
+            },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
+              "children": [
+                { "type": "heading", "level": 3, "text": "Лазерная резка" },
+                { "type": "text", "size": "sm", "text": "97 лотов · от 2,4 до 21 млн ₽" },
+                { "type": "divider" }
+              ]
+            },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
+              "children": [
+                { "type": "heading", "level": 3, "text": "Компрессорные" },
+                { "type": "text", "size": "sm", "text": "76 лотов · от 180 тыс. до 3 млн ₽" },
+                { "type": "divider" }
+              ]
+            },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
+              "children": [
+                { "type": "heading", "level": 3, "text": "Оснастка и инструмент" },
+                { "type": "text", "size": "sm", "text": "352 лота · от 15 тыс. до 800 тыс. ₽" },
+                { "type": "divider" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "check",
+      "type": "feature-grid",
+      "variant": "bento-asym",
+      "props": {
+        "heading": "Что инженер смотрит до публикации",
+        "subheading": "Лот без закрытых пунктов на площадку не выходит."
+      },
+      "children": [
+        {
+          "type": "card",
+          "title": "Геометрия",
+          "text": "Проверка по индикатору: биение шпинделя, перпендикулярность осей, люфт винтов. В лот идёт протокол с цифрами, а не отметка «в норме»."
+        },
+        { "type": "card", "title": "Наработка", "text": "Часы из системы ЧПУ, а не со слов владельца. Расхождение с паспортом — повод снять лот." },
+        { "type": "card", "title": "История ремонтов", "text": "Что менялось, когда и кем. Сервисные акты прикладываются в лот целиком." },
+        {
+          "type": "card",
+          "title": "Работа под нагрузкой",
+          "text": "Тестовая деталь на станке, видео на пять минут: звук, вибрация, поведение подачи. Запись доступна всем участникам торгов."
+        },
+        { "type": "card", "title": "Комплектность", "text": "Патроны, тиски, оснастка, ключи, USB с постпроцессором — по списку, с фото каждой позиции." },
+        { "type": "card", "title": "Условия вывоза", "text": "Высота ворот, наличие крана, состояние подъезда. Такелажник считает смету до торгов, а не после." }
+      ]
+    },
+    {
+      "id": "footer",
+      "type": "footer",
+      "variant": "columns",
+      "props": {
+        "logoText": "Оборот",
+        "tagline": "Торги промышленным оборудованием с проверкой на месте",
+        "columns": [
+          {
+            "title": "Покупателям",
+            "links": [
+              { "label": "Текущие торги", "href": "#lot" },
+              { "label": "Как получить допуск", "href": "#deal" },
+              { "label": "Выездная проверка", "href": "#check" }
+            ]
+          },
+          {
+            "title": "Продавцам",
+            "links": [
+              { "label": "Выставить лот", "href": "#sell" },
+              { "label": "Комиссия площадки", "href": "#fees" },
+              { "label": "Такелаж и вывоз", "href": "#logistics" }
+            ]
+          },
+          {
+            "title": "Площадка",
+            "links": [
+              { "label": "Регламент торгов", "href": "#rules" },
+              { "label": "Номинальный счёт", "href": "#escrow" },
+              { "label": "help@oborot.ru", "href": "#mail" }
+            ]
+          }
+        ],
+        "copyright": "© 2026 Оборот. Челябинск, Свердловский проспект, 84"
+      }
+    }
+  ]
+}

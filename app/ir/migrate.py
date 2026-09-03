@@ -25,7 +25,7 @@ _GENERATED_META_KEYS = {
     "name", "description", "qaWarnings", "fontFaces", "activeViewport", "styleTags", "mixOf",
     "designSystemErrors", "designSystemWarnings", "designSystemRef", "compiledContextHash",
     "archetypeId", "identityScore", "identityReport", "strictRecovery", "requestedComponentKey",
-    "sourceTokenLock", "sourceTokenNodeId", "exactServiceCardEmbedded",
+    "sourceTokenLock", "sourceTokenNodeId", "exactServiceCardEmbedded", "direction",
 }
 _GENERATED_SIZE_ALIASES = {
     "h1": "display", "h2": "xl", "h3": "lg", "h4": "md",

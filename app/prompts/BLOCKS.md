@@ -2,7 +2,32 @@
 
 This file is used by `app/llm_client.py` inside the generation system prompt. Keep it concise, current and model-friendly.
 
-The model must generate valid Design IR using known semantic blocks. It may combine blocks, but should not invent unknown top-level block types unless the schema and renderer support them.
+Sections are **composed**, not picked from a menu. `composition` is the general case: a section whose whole content is a tree of primitives inside auto-layout frames. The semantic blocks below are accelerators — use one when its shape already matches the content, and drop to `composition` the moment the content wants a shape the variants do not have. Never invent a top-level `type` outside this list; the schema and renderer would reject it.
+
+## Free composition
+
+### `composition`
+
+A section with no semantic props: everything lives in `children`.
+
+- `props`: `heading`, `subheading` (both optional, rendered left-aligned above the tree), `background` (`background` | `surface` | `primary` | `accent` | `none` — token roles only, never a hex), `density` (`tight` | `normal` | `airy`, scales the section's vertical rhythm).
+- `children`: any primitive from the list below. `frame` is the container — it carries auto-layout (`frame.layout:"auto"` with `direction`/`gap`/`padding`/`justify`/`align`/`wrap`) or a free canvas (`frame.layout:"free"`, children positioned by `frame.x`/`frame.y`; a free parent needs a numeric `frame.height`).
+- The tree is edited in the DNA editor exactly like ordinary frame children: every child gets a layer, a selection box, drag/resize and an inspector.
+- Reach for it when the section is a manifesto, a price ladder, a table of contents, a full-bleed quote, an offset diptych — anything that is not "heading + a row of cards".
+- `variant` остаётся обязательным полем, но для `composition` это свободная подпись композиции (`menu-column`, `ledger-strip`, `offset-diptych`): она попадает в редактор и в слои, поэтому называйте по смыслу, а не «custom».
+
+Example shape (abbreviated):
+
+```json
+{"id":"manifest","type":"composition","variant":"offset-diptych",
+ "props":{"background":"surface","density":"airy"},
+ "children":[
+   {"type":"frame","frame":{"layout":"auto","direction":"row","gap":64,"align":"start"},
+    "children":[
+      {"type":"frame","frame":{"layout":"auto","direction":"column","gap":16,"width":420},
+       "children":[{"type":"heading","level":2,"text":"…"},{"type":"text","text":"…"}]},
+      {"type":"image","imagePrompt":"…","alt":"…"}]}]}
+```
 
 ## Top-level sections
 
@@ -44,9 +69,18 @@ Common props:
 
 Variants:
 
-- `split`
-- `centered`
-- `media-bg`
+- `split` — текст слева, медиа справа; равные половины. Дефолт, а не «лучший выбор».
+- `centered` — всё по центру. Только когда у продукта одно сообщение и нет медиа.
+- `media-bg` — затемнённое медиа во всю ширину под текстом.
+- `editorial-stack` — надзаголовок капслоком без плашки, display-заголовок во всю
+  колонку, под линией полоса «лид слева + действие справа», медиа широкой полосой
+  внизу. Для продуктов, где сильна формулировка, а не скриншот.
+- `poster` — плита с рамкой на фоне `surface`: заголовок сверху, подпись и кнопки
+  прижаты к низу плиты. Афиша: событие, выпуск, меню, коллекция.
+- `split-offset` — узкая текстовая колонка и медиа, поднятое над базовой линией и
+  уходящее за правый край. Асимметрия вместо двух ровных половин.
+- `numbered` — тезис слева, справа пронумерованные строки из `children`
+  (каждый ребёнок = один пункт). Нумерация обязана означать порядок, а не декор.
 
 ### feature-grid
 
@@ -65,9 +99,14 @@ Children:
 
 Variants:
 
-- `grid-3`
-- `grid-4`
-- `bento`
+- `grid-2` / `grid-3` / `grid-4` — равные карточки в ряд.
+- `bento` — трёхколоночное бенто из карточек.
+- `list-rail` — строки-рейка: крупный индекс `01/02/03` слева, содержимое справа,
+  строки разделены линией, карточных плашек нет. Лучше всего с `frame`-детьми.
+- `bento-asym` — шестиколоночная сетка с чередованием ширин 4/2 → 3/3 → 2/4,
+  первая плитка выше остальных. Ряды заполняются без дыр.
+- `two-col-manifest` — залипающий заголовок в левой колонке, тезисы сплошным
+  текстом справа. Для принципов, гарантий, условий — не для фич-карточек.
 
 ### feature-alternating
 
@@ -219,17 +258,21 @@ Variants:
 
 ## Child elements
 
-Allowed child elements:
+Allowed child elements (the composition primitives):
 
-- `heading`
-- `text`
-- `button`
-- `image`
-- `card`
-- `avatar`
-- `rating`
-- `rect`
-- `frame`
+- `frame` — контейнер: auto-layout (`layout:"auto"`) или свободный холст (`layout:"free"`).
+  Своей рамки и фона не имеет, только геометрия и дети.
+- `heading` (`level` 1–4), `text`, `button`, `image`, `divider`, `rect`
+- `card` — плашка с фоном `surface`, рамкой и тенью. Это оформление, а не контейнер:
+  для группировки без плашки берите `frame`.
+- `badge`, `icon`, `avatar`, `rating`, `stat`, `list`, `input`
+
+## Изображения
+
+У каждого `image` обязателен `imagePrompt` с настоящей арт-дирекцией (предмет,
+материал, свет, палитра, ракурс) — заглушка показывает именно его, а не `alt`.
+Тон заглушки берётся из палитры страницы, поэтому пустая картинка читается как
+часть макета. `src` модель не выдумывает: реальный файл подставляет пользователь.
 
 ## Token guidance
 

@@ -2695,7 +2695,7 @@ function addLayerItem(
       // Цель-контейнер (секция или card) принимает узел внутрь — как в Figma.
       // reparent сам откажется, если цель уже родитель источника: тогда это
       // обычная перестановка соседей ниже.
-      const targetIsContainer = toRef.path == null || (targetNode && targetNode.type === "card");
+      const targetIsContainer = toRef.path == null || (targetNode && (targetNode.type === "card" || targetNode.type === "frame"));
       if (targetIsContainer && state.geo.reparent(fromRef, toRef)) return;
       // тот же родитель — reorder по индексу цели
       if (a.si === b.si && parentOf(a) === parentOf(b)) {
@@ -2715,7 +2715,7 @@ function addLayerItem(
   div.setAttribute("aria-pressed", String(isSelected));
   const icons: Record<string, string> = {
     navbar: "☰", hero: "◈", card: "▢", heading: "H", text: "T", button: "⬛", image: "▣",
-    badge: "•", pricing: "$", faq: "?", footer: "⊥",
+    badge: "•", pricing: "$", faq: "?", footer: "⊥", frame: "◻", composition: "◫",
   };
   const icon = iconOverride || (irNode.type === "card" && irNode.role ? "◇" : icons[irNode.type]) || "◇";
   const source = sourceForRef(ref);
