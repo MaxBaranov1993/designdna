@@ -26,3 +26,4 @@ desktop/runtime/
 tmp/
 _ref_*.png
 _rend_*.png
+.orca-design-studio-tasks.json
