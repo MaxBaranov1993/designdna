@@ -67,29 +67,66 @@ if (-not $SkipCreate) {
 }
 
 $zaiEnv = Join-Path $env:USERPROFILE ".designdna\zai.env"
+# Координаторский терминал: без --from Orca не находит родительский воркtree из дочернего процесса.
+$coord = (Invoke-Orca @("orchestration", "run-current", "--json")).result.run.coordinator_handle
+$baseBranch = (git branch --show-current)
+$main = (Get-Location).Path
+
+function Prepare-Worktree([string]$path) {
+  # Дочерний воркtree ветвится от старого main, а не от рабочей ветки; окружения в нём нет.
+  git -C $path reset -q --hard $baseBranch
+  foreach ($rel in @(".venv", "node_modules", "frontend\node_modules")) {
+    $link = Join-Path $path $rel; $target = Join-Path $main $rel
+    if (-not (Test-Path $link) -and (Test-Path $target)) { cmd /c mklink /J "$link" "$target" | Out-Null }
+  }
+  if (Test-Path (Join-Path $main ".env")) { Copy-Item (Join-Path $main ".env") (Join-Path $path ".env") -Force }
+}
+
+function Unblock-Codex([string]$handle) {
+  # Codex TUI при старте показывает «Update available» — «2. Skip».
+  $screen = ((Invoke-Orca @("terminal", "read", "--terminal", $handle, "--json")).result.terminal.tail -join " ")
+  if ($screen -match "Update available") {
+    Invoke-Orca @("terminal", "send", "--terminal", $handle, "--text", "2", "--json") | Out-Null
+    Start-Sleep -Seconds 1
+    Invoke-Orca @("terminal", "send", "--terminal", $handle, "--text", "", "--enter", "--json") | Out-Null
+  }
+  Invoke-Orca @("terminal", "wait", "--terminal", $handle, "--for", "tui-idle", "--timeout-ms", "120000", "--json") | Out-Null
+}
+
 foreach ($id in $Start) {
   $t = $tasks | Where-Object { $_.id -eq $id }
   if (-not $t) { Write-Warning "unknown task $id"; continue }
   $taskId = $ids[$id]
+  $name = "ds-$($id.ToLower())"
   if ($t.agent -eq "glm") {
     if (-not (Test-Path $zaiEnv)) {
-      Write-Warning "${id}: ключ z.ai не найден ($zaiEnv) — запустите на Codex: worker-start --task $taskId --worktree new-child --agent codex --model gpt-5.6-sol --effort medium"
+      Write-Warning "${id}: ключ z.ai не найден ($zaiEnv) — запустите на Codex: -Start $id после правки agent на codex в этом скрипте"
       continue
     }
     $token = (Get-Content $zaiEnv | Where-Object { $_ -match "^ANTHROPIC_AUTH_TOKEN=" }) -replace "^ANTHROPIC_AUTH_TOKEN=", ""
-    $wt = Invoke-Orca @("worktree", "create", "--name", "ds-$($id.ToLower())", "--parent-worktree", "active", "--json")
-    $wtId = $wt.result.worktree.id
+    $wt = Invoke-Orca @("worktree", "create", "--name", $name, "--parent-worktree", "active", "--json")
+    $wtId = $wt.result.worktree.id; $wtPath = $wt.result.worktree.path
+    Prepare-Worktree $wtPath
     $cmd = "`$env:ANTHROPIC_BASE_URL='https://api.z.ai/api/anthropic'; `$env:ANTHROPIC_AUTH_TOKEN='$token'; `$env:ANTHROPIC_MODEL='glm-5.3'; claude"
     $term = Invoke-Orca @("terminal", "create", "--worktree", "id:$wtId", "--title", "GLM $id", "--command", $cmd, "--json")
     $handle = $term.result.terminal.handle
     Invoke-Orca @("terminal", "wait", "--terminal", $handle, "--for", "tui-idle", "--timeout-ms", "120000", "--json") | Out-Null
-    $d = Invoke-Orca @("orchestration", "dispatch", "--task", $taskId, "--to", $handle, "--inject", "--json")
+    $d = Invoke-Orca @("orchestration", "dispatch", "--run", $ids["run"], "--from", $coord, "--task", $taskId, "--to", $handle, "--inject", "--json")
     Write-Host "$id (GLM) dispatched: $($d.result.dispatch.id)"
-  } else {
-    $cli = @("orchestration", "worker-start", "--task", $taskId, "--worktree", "new-child", "--name", "ds-$($id.ToLower())", "--agent", $t.agent, "--model", $t.model, "--timeout-ms", "600000", "--json")
-    if ($t.effort) { $cli += @("--effort", $t.effort) }
-    $w = Invoke-Orca $cli
-    Write-Host "$id ($($t.agent) $($t.model)) started: dispatch $($w.result.dispatch.id)"
+    continue
   }
+  $cli = @("orchestration", "worker-start", "--from", $coord, "--run", $ids["run"], "--task", $taskId, "--worktree", "new-child", "--name", $name, "--agent", $t.agent, "--model", $t.model, "--timeout-ms", "600000", "--json")
+  if ($t.effort) { $cli += @("--effort", $t.effort) }
+  $out = & $orca @cli 2>&1 | Out-String
+  $w = $out | ConvertFrom-Json
+  $handle = ($w.result.effects | Where-Object { $_.kind -eq "terminal" } | Select-Object -First 1).id
+  $wtPath = (($w.result.effects | Where-Object { $_.kind -eq "worktree" } | Select-Object -First 1).id -split "::")[1]
+  if ($wtPath) { Prepare-Worktree $wtPath }
+  if ($w.result.state -eq "ready") { Write-Host "$id ($($t.agent) $($t.model)) started: dispatch $($w.result.dispatchId)"; continue }
+  # agent_prompt_blocked: снять промпт, вернуть задачу в ready и выдать заново
+  Unblock-Codex $handle
+  Invoke-Orca @("orchestration", "task-update", "--id", $taskId, "--status", "ready", "--run", $ids["run"], "--json") | Out-Null
+  $d = Invoke-Orca @("orchestration", "dispatch", "--run", $ids["run"], "--from", $coord, "--task", $taskId, "--to", $handle, "--inject", "--json")
+  Write-Host "$id ($($t.agent) $($t.model)) dispatched after unblock: $($d.result.dispatch.id)"
 }
 Write-Host "Далее: orca orchestration check --wait --timeout-ms 600000 --json ; orca orchestration worker-read --dispatch <id> --json"
