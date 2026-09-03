@@ -92,6 +92,37 @@
   const foundations = $derived(doc.foundations || {});
   const styleGuide = $derived((doc.styleGuide || {}) as Record<string, any>);
   const styleTokens = $derived(Object.entries(styleGuide.tokens || {}) as Array<[string, unknown]>);
+  // Генератор пишет в IR роли tokens.v2, а не shadcn-имена ДС. Показываем карту
+  // соответствия, чтобы было видно, каким цветом станет каждая роль страницы.
+  const V2_ROLE_SOURCES: Array<[string, string, string]> = [
+    ["bg", "background", "фон страницы"],
+    ["bg2", "muted", "второй фон, чередование секций"],
+    ["surface", "card", "карточки и панели"],
+    ["surface2", "secondary", "вложенные поверхности"],
+    ["ink", "foreground", "основной текст"],
+    ["ink2", "foreground", "второй уровень текста"],
+    ["inkMuted", "muted-foreground", "подписи, тихий текст"],
+    ["line", "border", "линии и рамки"],
+    ["accent", "primary", "кнопки и акценты"],
+    ["accentInk", "primary-foreground", "текст на акценте"],
+    ["accent2", "accent", "второй акцент"],
+  ];
+  const v2ColorRoles = $derived(
+    V2_ROLE_SOURCES.map(([role, source, hint]) => ({
+      role, source, hint, value: (styleGuide.tokens || {})[source],
+    })).filter((row) => typeof row.value === "string" && row.value.startsWith("#")),
+  );
+  const v2TypeRoles = $derived([
+    { role: "display", source: "font-display" },
+    { role: "h1", source: "font-display" },
+    { role: "h2", source: "font-display" },
+    { role: "h3", source: "font-display" },
+    { role: "lead", source: "font-body" },
+    { role: "body", source: "font-body" },
+    { role: "small", source: "font-body" },
+    { role: "eyebrow", source: "font-body" },
+  ].map((row) => ({ ...row, family: (styleGuide.tokens || {})[row.source] }))
+    .filter((row) => typeof row.family === "string" && row.family));
   const styleReview = $derived((styleGuide.review || null) as Record<string, any> | null);
   const identity = $derived(doc.identity || {});
   const identityTests = $derived((doc.identityTests || []) as any[]);
@@ -1096,6 +1127,26 @@
               <p class="ds-sg-hint">Токены появятся после сборки из Source.</p>
             {/each}
           </div>
+
+          {#if v2ColorRoles.length}
+            <h4>Роли страницы (tokens v2)</h4>
+            <p class="ds-sg-hint">Во что превращаются эти токены в IR генератора: цвет по ролям bg/surface/ink/accent и типографика по ролям display…eyebrow.</p>
+            <div class="ds-sg-tokens">
+              {#each v2ColorRoles as row (row.role)}
+                <div class="ds-sg-token">
+                  <i style="background:{row.value}"></i>
+                  <div><strong>{row.role}</strong><small>{row.source} · {row.hint}</small></div>
+                </div>
+              {/each}
+            </div>
+            {#if v2TypeRoles.length}
+              <div class="ds-sg-chips">
+                {#each v2TypeRoles as row (row.role)}
+                  <span><small>{row.role}</small>{row.family}</span>
+                {/each}
+              </div>
+            {/if}
+          {/if}
 
           <!-- Что именно получает Генератор: сводка вместо абстрактного обещания. -->
           <section class="ds-sg-dna" aria-label="Передача в Генератор">

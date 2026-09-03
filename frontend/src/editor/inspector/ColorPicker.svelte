@@ -56,6 +56,7 @@
    * Запись идёт через скрытый нативный input[data-style-color] — wiring уже в
    * wireInspector.ts, контракт с legacy 1:1 (включая синхронизацию text-поля). */
   import * as ctl from "../controller";
+  import { COLOR_ROLE_ORDER } from "../../engine/tokensV2";
 
   /* ---------- компонент ---------- */
 
@@ -213,7 +214,17 @@
 
   const tokens = ((): [string, string][] => {
     const s = ctl.getSession();
-    const c = s && s.ir && s.ir.tokens && s.ir.tokens.color;
+    const t = s && s.ir && s.ir.tokens;
+    if (!t || typeof t !== "object") return [];
+    // Роли v2 — те же цвета, но в порядке ролей страницы; для документов без
+    // v2 остаются плоские v1-токены.
+    const v2 = t.v2 && typeof t.v2 === "object" ? t.v2.color : null;
+    if (v2 && typeof v2 === "object") {
+      return COLOR_ROLE_ORDER
+        .filter((role) => typeof v2[role] === "string")
+        .map((role) => [role, v2[role]]) as [string, string][];
+    }
+    const c = t.color;
     if (!c || typeof c !== "object") return [];
     return Object.entries(c).filter(([, v]) => typeof v === "string") as [string, string][];
   })();

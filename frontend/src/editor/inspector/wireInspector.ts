@@ -8,6 +8,7 @@ import * as ctl from "../controller";
 import type { GeoHandle } from "../globals";
 import { applyNum, readNumInput } from "./evalMath";
 import { isLockedNode } from "../../engine/locked";
+import { applyTypeScale, fontStack, readFloatInput } from "../../engine/tokensV2";
 
 function sess() {
   return ctl.getSession();
@@ -273,6 +274,69 @@ function wireTypeGroups(root: HTMLElement) {
       if (!s) return;
       ctl.pushHistory();
       s.ir.tokens.font[sel.dataset.font!].family = sel.value;
+      ctl.rerenderEditorCanvas();
+    });
+  });
+  // роли цвета tokens.v2 — тот же контракт «снапшот до мутации», что у data-color
+  root.querySelectorAll<HTMLInputElement>("[data-color-v2]").forEach((inp) => {
+    let armed = false;
+    inp.addEventListener("focus", () => { armed = true; });
+    inp.addEventListener("input", () => {
+      const s = sess();
+      if (!s || !s.ir.tokens.v2 || !s.ir.tokens.v2.color) return;
+      if (armed) { ctl.pushHistory(); armed = false; }
+      s.ir.tokens.v2.color[inp.dataset.colorV2!] = inp.value;
+      (inp.nextElementSibling as HTMLElement).textContent = inp.value;
+      ctl.rerenderEditorCanvas();
+    });
+  });
+  // семейства tokens.v2: пишем и family, и stack — рендерер берёт готовый стек
+  root.querySelectorAll<HTMLSelectElement>("[data-font-v2]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const s = sess();
+      const families = s && s.ir.tokens.v2 && s.ir.tokens.v2.type && s.ir.tokens.v2.type.families;
+      if (!families || !families[sel.dataset.fontV2!]) return;
+      ctl.pushHistory();
+      const face = families[sel.dataset.fontV2!];
+      face.family = sel.value;
+      face.stack = fontStack(sel.value);
+      ctl.rerenderEditorCanvas();
+    });
+  });
+  // base/ratio шкалы: кегли ролей пересчитываются тем же правилом, что в миграции
+  root.querySelectorAll<HTMLInputElement>("[data-token-num]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const s = sess();
+      if (!s) return;
+      const path = inp.dataset.tokenNum!.split(".");
+      let obj: any = s.ir.tokens;
+      for (let i = 0; i < path.length - 1; i++) {
+        if (!obj || typeof obj !== "object") return;
+        obj = obj[path[i]];
+      }
+      if (!obj || typeof obj !== "object") return;
+      // ratio — дробное, readNumInput округляет до целого и схлопнул бы 1.45 в 1
+      const value = readFloatInput(inp.value);
+      if (value == null) return;
+      ctl.pushHistory();
+      obj[path[path.length - 1]] = value;
+      applyTypeScale(s.ir.tokens.v2 && s.ir.tokens.v2.type);
+      ctl.rerenderEditorCanvas();
+    });
+  });
+  // точечная правка роли (кегль/вес) поверх посчитанной шкалы
+  root.querySelectorAll<HTMLInputElement>("[data-type-role]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const s = sess();
+      const roles = s && s.ir.tokens.v2 && s.ir.tokens.v2.type && s.ir.tokens.v2.type.roles;
+      const target = roles && roles[inp.dataset.typeRole!];
+      if (!target) return;
+      const value = readFloatInput(inp.value);
+      if (value == null) return;
+      ctl.pushHistory();
+      target[inp.dataset.typeField!] = inp.dataset.typeField === "weight"
+        ? Math.max(100, Math.min(900, Math.round(value / 100) * 100))
+        : value;
       ctl.rerenderEditorCanvas();
     });
   });

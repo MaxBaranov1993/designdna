@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import copy
+import re
 from datetime import datetime, timezone
+
+from colorutils import contrast_ratio, mix_hex_colors
+from typography import font_stack
 
 from .hash import content_hash
 from .schema import CURRENT_SCHEMA_VERSION
@@ -31,6 +35,186 @@ _GENERATED_SIZE_ALIASES = {
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------- tokens v2 --
+#
+# v1 tokens carry eight flat colors, two font faces and three scalars.  v2 adds
+# the roles the renderer and the generator actually need (background family,
+# ink family, accents; a typographic scale by role; space/radius/shadow ladders
+# and one reveal animation).  The derivation below is a pure function of the v1
+# block so a stored project migrates to identical bytes on every load — the
+# live-session CAS guard compares those bytes.
+#
+# The mapping is chosen so a migrated document keeps its appearance: v2 `accent`
+# is v1 `primary` (the color the renderer paints buttons with), `bg`/`ink`/`line`
+# are the v1 background/text/border, and only genuinely new roles (bg2,
+# surface2, ink2) are interpolated.
+
+_V1_COLOR_FALLBACK = {
+    "primary": "#5b5bd6", "background": "#ffffff", "surface": "#f5f5f7",
+    "text": "#1a1a1a", "textMuted": "#666666", "border": "#e0e0e0",
+}
+_HEX_RE = re.compile(r"^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
+
+_TYPE_BASE = {"compact": 15.0, "default": 16.0, "spacious": 17.0}
+_TYPE_RATIO = {"compact": 1.35, "default": 1.45, "spacious": 1.5}
+# Steps of the modular scale; sizes are base * ratio ** step.
+_ROLE_STEPS = {"display": 4.0, "h1": 3.0, "h2": 2.0, "h3": 1.0, "lead": 0.5,
+               "body": 0.0, "small": -1.0, "eyebrow": -1.5}
+_ROLE_LINE_HEIGHT = {"display": 1.02, "h1": 1.08, "h2": 1.14, "h3": 1.25,
+                     "lead": 1.5, "body": 1.6, "small": 1.5, "eyebrow": 1.2}
+_ROLE_TRACKING = {"display": -0.03, "h1": -0.025, "h2": -0.02, "h3": -0.01,
+                  "lead": -0.005, "body": 0.0, "small": 0.0, "eyebrow": 0.12}
+_DISPLAY_ROLES = ("display", "h1", "h2", "h3")
+
+_SPACE_SCALE = [4, 8, 12, 16, 24, 32, 40, 48, 64, 80, 96, 128, 160]
+_RADIUS_BASE = {"none": 0.0, "sm": 4.0, "md": 8.0, "lg": 14.0, "xl": 22.0, "full": 28.0}
+_SHADOW_LADDER = {"sm": "0 1px 3px rgba(0,0,0,0.12)",
+                  "md": "0 6px 20px rgba(0,0,0,0.16)",
+                  "lg": "0 18px 50px rgba(0,0,0,0.24)"}
+_SHADOW_NONE = {"sm": "none", "md": "none", "lg": "none"}
+_MOTION = {"name": "fade-up", "durationMs": 420, "easing": "cubic-bezier(0.22, 1, 0.36, 1)"}
+
+
+def _hex(value: object, fallback: str) -> str:
+    """Normalize an untrusted v1 color to lowercase #rrggbb."""
+    if isinstance(value, str):
+        candidate = value.strip()
+        if _HEX_RE.match(candidate):
+            body = candidate[1:].lower()
+            if len(body) == 3:
+                body = "".join(char * 2 for char in body)
+            return "#" + body
+    return fallback
+
+
+def _mix(first: str, second: str, weight: float) -> str:
+    """`weight` of `first` mixed with the rest of `second`, in OKLCH."""
+    return mix_hex_colors([(first, weight), (second, 1.0 - weight)])
+
+
+def _weight(face: object, fallback: int) -> int:
+    raw = face.get("weight") if isinstance(face, dict) else None
+    try:
+        value = int(round(float(raw)))
+    except (TypeError, ValueError):
+        return fallback
+    return max(100, min(900, value))
+
+
+def _family(face: object, fallback: str) -> str:
+    if isinstance(face, dict):
+        name = face.get("family")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return fallback
+
+
+def derive_tokens_v2(tokens: dict) -> dict | None:
+    """Deterministically derive `tokens.v2` from a v1 token block.
+
+    Returns ``None`` when the input has no v1 color/font block to derive from
+    (empty legacy fixtures), so migration stays a no-op instead of inventing a
+    palette the document never had.
+    """
+    if not isinstance(tokens, dict):
+        return None
+    color = tokens.get("color")
+    font = tokens.get("font")
+    if not isinstance(color, dict) or not isinstance(font, dict):
+        return None
+
+    def v1(key: str) -> str:
+        return _hex(color.get(key), _V1_COLOR_FALLBACK[key])
+
+    bg = v1("background")
+    line = v1("border")
+    surface = _hex(color.get("surface"), _V1_COLOR_FALLBACK["surface"])
+    # `surface == background` is a common extraction defect: the page then has
+    # no elevation at all.  Nudge the surface toward the border instead of
+    # emitting two identical roles.
+    if surface == bg:
+        surface = _mix(bg, line, 0.93)
+    ink = v1("text")
+    ink_muted = v1("textMuted")
+    accent = v1("primary")
+    secondary = color.get("secondary")
+    accent2 = _hex(secondary, accent) if isinstance(secondary, str) else accent
+    accent_ink = ("#ffffff" if contrast_ratio("#ffffff", accent) >= contrast_ratio("#111111", accent)
+                  else "#111111")
+
+    scale = font.get("scale") if isinstance(font.get("scale"), str) else "default"
+    base = _TYPE_BASE.get(scale, _TYPE_BASE["default"])
+    ratio = _TYPE_RATIO.get(scale, _TYPE_RATIO["default"])
+    display_family = _family(font.get("display"), "Inter")
+    body_family = _family(font.get("body"), "Inter")
+    display_weight = _weight(font.get("display"), 700)
+    body_weight = _weight(font.get("body"), 400)
+
+    roles = {}
+    for role, step in _ROLE_STEPS.items():
+        size = max(11.0, min(160.0, round(base * (ratio ** step))))
+        if role in _DISPLAY_ROLES:
+            weight = display_weight
+        elif role == "eyebrow":
+            weight = max(600, body_weight)
+        else:
+            weight = body_weight
+        roles[role] = {"size": size, "lineHeight": _ROLE_LINE_HEIGHT[role],
+                       "tracking": _ROLE_TRACKING[role], "weight": weight}
+
+    radius_base = _RADIUS_BASE.get(
+        tokens.get("radius", {}).get("card") if isinstance(tokens.get("radius"), dict) else None,
+        _RADIUS_BASE["md"],
+    )
+    shadow = _SHADOW_NONE if tokens.get("shadow") == "none" else dict(_SHADOW_LADDER)
+
+    return {
+        "color": {
+            "bg": bg,
+            "bg2": _mix(bg, surface, 0.5),
+            "surface": surface,
+            "surface2": _mix(surface, line, 0.7),
+            "ink": ink,
+            "ink2": _mix(ink, ink_muted, 0.6),
+            "inkMuted": ink_muted,
+            "line": line,
+            "accent": accent,
+            "accentInk": accent_ink,
+            "accent2": accent2,
+        },
+        "type": {
+            "families": {
+                "display": {"family": display_family, "stack": font_stack(display_family),
+                            "weight": display_weight},
+                "body": {"family": body_family, "stack": font_stack(body_family),
+                         "weight": body_weight},
+            },
+            "base": base,
+            "ratio": ratio,
+            "roles": roles,
+        },
+        "space": list(_SPACE_SCALE),
+        "radius": {
+            "sm": round(radius_base * 0.5),
+            "md": radius_base,
+            "lg": round(radius_base * 1.75),
+            "pill": 999,
+        },
+        "shadow": shadow,
+        "motion": dict(_MOTION),
+    }
+
+
+def ensure_tokens_v2(ir: dict) -> None:
+    """Attach `tokens.v2` in place when the document only carries v1 tokens."""
+    tokens = ir.get("tokens")
+    if not isinstance(tokens, dict) or isinstance(tokens.get("v2"), dict):
+        return
+    derived = derive_tokens_v2(tokens)
+    if derived is not None:
+        tokens["v2"] = derived
 
 
 def sanitize_generated_ir(ir: dict) -> dict:
@@ -124,6 +308,7 @@ def migrate_ir(ir: dict, source: str | None = None, *, recorded_at: str | None =
     # Ensure a stable element identity graph.
     out = deduplicate_source_keys(out)
     out = ensure_fluid_layout(out)
+    ensure_tokens_v2(out)
 
     # Recompute content hash excluding preview/runtime fields.
     out["contentHash"] = content_hash(out)

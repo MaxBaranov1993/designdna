@@ -74,16 +74,34 @@ FONT_PAIRS: list[dict] = [
      "moods": {"art-deco", "luxury", "fashion", "playful"}},
 ]
 
+_SERIF_MARKERS = ("Playfair", "Prata", "Cormorant", "Newsreader", "Vollkorn",
+                  "Georgia", "Times", "Garamond", "Merriweather", "Lora",
+                  "PT Serif", "Source Serif", "Literata", "Fraunces")
+_MONO_MARKERS = ("Mono", "Code", "Courier", "Consolas")
+
+
+def font_stack(family: str) -> str:
+    """Полный CSS font-stack с generic-фолбэком для произвольного семейства.
+
+    Без явного generic в конце недостающий веб-шрифт откатывается к дефолту
+    документа (serif) и гротескный макет превращается в антикву.
+    """
+    name = (family or "").strip() or "Inter"
+    if any(marker in name for marker in _MONO_MARKERS):
+        generic = "monospace"
+    elif any(marker in name for marker in _SERIF_MARKERS):
+        generic = "serif"
+    else:
+        generic = "sans-serif"
+    return f'"{name}", system-ui, {generic}'
+
+
 # Every pair is immediately usable as CSS.  Generic faces are fallbacks only;
 # art direction deliberately chooses from the distinctive subset below.
 for _pair in FONT_PAIRS:
     for _role in ("display", "body"):
         _face = _pair[_role]
-        _generic = "serif" if any(
-            marker in _face["family"]
-            for marker in ("Playfair", "Prata", "Cormorant", "Newsreader", "Vollkorn")
-        ) else "sans-serif"
-        _face.setdefault("stack", f'"{_face["family"]}", system-ui, {_generic}')
+        _face.setdefault("stack", font_stack(_face["family"]))
 
 ART_DIRECTION_PAIR_NAMES = (
     "fraunces-newsreader", "prata-golos", "russo-golos", "cormorant-source",

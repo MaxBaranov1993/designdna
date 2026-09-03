@@ -246,35 +246,156 @@ import { isLockedNode } from "./locked";
     return "https://fonts.googleapis.com/css2?" + [...fams].map(f => "family=" + f).join("&") + "&display=swap";
   }
 
+  /* ---------- токены v2: роли вместо фиксированных кеглей ---------- */
+
+  const TYPE_ROLES = ["display", "h1", "h2", "h3", "lead", "body", "small", "eyebrow"];
+  // Мобильные кегли крупных ролей — тот же ритм, что был у фиксированной шкалы
+  // (.ir-mobile h1 34/46 ≈ .74, h2 26/30 ≈ .87).
+  const MOBILE_TYPE_FACTOR = { display: 0.7, h1: 0.74, h2: 0.87, h3: 0.92 };
+
+  /** Значение box-shadow/easing из IR: узкий charset, как у visualCss.boxShadow. */
+  function safeCssValue(v, max) {
+    const s = String(v == null ? "" : v).trim();
+    if (!s || s.length > (max || 160) || /[;{}<>"'\\\r\n]/.test(s)) return null;
+    return s;
+  }
+
+  function num(v, min, max) {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= min && n <= max ? n : null;
+  }
+
+  /** CSS-переменные ролей типографики: --t-<role>-size/-lh/-tracking/-weight. */
+  function typeRoleVars(type) {
+    const roles = type && type.roles;
+    if (!roles || typeof roles !== "object") return "";
+    const out = [];
+    for (const role of TYPE_ROLES) {
+      const r = roles[role];
+      if (!r || typeof r !== "object") continue;
+      const size = num(r.size, 8, 200);
+      if (size == null) continue;
+      out.push(`--t-${role}-size:${size}px`);
+      const mobile = MOBILE_TYPE_FACTOR[role];
+      if (mobile) out.push(`--t-${role}-size-m:${Math.round(size * mobile)}px`);
+      const lh = num(r.lineHeight, 0.8, 3);
+      if (lh != null) out.push(`--t-${role}-lh:${lh}`);
+      const tracking = num(r.tracking, -0.2, 0.5);
+      if (tracking != null) out.push(`--t-${role}-tracking:${tracking}em`);
+      const weight = num(r.weight, 100, 900);
+      if (weight != null) out.push(`--t-${role}-weight:${Math.round(weight)}`);
+    }
+    return out.join(";");
+  }
+
+  /** Роли цвета/формы/тени/движения v2. Пусто — рендерер живёт на v1-токенах. */
+  function tokensV2Vars(v2) {
+    if (!v2 || typeof v2 !== "object") return "";
+    const out = [];
+    const c = v2.color;
+    if (c && typeof c === "object") {
+      // bg/surface/ink/inkMuted/line/accent уже разложены в v1-совместимые
+      // --c-bg/--c-surface/--c-text/--c-muted/--c-border/--c-primary; здесь —
+      // только роли, у которых нет v1-переменной.
+      for (const [role, name] of [["bg2", "bg2"], ["surface2", "surface2"],
+        ["ink", "ink"], ["ink2", "ink2"], ["inkMuted", "ink-muted"], ["line", "line"],
+        ["accentInk", "accent-ink"], ["accent2", "accent2"]]) {
+        const value = safeColor(c[role]);
+        if (value) out.push(`--c-${name}:${value}`);
+      }
+    }
+    out.push(typeRoleVars(v2.type));
+    const families = v2.type && v2.type.families;
+    if (families && typeof families === "object") {
+      for (const [role, name] of [["display", "display"], ["body", "body"]]) {
+        const face = families[role];
+        // stack уже содержит fallback-стек — берём его целиком, а не только family
+        const stack = face && safeFontStack(face.stack || face.family);
+        if (stack) out.push(`--font-${name}:${stack}`);
+      }
+    }
+    if (Array.isArray(v2.space)) {
+      v2.space.slice(0, 20).forEach((step, i) => {
+        const value = num(step, 0, 400);
+        if (value != null) out.push(`--space-${i + 1}:${value}px`);
+      });
+    }
+    const radius = v2.radius;
+    if (radius && typeof radius === "object") {
+      for (const key of ["sm", "md", "lg", "pill"]) {
+        const value = num(radius[key], 0, 999);
+        if (value != null) out.push(`--r-${key}:${value}px`);
+      }
+    }
+    const shadow = v2.shadow;
+    if (shadow && typeof shadow === "object") {
+      for (const key of ["sm", "md", "lg"]) {
+        const value = safeCssValue(shadow[key], 160);
+        if (value) out.push(`--shadow-${key}:${value}`);
+      }
+    }
+    const motion = v2.motion;
+    if (motion && typeof motion === "object") {
+      const duration = num(motion.durationMs, 0, 2000);
+      const easing = safeCssValue(motion.easing, 60);
+      if (duration != null) out.push(`--motion-duration:${Math.round(duration)}ms`);
+      if (easing) out.push(`--motion-easing:${easing}`);
+    }
+    return out.filter(Boolean).join(";");
+  }
+
   function cssVars(tokens) {
     const c = tokens.color, scale = TYPE_SCALE[tokens.font.scale] || 1;
     // цвета/шрифты/веса приходят из IR (контент недоверенный) — только санация
     const d = DEFAULT_TOKENS.color;
-    const primary = safeColor(c.primary) || d.primary;
+    const v2 = tokens.v2 && typeof tokens.v2 === "object" ? tokens.v2 : null;
+    const v2c = (v2 && v2.color) || {};
+    // v2-роль важнее v1-ключа, v1 остаётся фолбэком для документов без v2.
+    // Миграция задаёт accent = v1 primary, поэтому вид сохранённых проектов
+    // не меняется; --c-secondary/--c-accent сначала смотрят на свои v1-ключи,
+    // чтобы третий брендовый цвет не потерялся при схлопывании в две роли.
     const col = (k, fb) => safeColor(c[k]) || fb;
+    const role = (k, v1Key, fb) => safeColor(v2c[k]) || col(v1Key, fb);
+    const primary = role("accent", "primary", d.primary);
     const fw = (f, fb) => Math.min(900, Math.max(100, Math.round(Number(f && f.weight) || fb)));
     return `
-      --c-primary:${primary};--c-secondary:${col("secondary", primary)};--c-accent:${col("accent", primary)};
-      --c-bg:${col("background", d.background)};--c-surface:${col("surface", d.surface)};--c-text:${col("text", d.text)};--c-muted:${col("textMuted", d.textMuted)};--c-border:${col("border", d.border)};
+      --c-primary:${primary};--c-secondary:${col("secondary", safeColor(v2c.accent2) || primary)};--c-accent:${col("accent", safeColor(v2c.accent2) || primary)};
+      --c-bg:${role("bg", "background", d.background)};--c-surface:${role("surface", "surface", d.surface)};--c-text:${role("ink", "text", d.text)};--c-muted:${role("inkMuted", "textMuted", d.textMuted)};--c-border:${role("line", "border", d.border)};
       --font-display:${safeFontStack(tokens.font.display.family) || "'Inter'"},sans-serif;--font-body:${safeFontStack(tokens.font.body.family) || "'Inter'"},sans-serif;
       --fw-display:${fw(tokens.font.display, 700)};--fw-body:${fw(tokens.font.body, 400)};
       --fs:${scale};
       --r-card:${RADIUS_PX[tokens.radius.card]};--r-btn:${RADIUS_PX[tokens.radius.button]};--r-input:${RADIUS_PX[tokens.radius.input]};
       --sec-py:${SECTION_PY[tokens.spacing.section]};--container:${CONTAINER_W[tokens.spacing.container]};
       --shadow:${SHADOWS[tokens.shadow]};
+      ${tokensV2Vars(v2)};
     `;
   }
 
   function baseCss(uid) {
     return `
-      .ir-${uid} { background:var(--c-bg); color:var(--c-text); font-family:var(--font-body); font-weight:var(--fw-body);
-        font-size:calc(15px * var(--fs)); line-height:1.6; width:${DESIGN_WIDTH}px; transform-origin:top left; }
+      /* Кегли берутся из ролей tokens.v2 (--t-<role>-*); fallback внутри var()
+         оставляет прежнюю фиксированную шкалу документам без v2. */
+      .ir-${uid} { background:var(--c-bg); color:var(--c-text); font-family:var(--font-body); font-weight:var(--t-body-weight,var(--fw-body));
+        font-size:var(--t-body-size, calc(15px * var(--fs))); line-height:var(--t-body-lh,1.6);
+        letter-spacing:var(--t-body-tracking,normal); width:${DESIGN_WIDTH}px; transform-origin:top left; }
       .ir-${uid} * { margin:0; padding:0; box-sizing:border-box; }
       .ir-${uid} h1,.ir-${uid} h2,.ir-${uid} h3,.ir-${uid} h4 { font-family:var(--font-display); font-weight:var(--fw-display); line-height:1.15; }
-      .ir-${uid} h1 { font-size:calc(46px * var(--fs)); letter-spacing:-.02em; }
-      .ir-${uid} h2 { font-size:calc(30px * var(--fs)); letter-spacing:-.01em; }
-      .ir-${uid} h3 { font-size:calc(20px * var(--fs)); }
-      .ir-${uid} h4 { font-size:calc(16px * var(--fs)); }
+      .ir-${uid} h1 { font-size:var(--t-h1-size, calc(46px * var(--fs))); line-height:var(--t-h1-lh,1.15);
+        letter-spacing:var(--t-h1-tracking,-.02em); font-weight:var(--t-h1-weight,var(--fw-display)); }
+      .ir-${uid} h2 { font-size:var(--t-h2-size, calc(30px * var(--fs))); line-height:var(--t-h2-lh,1.15);
+        letter-spacing:var(--t-h2-tracking,-.01em); font-weight:var(--t-h2-weight,var(--fw-display)); }
+      .ir-${uid} h3 { font-size:var(--t-h3-size, calc(20px * var(--fs))); line-height:var(--t-h3-lh,1.15);
+        letter-spacing:var(--t-h3-tracking,normal); font-weight:var(--t-h3-weight,var(--fw-display)); }
+      .ir-${uid} h4 { font-size:var(--t-lead-size, calc(16px * var(--fs))); }
+      /* Роли без своего тега — для свободной композиции и блоков T3. */
+      .ir-${uid} .t-display { font-family:var(--font-display); font-size:var(--t-display-size, calc(60px * var(--fs)));
+        line-height:var(--t-display-lh,1.02); letter-spacing:var(--t-display-tracking,-.03em); font-weight:var(--t-display-weight,var(--fw-display)); }
+      .ir-${uid} .t-lead { font-size:var(--t-lead-size, calc(19px * var(--fs))); line-height:var(--t-lead-lh,1.5);
+        letter-spacing:var(--t-lead-tracking,normal); font-weight:var(--t-lead-weight,var(--fw-body)); }
+      .ir-${uid} .t-small { font-size:var(--t-small-size, calc(13px * var(--fs))); line-height:var(--t-small-lh,1.5);
+        font-weight:var(--t-small-weight,var(--fw-body)); }
+      .ir-${uid} .t-eyebrow { font-size:var(--t-eyebrow-size, calc(12px * var(--fs))); line-height:var(--t-eyebrow-lh,1.2);
+        letter-spacing:var(--t-eyebrow-tracking,.12em); font-weight:var(--t-eyebrow-weight,600); text-transform:uppercase; }
       .ir-${uid} .sec, .ir-${uid} .sec-free { padding:var(--sec-py) 32px; position:relative; }
       .ir-${uid} .sec-source { padding:0; position:relative; margin:0; }
       .ir-${uid} .source-underlay { position:absolute; inset:0; width:100%; height:100%; object-fit:fill; pointer-events:none; user-select:none; }
@@ -312,9 +433,11 @@ import { isLockedNode } from "./locked";
       .ir-${uid} .stars { color:var(--c-accent); letter-spacing:2px; }
       .ir-${uid} [data-ir-path].editing { outline:2px dashed var(--c-primary); outline-offset:2px; cursor:text; }
       .ir-${uid} [data-ir-locked] { cursor:default; }
-      .ir-${uid}.ir-mobile { font-size:calc(16px * var(--fs)); line-height:1.55; }
-      .ir-${uid}.ir-mobile h1 { font-size:calc(34px * var(--fs)); line-height:1.08; letter-spacing:-.025em; }
-      .ir-${uid}.ir-mobile h2 { font-size:calc(26px * var(--fs)); line-height:1.12; }
+      .ir-${uid}.ir-mobile { font-size:var(--t-body-size, calc(16px * var(--fs))); line-height:1.55; }
+      .ir-${uid}.ir-mobile h1 { font-size:var(--t-h1-size-m, calc(34px * var(--fs))); line-height:1.08; letter-spacing:-.025em; }
+      .ir-${uid}.ir-mobile h2 { font-size:var(--t-h2-size-m, calc(26px * var(--fs))); line-height:1.12; }
+      .ir-${uid}.ir-mobile h3 { font-size:var(--t-h3-size-m, calc(20px * var(--fs))); }
+      .ir-${uid}.ir-mobile .t-display { font-size:var(--t-display-size-m, calc(42px * var(--fs))); }
       .ir-${uid}.ir-mobile .sec:not(.sec-source), .ir-${uid}.ir-mobile .sec-free { padding-left:16px; padding-right:16px; }
       .ir-${uid}.ir-mobile .sec-free { display:flex !important; flex-direction:column; gap:20px; height:auto !important; }
       .ir-${uid}.ir-mobile .sec-free > [data-ir-path]:not([data-ir-transform]) { position:relative !important; inset:auto !important; transform:none !important; }
