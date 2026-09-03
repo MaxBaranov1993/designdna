@@ -1667,6 +1667,10 @@ def _with_reproduce_parser_contract(payload: dict, source_ref: str, source_kind:
     document = payload.get("ir")
     if not isinstance(document, dict) or not document:
         return payload
+    # Пустое дерево (VLM ничего не распознал, старый кэш): конверту нечего
+    # описывать — nodeStates обязан быть непустым, иначе валидация роняла 500.
+    if not isinstance(document.get("tree"), list) or not document["tree"]:
+        return payload
     diff = payload.get("diff") if isinstance(payload.get("diff"), dict) else {}
     fidelity = diff.get("overall_pct")
     capture = {

@@ -128,7 +128,8 @@ def main():
 
         pg.click('.dna-editor .fe-viewports [data-viewport="tablet"]')
         pg.wait_for_timeout(350)
-        check("tablet: ширина 768", pg.evaluate(WIDTH_INPUT) == "768", pg.evaluate(WIDTH_INPUT))
+        # превью tablet в редакторе — 834 (controller.setViewport); 768 остаётся шириной responsive-материализации
+        check("tablet: ширина 834", pg.evaluate(WIDTH_INPUT) == "834", pg.evaluate(WIDTH_INPUT))
         check("tablet: meta.activeViewport", pg.evaluate(WIDTH) == "tablet", str(pg.evaluate(WIDTH)))
         check("tablet: кнопка active", pg.evaluate(
             "document.querySelector('.dna-editor [data-viewport=\"tablet\"]').classList.contains('active')"))
