@@ -100,9 +100,11 @@ foreach ($id in $Start) {
   $name = "ds-$($id.ToLower())"
   if ($t.agent -eq "glm") {
     if (-not (Test-Path $zaiEnv)) {
-      Write-Warning "${id}: ключ z.ai не найден ($zaiEnv) — запустите на Codex: -Start $id после правки agent на codex в этом скрипте"
-      continue
+      Write-Warning "${id}: ключ z.ai не найден ($zaiEnv) — запускаю на Codex gpt-5.6-sol medium вместо GLM 5.3"
+      $t = @{ id = $t.id; agent = "codex"; model = "gpt-5.6-sol"; effort = "medium"; deps = $t.deps; title = $t.title; spec = $t.spec }
     }
+  }
+  if ($t.agent -eq "glm") {
     $token = (Get-Content $zaiEnv | Where-Object { $_ -match "^ANTHROPIC_AUTH_TOKEN=" }) -replace "^ANTHROPIC_AUTH_TOKEN=", ""
     $wt = Invoke-Orca @("worktree", "create", "--name", $name, "--parent-worktree", "active", "--json")
     $wtId = $wt.result.worktree.id; $wtPath = $wt.result.worktree.path
