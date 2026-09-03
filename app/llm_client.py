@@ -431,15 +431,19 @@ def chat(provider: str | None, messages: list, temperature: float, timeout: int 
     return chat_envelope(request, role=role, on_delta=on_delta)["content"]
 
 
-def chat_vision(provider: str | None, image_data_url: str, text_prompt: str,
+def chat_vision(provider: str | None, image_data_url: str | list[str], text_prompt: str,
                 system_prompt: str = "", temperature: float = 0.2,
                 timeout: int | None = None, role: str = "vision") -> str:
+    # Несколько изображений (первый экран 1:1 + страница по частям): одна
+    # высокая картинка при даунскейле у vision-модели превращается в «мобильный
+    # макет с нечитаемым кеглем».
+    images = [image_data_url] if isinstance(image_data_url, str) else list(image_data_url)
     request = ChatRequest(
         provider=provider,
         system=system_prompt,
         messages=[{"role": "user", "content": [
             {"type": "text", "text": text_prompt},
-            {"type": "image_url", "image_url": {"url": image_data_url}},
+            *({"type": "image_url", "image_url": {"url": url}} for url in images),
         ]}],
         temperature=temperature,
         timeout_s=timeout,

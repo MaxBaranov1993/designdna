@@ -40,7 +40,7 @@ def test_quality_scorecard_sends_rendered_png_and_rubric_to_vision(monkeypatch):
     assert result["score"] == 88
     assert result["model_route"] == "LLM vision / quality_judge"
     assert stages == ["render", "judge"]
-    assert calls[0]["image"].startswith("data:image/png;base64,iVBORw0K")
+    assert calls[0]["image"][0].startswith("data:image/png;base64,iVBORw0K")
     assert calls[0]["role"] == "quality_judge"
     assert "Иерархия" in calls[0]["prompt"]
     assert "slop-тропов" in calls[0]["prompt"]

@@ -1460,14 +1460,50 @@ def _parse_quality_repair(raw: str) -> tuple[dict | None, str | None]:
         return None, str(e)
 
 
+JUDGE_FIRST_SCREEN_H = 900
+JUDGE_TILE_H = 1400
+JUDGE_MAX_TILES = 4
+
+
+def _judge_images(screenshot: bytes) -> list[str]:
+    """Скриншот страницы → набор изображений для vision-судьи.
+
+    Одна высокая картинка (1440×7000) при даунскейле выглядит как мобильный
+    макет с нечитаемым текстом. Отдаём первый экран 1:1 и страницу по частям.
+    """
+    def data_url(png: bytes) -> str:
+        return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    try:
+        from PIL import Image
+        image = Image.open(io.BytesIO(screenshot))
+        width, height = image.size
+        out: list[str] = []
+        first = image.crop((0, 0, width, min(height, JUDGE_FIRST_SCREEN_H)))
+        buf = io.BytesIO(); first.save(buf, format="PNG", optimize=True); out.append(data_url(buf.getvalue()))
+        if height > JUDGE_FIRST_SCREEN_H:
+            tile_h = max(JUDGE_TILE_H, -(-height // JUDGE_MAX_TILES))  # не больше JUDGE_MAX_TILES плиток
+            for top in range(0, height, tile_h):
+                tile = image.crop((0, top, width, min(height, top + tile_h)))
+                scale = 1024 / width
+                tile = tile.resize((1024, max(1, round(tile.height * scale))))
+                buf = io.BytesIO(); tile.save(buf, format="PNG", optimize=True); out.append(data_url(buf.getvalue()))
+        return out
+    except Exception:  # noqa: BLE001 — без PIL/на битом PNG отдаём как есть
+        return [data_url(screenshot)]
+
+
 def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None) -> dict:
     """Render IR and ask the standalone server's vision model for a scorecard."""
     run_registry.stage(run_id, "render", "Рендерю IR для визуальной проверки")
     screenshot = render_png(ir, width=1440, webfonts=True)
-    image_data_url = "data:image/png;base64," + base64.b64encode(screenshot).decode("ascii")
+    image_data_url = _judge_images(screenshot)
     rubric = (APP_ROOT / "prompts" / "RUBRIC.md").read_text(encoding="utf-8")
     prompt = (
-        rubric + "\n\n## Бриф\n" + (brief.strip() or "(не указан)")
+        rubric
+        + "\n\n## Изображения\nПервое — первый экран 1440×900 в масштабе 1:1 (десктоп); "
+          "следующие — вся страница по частям сверху вниз, уменьшены до 1024px по ширине. "
+          "Это десктопный макет, не мобильный: масштаб кегля оценивай по первому изображению."
+        + "\n\n## Бриф\n" + (brief.strip() or "(не указан)")
         + "\n\n## Карта Design IR для адресных правок\n"
         + json.dumps(ir, ensure_ascii=False)
     )
