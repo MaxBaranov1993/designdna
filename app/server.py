@@ -1463,7 +1463,7 @@ def _parse_quality_repair(raw: str) -> tuple[dict | None, str | None]:
 def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None) -> dict:
     """Render IR and ask the standalone server's vision model for a scorecard."""
     run_registry.stage(run_id, "render", "Рендерю IR для визуальной проверки")
-    screenshot = render_png(ir, width=1440)
+    screenshot = render_png(ir, width=1440, webfonts=True)
     image_data_url = "data:image/png;base64," + base64.b64encode(screenshot).decode("ascii")
     rubric = (APP_ROOT / "prompts" / "RUBRIC.md").read_text(encoding="utf-8")
     prompt = (

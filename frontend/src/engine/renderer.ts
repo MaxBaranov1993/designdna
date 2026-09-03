@@ -785,7 +785,8 @@ import { isLockedNode } from "./locked";
   const COMPOSITION_PADDING = {
     tight: "padding-top:calc(var(--sec-py) * .55);padding-bottom:calc(var(--sec-py) * .55)",
     normal: "",
-    airy: "padding-top:calc(var(--sec-py) * 1.6);padding-bottom:calc(var(--sec-py) * 1.6)",
+    // 1.6× давало 224px пустоты над hero — vision-судья снимал за это на каждой странице
+    airy: "padding-top:calc(var(--sec-py) * 1.15);padding-bottom:calc(var(--sec-py) * 1.15)",
   };
 
   function compositionSurface(value) {

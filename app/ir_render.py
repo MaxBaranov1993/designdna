@@ -115,11 +115,17 @@ def _neutralize_links(ir: dict) -> dict:
     return out
 
 
-def render_png(ir: dict, width: int = 1440) -> bytes:
+WEBFONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
+
+
+def render_png(ir: dict, width: int = 1440, *, webfonts: bool = False) -> bytes:
     """Render a complete Design IR page to PNG with the offline timeline path.
 
     The renderer materializes local assets, blocks every other browser request,
     waits for fonts and images, and uses the same ``engine.js`` as the editor.
+
+    ``webfonts=True`` (режим vision-судьи) разрешает каталог Google Fonts:
+    детерминизм менее важен, чем настоящая типографика на скриншоте.
     """
     if not isinstance(ir, dict):
         raise TypeError("ir must be an object")
@@ -141,7 +147,8 @@ def render_png(ir: dict, width: int = 1440) -> bytes:
     if asset_errors:
         raise ValueError("render assets failed validation: " + "; ".join(asset_errors[:3]))
     render_ir = rewrite_local_asset_urls(ir)
-    _install_deterministic_font_fallbacks(render_ir, assets)
+    if not webfonts:
+        _install_deterministic_font_fallbacks(render_ir, assets)
 
     blocked: list[str] = []
     with sync_playwright() as playwright:
@@ -150,18 +157,19 @@ def render_png(ir: dict, width: int = 1440) -> bytes:
             context = browser.new_context(
                 viewport={"width": output_width, "height": 900}, device_scale_factor=1)
             install_render_asset_guard(
-                context, assets, blocked, RENDER_DOCUMENT_URL, RENDER_DOCUMENT_HTML)
+                context, assets, blocked, RENDER_DOCUMENT_URL, RENDER_DOCUMENT_HTML,
+                allow_hosts=WEBFONT_HOSTS if webfonts else ())
             page = context.new_page()
             page.goto(RENDER_DOCUMENT_URL)
             page.add_script_tag(path=str(RENDERER_JS))
             dimensions = page.evaluate(
-                """({designIr, outputWidth}) => {
+                """({designIr, outputWidth, webfonts}) => {
                   const host = document.querySelector('#host');
                   window.IRRenderer.renderIR(host, designIr, {
-                    fit: false, viewport: 'desktop', offline: true,
+                    fit: false, viewport: 'desktop', offline: !webfonts,
                   });
                   const catalogLink = document.getElementById('ir-fonts');
-                  if (catalogLink) catalogLink.removeAttribute('href');
+                  if (catalogLink && !webfonts) catalogLink.removeAttribute('href');
                   const inner = host.querySelector('[data-design-width]');
                   const artWidth = Number(inner?.dataset.designWidth) || 1440;
                   const scale = outputWidth / artWidth;
@@ -174,8 +182,27 @@ def render_png(ir: dict, width: int = 1440) -> bytes:
                   document.body.style.height = Math.ceil(artHeight * scale) + 'px';
                   return {artHeight, scale};
                 }""",
-                {"designIr": render_ir, "outputWidth": output_width},
+                {"designIr": render_ir, "outputWidth": output_width, "webfonts": bool(webfonts)},
             )
+            if webfonts:
+                # Каталог Google Fonts грузится асинхронно: дождаться стилей и
+                # явно запросить каждое семейство, иначе readiness увидит
+                # «не объявлено» до прихода @font-face.
+                families = sorted(_requested_font_families(render_ir))
+                try:
+                    page.wait_for_function(
+                        "() => [...document.styleSheets].some((s) => { try { return !!(s.href && s.href.includes('fonts.googleapis')) && s.cssRules.length >= 0; } catch (e) { return false; } })",
+                        timeout=15_000)
+                except Exception:  # noqa: BLE001 — без каталога readiness ниже скажет, чего не хватает
+                    pass
+                page.evaluate(
+                    """async (families) => {
+                      const loads = [];
+                      for (const family of families) for (const w of [400, 500, 600, 700, 800])
+                        loads.push(document.fonts.load(w + ' 16px "' + family + '"').catch(() => []));
+                      await Promise.race([Promise.all(loads), new Promise((r) => setTimeout(r, 12000))]);
+                    }""",
+                    families)
             readiness = page.evaluate(_READINESS_JS)
             problems = [str(item) for item in (readiness.get("errors") or [])]
             if blocked:
@@ -183,9 +210,12 @@ def render_png(ir: dict, width: int = 1440) -> bytes:
             if problems:
                 raise ValueError("render assets are not ready: " + "; ".join(problems[:5]))
             height = max(1, int(float(dimensions["artHeight"]) * float(dimensions["scale"])))
+            # full_page: без него clip режется по вьюпорту 900px и судья видел
+            # только первый экран («CTA ниже сгиба», «изображения нет»).
             return page.screenshot(
                 type="png",
-                clip={"x": 0, "y": 0, "width": output_width, "height": height},
+                full_page=True,
+                clip={"x": 0, "y": 0, "width": output_width, "height": min(height, 8000)},
                 animations="disabled",
                 caret="hide",
             )

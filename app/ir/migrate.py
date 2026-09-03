@@ -30,6 +30,13 @@ _GENERATED_META_KEYS = {
 _GENERATED_SIZE_ALIASES = {
     "h1": "display", "h2": "xl", "h3": "lg", "h4": "md",
     "body": "md", "caption": "sm", "small": "sm", "large": "lg",
+    # роли типографики tokens v2, которые модель тянет в size элементов
+    "lead": "lg", "eyebrow": "xs", "hero": "display",
+}
+# tone кнопок/бейджей: модель отвечает именами цветовых ролей
+_GENERATED_TONE_ALIASES = {
+    "secondary": "muted", "ghost": "muted", "neutral": "default", "brand": "primary",
+    "warning": "accent", "danger": "accent", "info": "muted", "outline": "default",
 }
 
 
@@ -254,6 +261,9 @@ def sanitize_generated_ir(ir: dict) -> dict:
         raw_size = node.get("size")
         if isinstance(raw_size, str) and raw_size in _GENERATED_SIZE_ALIASES:
             node["size"] = _GENERATED_SIZE_ALIASES[raw_size]
+        raw_tone = node.get("tone")
+        if isinstance(raw_tone, str) and raw_tone in _GENERATED_TONE_ALIASES:
+            node["tone"] = _GENERATED_TONE_ALIASES[raw_tone]
         if node.get("type") == "image":
             strip_invented_src(node)
         props = node.get("props")

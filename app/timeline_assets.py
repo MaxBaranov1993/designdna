@@ -320,7 +320,8 @@ def _relative_local_url(url: str) -> str:
 
 
 def install_render_asset_guard(context, assets: dict[str, MaterializedAsset],
-                               blocked: list, document_url: str, document_html: str) -> None:
+                               blocked: list, document_url: str, document_html: str,
+                               allow_hosts: tuple[str, ...] = ()) -> None:
     """Полный офлайн: документ и ассеты — только из материализованных байтов.
 
     Любой запрос вне карты ассетов абортируется и запоминается в ``blocked`` —
@@ -346,6 +347,13 @@ def install_render_asset_guard(context, assets: dict[str, MaterializedAsset],
         if url.startswith("data:") or url.startswith("about:"):
             route.continue_()
             return
+        # Режим судьи: веб-шрифты с разрешённых хостов (Google Fonts) — иначе
+        # подмена на Inter искажает типографику, которую оценивает vision-модель.
+        if allow_hosts:
+            host = urlparse(url).hostname or ""
+            if any(host == allowed or host.endswith("." + allowed) for allowed in allow_hosts):
+                route.continue_()
+                return
         blocked.append(url)
         route.abort("blockedbyclient")
 

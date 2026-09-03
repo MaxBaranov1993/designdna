@@ -21,7 +21,7 @@ def _score(score: int, verdict: str, issues: list | None = None) -> str:
 
 def test_quality_scorecard_sends_rendered_png_and_rubric_to_vision(monkeypatch):
     calls = []
-    monkeypatch.setattr(server, "render_png", lambda ir, width=1440: b"\x89PNG\r\n")
+    monkeypatch.setattr(server, "render_png", lambda ir, width=1440, **_kw: b"\x89PNG\r\n")
 
     def fake_vision(provider, image_data_url, text_prompt, system_prompt="", temperature=0.2,
                     timeout=None, role="vision"):
@@ -51,8 +51,7 @@ def test_quality_scorecard_sends_rendered_png_and_rubric_to_vision(monkeypatch):
 def test_quality_pass_repair_rejudges_a_fresh_screenshot(monkeypatch):
     render_calls = []
     monkeypatch.setattr(
-        server, "render_png",
-        lambda ir, width=1440: render_calls.append(copy.deepcopy(ir)) or b"png",
+        server, "render_png", lambda ir, width=1440, **_kw: render_calls.append(copy.deepcopy(ir)) or b"png",
     )
     answers = iter([
         _score(61, "needs_repair", [{
