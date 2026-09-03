@@ -60,6 +60,12 @@ def component_fidelity_status(fidelity: dict | None) -> dict:
     contains_raster = evidence.get("containsRaster") is True
     compact_control = evidence.get("compactControl") is True
     reasons: list[str] = []
+    # AI-ревью (design_system.master_review) — второй, содержательный гейт:
+    # агент сравнил оригинал и рендер и не нашёл реальных дефектов. Его
+    # одобрение заменяет пороги попиксельной метрики; отказ ничего не меняет.
+    ai_review = fidelity.get("aiReview") if isinstance(fidelity, dict) and isinstance(fidelity.get("aiReview"), dict) else None
+    if ai_review and ai_review.get("verdict") == "approved":
+        return {"status": "verified", "passed": True, "reasons": []}
     if not required:
         return {"status": "needs-review", "passed": False, "reasons": ["no fidelity viewports"]}
     for name in required:

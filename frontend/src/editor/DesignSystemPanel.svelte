@@ -610,6 +610,50 @@
     }
   }
 
+  /* AI-ревью мастеров: агент вместо пользователя решает судьбу пула «на ревью».
+   * Запускается сам после сборки кита, пока есть кандидаты; сервер сравнивает
+   * оригинал и рендер vision-моделью (Codex/Claude через консольный аккаунт
+   * или OpenAI) и переносит одобренные мастера в реестр. */
+  let masterReviewing = $state(false);
+  let masterReviewNote = $state("");
+  let autoMasterReviewFor = "";
+  $effect(() => {
+    const systemId = String(doc.id || "");
+    if (!systemId || masterReviewing || busy || !reviewComponents.length) return;
+    if (autoMasterReviewFor === systemId) return;
+    autoMasterReviewFor = systemId;
+    void runMasterReview({ silent: true });
+  });
+
+  async function runMasterReview({ silent = false }: { silent?: boolean } = {}) {
+    if (!doc.id || masterReviewing) return;
+    masterReviewing = true;
+    if (!silent) actionError = "";
+    $flow.setNodeData(Number(nodeId), { busyAction: "master-review", lastError: "" });
+    try {
+      const resp = await fetch("/api/design-system/master-review", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: doc, provider: reviewProvider === "openai" ? "auto" : reviewProvider, viewport }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
+      if (result.reviewed) {
+        pushUndo();
+        $flow.setNodeData(Number(nodeId), { document: result.document, summary: result.summary, status: "draft" });
+      }
+      const failed = (result.results || []).filter((r: any) => r.error).length;
+      masterReviewNote = result.reviewed
+        ? `одобрено ${result.approved} из ${result.reviewed}${failed ? `, ошибок ${failed}` : ""}`
+        : "нечего проверять";
+    } catch (e) {
+      if (!silent) actionError = e instanceof Error ? e.message : String(e);
+      masterReviewNote = "";
+    } finally {
+      masterReviewing = false;
+      $flow.setNodeData(Number(nodeId), { busyAction: "" });
+    }
+  }
+
   async function runStyleReview({ silent = false }: { silent?: boolean } = {}) {
     if (!doc.id) return;
     reviewing = true;
@@ -1109,6 +1153,19 @@
             <span class="ds-organizer-state" data-kind={styleGuide.origin === "ai" ? "ai" : "deterministic"}>
               {styleGuide.origin === "ai" ? `AI · ${styleGuide.provider || "openai"}` : "измеренная база"}
             </span>
+          </section>
+
+          <section class="ds-organizer" data-ds-master-review>
+            <div>
+              <strong>AI-ревью мастеров</strong>
+              <small>Мастера, не прошедшие попиксельный порог, проверяет агент: сравнивает оригинал и рендер, одобряет без дефектов или называет конкретные. Подтверждение вручную не нужно.</small>
+            </div>
+            <button type="button" data-ds-action="master-review" onclick={() => void runMasterReview()} disabled={busy || !doc.id || !reviewComponents.length}>
+              {masterReviewing ? "Ревью мастеров…" : reviewComponents.length ? `Проверить ${reviewComponents.length} на ревью` : "Всё проверено"}
+            </button>
+            {#if masterReviewNote}
+              <span class="ds-organizer-state" data-kind="ai">{masterReviewNote}</span>
+            {/if}
           </section>
 
           <h4>Семантические токены</h4>

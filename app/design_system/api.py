@@ -177,6 +177,42 @@ def style_review_design_system(req: StyleReviewRequest):
             "summary": summary(document)}
 
 
+class MasterReviewRequest(BaseModel):
+    """AI-ревью мастеров пула «на ревью»: агент сравнивает оригинал и рендер
+    и сам одобряет/отклоняет — подтверждение пользователя не требуется."""
+    document: dict | None = None
+    systemId: str = ""
+    revision: int = 0
+    provider: str = "auto"
+    viewport: str = "desktop"
+    maxComponents: int = 8
+
+
+@router.post("/api/design-system/master-review")
+def master_review_design_system(req: MasterReviewRequest):
+    document = req.document
+    if not document and req.systemId:
+        document = store.get_revision(req.systemId, req.revision)
+    if not isinstance(document, dict) or not document.get("id"):
+        return _err(422, "No Design System document")
+    from . import master_review
+    from .document import summary
+    if not master_review.review_candidates(document):
+        return {"document": document, "results": [], "summary": summary(document), "reviewed": 0}
+    try:
+        updated, results = master_review.run(
+            document, provider=req.provider or "auto", viewport=req.viewport or "desktop",
+            max_components=req.maxComponents)
+        saved = store.save_draft(updated)
+    except (ValueError, RuntimeError) as exc:
+        return _err(422, str(exc))
+    except Exception as exc:
+        return _err(502, f"AI master review failed: {exc}")
+    document = saved.get("document") or updated
+    return {"document": document, "results": results, "summary": summary(document),
+            "reviewed": len(results), "approved": sum(1 for r in results if r.get("approved"))}
+
+
 @router.post("/api/design-system/styleguide")
 def export_styleguide(req: StyleguideRequest):
     """Документ дизайн-системы → живой UI kit одним HTML-файлом.
