@@ -11,6 +11,12 @@
 | Реализация фронта/архитектуры | `claude` | `opus` | рендерер, токены, промпты |
 | Тесты, эталоны, UI-обвязка | `claude` через z.ai | GLM 5.3 | библиотека эталонов, чипы направлений |
 
+### Что выяснилось на первом запуске (2026-09-03)
+
+- `worker-start --agent codex --model gpt-5.6-sol --effort medium` работает, но только с `--from <coordinator_handle>` (иначе `selector_not_found`), и Codex при старте показывает «Update available» — скрипт снимает промпт и делает `dispatch --inject` повторно.
+- `worker-start --agent claude` отвечает `agent_unconfigured`: у Orca нет управляемого аккаунта Claude (`orca account list`). Ручной `claude --model opus` в терминале воркtree требует OAuth-логина, который делает только человек. Пока логина нет, задачи Opus выполняются субагентами координатора (Agent tool, model opus) в тех же воркtree; провенанс Orca для них неполный. Чтобы вернуть Opus в Orca: `orca account add` для Claude или один раз войти в `claude` в терминале Orca.
+- GLM 5.3: ключа z.ai на машине нет, задачи T5/T6 уходят на Codex sol medium (фолбэк в скрипте).
+
 ### Как запускается каждый агент
 
 - **Codex Sol medium**: `orca orchestration worker-start --task <id> --worktree new-child --agent codex --model gpt-5.6-sol --effort medium`.
