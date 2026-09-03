@@ -508,7 +508,7 @@ def run_pipeline(image_b64: str, provider: str = "auto", llm_module=None,
                  regions: list | None = None) -> dict:
     """Полный пайплайн pixel-perfect reproduction.
 
-    1. VLM-анализ структуры (прямой вызов OpenAI/Kimi)
+    1. VLM-анализ структуры (Sol по ключу или Codex/Claude CLI)
     2. Python-измерения: цвета, bounding boxes
     3. Извлечение иконок/контента как PNG base64
     4. Сборка HTML с absolute positioning

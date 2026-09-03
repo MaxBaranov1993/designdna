@@ -60,10 +60,16 @@ def test_browser_generate_migrates_every_saved_provider_to_openai(monkeypatch) -
         return deepcopy(fixture), None
 
     monkeypatch.setattr(server, "call_llm_ir", fake_call)
-    for requested in ("kimi", "openai", "glm", "zai", "grok", "codex", "openrouter", "auto"):
+    # Ретро-провайдеры (kimi/glm/zai/grok/openrouter/auto) схлопываются в Sol;
+    # codex и claude — консольные аккаунты (cli_llm) и проходят как есть.
+    for requested in ("kimi", "openai", "glm", "zai", "grok", "openrouter", "auto"):
         response = server.generate(server.GenerateReq(brief="marketplace hero", count=1, provider=requested))
         assert len(response["variants"]) == 1
         assert seen.pop() == "openai"
+    for requested in ("codex", "claude"):
+        response = server.generate(server.GenerateReq(brief="marketplace hero", count=1, provider=requested))
+        assert len(response["variants"]) == 1
+        assert seen.pop() == requested
 
 
 def test_generate_applies_locked_dna_to_model_inline_styles(monkeypatch) -> None:

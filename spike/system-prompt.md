@@ -1,6 +1,6 @@
 # System prompt для Generator-ноды (v3 — generate-first)
 
-Используется как system message при вызове через подключённый LLM-аккаунт (OpenAI или Kimi).
+Используется как system message при вызове через подключённый аккаунт (OpenAI по ключу, Codex CLI или Claude Code).
 
 Плейсхолдеры:
 

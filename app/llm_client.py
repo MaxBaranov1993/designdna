@@ -12,6 +12,8 @@ import os
 import re
 import threading
 import urllib.request
+
+import cli_llm
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -358,8 +360,33 @@ def chat_envelope(
     cancel_token.check()
     payload, dropped = request.to_responses_payload()
     key = os.environ.get("OPENAI_API_KEY", "")
+    # Консольный транспорт (аккаунты Codex / Claude Code, без API-ключей):
+    # явный provider codex|claude — всегда через CLI; без ключа OpenAI — через
+    # первый доступный CLI. Стриминга у CLI нет: on_delta получит ответ целиком.
+    cli_provider = request.provider if request.provider in ("codex", "claude") else None
+    if not cli_provider and not key:
+        cli_provider = cli_llm.default_provider()
+    if cli_provider:
+        messages = list(request.messages or [])
+        if request.system:
+            messages = [{"role": "system", "content": request.system}, *messages]
+        content = cli_llm.chat(
+            cli_provider, messages,
+            model=request.model if request.provider in ("codex", "claude") else None,
+            effort=request.reasoning_effort, timeout=request.timeout_s or TIMEOUT,
+        )
+        if on_delta and content:
+            on_delta(content)
+        return {
+            "content": content,
+            "tool_calls": None,
+            "transport": {
+                "provider": cli_provider, "model": request.model or "cli-default",
+                "request_id": request.request_id, "dropped": dropped, "streamed": False,
+            },
+        }
     if not key:
-        raise RuntimeError("OpenAI is not connected: set OPENAI_API_KEY")
+        raise RuntimeError("Нет подключённого AI-аккаунта: установите Codex CLI или Claude Code и войдите, либо задайте OPENAI_API_KEY")
     streamed = bool(request.stream or on_delta)
     post = _post_stream if streamed else _post_json
     if streamed:

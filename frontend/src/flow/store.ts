@@ -63,7 +63,7 @@ import type {
 function friendlyProviderError(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
   const detail = raw.replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, "").trim();
-  if (/OpenAI API key|Kimi не подключён|нет подключённого AI-аккаунта|Agents\s*→\s*Connections/i.test(detail)) {
+  if (/OpenAI API key|Codex не подключён|Claude не подключён|Codex CLI|Claude Code|нет подключённого AI-аккаунта|Agents\s*→\s*Connections/i.test(detail)) {
     return "AI-аккаунт не подключён. Откройте Agents → Connections.";
   }
   return detail || "AI не ответил. Повторите запуск.";

@@ -1727,7 +1727,7 @@ function friendlyAiError(detail: string) {
   console.warn("AI assist rejected:", detail);
   if (/AI_STALE|изменился во время AI/i.test(detail)) return "Макет или выделение изменились во время работы AI. Запустите запрос ещё раз — ручные правки сохранены.";
   if (/Intent Lock|allowedColors|maxTextLength|защищ[её]н|ограничен/i.test(detail)) return "Эта часть объекта защищена ограничениями. Измените разрешения или выберите другой элемент.";
-  if (/OpenAI API key|Kimi не подключён|нет подключённого AI-аккаунта|Agents\s*→\s*Connections/i.test(detail)) return "AI-аккаунт не подключён. Откройте Agents → Connections.";
+  if (/OpenAI API key|Codex не подключён|Claude не подключён|Codex CLI|Claude Code|нет подключённого AI-аккаунта|Agents\s*→\s*Connections/i.test(detail)) return "AI-аккаунт не подключён. Откройте Agents → Connections.";
   if (/outside|вне текущего выделения|не найден элемент/i.test(detail)) return "Выделение изменилось. Выберите объект ещё раз.";
   if (/schema|невалидн|структурн|children|sourceKey|patch|команд/i.test(detail)) return "AI предложил небезопасную правку. Уточните запрос.";
   if (/429|лимит|очередь/i.test(detail)) return "AI занят. Повторите через минуту.";

@@ -265,9 +265,13 @@ def main() -> int:
     live: list[dict[str, Any]] | None = None
     live_error: str | None = None
     if not args.dry_run:
-        if not os.getenv("OPENAI_API_KEY"):
-            live_error = "OPENAI_API_KEY is not configured"
+        # Живой режим: API-ключ OpenAI ИЛИ консольный аккаунт Codex/Claude (cli_llm)
+        import cli_llm  # noqa: WPS433 — app/ уже в sys.path
+        cli_provider = cli_llm.default_provider()
+        if not os.getenv("OPENAI_API_KEY") and not cli_provider:
+            live_error = "no provider: set OPENAI_API_KEY or sign in to Codex CLI / Claude Code"
         else:
+            print(f"live provider: {'openai api' if os.getenv('OPENAI_API_KEY') else cli_provider}")
             try:
                 live = _live_pairs(assets)
                 for item in exemplars:

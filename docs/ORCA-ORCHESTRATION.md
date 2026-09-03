@@ -9,28 +9,19 @@
 | Оркестратор | текущий терминал (Claude Code) | Fable 5.1 | план, задачи-DAG, приёмка, слияние |
 | Реализация бэкенда | `codex` | `gpt-5.6-sol`, effort `medium` | Python-пайплайн, схемы, судья |
 | Реализация фронта/архитектуры | `claude` | `opus` | рендерер, токены, промпты |
-| Тесты, эталоны, UI-обвязка | `claude` через z.ai | GLM 5.3 | библиотека эталонов, чипы направлений |
+| Тесты, эталоны, UI-обвязка | `codex` | `gpt-5.6-sol`, effort `medium` | библиотека эталонов, чипы направлений |
 
 ### Что выяснилось на первом запуске (2026-09-03)
 
 - `worker-start --agent codex --model gpt-5.6-sol --effort medium` работает, но только с `--from <coordinator_handle>` (иначе `selector_not_found`), и Codex при старте показывает «Update available» — скрипт снимает промпт и делает `dispatch --inject` повторно.
 - `worker-start --agent claude` отвечает `agent_unconfigured`: у Orca нет управляемого аккаунта Claude (`orca account list`). Ручной `claude --model opus` в терминале воркtree требует OAuth-логина, который делает только человек. Пока логина нет, задачи Opus выполняются субагентами координатора (Agent tool, model opus) в тех же воркtree; провенанс Orca для них неполный. Чтобы вернуть Opus в Orca: `orca account add` для Claude или один раз войти в `claude` в терминале Orca.
-- GLM 5.3: ключа z.ai на машине нет, задачи T5/T6 уходят на Codex sol medium (фолбэк в скрипте).
+- Провайдеры проекта — только OpenAI (Codex/Sol) и Claude; Kimi и z.ai выведены, GLM-слот из скрипта удалён.
 
 ### Как запускается каждый агент
 
 - **Codex Sol medium**: `orca orchestration worker-start --task <id> --worktree new-child --agent codex --model gpt-5.6-sol --effort medium`.
 - **Opus**: `orca orchestration worker-start --task <id> --worktree new-child --agent claude --model opus`.
-- **GLM 5.3 (z.ai)**: у Orca нет отдельного провайдера, GLM работает через Claude Code с Anthropic-совместимым эндпоинтом z.ai. Нужны переменные окружения в терминале воркера (ключ хранится только в `%USERPROFILE%\.designdna\zai.env`, в репозиторий не попадает):
-
-  ```powershell
-  $env:ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic"
-  $env:ANTHROPIC_AUTH_TOKEN = "<ключ z.ai>"
-  $env:ANTHROPIC_MODEL = "glm-5.3"
-  claude
-  ```
-
-  Скрипт создаёт воркtree без агента, открывает терминал командой выше и делает `dispatch --to <handle> --inject`. Если файла с ключом нет, скрипт пропускает GLM-задачи и печатает, как их запустить на Codex.
+- **Провайдеры**: только OpenAI (Codex CLI / Sol) и Claude (Claude Code). Без API-ключей: сервер и воркер ходят через консольные аккаунты (`app/cli_llm.py`); Seedance — через OpenRouter.
 
 ## Порядок
 

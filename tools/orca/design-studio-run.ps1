@@ -2,7 +2,7 @@
 # Использование (из Orca-терминала координатора):
 #   powershell -File tools/orca/design-studio-run.ps1            # создать Run + задачи + стартовать T1/T4
 #   powershell -File tools/orca/design-studio-run.ps1 -Start T2,T3   # стартовать конкретные задачи
-# GLM 5.3: положите ключ z.ai в %USERPROFILE%\.designdna\zai.env строкой ANTHROPIC_AUTH_TOKEN=...
+# Провайдеры воркеров: Codex (gpt-5.6-sol) и Claude Code (opus). Внешних API-ключей нет.
 param(
   [string[]]$Start = @("T1", "T4"),
   [switch]$SkipCreate
@@ -29,10 +29,10 @@ $tasks = @(
   @{ id = "T3"; agent = "claude"; model = "opus"; effort = ""; deps = @("T1");
      title = "T3 Composition block + generate-first prompt + exemplars";
      spec = "Задача T3 из ${spec}: блок composition (дерево примитивов с auto-layout frame) в схеме, BLOCKS.md и рендерере; новые характерные варианты hero (editorial-stack, poster, split-offset, numbered) и feature (list-rail, bento-asym, two-col-manifest); заглушки изображений в тоне палитры; переписанный spike/system-prompt.md: generate — основной режим, DesignBrief в контексте, few-shot из app/exemplars/*.json, варианты = разные направления с подписью; 3 первых эталона (SaaS-лендинг, маркетплейс, ресторан) ручной работы. Тесты: схема, рендер новых вариантов, промпт-сборка. Владение: spike/system-prompt.md, app/prompts/BLOCKS.md, app/prompts/DESIGN.md, app/exemplars/, frontend/src/engine/renderer.ts (секции), schema/design-ir.schema.json (blocks). $rules" },
-  @{ id = "T5"; agent = "glm"; model = ""; effort = ""; deps = @("T1", "T4");
+  @{ id = "T5"; agent = "codex"; model = "gpt-5.6-sol"; effort = "medium"; deps = @("T1", "T4");
      title = "T5 Generator node UI: direction chips + verdict";
      spec = "Задача T5 из ${spec}: в GeneratorNode.svelte чипы 3 направлений из стадии арт-дирекции (мотивация + компромисс), выбор одного или всех, подписи вариантов направлением вместо 'Вариант 1/2', статус 'нужна доработка' с причинами судьи, запоминание выбранного направления в taste-профиле. Playwright-тест ui_generator_directions_test.py с моками /api/generate. Владение: frontend/src/nodes/GeneratorNode.svelte, frontend/src/flow/store.ts (runGenerator UI-часть), новый тест. $rules" },
-  @{ id = "T6"; agent = "glm"; model = ""; effort = ""; deps = @("T3", "T4");
+  @{ id = "T6"; agent = "codex"; model = "gpt-5.6-sol"; effort = "medium"; deps = @("T3", "T4");
      title = "T6 Exemplar library + before/after quality report";
      spec = "Задача T6 из ${spec}: довести app/exemplars до 10+ страниц по типам продуктов, каждая ≥90 у vision-судьи; скрипт tools/quality_report.py — 5 фиксированных брифов (SaaS, маркетплейс, ресторан, портфолио, финтех), генерация до/после, PNG и баллы в results/quality-report.md. Владение: app/exemplars/, tools/quality_report.py, results/quality-report.md. $rules" }
 )
@@ -66,7 +66,6 @@ if (-not $SkipCreate) {
   }
 }
 
-$zaiEnv = Join-Path $env:USERPROFILE ".designdna\zai.env"
 # Координаторский терминал: без --from Orca не находит родительский воркtree из дочернего процесса.
 $coord = (Invoke-Orca @("orchestration", "run-current", "--json")).result.run.coordinator_handle
 $baseBranch = (git branch --show-current)
@@ -98,25 +97,6 @@ foreach ($id in $Start) {
   if (-not $t) { Write-Warning "unknown task $id"; continue }
   $taskId = $ids[$id]
   $name = "ds-$($id.ToLower())"
-  if ($t.agent -eq "glm") {
-    if (-not (Test-Path $zaiEnv)) {
-      Write-Warning "${id}: ключ z.ai не найден ($zaiEnv) — запускаю на Codex gpt-5.6-sol medium вместо GLM 5.3"
-      $t = @{ id = $t.id; agent = "codex"; model = "gpt-5.6-sol"; effort = "medium"; deps = $t.deps; title = $t.title; spec = $t.spec }
-    }
-  }
-  if ($t.agent -eq "glm") {
-    $token = (Get-Content $zaiEnv | Where-Object { $_ -match "^ANTHROPIC_AUTH_TOKEN=" }) -replace "^ANTHROPIC_AUTH_TOKEN=", ""
-    $wt = Invoke-Orca @("worktree", "create", "--name", $name, "--parent-worktree", "active", "--json")
-    $wtId = $wt.result.worktree.id; $wtPath = $wt.result.worktree.path
-    Prepare-Worktree $wtPath
-    $cmd = "`$env:ANTHROPIC_BASE_URL='https://api.z.ai/api/anthropic'; `$env:ANTHROPIC_AUTH_TOKEN='$token'; `$env:ANTHROPIC_MODEL='glm-5.3'; claude"
-    $term = Invoke-Orca @("terminal", "create", "--worktree", "id:$wtId", "--title", "GLM $id", "--command", $cmd, "--json")
-    $handle = $term.result.terminal.handle
-    Invoke-Orca @("terminal", "wait", "--terminal", $handle, "--for", "tui-idle", "--timeout-ms", "120000", "--json") | Out-Null
-    $d = Invoke-Orca @("orchestration", "dispatch", "--run", $ids["run"], "--from", $coord, "--task", $taskId, "--to", $handle, "--inject", "--json")
-    Write-Host "$id (GLM) dispatched: $($d.result.dispatch.id)"
-    continue
-  }
   $cli = @("orchestration", "worker-start", "--from", $coord, "--run", $ids["run"], "--task", $taskId, "--worktree", "new-child", "--name", $name, "--agent", $t.agent, "--model", $t.model, "--timeout-ms", "600000", "--json")
   if ($t.effort) { $cli += @("--effort", $t.effort) }
   $out = & $orca @cli 2>&1 | Out-String

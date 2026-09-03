@@ -464,7 +464,9 @@ def generate(req: GenerateReq):
 def _generate(req: GenerateReq, run_id: str | None):
     # Browser mode may explicitly select a direct API account. Codex is a
     # desktop-only transport, so unknown/desktop values fall back to ROUTING.
-    provider = "openai"
+    # codex/claude — консольные аккаунты (cli_llm); всё остальное — Sol по ключу
+    # или первый доступный CLI, если ключа нет (см. llm_client.chat_envelope).
+    provider = req.provider if getattr(req, "provider", None) in ("codex", "claude") else "openai"
     effort = req.effort if req.effort in ("medium", "high", "max") else "medium"
     brief = req.brief.strip()
     if not brief:
@@ -1215,7 +1217,7 @@ def block_parse_repair(req: FidelityRepairReq):
 def reskin(req: ReskinReq):
     """Reskin: AI-рестайл блока с локом структуры.
 
-    LLM (прямой вызов OpenAI/Kimi) → детерминированный merge-back
+    LLM (Sol по ключу или консольный аккаунт Codex/Claude) → детерминированный merge-back
     (залоченные поля принудительно из входного IR) → валидация по схеме →
     один repair-вызов по существующему паттерну. Дрейф структуры невозможен.
     """
@@ -1264,7 +1266,9 @@ def reskin(req: ReskinReq):
             return err(422, "Design System Strict: exact master не помещается в выбранный context budget. Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")
         user += "\n\n" + ds_compiled["promptBlock"]
 
-    provider = "openai"
+    # codex/claude — консольные аккаунты (cli_llm); всё остальное — Sol по ключу
+    # или первый доступный CLI, если ключа нет (см. llm_client.chat_envelope).
+    provider = req.provider if getattr(req, "provider", None) in ("codex", "claude") else "openai"
     effort = req.effort if req.effort in ("medium", "high", "max") else "medium"
     reskin_messages = [
         {"role": "system", "content": llm.build_system_prompt("edit")},
@@ -1471,7 +1475,7 @@ def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None) -> dict:
 
 
 def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None, str | None]:
-    """Серверный LLM-путь standalone веб-сервера (прямой вызов OpenAI/Kimi)."""
+    """Серверный LLM-путь standalone веб-сервера (Sol по ключу или Codex/Claude CLI)."""
     messages, error = _quality_repair_messages(ir, scorecard, brief)
     if messages is None:
         return None, error
