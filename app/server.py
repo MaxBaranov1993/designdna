@@ -53,6 +53,7 @@ import run_registry
 import blockparse
 import mergeback
 import qualitygate
+from ir_render import render_png
 import project_store
 import typography
 import designkb
@@ -312,7 +313,7 @@ class QualityGateReq(BaseModel):
 class QualityPassReq(BaseModel):
     ir: dict
     brief: str = ""
-    min_score: int = 85
+    min_score: int = 80
     repair: bool = True
     rejudge: bool = True
     runId: str | None = None
@@ -1354,19 +1355,19 @@ def quality_gate(req: QualityGateReq):
             "fixed_ir": fixed_ir, "journal": journal}
 
 
-QUALITY_JUDGE_SYSTEM = """Ты — строгий арт-директор и QA-судья DesignAI.
-Оцениваешь Design IR, а не пишешь новый дизайн. Проверяй соответствие брифу,
-визуальную иерархию, композицию, консистентность токенов, семантику блоков,
-реалистичность контента и доступность. Не хвали и не придумывай отсутствующие факты.
+QUALITY_JUDGE_SYSTEM = """Ты — строгий арт-директор и pixel QA-судья DesignAI.
+Главное доказательство — приложенный скриншот реально отрендеренного Design IR.
+Design IR дан только как карта для адресных путей правок. Не хвали, не додумывай
+невидимые свойства и не подменяй визуальную оценку чтением JSON.
 Верни только JSON-объект:
 {
   "score": 0,
   "verdict": "pass|needs_repair",
   "summary": "краткий вывод",
-  "issues": [{"category": "brief|hierarchy|composition|consistency|content|accessibility", "severity": "critical|major|minor", "path": "путь IR или (root)", "problem": "что не так", "instruction": "как исправить"}],
+  "issues": [{"category": "hierarchy|rhythm|density|typography|color|slop|brief", "severity": "critical|major|minor", "path": "путь IR или (root)", "problem": "что не так", "instruction": "как исправить"}],
   "repair_instruction": "единая точная инструкция; пустая строка, если repair не нужен"
 }
-score — целое 0..100. Учитывай только наблюдаемые данные в IR и брифе."""
+score — целое 0..100. Следуй приложенной рубрике и учитывай только наблюдаемое."""
 
 
 def _quality_judge_messages(ir: dict, brief: str) -> list[dict]:
@@ -1450,10 +1451,23 @@ def _parse_quality_repair(raw: str) -> tuple[dict | None, str | None]:
         return None, str(e)
 
 
-def _quality_scorecard(ir: dict, brief: str) -> dict:
-    """Серверный LLM-путь standalone веб-сервера (прямой вызов OpenAI/Kimi)."""
-    raw = llm.chat("auto", _quality_judge_messages(ir, brief), 0.2, role="quality_judge")
-    return _parse_quality_scorecard(raw, "LLM / quality_judge")
+def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None) -> dict:
+    """Render IR and ask the standalone server's vision model for a scorecard."""
+    run_registry.stage(run_id, "render", "Рендерю IR для визуальной проверки")
+    screenshot = render_png(ir, width=1440)
+    image_data_url = "data:image/png;base64," + base64.b64encode(screenshot).decode("ascii")
+    rubric = (APP_ROOT / "prompts" / "RUBRIC.md").read_text(encoding="utf-8")
+    prompt = (
+        rubric + "\n\n## Бриф\n" + (brief.strip() or "(не указан)")
+        + "\n\n## Карта Design IR для адресных правок\n"
+        + json.dumps(ir, ensure_ascii=False)
+    )
+    run_registry.stage(run_id, "judge", "Vision-судья оценивает скриншот")
+    raw = llm.chat_vision(
+        "auto", image_data_url, prompt, QUALITY_JUDGE_SYSTEM, 0.2,
+        role="quality_judge",
+    )
+    return _parse_quality_scorecard(raw, "LLM vision / quality_judge")
 
 
 def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None, str | None]:
@@ -1490,9 +1504,8 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
     if schema_errors:
         return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
     deterministic_before = qualitygate.check(req.ir)
-    run_registry.stage(run_id, "judge", "Судья оценивает")
     try:
-        initial = _quality_scorecard(req.ir, req.brief)
+        initial = _quality_scorecard(req.ir, req.brief, run_id)
     except Exception as e:
         return err(502, f"Quality Pass judge недоступен: {e}")
     if run_registry.is_cancelled(run_id):
@@ -1517,7 +1530,7 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
                     return err(CANCELLED_STATUS, "Quality Pass отменён")
                 run_registry.stage(run_id, "rejudge", "Повторная оценка")
                 try:
-                    final = _quality_scorecard(output_ir, req.brief)
+                    final = _quality_scorecard(output_ir, req.brief, run_id)
                 except Exception as e:
                     repair["error"] = f"rejudge недоступен: {e}"
     deterministic_after = qualitygate.check(output_ir)
