@@ -66,6 +66,11 @@ tokens still win over everything below.
   information about the content — no decorative "01/02/03" unless the content
   truly is a sequence.
 - Cards in one row share height; media dominates over text in product cards.
+- Product / pricing cards: the price and the CTA never share a cramped row.
+  Put the price on its own line (`nowrap`, display role) and the CTA below it
+  full-width, or give the row ≥ 2 lines of room; card padding is uniform
+  (≥ 16px on every side, never `[16, 4]`); titles get a fixed 2-line box so
+  card bottoms align across the row.
 
 ## Color and tokens discipline
 

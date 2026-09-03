@@ -163,7 +163,7 @@ def ir_tokens(foundations: dict) -> dict:
     shadows = foundations.get("shadows") or []
     raw = {
         "mode": foundations.get("mode"),
-        "color": dict(colors),
+        "color": soften_border(dict(colors)),
         "font": {
             "display": typography.get("display") or {},
             "body": typography.get("body") or {},
@@ -192,7 +192,8 @@ def coerce_ir_tokens(tokens: Any) -> dict | None:
     if isinstance(tokens.get("colors"), dict) or isinstance(tokens.get("typography"), dict):
         return ir_tokens(tokens)
     if isinstance(tokens.get("color"), dict) or isinstance(tokens.get("font"), dict):
-        full = _tokens_for_ir(normalize_dna(tokens))
+        softened = dict(tokens, color=soften_border(dict(tokens.get("color") or {})))
+        full = _tokens_for_ir(normalize_dna(softened))
         for key in ("primitives", "semantic", "provenance", "v2"):
             if key in tokens:
                 full[key] = copy.deepcopy(tokens[key])
@@ -213,19 +214,42 @@ def coerce_ir_tokens(tokens: Any) -> dict | None:
     }
     background = flat_colors.get("background")
     mode = ("dark" if background and _luminance(background) < 0.45 else "light")
-    return _tokens_for_ir(normalize_dna({"mode": mode, "color": flat_colors, "font": font, "radius": radius}))
+    return _tokens_for_ir(normalize_dna({"mode": mode, "color": soften_border(flat_colors), "font": font, "radius": radius}))
+
+
+def _is_mono(family: Any) -> bool:
+    return "mono" in str(family or "").lower() or "code" in str(family or "").lower()
+
+
+def _classify_text(node: dict) -> str:
+    """Роль текста мастера Source Import: по типу узла и измеренному стилю.
+    Захват отдаёт почти всё как `text`, поэтому заголовки узнаём по кеглю,
+    надзаголовки — по моно/uppercase/разрядке, CTA — по кнопке."""
+    kind = str(node.get("type") or "")
+    if kind == "button":
+        return "cta"
+    if kind == "heading":
+        return "heading"
+    style = node.get("style") if isinstance(node.get("style"), dict) else {}
+    size = float(style.get("fontSize") or 0)
+    tracking = float(style.get("letterSpacing") or 0)
+    upper = str(style.get("textTransform") or "") == "uppercase"
+    text = str(node.get("text") or "")
+    if size >= 22:
+        return "heading"
+    if size <= 13 and (upper or tracking >= 0.5 or (_is_mono(style.get("fontFamily")) and text.isupper())):
+        return "eyebrow"
+    if node.get("size") in ("xs", "sm"):
+        return "eyebrow"
+    return "text"
 
 
 def _walk_text(node: Any, out: dict[str, list[str]], depth: int = 0) -> None:
-    if depth > 8 or not isinstance(node, dict):
+    if depth > 12 or not isinstance(node, dict):
         return
-    kind = str(node.get("type") or "")
     text = node.get("text")
-    if isinstance(text, str) and text.strip():
-        bucket = "cta" if kind == "button" else "heading" if kind == "heading" else "text"
-        if kind == "text" and node.get("size") in ("xs", "sm"):
-            bucket = "eyebrow"
-        out[bucket].append(" ".join(text.split())[:90])
+    if isinstance(text, str) and text.strip() and len(text.strip()) > 1:
+        out[_classify_text(node)].append(" ".join(text.split())[:90])
     props = node.get("props")
     if isinstance(props, dict):
         for key in ("heading", "subheading", "eyebrow", "title"):
@@ -241,13 +265,60 @@ def _walk_text(node: Any, out: dict[str, list[str]], depth: int = 0) -> None:
 
 
 def _copy_voice(document: dict) -> dict[str, list[str]]:
-    """Образцы текста мастеров: заголовки, надзаголовки, CTA — голос бренда."""
-    out: dict[str, list[str]] = {"heading": [], "eyebrow": [], "cta": [], "text": []}
-    for component in (document.get("components") or {}).values():
-        master = component.get("masterIr") if isinstance(component, dict) else None
-        for section in ((master or {}).get("tree") or []):
-            _walk_text(section, out)
-    return {key: list(dict.fromkeys(values))[:6] for key, values in out.items()}
+    """Образцы текста сайта: заголовки, надзаголовки, CTA, бейджи — голос бренда.
+
+    Сначала referenceContent (собран со всей страницы), затем тексты мастеров
+    (включая review-пул: компонентов с verified-статусом может не быть)."""
+    out: dict[str, list[str]] = {"heading": [], "eyebrow": [], "cta": [], "badge": [], "text": []}
+    reference = document.get("referenceContent") if isinstance(document.get("referenceContent"), dict) else {}
+    for key, bucket in (("heading", "heading"), ("title", "heading"), ("cta", "cta"), ("badge", "badge"),
+                        ("category", "eyebrow"), ("price", "badge")):
+        values = reference.get(key)
+        if isinstance(values, list):
+            out[bucket].extend(" ".join(str(v).split())[:90] for v in values if str(v).strip())
+    for pool in ("components", "reviewComponents"):
+        for component in (document.get(pool) or {}).values():
+            master = component.get("masterIr") if isinstance(component, dict) else None
+            for section in ((master or {}).get("tree") or []):
+                _walk_text(section, out)
+    return {key: list(dict.fromkeys(values))[:6] for key, values in out.items() if values}
+
+
+def _label_style(document: dict) -> str:
+    """Стиль лейблов/надзаголовков и цифр из измеренных стилей мастеров."""
+    samples: list[dict] = []
+
+    def walk(node: Any, depth: int = 0) -> None:
+        if depth > 12 or not isinstance(node, dict):
+            return
+        if isinstance(node.get("text"), str) and isinstance(node.get("style"), dict):
+            samples.append(node)
+        for child in node.get("children") or []:
+            walk(child, depth + 1)
+
+    for pool in ("components", "reviewComponents"):
+        for component in (document.get(pool) or {}).values():
+            for section in (((component or {}).get("masterIr") or {}).get("tree") or []):
+                walk(section)
+    eyebrows = [n for n in samples if _classify_text(n) == "eyebrow"]
+    if not eyebrows:
+        return ""
+    mono = sum(1 for n in eyebrows if _is_mono(n["style"].get("fontFamily")))
+    upper = sum(1 for n in eyebrows if str(n["style"].get("textTransform")) == "uppercase" or str(n.get("text")).isupper())
+    tracked = sum(1 for n in eyebrows if float(n["style"].get("letterSpacing") or 0) >= 0.5)
+    family = next((str(n["style"].get("fontFamily")).split(",")[0].strip() for n in eyebrows
+                   if _is_mono(n["style"].get("fontFamily"))), "")
+    parts = []
+    if mono >= len(eyebrows) / 2:
+        parts.append(f"моноширинный {family or 'mono'}".strip())
+    if upper >= len(eyebrows) / 2:
+        parts.append("uppercase")
+    if tracked >= len(eyebrows) / 2:
+        parts.append("с разрядкой")
+    sizes = sorted(float(n["style"].get("fontSize") or 0) for n in eyebrows)
+    if sizes:
+        parts.append(f"кегль ~{int(sizes[len(sizes) // 2])}px")
+    return ", ".join(parts)
 
 
 def _typography_character(foundations: dict) -> str:
@@ -287,11 +358,34 @@ def style_profile(document: dict) -> dict:
         ),
         "accent": semantic.get("accent") or semantic.get("primary"),
         "typographyCharacter": _typography_character(foundations),
+        "labelStyle": _label_style(document),
+        "monoFamily": next((str(f) for f in ((foundations.get("typography") or {}).get("families") or []) if _is_mono(f)), ""),
         "imageDirection": foundations.get("imageDirection") or "",
         "iconStyle": foundations.get("iconStyle") or "",
         "copyVoice": _copy_voice(document),
     }
     return {key: value for key, value in profile.items() if value not in ("", None, [], {})}
+
+
+def _mix_hex(color: str, into: str, amount: float) -> str:
+    """color, смешанный с into на amount (0..1)."""
+    a = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(into[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x * (1 - amount) + y * amount):02x}" for x, y in zip(a, b))
+
+
+def soften_border(colors: dict) -> dict:
+    """Захват схлопывает rgba-рамки в непрозрачный цвет: на тёмном сайте
+    border=#ffffff, и каждая сгенерированная карточка получала яркую белую
+    рамку (судья: «яркие контрастные рамки — провал»). Если рамка контрастнее
+    фона, чем 0.5 по светлоте, приглушаем её до ~14% поверх фона."""
+    background = _hex(colors.get("background"))
+    border = _hex(colors.get("border"))
+    if not background or not border:
+        return colors
+    if abs(_luminance(border) - _luminance(background)) > 0.5:
+        return {**colors, "border": _mix_hex(border, background, 0.86)}
+    return colors
 
 
 def profile_prompt(document: dict) -> str:
@@ -305,6 +399,14 @@ def profile_prompt(document: dict) -> str:
         f"тени: {profile.get('shadowUsage')}; палитра: {profile.get('paletteCharacter')}.",
         f"- Типографика: {profile.get('typographyCharacter')}.",
     ]
+    if profile.get("labelStyle"):
+        lines.append(f"- Лейблы, надзаголовки и служебные цифры: {profile['labelStyle']} — используй такой же стиль "
+                     f"для eyebrow/бейджей/цен, а не body-шрифт.")
+    elif profile.get("monoFamily"):
+        lines.append(f"- Служебный шрифт сайта: {profile['monoFamily']} (лейблы, цифры, коды).")
+    if profile.get("mode") == "dark":
+        lines.append("- Тёмная тема исходника: поверхности карточек лишь чуть светлее фона (surface/border из токенов), "
+                     "рамки тонкие и приглушённые, никаких светлых плашек и белых карточек.")
     if profile.get("imageDirection"):
         lines.append(f"- Изображения: {profile['imageDirection']}.")
     if profile.get("iconStyle"):
@@ -315,6 +417,8 @@ def profile_prompt(document: dict) -> str:
         lines.append("- Надзаголовки/лейблы: " + " | ".join(voice["eyebrow"][:4]))
     if voice.get("cta"):
         lines.append("- CTA: " + " | ".join(voice["cta"][:4]))
+    if voice.get("badge"):
+        lines.append("- Бейджи/цены: " + " | ".join(voice["badge"][:4]))
     review = guide.get("review") or {}
     for key, label in (("tone", "Тон"), ("colorUsage", "Цвет"), ("typographyCharacter", "Типографика (ревью)"),
                        ("imageryStyle", "Имиджи")):
