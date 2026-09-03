@@ -90,6 +90,31 @@ def _install_deterministic_font_fallbacks(render_ir: dict, assets: dict) -> None
     assets.update(fallback_assets)
 
 
+_ASSET_HREF_PREFIXES = ("ddna://", "/fonts/", "data:")
+
+
+def _neutralize_links(ir: dict) -> dict:
+    """Копия IR без href, не указывающих на локальные ассеты (гард считает
+    ассетом любой непустой href, включая «#»)."""
+    import copy
+
+    out = copy.deepcopy(ir)
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            href = node.get("href")
+            if isinstance(href, str) and not href.startswith(_ASSET_HREF_PREFIXES):
+                del node["href"]
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(out)
+    return out
+
+
 def render_png(ir: dict, width: int = 1440) -> bytes:
     """Render a complete Design IR page to PNG with the offline timeline path.
 
@@ -108,6 +133,10 @@ def render_png(ir: dict, width: int = 1440) -> bytes:
         raise RuntimeError(
             f"Design IR renderer is missing: {RENDERER_JS}; run the frontend build first")
 
+    # Ссылки (href кнопок/навигации: якоря, mailto, внешние URL) при рендере
+    # не загружаются — это не ассеты. Сгенерированный IR полон таких href;
+    # без нейтрализации гард ассетов ронял судью на каждой второй странице.
+    ir = _neutralize_links(ir)
     assets, asset_errors = materialize_render_assets(ir)
     if asset_errors:
         raise ValueError("render assets failed validation: " + "; ".join(asset_errors[:3]))
