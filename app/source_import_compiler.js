@@ -108,7 +108,10 @@
                       alpha=(alA*pa+alB*pb)/tot;
                     }
                     else return null;
-                    if(alpha<=.05) return null;
+                    // Порог был .05: полупрозрачные поверхности тёмных UI (white 3–5%
+                    // как «чуть светлее фона», рамки 4%) выбрасывались как прозрачные —
+                    // AI-ревью мастеров видело «фон темнее оригинала, рамки не те».
+                    if(alpha<=.008) return null;
                     return alpha<1 ? out+Math.round(alpha*255).toString(16).padStart(2,'0') : out;
                   };
                   // helpers для color-mix (после hex — рекурсивный разбор частей)
