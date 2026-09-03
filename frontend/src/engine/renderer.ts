@@ -398,6 +398,11 @@ import { isLockedNode } from "./locked";
         letter-spacing:var(--t-eyebrow-tracking,.12em); font-weight:var(--t-eyebrow-weight,600); text-transform:uppercase; }
       .ir-${uid} .sec, .ir-${uid} .sec-free { padding:var(--sec-py) 32px; position:relative; }
       .ir-${uid} .sec-source { padding:0; position:relative; margin:0; }
+      /* Источник объявляет лишние веса поверх одного файла (JetBrains Mono 400/500/600
+         → один woff2), браузер там не синтезирует жирность. Захват хранит только
+         реальные файлы, поэтому без запрета синтеза 500-й вес рисовался faux-bold
+         и каждая подпись расходилась с оригиналом на 1–2px по ширине. */
+      .ir-${uid} .sec-source, .ir-${uid} .sec-source * { font-synthesis:none; }
       .ir-${uid} .source-underlay { position:absolute; inset:0; width:100%; height:100%; object-fit:fill; pointer-events:none; user-select:none; }
       .ir-${uid} .sec-source.with-underlay > [data-ir-frame] > * { opacity:0 !important; }
       .ir-${uid} .sec-source.with-underlay > [data-ir-frame].editing > * { opacity:.92 !important; }

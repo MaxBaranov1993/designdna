@@ -395,11 +395,14 @@ def test_region_diffs_cover_remainder_rows_and_columns():
     height, width = 10, 10
     ref = np.zeros((height, width, 3), dtype=np.uint8)
     got = ref.copy()
-    got[height - 1, width - 1] = [255, 255, 255]
+    # Пятно 4×4: допуск сдвига на 1px (AA_SHIFT_TOLERANCE_PX) прощает
+    # расхождения тоньше 3px, поэтому одиночный пиксель уже не считается.
+    got[height - 4:, width - 4:] = [255, 255, 255]
     metrics = fidelity_harness._image_metrics(_png_bytes(ref), _png_bytes(got))
     assert metrics["size_match"]
     assert metrics["pixel_similarity"] is not None
-    assert {"region": [7, 7], "mismatch_pct": 25.0} in metrics["region_diffs"]
+    assert metrics["pixel_similarity_exact"] < metrics["pixel_similarity"] < 100
+    assert {"region": [7, 7], "mismatch_pct": 100.0} in metrics["region_diffs"]
 
 
 def test_region_diffs_partition_covers_every_pixel():

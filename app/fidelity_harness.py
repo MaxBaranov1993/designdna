@@ -293,6 +293,11 @@ def _decode_data_url(data_url: str) -> bytes:
     return base64.b64decode(b64)
 
 
+def _fonts_dir() -> Path:
+    import os
+    return Path(os.environ.get("DESIGNDNA_DATA_DIR") or (ROOT / "data")) / "fonts"
+
+
 def _inline_font_face_css(ir: dict) -> str:
     """Resolve captured /fonts assets for the about:blank harness page.
 
@@ -318,9 +323,15 @@ def _inline_font_face_css(ir: dict) -> str:
         filename = url.rsplit("/", 1)[-1]
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", filename):
             continue
-        path = ROOT / "data" / "fonts" / filename
+        # Шрифты источника лежат в DESIGNDNA_DATA_DIR/fonts (десктоп: userData/data),
+        # а не только в <repo>/data: с жёстким путём harness мерил fallback-глифы
+        # и каждый мастер получал ~90% при идеальной геометрии.
+        path = _fonts_dir() / filename
         if not path.is_file():
-            continue
+            fallback = ROOT / "data" / "fonts" / filename
+            if not fallback.is_file():
+                continue
+            path = fallback
         suffix = path.suffix.lower()
         mime = "font/woff2" if suffix == ".woff2" else "font/woff" if suffix == ".woff" else "font/ttf"
         fmt = "woff2" if suffix == ".woff2" else "woff" if suffix == ".woff" else "truetype"
@@ -392,6 +403,30 @@ def _render_block_png(page, ir: dict, viewport_name: str, width: int, height: in
     return page.locator("#preview").screenshot(type="png", timeout=15000)
 
 
+AA_SHIFT_TOLERANCE_PX = 1
+
+
+def _shift_tolerant_match(ref_arr, got_arr, exact):
+    """Маска совпадений с допуском сдвига на AA_SHIFT_TOLERANCE_PX в любую сторону."""
+    import numpy as np
+
+    height, width = exact.shape
+    match = exact.copy()
+    radius = AA_SHIFT_TOLERANCE_PX
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            if dx == 0 and dy == 0:
+                continue
+            ys = slice(max(0, dy), height + min(0, dy))
+            xs = slice(max(0, dx), width + min(0, dx))
+            yb = slice(max(0, -dy), height + min(0, -dy))
+            xb = slice(max(0, -dx), width + min(0, -dx))
+            shifted = np.zeros_like(exact)
+            shifted[ys, xs] = (np.abs(ref_arr[ys, xs] - got_arr[yb, xb]) < CHANNEL_TOLERANCE).all(axis=2)
+            match |= shifted
+    return match
+
+
 def _image_metrics(reference_png: bytes, render_png: bytes) -> dict:
     """Сравнение равных по размеру образов: similarity, region diffs, diff PNG."""
     import numpy as np
@@ -408,9 +443,18 @@ def _image_metrics(reference_png: bytes, render_png: bytes) -> dict:
     result["reference_png"] = ref_buf.getvalue()
     if ref.size != got.size:
         return result  # без ресайза: неравные размеры — честный провал метрики
-    diff = np.abs(np.asarray(got, dtype=np.int16) - np.asarray(ref, dtype=np.int16))
-    match = (diff < CHANNEL_TOLERANCE).all(axis=2)
+    ref_arr = np.asarray(ref, dtype=np.int16)
+    got_arr = np.asarray(got, dtype=np.int16)
+    diff = np.abs(got_arr - ref_arr)
+    exact = (diff < CHANNEL_TOLERANCE).all(axis=2)
+    # Точное попиксельное сравнение считало расхождением КАЖДУЮ кромку глифа
+    # при сдвиге текста на 1px (субпиксельная раскладка/округление line-height):
+    # блок с идеальной геометрией и теми же шрифтами получал ~90%. Как pixelmatch,
+    # допускаем сдвиг на AA_SHIFT_TOLERANCE_PX: пиксель совпал, если в окрестности
+    # рендера есть такой же цвет. Точное значение остаётся в pixel_similarity_exact.
+    match = _shift_tolerant_match(ref_arr, got_arr, exact)
     result["pixel_similarity"] = round(float(match.mean()) * 100, 2)
+    result["pixel_similarity_exact"] = round(float(exact.mean()) * 100, 2)
 
     height, width = match.shape
     regions = []

@@ -1777,7 +1777,29 @@ def _resolve_font_faces(raw_faces: list, used: set,
     в IR блока, скачивает файлы и отдаёт ссылки на локальную базу /fonts."""
     out: list = []
     seen: set = set()
-    for face in raw_faces or []:
+    # Раньше лимит был 12 faces: у страницы с тремя семьями × subsets × веса
+    # (Hanken 400/500/600/700 × 2) он срезал JetBrains Mono 500/600, и рендер
+    # синтезировал faux-bold там, где сайт объявляет 500 поверх файла 400.
+    # Сначала — faces с реально используемыми весами, потом остальные; лимит 48.
+    max_faces = 48
+    used_weights = used_weights or {}
+
+    def _face_used_weight(face: dict) -> bool:
+        fam_key = str(face.get("family") or "").strip().lower()
+        wanted = used_weights.get(fam_key)
+        if not wanted:
+            return True
+        raw = str(face.get("weight") or "400").strip().split()
+        if len(raw) == 2 and all(part.isdigit() for part in raw):
+            low, high = sorted((int(raw[0]), int(raw[1])))
+            return any(low <= w <= high for w in wanted)
+        try:
+            return int(raw[0]) in wanted
+        except (ValueError, IndexError):
+            return True
+
+    ordered = sorted(raw_faces or [], key=lambda face: 0 if _face_used_weight(face) else 1)
+    for face in ordered:
         fam = str(face.get("family") or "").strip()
         if not fam or fam.lower() not in used:
             continue
@@ -1816,10 +1838,10 @@ def _resolve_font_faces(raw_faces: list, used: set,
                 if unicode_range:
                     resolved["unicodeRange"] = unicode_range
                 out.append(resolved)
-                if len(out) >= 12:
+                if len(out) >= max_faces:
                     break
             break
-        if len(out) >= 12:
+        if len(out) >= max_faces:
             break
     return out
 
