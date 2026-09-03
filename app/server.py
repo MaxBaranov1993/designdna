@@ -1432,7 +1432,11 @@ def _quality_repair_messages(ir: dict, scorecard: dict, brief: str) -> tuple[lis
         return None, "судья не дал инструкций для repair"
     user = (
         "Исправь Design IR строго по замечаниям Quality Pass. Сохрани полезный контент, "
-        "не добавляй неупомянутые секции и верни только полный валидный JSON.\n\n"
+        "не добавляй неупомянутые секции и верни только полный валидный JSON.\n"
+        "Ограничения починки: элементы image с imagePrompt — штатные заглушки, их не заменять "
+        "«нарисованным интерфейсом» из примитивов и не удалять; во free-раскладке дети не должны "
+        "перекрываться и выходить за границы родителя — при сомнении переводи группу в auto-layout "
+        "(frame.layout row/column с gap), а не подбирай координаты.\n\n"
         f"## Бриф\n{brief.strip() or '(не указан)'}\n\n"
         f"## Инструкции\n{instructions}\n\n"
         f"## Входной Design IR\n{json.dumps(ir, ensure_ascii=False)}"

@@ -175,10 +175,16 @@ def _live_pairs(assets_dir: Path) -> list[dict[str, Any]]:
     for brief in BRIEFS:
         row: dict[str, Any] = {"brief": brief}
         for condition, with_exemplars in (("before", False), ("after", True)):
-            ir = _generate(brief, with_exemplars=with_exemplars)
-            png = assets_dir / "briefs" / f"{brief.slug}-{condition}.png"
-            size = _save_png(render_png(ir, width=1440), png)
-            row[condition] = {"ir": ir, "png": png, "png_size": size, "scorecard": _judge(ir, brief.text)}
+            # Провал одного условия (невалидный IR, таймаут CLI) — строка отчёта,
+            # а не обрыв всего прогона: остальные брифы и эталоны важнее.
+            try:
+                ir = _generate(brief, with_exemplars=with_exemplars)
+                png = assets_dir / "briefs" / f"{brief.slug}-{condition}.png"
+                size = _save_png(render_png(ir, width=1440), png)
+                row[condition] = {"ir": ir, "png": png, "png_size": size, "scorecard": _judge(ir, brief.text)}
+            except Exception as exc:  # noqa: BLE001 — отчёт должен пережить любой сбой условия
+                row[condition] = {"error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+                print(f"[{brief.slug}/{condition}] failed: {row[condition]['error']}", file=sys.stderr)
         rows.append(row)
     return rows
 
@@ -202,13 +208,20 @@ def _render_report(report: Path, deterministic: list[dict[str, Any]], live: list
         "|---|---|---:|---|---:|---:|",
     ]
     if live:
+        def cell(item):
+            if "error" in item:
+                return f"failed: {item['error']}", None
+            return f"[PNG]({_relative(item['png'], report)})", int(item["scorecard"]["score"])
         for row in live:
-            before = row["before"]; after = row["after"]
-            bs = int(before["scorecard"]["score"]); after_score = int(after["scorecard"]["score"])
-            lines.append(f"| {row['brief'].product} | [PNG]({_relative(before['png'], report)}) | {bs} | [PNG]({_relative(after['png'], report)}) | {after_score} | {after_score - bs:+d} |")
-        before_scores = [int(row["before"]["scorecard"]["score"]) for row in live]
-        after_scores = [int(row["after"]["scorecard"]["score"]) for row in live]
-        lines += ["", f"Median: **{statistics.median(before_scores):g} → {statistics.median(after_scores):g}**."]
+            b_png, bs = cell(row["before"]); a_png, after_score = cell(row["after"])
+            delta = f"{after_score - bs:+d}" if bs is not None and after_score is not None else "—"
+            lines.append(f"| {row['brief'].product} | {b_png} | {bs if bs is not None else '—'} | {a_png} | {after_score if after_score is not None else '—'} | {delta} |")
+        before_scores = [int(row["before"]["scorecard"]["score"]) for row in live if "scorecard" in row["before"]]
+        after_scores = [int(row["after"]["scorecard"]["score"]) for row in live if "scorecard" in row["after"]]
+        if before_scores and after_scores:
+            lines += ["", f"Median: **{statistics.median(before_scores):g} → {statistics.median(after_scores):g}** (пар с оценкой: {min(len(before_scores), len(after_scores))} из {len(live)})."]
+        else:
+            lines += ["", "Median: — (ни одной полной пары до/после)."]
     else:
         for brief in BRIEFS:
             lines.append(f"| {brief.product} | not run | not run | not run | not run | not run |")

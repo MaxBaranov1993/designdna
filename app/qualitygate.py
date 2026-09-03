@@ -516,6 +516,67 @@ def _fix_min_font_size(ir) -> list:
 
 # ---------- реестр правил ----------
 
+# ---------- правило: наложения и выход за границы во free-раскладке ----------
+#
+# Композиционные секции и починки судьи любят абсолютные координаты; типичные
+# дефекты живой генерации — карточка поверх соседа и обрезанный контент. Это
+# считается детерминированно: прямоугольники детей free-родителя.
+
+FREE_OVERLAP_RATIO = 0.25
+
+
+def _rect(frame):
+    if not isinstance(frame, dict):
+        return None
+    x, y, w, h = frame.get("x"), frame.get("y"), frame.get("width"), frame.get("height")
+    if all(_is_num(v) for v in (x, y, w, h)) and w > 0 and h > 0:
+        return (float(x), float(y), float(w), float(h))
+    return None
+
+
+def _check_free_overlap(ir) -> list:
+    out = []
+
+    def walk(node, path):
+        if not isinstance(node, dict):
+            return
+        frame = node.get("frame") if isinstance(node.get("frame"), dict) else {}
+        children = node.get("children") if isinstance(node.get("children"), list) else []
+        if frame.get("layout") == "free" and children:
+            pw = frame.get("width") if _is_num(frame.get("width")) else None
+            ph = frame.get("height") if _is_num(frame.get("height")) else None
+            rects = []
+            for i, child in enumerate(children):
+                if not isinstance(child, dict):
+                    continue
+                r = _rect(child.get("frame"))
+                if r is None:
+                    continue
+                cpath = f"{path}.children[{i}]"
+                x, y, w, h = r
+                if pw is not None and x + w > pw + 0.5:
+                    out.append({"path": f"{cpath}.frame", "message": f"x+width={format(x + w, 'g')} выходит за ширину родителя {format(pw, 'g')}"})
+                if ph is not None and y + h > ph + 0.5:
+                    out.append({"path": f"{cpath}.frame", "message": f"y+height={format(y + h, 'g')} выходит за высоту родителя {format(ph, 'g')}"})
+                rects.append((cpath, r))
+            for a in range(len(rects)):
+                for b in range(a + 1, len(rects)):
+                    (pa, (ax, ay, aw, ah)), (pb, (bx, by, bw, bh)) = rects[a], rects[b]
+                    ix = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
+                    iy = max(0.0, min(ay + ah, by + bh) - max(ay, by))
+                    inter = ix * iy
+                    smaller = min(aw * ah, bw * bh)
+                    if smaller > 0 and inter / smaller > FREE_OVERLAP_RATIO:
+                        out.append({"path": f"{pb}.frame",
+                                    "message": f"перекрывает {pa} на {round(100 * inter / smaller)}% площади"})
+        for i, child in enumerate(children):
+            walk(child, f"{path}.children[{i}]")
+
+    for i, base, sec in _iter_sections(ir):
+        walk(sec, base)
+    return out
+
+
 RULES = [
     {"id": "single-h1", "severity": SEVERITY_ERROR,
      "description": "ровно один h1 среди heading-элементов",
@@ -548,6 +609,9 @@ RULES = [
     {"id": "min-font-size", "severity": SEVERITY_ERROR,
      "description": f"текст не мельче {MIN_FONT_SIZE}px",
      "check": _check_min_font_size, "fix": _fix_min_font_size},
+    {"id": "free-overlap", "severity": SEVERITY_ERROR,
+     "description": "во free-раскладке дети не перекрываются и не выходят за границы родителя",
+     "check": _check_free_overlap},
 ]
 RULES_BY_ID = {r["id"]: r for r in RULES}
 
