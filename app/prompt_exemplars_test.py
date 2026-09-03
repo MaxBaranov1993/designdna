@@ -131,7 +131,7 @@ def test_load_exemplars_tolerates_missing_files(monkeypatch, tmp_path):
 def test_full_generate_prompt_carries_brief_and_exemplars():
     prompt = llm_client.build_system_prompt(
         "generate",
-        design_brief={"tone": "editorial", "typePair": "fraunces-newsreader"},
+        design_brief={"tone": "editorial", "typePair": "lora-literata"},
         exemplars=llm_client.load_exemplars("винный бар"),
     )
     assert "editorial" in prompt

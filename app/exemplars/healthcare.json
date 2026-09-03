@@ -1,5 +1,6 @@
 {
   "version": "1.1",
+  "frame": {"width": 1440},
   "meta": {"name": "Опора — восстановление после травм", "description": "Сайт медицинского центра с маршрутом пациента, границами метода и ясной записью.", "styleTags": ["clinical", "human", "calm"], "direction": {"name": "Маршрут восстановления", "motivation": "Пациенту после травмы важны понятные этапы и реалистичный прогноз, а не язык чудесного исцеления", "tradeoff": "Спокойная фактическая подача выглядит менее эмоционально, чем привычная медицинская реклама"}},
   "tokens": {"mode": "light", "color": {"primary": "#146B70", "secondary": "#395B66", "accent": "#D46C4E", "background": "#EEF4F2", "surface": "#FFFFFF", "text": "#172628", "textMuted": "#586C6D", "border": "#C9D9D6"}, "font": {"display": {"family": "Source Sans 3", "weight": 600}, "body": {"family": "Inter", "weight": 400}, "scale": "default"}, "radius": {"card": "md", "button": "md", "input": "md"}, "spacing": {"section": "lg", "container": "default"}, "shadow": "sm"},
   "tree": [

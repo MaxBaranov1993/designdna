@@ -19,7 +19,7 @@ def sample() -> dict:
         "schemaVersion": "design-brief/1.0",
         "audience": {"primary": "Independent restaurant owners", "task": "Book a demo"},
         "tone": "editorial",
-        "typePair": "fraunces-newsreader",
+        "typePair": "lora-literata",
         "palette": {
             "background": {"lightness": 0.96, "chroma": 0.015, "hue": 80},
             "accent": {"lightness": 0.62, "chroma": 0.16, "hues": [35, 190]},

@@ -1,5 +1,6 @@
 {
   "version": "1.1",
+  "frame": {"width": 1440},
   "meta": {
     "name": "Сквозняк — винный бар с кухней",
     "description": "Сайт винного бара, собранный как разворот меню: тёмная бумага, вертикальный набор, цены в правой колонке.",
@@ -23,7 +24,7 @@
       "border": "#322A22"
     },
     "font": {
-      "display": { "family": "Fraunces", "weight": 600 },
+      "display": { "family": "Vollkorn", "weight": 700 },
       "body": { "family": "Inter", "weight": 400 },
       "scale": "default"
     },

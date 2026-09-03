@@ -224,6 +224,9 @@ def ensure_tokens_v2(ir: dict) -> None:
         tokens["v2"] = derived
 
 
+GENERATED_ARTBOARD_WIDTH = 1440
+
+
 def sanitize_generated_ir(ir: dict) -> dict:
     """Repair common provider-only aliases without weakening Design IR validation.
 
@@ -278,7 +281,22 @@ def sanitize_generated_ir(ir: dict) -> dict:
     if isinstance(tree, list):
         for section in tree:
             normalize_node(section)
+
+    # Артборд. Промпты (DESIGN.md) просят компоновать под 1440px, а рендер без
+    # корневого frame берёт холст 960px и масштабирует его 1.5×: контейнер
+    # «wide» превращается в 896px, ряды hero (650px колонка + кнопка) не
+    # помещаются и складываются в столбик. Судья снимал за это на каждой странице.
+    frame = out.get("frame")
+    if not isinstance(frame, dict):
+        frame = {}
+    if not _is_number(frame.get("width")):
+        frame = dict(frame, width=GENERATED_ARTBOARD_WIDTH)
+    out["frame"] = frame
     return out
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def migrate_ir(ir: dict, source: str | None = None, *, recorded_at: str | None = None) -> dict:

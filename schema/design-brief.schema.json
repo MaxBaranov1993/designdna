@@ -20,7 +20,7 @@
       "enum": ["editorial", "brutalist-minimal", "soft-pastel", "luxury", "playful", "industrial", "retro-futuristic", "organic", "technical", "art-deco"]
     },
     "typePair": {
-      "enum": ["fraunces-newsreader", "prata-golos", "russo-golos", "cormorant-source", "unbounded-golos", "bebas-source", "yeseva-golos", "oswald-pt", "vollkorn-golos", "poiret-commissioner"]
+      "enum": ["lora-literata", "prata-golos", "russo-golos", "cormorant-source", "unbounded-golos", "bebas-source", "yeseva-golos", "oswald-pt", "vollkorn-golos", "poiret-commissioner"]
     },
     "palette": {
       "type": "object",

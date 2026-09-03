@@ -1,5 +1,6 @@
 {
   "version": "1.1",
+  "frame": {"width": 1440},
   "meta": {
     "name": "Лера Соколова — предметный дизайнер",
     "description": "Портфолио через один подробно разобранный объект вместо стены одинаковых превью.",
@@ -13,7 +14,7 @@
   "tokens": {
     "mode": "light",
     "color": {"primary": "#9C3D24", "secondary": "#29322C", "accent": "#D9A441", "background": "#F1EEE7", "surface": "#FBFAF6", "text": "#20231F", "textMuted": "#686B62", "border": "#CBC6BA"},
-    "font": {"display": {"family": "Fraunces", "weight": 600}, "body": {"family": "Inter", "weight": 400}, "scale": "spacious"},
+    "font": {"display": {"family": "Playfair Display", "weight": 700}, "body": {"family": "Inter", "weight": 400}, "scale": "spacious"},
     "radius": {"card": "sm", "button": "sm", "input": "sm"},
     "spacing": {"section": "xl", "container": "default"},
     "shadow": "none"

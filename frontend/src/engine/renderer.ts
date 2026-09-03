@@ -429,7 +429,8 @@ import { isLockedNode } from "./locked";
          работает там, где есть color-mix, первая остаётся фолбэком. */
       .ir-${uid} .img-ph { background:var(--c-surface); border-radius:var(--r-card); border:1px solid var(--c-border);
         background-image:linear-gradient(150deg, color-mix(in srgb, var(--c-accent) 16%, transparent) 0%, color-mix(in srgb, var(--c-primary) 9%, transparent) 100%);
-        display:flex; align-items:center; justify-content:center; color:var(--c-muted); font-size:12px; min-height:180px; padding:16px; text-align:center; }
+        display:flex; align-items:center; justify-content:center; color:var(--c-muted); font-size:13px; line-height:1.5; min-height:180px; padding:16px; text-align:center; }
+      .ir-${uid} .img-ph > span { max-width:720px; }
       .ir-${uid} .sec-head { text-align:center; max-width:640px; margin:0 auto 40px; }
       .ir-${uid} .sec-head h2 { margin-bottom:12px; }
       .ir-${uid} .divider { height:1px; background:var(--c-border); margin:16px 0; }
@@ -560,10 +561,22 @@ import { isLockedNode } from "./locked";
       // если метрики шрифта всё же разойдутся (клип вместо overflow поверх)
       const clipText = (el.type === "text" || el.type === "heading") &&
         el.frame && typeof el.frame.height === "number" ? "overflow:hidden" : "";
-      const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, clipText);
+      // Картинка без явной ширины в auto-row делит ряд с соседями, а не берёт
+      // max-content подписи заглушки: иначе ряд «картинка + колонка» с wrap
+      // складывался в столбик, а без wrap выдавливал колонку за край.
+      // То же для текста и заголовков: строка «H2 + колонка 400» в wrap-ряду
+      // складывалась, потому что заголовок брал max-content на всю ширину.
+      const flexImage = (el.type === "image" || el.type === "heading" || el.type === "text") && !parentFree &&
+        parentFrame && parentFrame.layout === "auto" && parentFrame.direction === "row" &&
+        !(el.frame && (typeof el.frame.width === "number" || el.frame.width === "hug" || el.frame.width === "fill"))
+        ? "flex:1 1 0;min-width:0" : "";
+      const extra = [clipText, flexImage].filter(Boolean).join(";");
+      const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, extra);
       // если frame пустой и withFrame не обернул — добавляем span-обёртку с path
       out = (wrapped === html && irPath)
-        ? `<span data-ir-path="${esc(irPath)}" style="display:inline-block">${html}</span>`
+        ? (flexImage
+          ? `<div data-ir-path="${esc(irPath)}" style="${flexImage}">${html}</div>`
+          : `<span data-ir-path="${esc(irPath)}" style="display:inline-block">${html}</span>`)
         : wrapped;
     }
     // editable:false (raster fallback источника): слой остаётся selectable и
@@ -632,7 +645,7 @@ import { isLockedNode } from "./locked";
           // это ломало ритм колонки, где картинка задаёт пропорцию блока
           const ratio = ASPECT_RATIO[el.aspect];
           const css = ratio ? ` style="aspect-ratio:${ratio};min-height:0"` : "";
-          return `<div class="img-ph"${css}>${esc(el.imagePrompt || el.alt || "изображение")}</div>`;
+          return `<div class="img-ph"${css}><span>${esc(el.imagePrompt || el.alt || "изображение")}</span></div>`;
         }
       case "divider":
         return `<div class="divider"></div>`;
@@ -807,7 +820,11 @@ import { isLockedNode } from "./locked";
           <span data-ir-path="props.links.${i}.label">${esc(l.label)}</span></a>`).join("");
       const logo = `<a style="font-family:var(--font-display);font-weight:var(--fw-display);font-size:calc(19px * var(--fs));color:var(--c-text);text-decoration:none" href="#" onclick="return false">
           <span data-ir-path="props.logoText">${esc(p.logoText || "")}</span></a>`;
-      const cta = v === "minimal" ? "" : btnHtml(p.cta, "primary", "props.cta.text");
+      // minimal: CTA только если он задан в props — тогда компактный outline
+      // (судья снимал за «предусмотренный, но невидимый» CTA навигации)
+      const cta = v === "minimal"
+        ? (p.cta && p.cta.text ? btnHtml(p.cta, "outline", "props.cta.text") : "")
+        : btnHtml(p.cta, "primary", "props.cta.text");
       let inner;
       if (v === "centered") {
         inner = `<div style="display:flex;align-items:center;justify-content:space-between;gap:24px">

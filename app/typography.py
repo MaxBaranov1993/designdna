@@ -42,8 +42,9 @@ FONT_PAIRS: list[dict] = [
     {"name": "golos", "display": {"family": "Golos Text", "weight": 700},
      "body": {"family": "Golos Text", "weight": 400},
      "moods": {"neutral", "cyrillic", "modern", "minimal"}},
-    {"name": "fraunces-newsreader", "display": {"family": "Fraunces", "weight": 700},
-     "body": {"family": "Newsreader", "weight": 400},
+    # Fraunces/Newsreader в Google Fonts без кириллицы — заголовки падали в Inter.
+    {"name": "lora-literata", "display": {"family": "Lora", "weight": 700},
+     "body": {"family": "Literata", "weight": 400},
      "moods": {"editorial", "organic", "warm", "luxury"}},
     {"name": "prata-golos", "display": {"family": "Prata", "weight": 400},
      "body": {"family": "Golos Text", "weight": 400},
@@ -104,7 +105,7 @@ for _pair in FONT_PAIRS:
         _face.setdefault("stack", font_stack(_face["family"]))
 
 ART_DIRECTION_PAIR_NAMES = (
-    "fraunces-newsreader", "prata-golos", "russo-golos", "cormorant-source",
+    "lora-literata", "prata-golos", "russo-golos", "cormorant-source",
     "unbounded-golos", "bebas-source", "yeseva-golos", "oswald-pt",
     "vollkorn-golos", "poiret-commissioner",
 )

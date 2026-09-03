@@ -1,14 +1,445 @@
 {
   "version": "1.1",
-  "meta": {"name": "Дом 12 — клубный дом", "description": "Недвижимость через планировку, свет и эксплуатационные факты вместо статусных обещаний.", "styleTags": ["architectural", "restrained", "premium"], "direction": {"name": "Архитектурное досье", "motivation": "Покупатель дорогой квартиры принимает решение по плану, свету и устройству дома, а не по риторике исключительности", "tradeoff": "Рациональная подача оставляет меньше места эмоциональной мечте"}},
-  "tokens": {"mode": "light", "color": {"primary": "#5C5145", "secondary": "#6E7772", "accent": "#A96545", "background": "#EDEAE4", "surface": "#FAF9F5", "text": "#242422", "textMuted": "#66645F", "border": "#C9C4BA"}, "font": {"display": {"family": "DM Serif Display", "weight": 400}, "body": {"family": "Inter", "weight": 400}, "scale": "spacious"}, "radius": {"card": "sm", "button": "sm", "input": "sm"}, "spacing": {"section": "xl", "container": "wide"}, "shadow": "none"},
+  "frame": {
+    "width": 1440
+  },
+  "meta": {
+    "name": "Дом 12 — клубный дом",
+    "description": "Недвижимость через планировку, свет и эксплуатационные факты вместо статусных обещаний.",
+    "styleTags": [
+      "architectural",
+      "restrained",
+      "premium"
+    ],
+    "direction": {
+      "name": "Архитектурное досье",
+      "motivation": "Покупатель дорогой квартиры принимает решение по плану, свету и устройству дома, а не по риторике исключительности",
+      "tradeoff": "Рациональная подача оставляет меньше места эмоциональной мечте"
+    }
+  },
+  "tokens": {
+    "mode": "light",
+    "color": {
+      "primary": "#5C5145",
+      "secondary": "#6E7772",
+      "accent": "#A96545",
+      "background": "#EDEAE4",
+      "surface": "#FAF9F5",
+      "text": "#242422",
+      "textMuted": "#66645F",
+      "border": "#C9C4BA"
+    },
+    "font": {
+      "display": {
+        "family": "Prata",
+        "weight": 400
+      },
+      "body": {
+        "family": "Inter",
+        "weight": 400
+      },
+      "scale": "spacious"
+    },
+    "radius": {
+      "card": "sm",
+      "button": "sm",
+      "input": "sm"
+    },
+    "spacing": {
+      "section": "xl",
+      "container": "wide"
+    },
+    "shadow": "none"
+  },
   "tree": [
-    {"id": "nav", "type": "navbar", "variant": "minimal", "props": {"logoText": "Дом 12", "links": [{"label": "Архитектура", "href": "#architecture"}, {"label": "Квартиры", "href": "#plans"}, {"label": "Ход работ", "href": "#build"}], "cta": {"text": "Выбрать квартиру", "variant": "outline"}}},
-    {"id": "hero", "type": "composition", "variant": "architectural-plate", "props": {"background": "background", "density": "airy"}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 22}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 64, "justify": "space-between", "align": "end", "wrap": true}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 12, "width": 650}, "children": [{"type": "text", "size": "sm", "text": "ХАМОВНИКИ · 28 КВАРТИР · IV КВАРТАЛ 2027"}, {"type": "heading", "level": 1, "text": "Дом, где окно начинается от пола, а двор — от порога"}]}, {"type": "button", "text": "Смотреть доступные планы", "variant": "primary"}]}, {"type": "image", "aspect": "16:9", "alt": "Кирпичный фасад дома в утреннем свете", "imagePrompt": "Спокойный кирпичный фасад шестиэтажного клубного дома на московской улице ранним осенним утром, глубокие оконные откосы и взрослые деревья во дворе, архитектурная съёмка с уровня пешехода 35 мм, естественные серо-терракотовые цвета"}]}]},
-    {"id": "architecture", "type": "composition", "variant": "building-section", "props": {"background": "surface", "density": "normal"}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 64, "wrap": true}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 12, "width": 360}, "children": [{"type": "heading", "level": 2, "text": "Шесть этажей вокруг тихого двора"}, {"type": "text", "text": "Первый этаж поднят на 90 сантиметров над тротуаром. Окна квартир выходят либо на южную улицу, либо в закрытый двор без машин."}]}, {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 14, "width": 560}, "children": [{"type": "text", "size": "sm", "text": "РАЗРЕЗ А–А"}, {"type": "divider"}, {"type": "text", "text": "Высота потолка 3,2 м · окна 2,7 м · наружная стена 640 мм · два лифта на секцию · не больше трёх квартир на площадке."}, {"type": "text", "text": "Вентиляция индивидуальная для каждой квартиры; внешние блоки кондиционеров спрятаны в технических лоджиях и доступны из общего коридора."}]}]}]},
-    {"id": "plans", "type": "composition", "variant": "plan-ledger", "props": {"background": "background", "density": "tight"}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 18}, "children": [{"type": "heading", "level": 2, "text": "Квартиры в продаже"}, {"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 28, "wrap": true}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 8, "width": 470}, "children": [{"type": "text", "size": "sm", "text": "3 ЭТАЖ · ОКНА ВО ДВОР"}, {"type": "heading", "level": 3, "text": "2 спальни · 104,6 м²"}, {"type": "text", "text": "Кухня-гостиная 41 м², мастер-блок, постирочная · 118 млн ₽"}, {"type": "divider"}]}, {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 8, "width": 540}, "children": [{"type": "text", "size": "sm", "text": "5 ЭТАЖ · ЮГ И ЗАПАД"}, {"type": "heading", "level": 3, "text": "3 спальни · 156,2 м²"}, {"type": "text", "text": "Три стороны света, две ванные, кабинет у входа · 189 млн ₽"}, {"type": "divider"}]}]}]}]},
-    {"id": "build", "type": "composition", "variant": "site-note", "props": {"background": "surface", "density": "normal"}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 60, "align": "start", "wrap": true}, "children": [{"type": "image", "aspect": "4:3", "alt": "Кладка фасада на строительной площадке", "imagePrompt": "Крупный план кладки фасада на реальной строительной площадке, образцы клинкерного кирпича, раствор и металлические связи, пасмурный дневной свет, техническая документальная съёмка 50 мм без постановочных рабочих"}, {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 14, "width": 430}, "children": [{"type": "text", "size": "sm", "text": "АВГУСТ 2026 · 38% ГОТОВНОСТИ"}, {"type": "heading", "level": 2, "text": "Монолит завершён, началась кладка фасада"}, {"type": "text", "text": "Каждые две недели публикуем фото одного и того же узла с датой. Следующий контрольный этап — закрытие теплового контура в феврале 2027."}]}]}]},
-    {"id": "visit", "type": "composition", "variant": "sales-note", "props": {"background": "background", "density": "airy"}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 72, "justify": "space-between", "align": "center", "wrap": true}, "children": [{"type": "heading", "level": 2, "text": "Посмотреть макет и пройти вокруг участка"}, {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 10, "width": 400}, "children": [{"type": "text", "text": "Встреча занимает 50 минут. Покажем вид из выбранной квартиры по высоте камеры и дадим распечатанный план с размерами."}, {"type": "button", "text": "Выбрать время встречи", "variant": "primary"}]}]}]},
-    {"id": "footer", "type": "footer", "variant": "minimal", "props": {"logoText": "Дом 12", "tagline": "Клубный дом в Хамовниках", "columns": [{"title": "Документы", "links": [{"label": "Проектная декларация", "href": "#docs"}, {"label": "Разрешение на строительство", "href": "#permit"}, {"label": "Условия покупки", "href": "#terms"}]}], "copyright": "© 2026 Дом 12"}}
+    {
+      "id": "nav",
+      "type": "navbar",
+      "variant": "minimal",
+      "props": {
+        "logoText": "Дом 12",
+        "links": [
+          {
+            "label": "Архитектура",
+            "href": "#architecture"
+          },
+          {
+            "label": "Квартиры",
+            "href": "#plans"
+          },
+          {
+            "label": "Ход работ",
+            "href": "#build"
+          }
+        ],
+        "cta": {
+          "text": "Выбрать квартиру",
+          "variant": "outline"
+        }
+      }
+    },
+    {
+      "id": "hero",
+      "type": "composition",
+      "variant": "architectural-plate",
+      "props": {
+        "background": "background",
+        "density": "airy"
+      },
+      "children": [
+        {
+          "type": "frame",
+          "frame": {
+            "layout": "auto",
+            "direction": "column",
+            "gap": 22
+          },
+          "children": [
+            {
+              "type": "frame",
+              "frame": {
+                "layout": "auto",
+                "direction": "row",
+                "gap": 64,
+                "justify": "space-between",
+                "align": "end",
+                "wrap": true
+              },
+              "children": [
+                {
+                  "type": "frame",
+                  "frame": {
+                    "layout": "auto",
+                    "direction": "column",
+                    "gap": 12,
+                    "width": 650
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "size": "sm",
+                      "text": "ХАМОВНИКИ · 28 КВАРТИР · IV КВАРТАЛ 2027"
+                    },
+                    {
+                      "type": "heading",
+                      "level": 1,
+                      "text": "Дом, где окно начинается от пола, а двор — от порога"
+                    }
+                  ]
+                },
+                {
+                  "type": "button",
+                  "text": "Смотреть доступные планы",
+                  "variant": "primary"
+                }
+              ]
+            },
+            {
+              "type": "image",
+              "aspect": "16:9",
+              "alt": "Кирпичный фасад дома в утреннем свете",
+              "imagePrompt": "Спокойный кирпичный фасад шестиэтажного клубного дома на московской улице ранним осенним утром, глубокие оконные откосы и взрослые деревья во дворе, архитектурная съёмка с уровня пешехода 35 мм, естественные серо-терракотовые цвета",
+              "frame": {
+                "maxHeight": 520
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "architecture",
+      "type": "composition",
+      "variant": "building-section",
+      "props": {
+        "background": "surface",
+        "density": "normal"
+      },
+      "children": [
+        {
+          "type": "frame",
+          "frame": {
+            "layout": "auto",
+            "direction": "row",
+            "gap": 64,
+            "wrap": true
+          },
+          "children": [
+            {
+              "type": "frame",
+              "frame": {
+                "layout": "auto",
+                "direction": "column",
+                "gap": 12,
+                "width": 360
+              },
+              "children": [
+                {
+                  "type": "heading",
+                  "level": 2,
+                  "text": "Шесть этажей вокруг тихого двора"
+                },
+                {
+                  "type": "text",
+                  "text": "Первый этаж поднят на 90 сантиметров над тротуаром. Окна квартир выходят либо на южную улицу, либо в закрытый двор без машин."
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "frame": {
+                "layout": "auto",
+                "direction": "column",
+                "gap": 14,
+                "width": 560
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "size": "sm",
+                  "text": "РАЗРЕЗ А–А"
+                },
+                {
+                  "type": "divider"
+                },
+                {
+                  "type": "text",
+                  "text": "Высота потолка 3,2 м · окна 2,7 м · наружная стена 640 мм · два лифта на секцию · не больше трёх квартир на площадке."
+                },
+                {
+                  "type": "text",
+                  "text": "Вентиляция индивидуальная для каждой квартиры; внешние блоки кондиционеров спрятаны в технических лоджиях и доступны из общего коридора."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "plans",
+      "type": "composition",
+      "variant": "plan-ledger",
+      "props": {
+        "background": "background",
+        "density": "tight"
+      },
+      "children": [
+        {
+          "type": "frame",
+          "frame": {
+            "layout": "auto",
+            "direction": "column",
+            "gap": 18
+          },
+          "children": [
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Квартиры в продаже"
+            },
+            {
+              "type": "frame",
+              "frame": {
+                "layout": "auto",
+                "direction": "row",
+                "gap": 28,
+                "wrap": true
+              },
+              "children": [
+                {
+                  "type": "frame",
+                  "frame": {
+                    "layout": "auto",
+                    "direction": "column",
+                    "gap": 8,
+                    "width": 470
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "size": "sm",
+                      "text": "3 ЭТАЖ · ОКНА ВО ДВОР"
+                    },
+                    {
+                      "type": "heading",
+                      "level": 3,
+                      "text": "2 спальни · 104,6 м²"
+                    },
+                    {
+                      "type": "text",
+                      "text": "Кухня-гостиная 41 м², мастер-блок, постирочная · 118 млн ₽"
+                    },
+                    {
+                      "type": "divider"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "frame": {
+                    "layout": "auto",
+                    "direction": "column",
+                    "gap": 8,
+                    "width": 540
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "size": "sm",
+                      "text": "5 ЭТАЖ · ЮГ И ЗАПАД"
+                    },
+                    {
+                      "type": "heading",
+                      "level": 3,
+                      "text": "3 спальни · 156,2 м²"
+                    },
+                    {
+                      "type": "text",
+                      "text": "Три стороны света, две ванные, кабинет у входа · 189 млн ₽"
+                    },
+                    {
+                      "type": "divider"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "build",
+      "type": "composition",
+      "variant": "site-note",
+      "props": {
+        "background": "surface",
+        "density": "normal"
+      },
+      "children": [
+        {
+          "type": "frame",
+          "frame": {
+            "layout": "auto",
+            "direction": "row",
+            "gap": 60,
+            "align": "start",
+            "wrap": true
+          },
+          "children": [
+            {
+              "type": "image",
+              "aspect": "4:3",
+              "alt": "Кладка фасада на строительной площадке",
+              "imagePrompt": "Крупный план кладки фасада на реальной строительной площадке, образцы клинкерного кирпича, раствор и металлические связи, пасмурный дневной свет, техническая документальная съёмка 50 мм без постановочных рабочих"
+            },
+            {
+              "type": "frame",
+              "frame": {
+                "layout": "auto",
+                "direction": "column",
+                "gap": 14,
+                "width": 430
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "size": "sm",
+                  "text": "АВГУСТ 2026 · 38% ГОТОВНОСТИ"
+                },
+                {
+                  "type": "heading",
+                  "level": 2,
+                  "text": "Монолит завершён, началась кладка фасада"
+                },
+                {
+                  "type": "text",
+                  "text": "Каждые две недели публикуем фото одного и того же узла с датой. Следующий контрольный этап — закрытие теплового контура в феврале 2027."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "visit",
+      "type": "composition",
+      "variant": "sales-note",
+      "props": {
+        "background": "background",
+        "density": "airy"
+      },
+      "children": [
+        {
+          "type": "frame",
+          "frame": {
+            "layout": "auto",
+            "direction": "row",
+            "gap": 72,
+            "justify": "space-between",
+            "align": "center",
+            "wrap": true
+          },
+          "children": [
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Посмотреть макет и пройти вокруг участка"
+            },
+            {
+              "type": "frame",
+              "frame": {
+                "layout": "auto",
+                "direction": "column",
+                "gap": 10,
+                "width": 400
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "text": "Встреча занимает 50 минут. Покажем вид из выбранной квартиры по высоте камеры и дадим распечатанный план с размерами."
+                },
+                {
+                  "type": "button",
+                  "text": "Выбрать время встречи",
+                  "variant": "primary"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "footer",
+      "type": "footer",
+      "variant": "minimal",
+      "props": {
+        "logoText": "Дом 12",
+        "tagline": "Клубный дом в Хамовниках",
+        "columns": [
+          {
+            "title": "Документы",
+            "links": [
+              {
+                "label": "Проектная декларация",
+                "href": "#docs"
+              },
+              {
+                "label": "Разрешение на строительство",
+                "href": "#permit"
+              },
+              {
+                "label": "Условия покупки",
+                "href": "#terms"
+              }
+            ]
+          }
+        ],
+        "copyright": "© 2026 Дом 12"
+      }
+    }
   ]
 }

@@ -1,5 +1,6 @@
 {
   "version": "1.1",
+  "frame": {"width": 1440},
   "meta": {"name": "Практика — школа редакторов", "description": "Образовательный лендинг через рабочее задание, разбор и критерии результата.", "styleTags": ["academic", "editorial", "direct"], "direction": {"name": "Поля редактора", "motivation": "Будущему студенту нужно увидеть способ обучения и уровень обратной связи до оплаты", "tradeoff": "Страница не обещает лёгкого входа и открыто показывает объём самостоятельной работы"}},
   "tokens": {"mode": "light", "color": {"primary": "#2948A5", "secondary": "#3A3F4B", "accent": "#E45B3F", "background": "#F2F1EC", "surface": "#FFFFFF", "text": "#20242C", "textMuted": "#626977", "border": "#CACDD3"}, "font": {"display": {"family": "IBM Plex Serif", "weight": 600}, "body": {"family": "Inter", "weight": 400}, "scale": "default"}, "radius": {"card": "sm", "button": "sm", "input": "sm"}, "spacing": {"section": "lg", "container": "default"}, "shadow": "none"},
   "tree": [

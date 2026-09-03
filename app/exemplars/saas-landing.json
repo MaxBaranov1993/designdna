@@ -1,5 +1,6 @@
 {
   "version": "1.1",
+  "frame": {"width": 1440},
   "meta": {
     "name": "Смена — производственный график",
     "description": "Лендинг сервиса сменного планирования для заводов: интерфейс диспетчерской, а не витрина обещаний.",
@@ -23,7 +24,7 @@
       "border": "#D8DED8"
     },
     "font": {
-      "display": { "family": "Space Grotesk", "weight": 700 },
+      "display": { "family": "Manrope", "weight": 800 },
       "body": { "family": "Inter", "weight": 400 },
       "scale": "default"
     },

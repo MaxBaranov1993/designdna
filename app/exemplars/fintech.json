@@ -1,5 +1,6 @@
 {
   "version": "1.1",
+  "frame": {"width": 1440},
   "meta": {"name": "Контур — казначейство бизнеса", "description": "Финтех-лендинг, построенный вокруг календаря платежей и реальных контрольных точек.", "styleTags": ["financial", "precise", "dark"], "direction": {"name": "Казначейский журнал", "motivation": "Финдиректору нужен прозрачный порядок решений, а не абстрактное обещание контроля денег", "tradeoff": "Плотная подача предполагает знакомство аудитории с платёжным календарём"}},
   "tokens": {"mode": "dark", "color": {"primary": "#A8E063", "secondary": "#90A7B2", "accent": "#F1BE5B", "background": "#111817", "surface": "#192321", "text": "#F2F5EE", "textMuted": "#A7B2AC", "border": "#35433F"}, "font": {"display": {"family": "IBM Plex Sans", "weight": 600}, "body": {"family": "Inter", "weight": 400}, "scale": "default"}, "radius": {"card": "sm", "button": "sm", "input": "sm"}, "spacing": {"section": "lg", "container": "wide"}, "shadow": "none"},
   "tree": [

@@ -143,6 +143,12 @@ def render_png(ir: dict, width: int = 1440, *, webfonts: bool = False) -> bytes:
     # не загружаются — это не ассеты. Сгенерированный IR полон таких href;
     # без нейтрализации гард ассетов ронял судью на каждой второй странице.
     ir = _neutralize_links(ir)
+    # IR без корневого артборда рендерится на холсте 960px и масштабируется 1.5×:
+    # судья видел «сложенные» ряды hero. Такие страницы снимаем на ширине вывода.
+    root_frame = ir.get("frame") if isinstance(ir.get("frame"), dict) else {}
+    root_width = root_frame.get("width")
+    if not isinstance(root_width, (int, float)) or isinstance(root_width, bool):
+        ir["frame"] = dict(root_frame, width=output_width)
     assets, asset_errors = materialize_render_assets(ir)
     if asset_errors:
         raise ValueError("render assets failed validation: " + "; ".join(asset_errors[:3]))

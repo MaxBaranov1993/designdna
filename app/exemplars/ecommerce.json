@@ -1,5 +1,6 @@
 {
   "version": "1.1",
+  "frame": {"width": 1440},
   "meta": {"name": "Поле — льняной домашний текстиль", "description": "E-commerce витрина одной коллекции с материалом, уходом и честными сроками в центре.", "styleTags": ["organic", "tactile", "retail"], "direction": {"name": "Льняной каталог", "motivation": "Покупатель выбирает ткань по фактуре и поведению в быту, поэтому материал важнее промо-механики", "tradeoff": "Сдержанная витрина не маскирует высокую цену скидочными сообщениями"}},
   "tokens": {"mode": "light", "color": {"primary": "#315C46", "secondary": "#7E6955", "accent": "#C96A43", "background": "#F4F0E7", "surface": "#FFFDF8", "text": "#272A25", "textMuted": "#6B6D64", "border": "#D7D0C2"}, "font": {"display": {"family": "Cormorant Garamond", "weight": 600}, "body": {"family": "Inter", "weight": 400}, "scale": "spacious"}, "radius": {"card": "sm", "button": "full", "input": "sm"}, "spacing": {"section": "xl", "container": "wide"}, "shadow": "sm"},
   "tree": [
