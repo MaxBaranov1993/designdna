@@ -373,7 +373,9 @@ def chat_envelope(
         content = cli_llm.chat(
             cli_provider, messages,
             model=request.model if request.provider in ("codex", "claude") else None,
-            effort=request.reasoning_effort, timeout=request.timeout_s or TIMEOUT,
+            effort=request.reasoning_effort,
+            # HTTP-таймаут (120 с) для CLI слишком короток: берём больший из двух
+            timeout=max(request.timeout_s or TIMEOUT, cli_llm.DEFAULT_TIMEOUT),
         )
         if on_delta and content:
             on_delta(content)

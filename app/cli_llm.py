@@ -24,7 +24,9 @@ import cancel_token
 
 CODEX_DEFAULT_MODEL = "gpt-5.6-sol"
 CLAUDE_DEFAULT_MODEL = "opus"
-DEFAULT_TIMEOUT = 240
+# Полный IR-документ через CLI (промпт ~40 КБ + JSON ~15 КБ) занимает минуты:
+# лимит заметно выше HTTP-пути, настраивается LLM_CLI_TIMEOUT_S.
+DEFAULT_TIMEOUT = int(os.environ.get("LLM_CLI_TIMEOUT_S", "900"))
 _EFFORTS = {"low", "medium", "high", "max", "xhigh"}
 # Claude Code думает по бюджету токенов, а не по уровню усилия (как в десктопе)
 _CLAUDE_THINKING = {"low": 0, "medium": 4_000, "high": 12_000, "max": 32_000, "xhigh": 32_000}
