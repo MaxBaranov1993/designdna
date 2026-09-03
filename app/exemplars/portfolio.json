@@ -1,0 +1,29 @@
+{
+  "version": "1.1",
+  "meta": {
+    "name": "Лера Соколова — предметный дизайнер",
+    "description": "Портфолио через один подробно разобранный объект вместо стены одинаковых превью.",
+    "styleTags": ["editorial", "material", "quiet"],
+    "direction": {
+      "name": "Рабочий стол",
+      "motivation": "Заказчику важнее увидеть ход решения и качество деталей, чем количество проектов в сетке",
+      "tradeoff": "Портфолио намеренно показывает меньше работ и требует вдумчивого чтения"
+    }
+  },
+  "tokens": {
+    "mode": "light",
+    "color": {"primary": "#9C3D24", "secondary": "#29322C", "accent": "#D9A441", "background": "#F1EEE7", "surface": "#FBFAF6", "text": "#20231F", "textMuted": "#686B62", "border": "#CBC6BA"},
+    "font": {"display": {"family": "Fraunces", "weight": 600}, "body": {"family": "Inter", "weight": 400}, "scale": "spacious"},
+    "radius": {"card": "sm", "button": "sm", "input": "sm"},
+    "spacing": {"section": "xl", "container": "default"},
+    "shadow": "none"
+  },
+  "tree": [
+    {"id": "nav", "type": "navbar", "variant": "minimal", "props": {"logoText": "Лера Соколова", "links": [{"label": "Проекты", "href": "#case"}, {"label": "Процесс", "href": "#process"}, {"label": "Обо мне", "href": "#about"}], "cta": {"text": "Обсудить задачу", "variant": "outline"}}},
+    {"id": "hero", "type": "composition", "variant": "editorial-offset", "props": {"background": "background", "density": "airy"}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 72, "align": "end", "wrap": true}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 20, "width": 560}, "children": [{"type": "text", "size": "sm", "text": "ПРЕДМЕТНЫЙ ДИЗАЙН · МОСКВА"}, {"type": "heading", "level": 1, "text": "Вещи, к которым возвращается рука"}, {"type": "text", "text": "Проектирую мебель и домашние предметы серийного производства. Начинаю не с формы, а со следа, который вещь оставляет в ежедневном ритуале."}, {"type": "button", "text": "Смотреть проект М17", "variant": "primary"}]}, {"type": "image", "aspect": "3:4", "alt": "Стул М17 в мастерской", "imagePrompt": "Стул М17 из тёмного ясеня на запылённом рабочем столе в мастерской, стружка и бумажный макет рядом, мягкий северный свет из высокого окна, съёмка на плёнку 50 мм, тёплые древесные тона без студийного глянца"}]}]},
+    {"id": "case", "type": "composition", "variant": "case-ledger", "props": {"background": "surface", "density": "normal"}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 56, "justify": "space-between", "wrap": true}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 12, "width": 330}, "children": [{"type": "text", "size": "sm", "text": "М17 · 2025 · МАССИВ ЯСЕНЯ"}, {"type": "heading", "level": 2, "text": "Стул для долгого ужина"}, {"type": "text", "text": "Спинка пружинит на четыре миллиметра, передняя кромка сиденья не давит под коленом, а все соединения можно подтянуть обычным ключом."}]}, {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 16, "width": 520}, "children": [{"type": "text", "text": "Задача: заменить тяжёлый ресторанный стул моделью, которую официант поднимает одной рукой, не потеряв ощущение основательности."}, {"type": "divider"}, {"type": "text", "text": "Результат: 4,8 кг вместо 7,1 кг; 12 прототипов; 18 месяцев испытаний в зале на 62 посадки."}]}]}]},
+    {"id": "process", "type": "composition", "variant": "material-sequence", "props": {"background": "background", "density": "tight"}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 24}, "children": [{"type": "heading", "level": 2, "text": "Три следа работы"}, {"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 28, "wrap": true}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 8, "width": 280}, "children": [{"type": "text", "size": "sm", "text": "01 · НАБЛЮДЕНИЕ"}, {"type": "text", "text": "Два вечера в ресторане: как гости отодвигают стул, куда кладут сумку, за что берётся уборщик."}]}, {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 8, "width": 380}, "children": [{"type": "text", "size": "sm", "text": "02 · ПРОТОТИП"}, {"type": "text", "text": "Фанера, скотч и рейка в натуральном масштабе. Геометрия проверяется телом до первого красивого рендера."}]}, {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 8, "width": 240}, "children": [{"type": "text", "size": "sm", "text": "03 · СЕРИЯ"}, {"type": "text", "text": "Чертежи, оснастка, первая сотня и карта контроля для производства."}]}]}]}]},
+    {"id": "about", "type": "composition", "variant": "contact-note", "props": {"background": "surface", "density": "airy"}, "children": [{"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 64, "justify": "space-between", "align": "center", "wrap": true}, "children": [{"type": "heading", "level": 2, "text": "Есть предмет, который пока неудобно объяснять словами?"}, {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 10, "width": 360}, "children": [{"type": "text", "text": "Пришлите фотографию, размеры и контекст использования. Отвечу с первыми вопросами в течение двух рабочих дней."}, {"type": "button", "text": "Написать Лере", "variant": "primary"}]}]}]},
+    {"id": "footer", "type": "footer", "variant": "minimal", "props": {"logoText": "Лера Соколова", "tagline": "Предметный дизайн и сопровождение серии", "columns": [{"title": "Связь", "links": [{"label": "hello@lerasokolova.ru", "href": "#mail"}, {"label": "Москва · CET+2", "href": "#place"}]}], "copyright": "© 2026 Лера Соколова"}}
+  ]
+}

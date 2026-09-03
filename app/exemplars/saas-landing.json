@@ -100,7 +100,7 @@
               "type": "frame",
               "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 264 },
               "children": [
-                { "type": "heading", "level": 2, "text": "6 часов" },
+                { "type": "heading", "level": 1, "text": "6 часов" },
                 { "type": "text", "size": "sm", "text": "средняя экономия времени мастера на составлении месячного графика" }
               ]
             },
