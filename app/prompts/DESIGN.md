@@ -21,6 +21,29 @@ tokens still win over everything below.
   "badge + heading + two buttons + dashboard mockup" template by default.
 - One primary CTA. Secondary action, if any, is visually quieter (ghost/link).
 
+## First screen (what the pixel judge checks first)
+
+- The thesis, the primary CTA and one proof must all sit inside the first
+  900px of a 1440px artboard. No decorative empty band between the navbar and
+  the hero: hero top padding is at most one section step (≤ 96px).
+- The hero headline uses the `display` role — visibly larger than any section
+  heading; section headings use `h2`. A hero whose headline looks like a
+  section heading fails hierarchy.
+- The first screen is dense with useful content: headline, one paragraph, CTA,
+  a proof line or number, and one media/placeholder — not one paragraph
+  floating in white space.
+
+## Free layout discipline
+
+- Prefer auto-layout frames (`layout: row|column` with `gap`) for groups.
+  Use `layout: "free"` with x/y only for deliberate overlaps of at most two
+  elements (a card breaking a media edge by ≤ 24px).
+- In a free parent every child must fit inside the parent's width/height and
+  must not cover another child by more than a quarter of its area — the
+  deterministic quality gate rejects such compositions.
+- An image placeholder with `imagePrompt` is a finished element: never redraw a
+  "product UI" from rectangles and text instead of it.
+
 ## Composition and rhythm
 
 - Vary section density: alternate tight and airy sections; not every section
