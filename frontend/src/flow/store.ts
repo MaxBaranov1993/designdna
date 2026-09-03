@@ -103,7 +103,7 @@ async function qualityPassCycle(
   provider: NodeProvider,
   effort: "medium" | "high" | "max",
   onStage: (stage: string) => void,
-  { minScore = 85, repair = true, signal, runId }: { minScore?: number; repair?: boolean; signal?: AbortSignal; runId?: string } = {},
+  { minScore = 80, repair = true, signal, runId }: { minScore?: number; repair?: boolean; signal?: AbortSignal; runId?: string } = {},
 ): Promise<QualityPassResp> {
   const request = { ir, brief, min_score: minScore, repair, rejudge: repair };
   const desktop = window.designDNA;
@@ -131,6 +131,70 @@ async function qualityPassCycle(
     });
     outputs[pending.stage] = answer.content;
   }
+}
+
+type GeneratorDirection = {
+  id: string;
+  label: string;
+  motivation: string;
+  tradeoff: string;
+};
+
+type GeneratorQualityReview = {
+  score: number | null;
+  passed: boolean | null;
+  reasons: string[];
+};
+
+type GenerateDirectionResp = GenerateResp & {
+  directions?: unknown[];
+  artDirections?: unknown[];
+  designDirections?: unknown[];
+  designBriefs?: unknown[];
+  variantDirections?: unknown[];
+};
+
+function generatorDirections(response: GenerateDirectionResp): GeneratorDirection[] {
+  const raw = response.directions || response.artDirections || response.designDirections || response.designBriefs || [];
+  return raw.slice(0, 3).flatMap((item, index) => {
+    if (typeof item === "string") {
+      const value = item.trim();
+      return value ? [{ id: value, label: value, motivation: "", tradeoff: "" }] : [];
+    }
+    if (!item || typeof item !== "object") return [];
+    const value = item as Record<string, any>;
+    const tone = typeof value.tone === "object" ? value.tone : {};
+    const id = String(value.id || value.key || tone.id || tone.name || value.tone || `direction-${index + 1}`);
+    const label = String(value.label || value.name || tone.label || tone.name || value.tone || id);
+    const audience = value.audience && typeof value.audience === "object" ? value.audience : {};
+    const rhythm = value.rhythm && typeof value.rhythm === "object" ? value.rhythm : {};
+    return [{
+      id,
+      label,
+      motivation: String(value.motivation || value.rationale || value.reason || audience.task || ""),
+      tradeoff: String(value.tradeoff || value.compromise || rhythm.risk || ""),
+    }];
+  });
+}
+
+function generatorVariantDirections(
+  response: GenerateDirectionResp,
+  variants: IRObject[],
+  directions: GeneratorDirection[],
+): string[] {
+  const explicit = Array.isArray(response.variantDirections) ? response.variantDirections : [];
+  return variants.map((variant, index) => {
+    const entry = explicit[index];
+    if (typeof entry === "string" && entry.trim()) return entry.trim();
+    if (entry && typeof entry === "object") {
+      const named = entry as Record<string, unknown>;
+      const label = named.label || named.name || named.direction || named.tone;
+      if (label) return String(label);
+    }
+    const meta = ((variant as Record<string, any>).meta || {}) as Record<string, any>;
+    const label = meta.directionLabel || meta.designDirectionLabel || meta.designDirection || meta.direction || meta.tone;
+    return label ? String(label) : (directions[index]?.label || `Направление ${index + 1}`);
+  });
 }
 
 const MOTION_DESIGN_TERMINAL = new Set(["completed", "failed", "cancelled", "expired"]);
@@ -1401,6 +1465,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         tokens,
         preset: data.preset || undefined,
         designSystem: designSystemRef,
+        // T1 may expose the staged contract under either name while old
+        // servers simply ignore these extra Pydantic fields.
+        selectedDirection: String((data as Record<string, unknown>).selectedDirection || "all"),
+        direction: String((data as Record<string, unknown>).selectedDirection || "all"),
+        allDirections: String((data as Record<string, unknown>).selectedDirection || "all") === "all",
       };
       let res: GenerateResp;
       if (!desktop) {
@@ -1429,12 +1498,17 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Проверка схемы и автофиксы" });
         res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs }, { signal });
       }
+      const directionResponse = res as GenerateDirectionResp;
       const variants = Array.isArray(res.variants) ? res.variants : [];
-      get().setNodeData(id, { variants, active: 0 });
+      const directions = generatorDirections(directionResponse);
+      const variantDirections = generatorVariantDirections(directionResponse, variants, directions);
+      const directionPatch = directions.length ? { directions } : {};
+      get().setNodeData(id, { variants, active: 0, variantDirections, ...directionPatch } as unknown as Partial<GeneratorNodeData>);
       // Quality Pass встроен: судья + починка каждого варианта тем же
       // провайдером. Провал судьи не теряет вариант — он остаётся как есть
       // с прочерком в статусе.
       const qualityScores: (number | null)[] = [];
+      const qualityReviews: GeneratorQualityReview[] = [];
       let repairedCount = 0;
       for (let i = 0; i < variants.length; i += 1) {
         const label = variants.length > 1 ? ` ${i + 1}/${variants.length}` : "";
@@ -1448,17 +1522,28 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage });
           }, { signal, runId: qpRunId });
           if (qp.ir) variants[i] = qp.ir;
-          qualityScores.push(Number(qp.scorecard?.score ?? 0));
+          const rawScore = qp.scorecard?.score;
+          const score = rawScore == null || !Number.isFinite(Number(rawScore)) ? null : Number(rawScore);
+          qualityScores.push(score);
+          qualityReviews.push({
+            score,
+            passed: typeof qp.passed === "boolean" ? qp.passed : (score == null ? null : score >= 80),
+            reasons: (qp.scorecard?.issues || []).map((issue) => {
+              const problem = String(issue.problem || "").trim();
+              return problem || String((issue as Record<string, unknown>).instruction || "").trim();
+            }).filter(Boolean).slice(0, 5),
+          });
           if (qp.repair?.applied) repairedCount += 1;
         } catch (qpError) {
           if (isAbortError(qpError) || signal.aborted) throw qpError;
           console.warn("Quality Pass: вариант оставлен без оценки", qpError);
           qualityScores.push(null);
+          qualityReviews.push({ score: null, passed: null, reasons: [] });
         } finally {
           stopQpPoll();
         }
       }
-      get().setNodeData(id, { variants, active: 0, qualityScores });
+      get().setNodeData(id, { variants, active: 0, qualityScores, qualityReviews, variantDirections, ...directionPatch } as unknown as Partial<GeneratorNodeData>);
       const errNote = res.errors && res.errors.length ? `, ошибок: ${res.errors.length}` : "";
       const fixedCount = (res.qa || []).reduce((s, q) => s + (q.fixed || 0), 0);
       const qaNote = fixedCount ? `, автофиксов QA: ${fixedCount}` : "";
@@ -1467,7 +1552,16 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         ? ` · QP ${qualityScores.map((score) => (score == null ? "—" : score)).join("/")}`
         + (repairedCount ? ` (починок: ${repairedCount})` : "")
         : "";
-      get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote}${qpNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
+      const needsRevision = qualityReviews
+        .map((review, index) => ({ review, index }))
+        .filter(({ review }) => review.passed === false || (review.score != null && review.score < 80));
+      if (needsRevision.length) {
+        const reasons = needsRevision.flatMap(({ review }) => review.reasons).slice(0, 3);
+        const reasonNote = reasons.length ? `: ${reasons.join("; ")}` : "";
+        get().setStatus(id, `Нужна доработка${reasonNote}`, "err");
+      } else {
+        get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote}${qpNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
+      }
       get().propagate(id);
     } catch (e) {
       if (isAbortError(e) || signal.aborted) {
