@@ -541,6 +541,28 @@ def main() -> None:
             "designSystem": strict_ref_request,
         })
         check("generate endpoint accepts exact pinned master", generated_exact.status_code == 200 and len(generated_exact.json().get("variants", [])) == 1, generated_exact.text)
+        # Порт ноды ДС отдаёт плоскую shadcn-карту (styleGuide.tokens): раньше
+        # сервер лочил из неё один ключ radius и IR падал на схеме tokens.
+        flat_tokens = second.json()["document"]["styleGuide"]["tokens"]
+        generated_flat = client.post("/api/generate", json={
+            "brief": "кнопка поиска", "count": 1, "tokens": flat_tokens,
+            "rawOutputs": [json.dumps(strict_master, ensure_ascii=False)],
+            "designSystem": strict_ref_request,
+        })
+        check("generate with flat style-guide tokens on the port succeeds", generated_flat.status_code == 200, generated_flat.text[:300])
+        flat_variant_tokens = (generated_flat.json().get("variants") or [{}])[0].get("tokens") or {}
+        check("locked tokens are complete v1 from the design system",
+              all(key in flat_variant_tokens for key in ("mode", "color", "font", "radius", "spacing", "shadow"))
+              and flat_variant_tokens["color"]["primary"] == flat_tokens["primary"],
+              json.dumps(flat_variant_tokens, ensure_ascii=False)[:300])
+        prepared = client.post("/api/generate", json={
+            "brief": "карточка тарифа", "count": 1, "tokens": flat_tokens, "prepareOnly": True,
+            "designSystem": dict(strict_ref_request, usageMode="style-only"),
+        })
+        prepared_prompt = json.dumps(prepared.json(), ensure_ascii=False) if prepared.status_code == 200 else prepared.text
+        check("prepared prompt carries the style profile / atmosphere block",
+              prepared.status_code == 200 and "Style profile" in prepared_prompt and "атмосфера" in prepared_prompt,
+              prepared_prompt[:300])
         ctx_ref = client.post("/api/design-system/resolve-context", json={
             "ref": {"systemId": system_id, "revision": 2},
             "brief": "кнопка поиска", "usageMode": "extend",

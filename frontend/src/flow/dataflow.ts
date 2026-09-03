@@ -108,6 +108,10 @@ export function outValue(n: FlowNode, port?: string): unknown {
       const document = n.data.document as Record<string, unknown> | null | undefined;
       if (!document || typeof document !== "object") return null;
       const styleGuide = document.styleGuide as Record<string, unknown> | undefined;
+      // Полные IR-токены v1 (styleGuide.irTokens) — то, что лочит генератор;
+      // плоская shadcn-карта остаётся для старых ревизий (сервер её приводит).
+      const irTokens = styleGuide?.irTokens as Record<string, unknown> | undefined;
+      if (irTokens && Object.keys(irTokens).length) return irTokens;
       const semantic = styleGuide?.tokens as Record<string, unknown> | undefined;
       if (semantic && Object.keys(semantic).length) return semantic;
       const foundations = document.foundations as Record<string, unknown> | undefined;

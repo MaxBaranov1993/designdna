@@ -142,6 +142,193 @@ def measured_character(foundations: dict) -> dict:
     }
 
 
+_SHADCN_TO_IR = {
+    "background": "background", "card": "surface", "foreground": "text",
+    "muted-foreground": "textMuted", "primary": "primary", "secondary": "secondary",
+    "accent": "accent", "border": "border",
+}
+_IR_TOKEN_KEYS = ("mode", "color", "font", "radius", "spacing", "shadow")
+
+
+def ir_tokens(foundations: dict) -> dict:
+    """Foundations дизайн-системы → полные Design IR tokens v1 (schema-валидные).
+
+    Генератор лочит именно эту форму; foundations хранят px и measured-списки,
+    поэтому идём через normalize_dna (px → enum, дефолты для пропусков)."""
+    from .builder import _shadow_enum, _tokens_for_ir, normalize_dna  # noqa: WPS433 — циклический импорт
+
+    foundations = foundations if isinstance(foundations, dict) else {}
+    colors = (foundations.get("colors") or {}).get("semantic") or {}
+    typography = foundations.get("typography") or {}
+    shadows = foundations.get("shadows") or []
+    raw = {
+        "mode": foundations.get("mode"),
+        "color": dict(colors),
+        "font": {
+            "display": typography.get("display") or {},
+            "body": typography.get("body") or {},
+        },
+        "radius": dict(foundations.get("radius") or {}),
+        "spacing": {
+            "section": (foundations.get("spacing") or {}).get("section"),
+            "container": (foundations.get("containers") or {}).get("content"),
+        },
+        "shadow": "none" if not shadows else _shadow_enum("sm" if len(shadows) <= 2 else "md"),
+    }
+    return _tokens_for_ir(normalize_dna(raw))
+
+
+def coerce_ir_tokens(tokens: Any) -> dict | None:
+    """Любая форма style-DNA с порта → полные IR tokens v1, либо None.
+
+    Порт Design System отдавал плоскую shadcn-карту (background/foreground/…),
+    а сервер лочил из неё единственный совпавший ключ ``radius`` — IR падал на
+    схеме «tokens: 'color' is a required property». Принимаем три формы:
+    tokens v1 (в т.ч. частичные), плоскую карту style guide и foundations."""
+    from .builder import _tokens_for_ir, normalize_dna  # noqa: WPS433
+
+    if not isinstance(tokens, dict) or not tokens:
+        return None
+    if isinstance(tokens.get("colors"), dict) or isinstance(tokens.get("typography"), dict):
+        return ir_tokens(tokens)
+    if isinstance(tokens.get("color"), dict) or isinstance(tokens.get("font"), dict):
+        full = _tokens_for_ir(normalize_dna(tokens))
+        for key in ("primitives", "semantic", "provenance", "v2"):
+            if key in tokens:
+                full[key] = copy.deepcopy(tokens[key])
+        return full
+    flat_colors = {ir_key: _hex(tokens.get(flat_key))
+                   for flat_key, ir_key in _SHADCN_TO_IR.items() if _hex(tokens.get(flat_key))}
+    if not flat_colors:
+        return None
+    font: dict[str, Any] = {}
+    if tokens.get("font-display"):
+        font["display"] = {"family": str(tokens["font-display"]), "weight": 700}
+    if tokens.get("font-body"):
+        font["body"] = {"family": str(tokens["font-body"]), "weight": 400}
+    radius = {
+        "card": tokens.get("radius"),
+        "button": tokens.get("radius-button", tokens.get("radius")),
+        "input": tokens.get("radius-input", tokens.get("radius")),
+    }
+    background = flat_colors.get("background")
+    mode = ("dark" if background and _luminance(background) < 0.45 else "light")
+    return _tokens_for_ir(normalize_dna({"mode": mode, "color": flat_colors, "font": font, "radius": radius}))
+
+
+def _walk_text(node: Any, out: dict[str, list[str]], depth: int = 0) -> None:
+    if depth > 8 or not isinstance(node, dict):
+        return
+    kind = str(node.get("type") or "")
+    text = node.get("text")
+    if isinstance(text, str) and text.strip():
+        bucket = "cta" if kind == "button" else "heading" if kind == "heading" else "text"
+        if kind == "text" and node.get("size") in ("xs", "sm"):
+            bucket = "eyebrow"
+        out[bucket].append(" ".join(text.split())[:90])
+    props = node.get("props")
+    if isinstance(props, dict):
+        for key in ("heading", "subheading", "eyebrow", "title"):
+            value = props.get(key)
+            if isinstance(value, str) and value.strip():
+                out["eyebrow" if key == "eyebrow" else "heading" if key in ("heading", "title") else "text"].append(" ".join(value.split())[:90])
+        for key in ("cta", "ctaPrimary", "ctaSecondary"):
+            value = props.get(key)
+            if isinstance(value, dict) and isinstance(value.get("text"), str) and value["text"].strip():
+                out["cta"].append(value["text"].strip()[:60])
+    for child in node.get("children") or []:
+        _walk_text(child, out, depth + 1)
+
+
+def _copy_voice(document: dict) -> dict[str, list[str]]:
+    """Образцы текста мастеров: заголовки, надзаголовки, CTA — голос бренда."""
+    out: dict[str, list[str]] = {"heading": [], "eyebrow": [], "cta": [], "text": []}
+    for component in (document.get("components") or {}).values():
+        master = component.get("masterIr") if isinstance(component, dict) else None
+        for section in ((master or {}).get("tree") or []):
+            _walk_text(section, out)
+    return {key: list(dict.fromkeys(values))[:6] for key, values in out.items()}
+
+
+def _typography_character(foundations: dict) -> str:
+    typography = foundations.get("typography") or {}
+    display = str((typography.get("display") or {}).get("family") or "")
+    body = str((typography.get("body") or {}).get("family") or "")
+    weight = int((typography.get("display") or {}).get("weight") or 700)
+    serif_markers = ("Serif", "Playfair", "Prata", "Cormorant", "Garamond", "Lora", "Vollkorn",
+                     "Merriweather", "Literata", "Georgia", "Times")
+    mono_markers = ("Mono", "Code", "Courier")
+    kind = ("моноширинный" if any(m in display for m in mono_markers)
+            else "серифный" if any(m in display for m in serif_markers) else "гротеск")
+    heaviness = "тяжёлый" if weight >= 700 else "средний" if weight >= 500 else "лёгкий"
+    pairing = "одна гарнитура на всё" if display and display == body else f"пара {display} + {body}"
+    return f"{kind} display ({display or '—'}, {heaviness} {weight}); {pairing}"
+
+
+def style_profile(document: dict) -> dict:
+    """Детерминированный профиль стиля сайта: атмосфера без участия модели.
+
+    Это то, что генератор должен «помнить» о сайте помимо hex-значений:
+    тема, характер углов и плотности, типографика, использование теней и
+    палитры, направление картинок и иконок, голос текста (образцы копирайта)."""
+    foundations = document.get("foundations") or {}
+    measured = measured_character(foundations)
+    primitives = ((foundations.get("colors") or {}).get("primitives") or {})
+    semantic = ((foundations.get("colors") or {}).get("semantic") or {})
+    brand = [value for key, value in primitives.items() if str(key).startswith("brand")]
+    profile = {
+        "mode": measured["mode"],
+        "cornerCharacter": measured["cornerCharacter"],
+        "density": measured["density"],
+        "shadowUsage": measured["shadowUsage"],
+        "paletteCharacter": (
+            "монохром с одним акцентом" if len(brand) <= 1
+            else f"{len(brand)} брендовых цвета" if len(brand) <= 3 else "многоцветная палитра"
+        ),
+        "accent": semantic.get("accent") or semantic.get("primary"),
+        "typographyCharacter": _typography_character(foundations),
+        "imageDirection": foundations.get("imageDirection") or "",
+        "iconStyle": foundations.get("iconStyle") or "",
+        "copyVoice": _copy_voice(document),
+    }
+    return {key: value for key, value in profile.items() if value not in ("", None, [], {})}
+
+
+def profile_prompt(document: dict) -> str:
+    """Блок промпта «стиль и атмосфера» для генератора: профиль + AI-ревью, если есть."""
+    guide = document.get("styleGuide") if isinstance(document.get("styleGuide"), dict) else {}
+    profile = guide.get("profile") or style_profile(document)
+    voice = profile.get("copyVoice") or {}
+    lines = [
+        "## Стиль и атмосфера исходного сайта (компонент обязан встраиваться, а не выделяться)",
+        f"- Тема: {profile.get('mode')}; углы: {profile.get('cornerCharacter')}; плотность: {profile.get('density')}; "
+        f"тени: {profile.get('shadowUsage')}; палитра: {profile.get('paletteCharacter')}.",
+        f"- Типографика: {profile.get('typographyCharacter')}.",
+    ]
+    if profile.get("imageDirection"):
+        lines.append(f"- Изображения: {profile['imageDirection']}.")
+    if profile.get("iconStyle"):
+        lines.append(f"- Иконки: {profile['iconStyle']}.")
+    if voice.get("heading"):
+        lines.append("- Голос заголовков (образцы): " + " | ".join(voice["heading"][:4]))
+    if voice.get("eyebrow"):
+        lines.append("- Надзаголовки/лейблы: " + " | ".join(voice["eyebrow"][:4]))
+    if voice.get("cta"):
+        lines.append("- CTA: " + " | ".join(voice["cta"][:4]))
+    review = guide.get("review") or {}
+    for key, label in (("tone", "Тон"), ("colorUsage", "Цвет"), ("typographyCharacter", "Типографика (ревью)"),
+                       ("imageryStyle", "Имиджи")):
+        if review.get(key):
+            lines.append(f"- {label}: {review[key]}")
+    for rule in (review.get("doRules") or [])[:6]:
+        lines.append(f"- DO: {rule}")
+    for rule in (review.get("dontRules") or [])[:6]:
+        lines.append(f"- DON'T: {rule}")
+    lines.append("- Пиши копирайт в том же голосе и регистре, что образцы; те же семейства шрифтов, "
+                 "те же радиусы и тени; новые цвета не вводить.")
+    return "\n".join(lines)
+
+
 def ensure_style_guide(document: dict) -> dict:
     """Детерминированная часть Style Guide — присутствует в каждом документе."""
     foundations = document.get("foundations") or {}
@@ -150,6 +337,10 @@ def ensure_style_guide(document: dict) -> dict:
         **existing,
         "tokens": semantic_tokens(foundations),
         "measured": measured_character(foundations),
+        # Полные IR-токены и профиль атмосферы: порт ноды и промпт генератора
+        # берут их отсюда, а не восстанавливают из плоской карты.
+        "irTokens": ir_tokens(foundations),
+        "profile": style_profile(document),
     }
     guide.setdefault("origin", "deterministic")
     document["styleGuide"] = guide

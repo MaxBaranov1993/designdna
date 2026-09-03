@@ -115,10 +115,16 @@ def _locked_generation_dna(tokens: dict | None) -> tuple[dict | None, dict | Non
     """
     if not isinstance(tokens, dict):
         return None, None
-    public_keys = ("mode", "color", "font", "radius", "spacing", "shadow")
-    public = {key: copy.deepcopy(tokens[key]) for key in public_keys if key in tokens}
-    if not public:
+    # Порт Design System отдаёт плоскую shadcn-карту или foundations, старые
+    # Style DNA — частичные tokens v1. Всё приводим к ПОЛНЫМ tokens v1: лок
+    # одного совпавшего ключа (radius) ронял IR на схеме.
+    from design_system.style_review import coerce_ir_tokens
+    coerced = coerce_ir_tokens(tokens)
+    if coerced is None:
         return None, None
+    public_keys = ("mode", "color", "font", "radius", "spacing", "shadow")
+    public = {key: copy.deepcopy(coerced[key]) for key in public_keys}
+    tokens = {**coerced, **{key: tokens[key] for key in ("primitives", "semantic", "provenance") if key in tokens}}
     complete = copy.deepcopy(public)
     for key in ("primitives", "semantic", "provenance"):
         if key in tokens:
@@ -516,6 +522,14 @@ def _generate(req: GenerateReq, run_id: str | None):
         if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
             return err(422, "Design System Strict: exact master не помещается в выбранный context budget. Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")
         ds_prompt_block = ds_compiled["promptBlock"]
+        # ДС — источник истины и для токенов, и для атмосферы: если по порту
+        # пришло что-то неполное (или ничего), лочим токены из foundations
+        # документа и добавляем профиль стиля (тема, углы, плотность, голос копирайта).
+        from design_system import style_review as ds_style_review
+        if not dna:
+            dna, complete_dna = _locked_generation_dna(
+                ds_style_review.ir_tokens(ds_doc.get("foundations") or {}))
+        ds_prompt_block += "\n\n" + ds_style_review.profile_prompt(ds_doc)
 
 
     def gen_one(n: int):

@@ -148,6 +148,18 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
     measured_character = style_guide.get("measured") or {}
     if measured_character:
         add("styleguide.character", f"- Measured character: {_json(measured_character)}", required=True)
+    # Профиль атмосферы — короткий и обязательный: именно он, а не hex-карта,
+    # заставляет новый компонент «звучать» как сайт (тема/углы/плотность/тип/голос).
+    profile = style_guide.get("profile") or {}
+    if profile:
+        compact_profile = {key: profile[key] for key in
+                           ("mode", "cornerCharacter", "density", "shadowUsage", "paletteCharacter",
+                            "typographyCharacter", "imageDirection", "iconStyle")
+                           if profile.get(key)}
+        voice = profile.get("copyVoice") or {}
+        if voice.get("heading") or voice.get("cta"):
+            compact_profile["copyVoice"] = {key: (voice.get(key) or [])[:3] for key in ("heading", "eyebrow", "cta") if voice.get(key)}
+        add("styleguide.profile", f"- Style profile (match this atmosphere): {_json(compact_profile)}", required=True)
     review = style_guide.get("review") or {}
     coverage = identity.get("paletteCoverage") or {}
     if coverage.get("roles"):
