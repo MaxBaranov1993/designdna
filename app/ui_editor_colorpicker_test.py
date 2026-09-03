@@ -96,7 +96,8 @@ def main():
             pg.wait_for_timeout(300)
             manual = pg.query_selector(".manual-controls")
             if manual is not None and manual.get_attribute("open") is None:
-                pg.click(".manual-controls summary")
+                if not pg.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+                    pg.click(".manual-controls summary")
 
         def open_picker():
             sw = pg.query_selector('.fe-inspector .pi-cp-swatch')

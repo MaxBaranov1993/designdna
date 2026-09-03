@@ -132,7 +132,8 @@ def main():
 
         # Padding is scoped to the selected card.
         click_path("children.0")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('[data-padding="t"]').fill("23")
         page.locator('[data-padding="t"]').press("Tab")
         page.wait_for_timeout(180)
@@ -141,12 +142,15 @@ def main():
 
         # Font, Fill and Text work immediately on a text element.
         click_path("children.0.children.2")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('.font-family select').select_option("Inter")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('[data-style-num="fontSize"]').fill("31")
         page.locator('[data-style-num="fontSize"]').press("Tab")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator(".manual-color .pi-cp-swatch").nth(0).click()
         assert page.locator(".pi-cp-pop").count() == 1
         page.locator(".pi-cp-hex").fill("aa2222")
@@ -170,7 +174,8 @@ def main():
 
         # The same Fill/Text controls reach both button shell and inner label.
         click_path("children.0.children.4.children.1")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('[data-style-text="background"]').fill("#334455")
         page.locator('[data-style-text="background"]').press("Tab")
         page.locator('[data-style-text="color"]').fill("#fefefe")
@@ -186,7 +191,8 @@ def main():
 
         click_path("children.0.children.2")
         if not page.locator(".manual-controls").evaluate("el => el.open"):
-            page.locator(".manual-controls summary").click()
+            if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+                page.locator(".manual-controls summary").click()
         SCREENSHOT.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(SCREENSHOT), full_page=True)
 
@@ -228,18 +234,21 @@ def main():
         page.wait_for_timeout(200)
 
         # Merge and unmerge preserve the two independently editable children.
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.get_by_role("button", name="Объединить").click()
         page.wait_for_timeout(200)
         grouped = page.evaluate("(id) => { const d=window.GraphDev.node(id).data; return (d._editorDraft?.ir || d.ir).tree[0].children[0].children[0]; }", edit_id)
         assert grouped["type"] == "card" and grouped["frame"]["layout"] == "free" and len(grouped["children"]) == 2
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.get_by_role("button", name="Разъединить").click()
         page.wait_for_timeout(200)
         restored = page.evaluate("(id) => { const d=window.GraphDev.node(id).data; return (d._editorDraft?.ir || d.ir).tree[0].children[0].children.slice(0,2).map(n=>n.type); }", edit_id)
         assert restored == ["image", "badge"]
 
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('.manual-controls [data-act="align-left"]').click()
         page.wait_for_timeout(200)
         aligned = page.evaluate("(id) => { const d=window.GraphDev.node(id).data; return (d._editorDraft?.ir || d.ir).tree[0].children[0].children.slice(0,2).map(n=>n.frame?.x); }", edit_id)

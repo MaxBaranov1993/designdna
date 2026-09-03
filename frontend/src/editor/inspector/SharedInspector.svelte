@@ -1,3 +1,28 @@
+<script module lang="ts">
+  /* Инспектор перемонтируется на каждую правку ({#key tick}); без памяти блок
+   * «Точно вручную» схлопывался после каждого изменения поля. Состояние —
+   * на уровне модуля и в localStorage, дефолт — свёрнут (AI-first). */
+  const MANUAL_OPEN_KEY = "designdna.inspector.manualOpen";
+  // Обычный объект, не $state: значение нужно только при монтировании
+  const manualControls = {
+    open: (() => {
+      try {
+        return localStorage.getItem(MANUAL_OPEN_KEY) === "1";
+      } catch {
+        return false;
+      }
+    })(),
+  };
+  function rememberManualOpen(open: boolean) {
+    manualControls.open = open;
+    try {
+      localStorage.setItem(MANUAL_OPEN_KEY, open ? "1" : "0");
+    } catch {
+      /* private mode */
+    }
+  }
+</script>
+
 <script lang="ts">
   import * as ctl from "../controller";
   import { editorUi } from "../state";
@@ -233,7 +258,7 @@ import ColorPicker from "./ColorPicker.svelte";
 
   {#if !preview}
     {#if sels.length}
-    <details class="manual-controls"><summary><span>Точно вручную</span><small>{isFormField ? "группа · цвета · padding · align" : isFormLabel ? "подпись · шрифт · цвет · padding" : isFormControl ? "поле ввода · шрифт · цвета · padding" : isFormSubmit ? "кнопка · текст · шрифт · цвета · padding" : "position · flex · шрифт · цвета · padding · merge · align"}</small></summary>
+    <details class="manual-controls" open={manualControls.open} ontoggle={(event) => rememberManualOpen((event.currentTarget as HTMLDetailsElement).open)}><summary><span>Точно вручную</span><small>{isFormField ? "группа · цвета · padding · align" : isFormLabel ? "подпись · шрифт · цвет · padding" : isFormControl ? "поле ввода · шрифт · цвета · padding" : isFormSubmit ? "кнопка · текст · шрифт · цвета · padding" : "position · flex · шрифт · цвета · padding · merge · align"}</small></summary>
       <div class="manual-body pi">
         {#if isFormField}<div class="manual-group field-content"><span class="manual-label">Группа поля</span><p>Выберите вложенную подпись или поле ввода на холсте либо в слоях.</p></div>{/if}
         <div class="manual-group"><span class="manual-label">Position</span>
@@ -299,7 +324,7 @@ import ColorPicker from "./ColorPicker.svelte";
         </div></div>
         <div class="manual-group"><span class="manual-label">Merge</span><div class="merge-row"><button data-act="group" disabled={sels.length < 2} aria-label="Объединить">Объединить</button><button data-act="ungroup" disabled={!canUngroup} aria-label="Разъединить">Разъединить</button></div></div>
         <div class="manual-group"><span class="manual-label">Padding</span><div class="padding-grid">{#each ["T", "R", "B", "L"] as label, index}<label><span>{label}</span><input data-padding={label.toLowerCase()} type="number" min="0" value={padding[index]} onchange={(event) => setPadding(index, event)} /></label>{/each}</div></div>
-        <div class="manual-group"><span class="manual-label">Цвета</span><div class="manual-color"><ColorPicker styleKey="background" label="Заливка" hex={fill} raw={style.background || node.fill || ""} transparent={!style.background && !node.fill} /></div><div class="manual-color"><ColorPicker styleKey="color" label="Текст" hex={textColor} raw={style.color || ""} transparent={!style.color} /></div></div>
+        <div class="manual-group"><span class="manual-label">Цвета</span><div class="manual-color"><ColorPicker styleKey="background" label="Заливка" hex={fill} raw={style.background || node.fill || ""} transparent={!style.background && !node.fill} /></div><label class="manual-radius"><span>Скругление</span><input type="number" min="0" data-style-num="borderRadius" value={typeof style.borderRadius === "number" ? style.borderRadius : ""} placeholder="auto" aria-label="Скругление углов, px" /></label><div class="manual-color"><ColorPicker styleKey="color" label="Текст" hex={textColor} raw={style.color || ""} transparent={!style.color} /></div></div>
         <div class="manual-group"><span class="manual-label">Шрифт</span><label class="font-family"><span>Семейство</span><select data-style-select="fontFamily" value={style.fontFamily || ""}><FontOptions autoLabel="Как в теме" /></select></label><div class="font-pair"><label><span>Размер</span><input type="number" min="1" data-style-num="fontSize" value={typeof style.fontSize === "number" ? style.fontSize : ""} placeholder="auto" /></label><label><span>Вес</span><input type="number" min="100" max="900" step="100" data-style-num="fontWeight" value={typeof style.fontWeight === "number" ? style.fontWeight : ""} placeholder="auto" /></label></div></div>
       </div>
     </details>

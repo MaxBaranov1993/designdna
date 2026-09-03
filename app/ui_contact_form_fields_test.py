@@ -93,22 +93,26 @@ def main():
 
         # Edit label and control independently through their nested layers.
         page.locator('.fe-layer[data-key="0:props.fields.0.parts.label"]').dispatch_event("click")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('[data-el-prop="text"]').fill("Товар")
         page.locator('[data-el-prop="text"]').press("Tab")
 
         page.locator('.fe-layer[data-key="0:props.fields.0.parts.label"]').dispatch_event("click")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('[data-style-num="fontSize"]').fill("19")
         page.locator('[data-style-num="fontSize"]').press("Tab")
 
         page.locator('.fe-layer[data-key="0:props.fields.0.parts.control"]').dispatch_event("click")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('[data-el-prop="placeholder"]').fill("Введите название товара")
         page.locator('[data-el-prop="placeholder"]').press("Tab")
 
         page.locator('.fe-layer[data-key="0:props.fields.0.parts.control"]').dispatch_event("click")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('[data-style-color="background"]').evaluate(
             "el => { el.value = '#eef2ff'; el.dispatchEvent(new Event('input', { bubbles: true })); }"
         )
@@ -133,12 +137,14 @@ def main():
         page.wait_for_timeout(150)
         assert page.locator('.fe-layer.selected[data-key="0:props.submit"]').count() == 1
         assert page.evaluate("document.activeElement?.tagName !== 'A'")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         submit_text = page.locator('.field-content [data-el-prop="text"]')
         submit_text.fill("Опубликовать товар")
         submit_text.press("Tab")
         page.locator('.fe-layer[data-key="0:props.submit"]').dispatch_event("click")
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('[data-style-color="background"]').evaluate(
             "el => { el.value = '#2563eb'; el.dispatchEvent(new Event('input', { bubbles: true })); }"
         )
@@ -150,7 +156,8 @@ def main():
         assert submit.evaluate("el => getComputedStyle(el).backgroundColor") == "rgb(37, 99, 235)"
 
         if not page.locator(".manual-controls").evaluate("el => el.open"):
-            page.locator(".manual-controls summary").click()
+            if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+                page.locator(".manual-controls summary").click()
         SCREENSHOT.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(SCREENSHOT), full_page=True, timeout=20000)
         page.locator('.dna-editor [data-act="close"]').click()

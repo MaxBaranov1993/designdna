@@ -155,7 +155,8 @@ def main():
         page.wait_for_timeout(250)
         manual = page.query_selector(".manual-controls")
         if manual is not None and manual.get_attribute("open") is None:
-            page.click(".manual-controls summary")
+            if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+                page.click(".manual-controls summary")
         page.click('.dna-editor .fe-inspector [data-act="align-right"]')
         page.wait_for_timeout(350)
         aligned = page.evaluate("""() => {

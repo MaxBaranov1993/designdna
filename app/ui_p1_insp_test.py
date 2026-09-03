@@ -18,8 +18,9 @@ BASE = "http://127.0.0.1:8420"
 IR_PATH = pathlib.Path(__file__).resolve().parent.parent / "app" / "fixtures" / "frame-example.json"
 FAILS = []
 
-FRAME = ("window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id))"
-         ".data.ir.tree[0].children[0].frame")
+# правки редактора до «Сохранить» живут в черновике _editorDraft.ir
+FRAME = ("(d => d._editorDraft?.ir || d.ir)(window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data)"
+         ".tree[0].children[0].frame")
 
 
 def check(name, cond, extra=""):
@@ -107,13 +108,17 @@ def main():
               pg.locator('.fe-inspector input[data-style-text="background"]').count() == 1)
         check("appearance: radius field exists",
               pg.locator('.fe-inspector input[data-style-num="borderRadius"]').count() == 1)
+        # ручные настройки инспектора свёрнуты в <details> — раскрыть
+        if not pg.evaluate("!!document.querySelector('.manual-controls')?.open"):
+            pg.locator(".manual-controls summary").click()
+            pg.wait_for_timeout(150)
         pg.fill('.fe-inspector input[data-style-text="background"]', "#123456")
         pg.evaluate('document.querySelector(".fe-inspector input[data-style-text=\\"background\\"]").dispatchEvent(new Event("change"))')
         pg.fill('.fe-inspector input[data-style-num="borderRadius"]', "22")
         pg.evaluate('document.querySelector(".fe-inspector input[data-style-num=\\"borderRadius\\"]").dispatchEvent(new Event("change"))')
         pg.wait_for_timeout(500)
         appearance = pg.evaluate("""() => {
-            const ir = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir;
+            const ir = (d => d._editorDraft?.ir || d.ir)(window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data);
             const node = ir.tree[0].children[0];
             const el = document.querySelector('.fe-canvas [data-ir-path="children.0"]');
             const cs = getComputedStyle(el);
@@ -178,7 +183,7 @@ def main():
         pg.evaluate('document.querySelector(".fe-inspector input[data-style-text=\\"color\\"]").dispatchEvent(new Event("change"))')
         pg.wait_for_timeout(500)
         type_style = pg.evaluate("""() => {
-            const ir = window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data.ir;
+            const ir = (d => d._editorDraft?.ir || d.ir)(window.GraphDev.node(Number(document.querySelector('.n-edit').dataset.id)).data);
             const node = ir.tree[0].children[0].children[2];
             const el = document.querySelector('.fe-canvas [data-ir-path="children.0.children.2"]');
             const cs = getComputedStyle(el.querySelector('h3') || el);

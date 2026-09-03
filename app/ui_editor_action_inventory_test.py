@@ -26,7 +26,9 @@ EXPECTED_GROUPS = {
     "topbar": ["zoom-out", "zoom-in", "zoom-fit", "close", "save"],
     "viewports": ["desktop", "tablet", "mobile"],
     # Хендофф: рейка — 8 плоских инструментов, flyout фигур удалён
-    "tools": ["select", "hand", "frame", "rect", "ellipse", "line", "image", "text"],
+    # по хендоффу фигуры живут во флайауте прямоугольника (actionInventory.shapeFlyout)
+    "tools": ["select", "hand", "frame", "rect", "text"],
+    "shapeFlyout": ["rect", "ellipse", "line", "image"],
     "inspector": [
         "semantic-select", "smart-axis", "quality-gate", "harmonize",
         "responsive-autopilot", "intent-locks", "style-dna",
@@ -98,7 +100,8 @@ def open_manual(page) -> None:
     details = page.locator(".manual-controls")
     details.wait_for()
     if not details.evaluate("el => el.open"):
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.wait_for_timeout(80)
 
 
@@ -221,7 +224,8 @@ def main() -> None:
 
         page.click('.dna-editor [data-viewport="tablet"]')
         page.wait_for_timeout(250)
-        check("tablet viewport width", page.locator(".fe-viewport-width").input_value() == "768")
+        # tablet 834 — ширина превью в редакторе (controller.setViewport); 768 — только responsive-материализация IR
+        check("tablet viewport width", page.locator(".fe-viewport-width").input_value() == "834")
         check("tablet aria-pressed", page.locator('[data-viewport="tablet"]').get_attribute("aria-pressed") == "true")
         page.click('.dna-editor [data-viewport="mobile"]')
         page.wait_for_timeout(250)
@@ -270,7 +274,8 @@ def main() -> None:
           return keys;
         }""", edit_id)
         parent_len = len(draft_ir(page, edit_id)["tree"][0]["children"][0]["children"])
-        page.locator(".manual-controls summary").click()
+        if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
+            page.locator(".manual-controls summary").click()
         page.locator('[data-pi="gap"]').fill("28")
         page.locator('[data-pi="gap"]').dispatch_event("change")
         page.wait_for_timeout(200)
