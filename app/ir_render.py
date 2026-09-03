@@ -207,7 +207,13 @@ def _render_document(
                 context, assets, blocked, RENDER_DOCUMENT_URL, RENDER_DOCUMENT_HTML,
                 allow_hosts=WEBFONT_HOSTS if webfonts else ())
             page = context.new_page()
-            page.goto(RENDER_DOCUMENT_URL)
+            # Перехват route иногда гонится с первой навигацией (ERR_ABORTED /
+            # таймаут) — в отчёте это роняло оценку эталона; одна повторная попытка.
+            try:
+                page.goto(RENDER_DOCUMENT_URL, timeout=20_000)
+            except Exception:  # noqa: BLE001
+                page = context.new_page()
+                page.goto(RENDER_DOCUMENT_URL, timeout=30_000)
             page.add_script_tag(path=str(RENDERER_JS))
             dimensions = page.evaluate(
                 """({designIr, outputWidth, webfonts}) => {

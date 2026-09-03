@@ -33,6 +33,19 @@ tokens still win over everything below.
   a proof line or number, and one media/placeholder — not one paragraph
   floating in white space.
 
+## Desktop width discipline (1440px artboard, 1120px content rail)
+
+- Every section uses the whole content rail. A single 560–650px column with
+  1000px of empty canvas beside it is a mobile layout, not a desktop one.
+- Compose sections as rows: `layout: "row"` with two or three children whose
+  numeric widths plus gaps add up to the rail (e.g. 640 + 64 + 416, or three
+  of 352 with gap 32). Children that carry no width (`heading`, `text`,
+  `image`) share the remaining width of the row automatically.
+- Lists of steps, features or FAQ stay short: 3–5 items, each with unique
+  copy. A row of three empty "Step 1 / Step 2 / Step 3" cards is filler.
+- The whole page fits 6–8 sections and stays under ~5500px tall at 1440px;
+  longer pages are read as padding.
+
 ## Free layout discipline
 
 - Prefer auto-layout frames (`layout: row|column` with `gap`) for groups.
