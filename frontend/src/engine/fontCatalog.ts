@@ -7,13 +7,16 @@
       "Plus Jakarta Sans", "Urbanist", "Outfit", "Rubik", "Mulish", "Noto Sans",
       "Noto Sans Display", "Noto Sans JP", "Noto Sans KR", "Noto Sans SC", "Noto Sans Thai",
       "PT Sans", "Ubuntu", "Fira Sans", "Barlow", "Karla", "Cabin", "Hind", "Heebo",
-      "IBM Plex Sans", "Alegreya Sans", "Exo 2", "Josefin Sans", "Quicksand", "Titillium Web"
+      "IBM Plex Sans", "Alegreya Sans", "Exo 2", "Josefin Sans", "Quicksand", "Titillium Web",
+      // пары typography.py (кириллица): без записи в каталоге семейство не грузится
+      "Golos Text", "Tenor Sans", "Commissioner", "Poiret One"
     ]},
     { label: "Serif", fonts: [
       "Merriweather", "Playfair Display", "Lora", "Libre Baskerville", "Cormorant Garamond",
       "EB Garamond", "Crimson Text", "Bitter", "Source Serif 4", "Noto Serif",
       "Noto Serif Display", "PT Serif", "Alegreya", "Spectral", "Fraunces",
-      "Prata", "Libre Bodoni", "DM Serif Display", "Vollkorn", "Cardo"
+      "Prata", "Libre Bodoni", "DM Serif Display", "Vollkorn", "Cardo",
+      "IBM Plex Serif", "Roboto Slab", "Literata", "Yeseva One", "Newsreader"
     ]},
     { label: "Mono", fonts: [
       "Roboto Mono", "Source Code Pro", "IBM Plex Mono", "JetBrains Mono", "Fira Code",

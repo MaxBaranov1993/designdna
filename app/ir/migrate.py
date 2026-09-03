@@ -227,6 +227,17 @@ def ensure_tokens_v2(ir: dict) -> None:
 GENERATED_ARTBOARD_WIDTH = 1440
 
 
+def _unwrap_generated_document(ir: dict) -> dict:
+    """Модель иногда заворачивает документ: {"designIR": {...}} / {"ir": {...}}.
+    Если корень без ``tree``, а ровно одно значение — словарь с ``tree``, берём его."""
+    if "tree" in ir:
+        return ir
+    candidates = [value for value in ir.values() if isinstance(value, dict) and "tree" in value]
+    if len(candidates) == 1:
+        return candidates[0]
+    return ir
+
+
 def sanitize_generated_ir(ir: dict) -> dict:
     """Repair common provider-only aliases without weakening Design IR validation.
 
@@ -237,7 +248,7 @@ def sanitize_generated_ir(ir: dict) -> dict:
     """
     if not isinstance(ir, dict):
         raise ValueError("IR must be a dict")
-    out = copy.deepcopy(ir)
+    out = copy.deepcopy(_unwrap_generated_document(ir))
     meta = out.get("meta")
     if isinstance(meta, dict):
         out["meta"] = {key: value for key, value in meta.items() if key in _GENERATED_META_KEYS}

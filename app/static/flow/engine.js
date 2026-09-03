@@ -43,7 +43,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       "Exo 2",
       "Josefin Sans",
       "Quicksand",
-      "Titillium Web"
+      "Titillium Web",
+      // пары typography.py (кириллица): без записи в каталоге семейство не грузится
+      "Golos Text",
+      "Tenor Sans",
+      "Commissioner",
+      "Poiret One"
     ] },
     { label: "Serif", fonts: [
       "Merriweather",
@@ -65,7 +70,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       "Libre Bodoni",
       "DM Serif Display",
       "Vollkorn",
-      "Cardo"
+      "Cardo",
+      "IBM Plex Serif",
+      "Roboto Slab",
+      "Literata",
+      "Yeseva One",
+      "Newsreader"
     ] },
     { label: "Mono", fonts: [
       "Roboto Mono",

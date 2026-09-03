@@ -243,7 +243,8 @@ def _render_report(report: Path, deterministic: list[dict[str, Any]], live: list
         stable = "pass" if item["sanitize_unchanged"] else "fail"
         gate = "pass" if not item["qualitygate"] else "fail"
         slop = "pass" if not item["slop"] else "fail"
-        score = item.get("scorecard", {}).get("score", "not run")
+        card = item.get("scorecard", {})
+        score = f"failed: {card['error']}" if card.get("error") else card.get("score", "not run")
         lines.append(f"| {item['name']} | [PNG]({_relative(item['png'], report)}) | {schema} | {stable} | {gate} | {slop} | {score} |")
 
     lines += [
@@ -287,11 +288,17 @@ def main() -> int:
             print(f"live provider: {'openai api' if os.getenv('OPENAI_API_KEY') else cli_provider}")
             try:
                 live = _live_pairs(assets)
-                for item in exemplars:
-                    item["scorecard"] = _judge(item["ir"], str((item["ir"].get("meta") or {}).get("description") or item["name"]))
             except Exception as exc:  # report partial provider failure without hiding it
                 live = None
                 live_error = f"{type(exc).__name__}: {exc}"
+            for item in exemplars:
+                # Сбой судьи на одном эталоне (шрифт, таймаут CLI) — ячейка отчёта,
+                # а не обрыв оценки остальных.
+                try:
+                    item["scorecard"] = _judge(item["ir"], str((item["ir"].get("meta") or {}).get("description") or item["name"]))
+                except Exception as exc:  # noqa: BLE001
+                    item["scorecard"] = {"score": 0, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+                    print(f"[exemplar {item['name']}] judge failed: {item['scorecard']['error']}", file=sys.stderr)
 
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(_render_report(report, exemplars, live, live_error), encoding="utf-8")

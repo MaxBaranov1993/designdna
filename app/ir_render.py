@@ -64,8 +64,14 @@ def _requested_font_families(ir: dict) -> set[str]:
     return families
 
 
-def _install_deterministic_font_fallbacks(render_ir: dict, assets: dict) -> None:
-    """Back missing catalog families with bundled Inter, without network drift."""
+def _install_deterministic_font_fallbacks(
+    render_ir: dict, assets: dict, only: set[str] | None = None,
+) -> None:
+    """Back missing catalog families with bundled Inter, without network drift.
+
+    ``only`` ограничивает подмену перечисленными семействами (режим веб-шрифтов:
+    каталог не отдал семейство — подменяем только его, остальные остаются настоящими).
+    """
     fallback_faces, fallback_assets = _builtin_inter_faces()
     if not fallback_faces:
         return
@@ -78,6 +84,9 @@ def _install_deterministic_font_fallbacks(render_ir: dict, assets: dict) -> None
     requested = _requested_font_families(render_ir)
     if _design_needs_inter(render_ir):
         requested.add("Inter")
+    if only is not None:
+        wanted = {name.lower() for name in only}
+        requested = {family for family in requested if family.lower() in wanted}
     for family in sorted(requested):
         if family.lower() in declared:
             continue
@@ -116,9 +125,23 @@ def _neutralize_links(ir: dict) -> dict:
 
 
 WEBFONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
+_UNDECLARED_FONT_RE = re.compile(r'^шрифт "([^"]+)" недоступен офлайн')
 
 
-def render_png(ir: dict, width: int = 1440, *, webfonts: bool = False) -> bytes:
+def _undeclared_families(problems: list[str]) -> set[str]:
+    """Семейства, которые readiness пометил как необъявленные (@font-face не пришёл)."""
+    found: set[str] = set()
+    for problem in problems:
+        match = _UNDECLARED_FONT_RE.match(problem)
+        if match:
+            found.add(match.group(1))
+    return found
+
+
+def render_png(
+    ir: dict, width: int = 1440, *, webfonts: bool = False,
+    _fallback_families: set[str] | None = None,
+) -> bytes:
     """Render a complete Design IR page to PNG with the offline timeline path.
 
     The renderer materializes local assets, blocks every other browser request,
@@ -155,7 +178,25 @@ def render_png(ir: dict, width: int = 1440, *, webfonts: bool = False) -> bytes:
     render_ir = rewrite_local_asset_urls(ir)
     if not webfonts:
         _install_deterministic_font_fallbacks(render_ir, assets)
+    elif _fallback_families:
+        # Второй проход режима веб-шрифтов: семейства, которых нет в каталоге
+        # (Golos Text, Roboto Slab…), подменяем встроенным Inter — остальные настоящие.
+        _install_deterministic_font_fallbacks(render_ir, assets, only=_fallback_families)
 
+    png, missing = _render_document(render_ir, assets, output_width, webfonts, _fallback_families)
+    if png is not None:
+        return png
+    # Повтор вне контекста Playwright: семейства, которых каталог не отдал,
+    # подменяем Inter только для них (см. _install_deterministic_font_fallbacks).
+    return render_png(ir, width, webfonts=True, _fallback_families=missing)
+
+
+def _render_document(
+    render_ir: dict, assets: dict, output_width: int, webfonts: bool,
+    _fallback_families: set[str] | None,
+) -> tuple[bytes | None, set[str]]:
+    """Один проход рендера. ``(None, missing)`` — в режиме веб-шрифтов каталог
+    не объявил перечисленные семейства и нужен повтор с подменой."""
     blocked: list[str] = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
@@ -211,6 +252,10 @@ def render_png(ir: dict, width: int = 1440, *, webfonts: bool = False) -> bytes:
                     families)
             readiness = page.evaluate(_READINESS_JS)
             problems = [str(item) for item in (readiness.get("errors") or [])]
+            if webfonts and _fallback_families is None:
+                missing = _undeclared_families(problems)
+                if missing:
+                    return None, missing
             if blocked:
                 problems.append("render attempted network access: " + "; ".join(blocked[:3]))
             if problems:
@@ -224,6 +269,6 @@ def render_png(ir: dict, width: int = 1440, *, webfonts: bool = False) -> bytes:
                 clip={"x": 0, "y": 0, "width": output_width, "height": min(height, 8000)},
                 animations="disabled",
                 caret="hide",
-            )
+            ), set()
         finally:
             browser.close()
