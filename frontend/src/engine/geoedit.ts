@@ -948,7 +948,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       if (ref.path && ref.path.startsWith("props.")) return false;
       if (ref.secIdx == null || ref.path == null) return true;
       const node = irNodeAt(ref);
-      return !!(node && (node.type === "card" || (Array.isArray(node.children) && node.children.length)));
+      return !!(node && (node.type === "card" || node.type === "frame" || (Array.isArray(node.children) && node.children.length)));
     }
 
     function padding4(ref, el) {
@@ -1274,7 +1274,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         if (!(pt.x >= t.x && pt.x <= t.x + t.w && pt.y >= t.y && pt.y <= t.y + t.h)) continue;
         if (t.ref.secIdx == null) continue;
         const node = irNodeAt(t.ref);
-        if (node && (t.ref.path == null || node.type === "card")) {
+        if (node && (t.ref.path == null || node.type === "card" || node.type === "frame")) {
           return t;
         }
       }
@@ -1838,7 +1838,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
           // контейнеры пропускают клик к ребёнку сразу (как фреймы в Figma).
           const sNode = irNodeAt(sr);
           if (sr.path != null) {
-            const isFreeGroup = sNode && (sNode.type === "card" || sNode.type === "button")
+            const isFreeGroup = sNode && (sNode.type === "card" || sNode.type === "frame" || sNode.type === "button")
               && sNode.frame && sNode.frame.layout === "free";
             if (!isFreeGroup) return false;
           }

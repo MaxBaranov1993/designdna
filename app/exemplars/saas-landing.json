@@ -1,0 +1,323 @@
+{
+  "version": "1.1",
+  "meta": {
+    "name": "Смена — производственный график",
+    "description": "Лендинг сервиса сменного планирования для заводов: интерфейс диспетчерской, а не витрина обещаний.",
+    "styleTags": ["technical", "calm", "editorial"],
+    "direction": {
+      "name": "Диспетчерская",
+      "motivation": "Начальник смены покупает не «эффективность», а спокойный вечер пятницы — страница показывает сам график, а не слоганы про него",
+      "tradeoff": "Первый экран сухой и плотный; тем, кто пришёл вслепую, придётся прочитать три строки, прежде чем станет понятно, что это софт"
+    }
+  },
+  "tokens": {
+    "mode": "light",
+    "color": {
+      "primary": "#0F5C4A",
+      "secondary": "#123B47",
+      "accent": "#E3552B",
+      "background": "#F3F5F2",
+      "surface": "#FFFFFF",
+      "text": "#14181A",
+      "textMuted": "#55635F",
+      "border": "#D8DED8"
+    },
+    "font": {
+      "display": { "family": "Space Grotesk", "weight": 700 },
+      "body": { "family": "Inter", "weight": 400 },
+      "scale": "default"
+    },
+    "radius": { "card": "md", "button": "sm", "input": "sm" },
+    "spacing": { "section": "lg", "container": "default" },
+    "shadow": "none"
+  },
+  "tree": [
+    {
+      "id": "nav",
+      "type": "navbar",
+      "variant": "classic",
+      "props": {
+        "logoText": "Смена",
+        "sticky": true,
+        "links": [
+          { "label": "Как считает", "href": "#rules" },
+          { "label": "График", "href": "#board" },
+          { "label": "Внедрение", "href": "#faq" },
+          { "label": "Цены", "href": "#cta" }
+        ],
+        "cta": { "text": "Запросить доступ", "variant": "primary" }
+      }
+    },
+    {
+      "id": "hero",
+      "type": "hero",
+      "variant": "numbered",
+      "props": {
+        "badge": "Для производств от 150 человек",
+        "heading": "График на 400 человек собирается за вечер, а не за неделю",
+        "subheading": "Смена держит нормы отдыха, допуски и заявки на переработку в одном расписании. Мастер видит дыру в ночной бригаде до того, как она станет простоем.",
+        "ctaPrimary": { "text": "Запросить доступ", "variant": "primary" },
+        "ctaSecondary": { "text": "Как считаются нормы", "variant": "ghost" }
+      },
+      "children": [
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 6 },
+          "children": [
+            { "type": "heading", "level": 3, "text": "Выгружаете табель" },
+            { "type": "text", "size": "sm", "text": "CSV или обмен с 1С:ЗУП. Люди, разряды, допуски и остаток отпусков подтягиваются как есть." }
+          ]
+        },
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 6 },
+          "children": [
+            { "type": "heading", "level": 3, "text": "Ставите правила участка" },
+            { "type": "text", "size": "sm", "text": "Минимум 11 часов между сменами, не больше двух ночных подряд, на прессе — только с допуском." }
+          ]
+        },
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 6 },
+          "children": [
+            { "type": "heading", "level": 3, "text": "Смена предлагает раскладку" },
+            { "type": "text", "size": "sm", "text": "Три варианта закрытия месяца с ценой каждого: где переработка, где недобор, где придётся звонить." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ledger",
+      "type": "composition",
+      "variant": "ledger-strip",
+      "props": { "background": "surface", "density": "tight" },
+      "children": [
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "row", "gap": 40, "justify": "space-between", "wrap": true },
+          "children": [
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 264 },
+              "children": [
+                { "type": "heading", "level": 2, "text": "6 часов" },
+                { "type": "text", "size": "sm", "text": "средняя экономия времени мастера на составлении месячного графика" }
+              ]
+            },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 264 },
+              "children": [
+                { "type": "heading", "level": 2, "text": "0 нарушений" },
+                { "type": "text", "size": "sm", "text": "по межсменному отдыху за 14 месяцев на пилоте в Череповце" }
+              ]
+            },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 264 },
+              "children": [
+                { "type": "heading", "level": 2, "text": "11 заводов" },
+                { "type": "text", "size": "sm", "text": "работают в Смене каждый день: металлообработка, химия, пищёвка" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "floor",
+      "type": "composition",
+      "variant": "floor-band",
+      "props": { "background": "background", "density": "tight" },
+      "children": [
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 12 },
+          "children": [
+            {
+              "type": "image",
+              "aspect": "16:9",
+              "alt": "Пересменка в механическом цехе",
+              "imagePrompt": "Пересменка в механическом цехе: две бригады у доски графика, зелёная спецодежда, холодный свет ламп сверху и тёплый отблеск от станков, лёгкая масляная дымка в воздухе, широкий кадр на 35 мм с уровня плеча, приглушённые зелёно-серые тона без глянца"
+            },
+            { "type": "text", "size": "sm", "text": "Пересменка на «Уралтрубе», 22:40. Раньше раскладку на ночь дописывали здесь же, маркером по доске." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rules",
+      "type": "feature-grid",
+      "variant": "two-col-manifest",
+      "props": {
+        "heading": "Три правила, на которых стоит расписание",
+        "subheading": "Не настройки, а то, от чего сервис отказывается ради предсказуемости."
+      },
+      "children": [
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 10 },
+          "children": [
+            { "type": "heading", "level": 3, "text": "График не сохраняется с нарушением" },
+            { "type": "text", "text": "Если раскладка ломает норму отдыха или ставит человека без допуска, Смена не даст её опубликовать — покажет, кого подставить вместо. Обойти можно только письменным исключением от начальника цеха, и оно остаётся в истории." }
+          ]
+        },
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 10 },
+          "children": [
+            { "type": "heading", "level": 3, "text": "Переработка всегда чья-то" },
+            { "type": "text", "text": "Каждый лишний час привязан к заявке с фамилией согласовавшего. В конце месяца бухгалтерия получает не «сверхурочные 312 ч», а список из 41 решения." }
+          ]
+        },
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 10 },
+          "children": [
+            { "type": "heading", "level": 3, "text": "Автоматика предлагает, человек ставит" },
+            { "type": "text", "text": "Смена не назначает людей сама. Она считает варианты и называет цену каждого, а подпись под графиком ставит мастер — иначе за раскладку никто не отвечает." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "board",
+      "type": "composition",
+      "variant": "board-offset",
+      "props": { "background": "background", "density": "airy" },
+      "children": [
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "row", "gap": 64, "align": "start", "wrap": true },
+          "children": [
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 20, "width": 380 },
+              "children": [
+                { "type": "heading", "level": 2, "text": "Неделя целиком помещается на один экран" },
+                { "type": "text", "text": "Полосы — занятость бригад, красная — то, что осталось незакрытым. Мастер тянет человека мышью, Смена сразу пересчитывает нормы и подсвечивает, где раскладка ломается." },
+                { "type": "button", "text": "Посмотреть демо-график", "variant": "outline" }
+              ]
+            },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 14, "width": "fill", "minWidth": 380 },
+              "children": [
+                {
+                  "type": "frame",
+                  "frame": { "layout": "auto", "direction": "row", "gap": 16, "align": "center" },
+                  "children": [
+                    { "type": "text", "size": "sm", "text": "Бригада А · день" },
+                    { "type": "rect", "fill": "#0F5C4A", "radius": 4, "frame": { "width": 300, "height": 12 } },
+                    { "type": "text", "size": "sm", "text": "40 ч" }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "frame": { "layout": "auto", "direction": "row", "gap": 16, "align": "center" },
+                  "children": [
+                    { "type": "text", "size": "sm", "text": "Бригада Б · день" },
+                    { "type": "rect", "fill": "#0F5C4A", "radius": 4, "frame": { "width": 244, "height": 12 } },
+                    { "type": "text", "size": "sm", "text": "33 ч" }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "frame": { "layout": "auto", "direction": "row", "gap": 16, "align": "center" },
+                  "children": [
+                    { "type": "text", "size": "sm", "text": "Бригада В · ночь" },
+                    { "type": "rect", "fill": "#123B47", "radius": 4, "frame": { "width": 188, "height": 12 } },
+                    { "type": "text", "size": "sm", "text": "24 ч" }
+                  ]
+                },
+                { "type": "divider" },
+                {
+                  "type": "frame",
+                  "frame": { "layout": "auto", "direction": "row", "gap": 16, "align": "center" },
+                  "children": [
+                    { "type": "text", "size": "sm", "text": "Не закрыто · ночь" },
+                    { "type": "rect", "fill": "#E3552B", "radius": 4, "frame": { "width": 96, "height": 12 } },
+                    { "type": "text", "size": "sm", "text": "12 ч" }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "faq",
+      "type": "faq",
+      "variant": "accordion",
+      "props": {
+        "heading": "Что спрашивают перед пилотом",
+        "items": [
+          {
+            "question": "Мы ведём табель в 1С:ЗУП. Придётся дублировать?",
+            "answer": "Нет. Смена читает справочник сотрудников и отпуска из ЗУП, а обратно отдаёт готовый график и заявки на переработку. Двойного ввода нет ни на одном шаге."
+          },
+          {
+            "question": "У нас на каждом участке свои правила отдыха. Их можно описать?",
+            "answer": "Правила задаются на участок, а не на завод: интервал между сменами, максимум ночных подряд, обязательный допуск на оборудование. На пилоте мы описываем их вместе с вашим мастером за две встречи."
+          },
+          {
+            "question": "Что будет, если мастер захочет поставить человека вопреки норме?",
+            "answer": "Смена покажет, какая норма нарушится и на сколько часов, и потребует исключение с подписью начальника цеха. Исключение остаётся в истории графика и попадает в месячный отчёт."
+          },
+          {
+            "question": "Сколько занимает внедрение?",
+            "answer": "Пилот на одном участке — три недели: неделя на выгрузку и правила, две на параллельную работу со старым графиком. Дальше подключаем цеха по одному, обычно по участку в неделю."
+          }
+        ]
+      }
+    },
+    {
+      "id": "cta",
+      "type": "cta",
+      "variant": "split",
+      "props": {
+        "heading": "Начните с одного участка",
+        "subheading": "Пришлём разбор вашего текущего графика за прошлый месяц: где нарушены нормы и сколько стоила каждая переработка. Без внедрения и без обязательств.",
+        "ctaPrimary": { "text": "Запросить разбор", "variant": "primary" },
+        "ctaSecondary": { "text": "Написать в Telegram", "variant": "outline" }
+      }
+    },
+    {
+      "id": "footer",
+      "type": "footer",
+      "variant": "columns",
+      "props": {
+        "logoText": "Смена",
+        "tagline": "Сменное планирование для производств",
+        "columns": [
+          {
+            "title": "Продукт",
+            "links": [
+              { "label": "Правила участка", "href": "#rules" },
+              { "label": "График недели", "href": "#board" },
+              { "label": "Обмен с 1С:ЗУП", "href": "#faq" }
+            ]
+          },
+          {
+            "title": "Компания",
+            "links": [
+              { "label": "О команде", "href": "#about" },
+              { "label": "Внедрения", "href": "#cases" },
+              { "label": "Вакансии", "href": "#jobs" }
+            ]
+          },
+          {
+            "title": "Поддержка",
+            "links": [
+              { "label": "База знаний", "href": "#docs" },
+              { "label": "support@smena.ru", "href": "#mail" },
+              { "label": "+7 495 120-44-08", "href": "#phone" }
+            ]
+          }
+        ],
+        "copyright": "© 2026 Смена. Екатеринбург, ул. Малышева, 51"
+      }
+    }
+  ]
+}

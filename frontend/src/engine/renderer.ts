@@ -302,7 +302,12 @@ import { isLockedNode } from "./locked";
         color:inherit; font:inherit; text-decoration:none; }
       .ir-${uid} .icon-dot { width:34px; height:34px; border-radius:var(--r-btn); background:var(--c-primary);
         color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:15px; flex:none; }
-      .ir-${uid} .img-ph { background:linear-gradient(135deg, var(--c-surface), var(--c-border)); border-radius:var(--r-card);
+      /* Заглушка изображения — тон из палитры (surface + разбавленные accent/primary),
+         а не универсальный серый градиент: пустая картинка должна читаться как часть
+         макета, а не как дырка в вёрстке. background объявлен дважды: вторая строка
+         работает там, где есть color-mix, первая остаётся фолбэком. */
+      .ir-${uid} .img-ph { background:var(--c-surface); border-radius:var(--r-card); border:1px solid var(--c-border);
+        background-image:linear-gradient(150deg, color-mix(in srgb, var(--c-accent) 16%, transparent) 0%, color-mix(in srgb, var(--c-primary) 9%, transparent) 100%);
         display:flex; align-items:center; justify-content:center; color:var(--c-muted); font-size:12px; min-height:180px; padding:16px; text-align:center; }
       .ir-${uid} .sec-head { text-align:center; max-width:640px; margin:0 auto 40px; }
       .ir-${uid} .sec-head h2 { margin-bottom:12px; }
@@ -418,12 +423,14 @@ import { isLockedNode } from "./locked";
 
   /* ---------- элементы (children) ---------- */
 
+  const ASPECT_RATIO = { "1:1": "1/1", "4:3": "4/3", "16:9": "16/9", "3:4": "3/4", "9:16": "9/16" };
+
   function renderElement(el, uid, parentFree, parentFrame) {
     if (el && el.__responsiveHidden) return "";
     const irPath = el.__path || null;
     const html = renderElementInner(el, uid, parentFree, parentFrame);
     let out;
-    if (el.type === "card" || ((el.type === "button" || el.type === "input") && el.children && el.children.length)) {
+    if (el.type === "card" || el.type === "frame" || ((el.type === "button" || el.type === "input") && el.children && el.children.length)) {
       out = html;
     } else {
       // текст с захваченной высотой: страховка от визуального наезда на соседей,
@@ -497,7 +504,13 @@ import { isLockedNode } from "./locked";
         if (el.src) {
           return `<img src="${esc(el.src)}" alt="${esc(el.alt || "")}"${styleAttr(el.style, "display:block;width:100%;height:100%;object-fit:contain")} decoding="sync">`;
         }
-        return `<div class="img-ph">${esc(el.alt || el.imagePrompt || "изображение")}</div>`;
+        {
+          // без aspect заглушка была одинаковой полосой в 180px: в композиции
+          // это ломало ритм колонки, где картинка задаёт пропорцию блока
+          const ratio = ASPECT_RATIO[el.aspect];
+          const css = ratio ? ` style="aspect-ratio:${ratio};min-height:0"` : "";
+          return `<div class="img-ph"${css}>${esc(el.imagePrompt || el.alt || "изображение")}</div>`;
+        }
       case "divider":
         return `<div class="divider"></div>`;
       case "rect": {
@@ -528,6 +541,17 @@ import { isLockedNode } from "./locked";
           return `<div class="source-input"${path}${transformAttr(el.frame)}${css ? ` style="${css}"` : ""}>${kids}</div>`;
         }
         return `<input class="input" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value || "")}">`;
+      /* Голый контейнер композиции: без карточной обводки/фона — только собственная
+       * геометрия (auto-layout или free) и дети. Рендерится как card с role, но это
+       * явный тип, чтобы модель не путала «фрейм» с «карточкой». */
+      case "frame": {
+        const free = el.frame && el.frame.layout === "free";
+        const inner = (el.children || []).map(c => renderElement(c, uid, free, el.frame)).join("");
+        const fcss = frameCss(el.frame, parentFree, true, parentFrame);
+        const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
+        const css = [fcss, visualCss(el.style)].filter(Boolean).join(";");
+        return `<div class="ir-frame"${path}${transformAttr(el.frame)}${css ? ` style="${css}"` : ""}>${inner}</div>`;
+      }
       case "card": {
         const free = el.frame && el.frame.layout === "free";
         const inner = (el.children || []).map(c => renderElement(c, uid, free, el.frame)).join("");
@@ -624,6 +648,31 @@ import { isLockedNode } from "./locked";
       isStructuredSource ? "sec-source" : ((isFree && hasChildren) ? "sec-free" : ""), null, extraCss);
   }
 
+  /* Фон и плотность секции-композиции: только токены, никаких сырых hex из props.
+   * На инвертированных плитах переопределяем muted/border локально: иначе приглушённый
+   * текст остаётся тёмно-серым на цветном фоне и проваливается по контрасту. */
+  const INVERTED_ROLES = "color:#fff;--c-text:#fff;--c-muted:rgba(255,255,255,.78);--c-border:rgba(255,255,255,.24)";
+  const COMPOSITION_SURFACE = {
+    background: "background:var(--c-bg)",
+    surface: "background:var(--c-surface)",
+    primary: `background:var(--c-primary);${INVERTED_ROLES}`,
+    accent: `background:var(--c-accent);${INVERTED_ROLES}`,
+    none: "",
+  };
+  const COMPOSITION_PADDING = {
+    tight: "padding-top:calc(var(--sec-py) * .55);padding-bottom:calc(var(--sec-py) * .55)",
+    normal: "",
+    airy: "padding-top:calc(var(--sec-py) * 1.6);padding-bottom:calc(var(--sec-py) * 1.6)",
+  };
+
+  function compositionSurface(value) {
+    return COMPOSITION_SURFACE[value] || "";
+  }
+
+  function compositionPadding(value) {
+    return COMPOSITION_PADDING[value] || "";
+  }
+
   function renderSectionInner(sec, uid) {
     const t = sec.type, v = sec.variant || "", p = sec.props || {};
     const base = `sec-${sec.id || "x"}`;
@@ -651,16 +700,90 @@ import { isLockedNode } from "./locked";
         <div class="wrap" style="max-width:1120px">${inner}</div></nav>`;
     }
 
+    /* Свободная композиция: содержимое целиком в children (frame + примитивы).
+     * Семантических props нет, кроме рамки секции — фон из токенов и плотность. */
+    if (t === "composition") {
+      const free = !!(sec.frame && sec.frame.layout === "free");
+      const kids = (sec.children || []).map(c => renderElement(c, uid, free, sec.frame)).join("");
+      const style = [compositionSurface(p.background), compositionPadding(p.density)]
+        .filter(Boolean).join(";");
+      const head = p.heading
+        ? `<h2 data-ir-path="props.heading" style="margin-bottom:${p.subheading ? 12 : 32}px;max-width:14ch">${esc(p.heading)}</h2>`
+        : "";
+      const sub = p.subheading
+        ? `<p class="muted" data-ir-path="props.subheading" style="margin-bottom:32px;max-width:62ch">${esc(p.subheading)}</p>`
+        : "";
+      return `<section class="sec sec-composition ${base}"${style ? ` style="${style}"` : ""}>
+        <div class="wrap">${head}${sub}${kids}</div></section>`;
+    }
+
     if (t === "hero") {
       const badge = p.badge ? `<span class="badge tone-primary" style="margin-bottom:16px"><span data-ir-path="props.badge">${esc(p.badge)}</span></span>` : "";
       const head = `<h1 data-ir-path="props.heading" style="margin-bottom:16px">${esc(p.heading || "")}</h1>`;
       const sub = p.subheading ? `<p class="muted" data-ir-path="props.subheading" style="font-size:calc(17px*var(--fs));margin-bottom:28px;max-width:560px">${esc(p.subheading)}</p>` : "";
       const btns = `<div style="display:flex;gap:12px;flex-wrap:wrap">${btnHtml(p.ctaPrimary, "primary", "props.ctaPrimary.text")}${btnHtml(p.ctaSecondary, "outline", "props.ctaSecondary.text")}</div>`;
+      const heroMedia = (minHeight, extra) => p.media
+        ? p.media.src
+          ? `<div class="img-ph" style="min-height:${minHeight}px;overflow:hidden;padding:0;${extra || ""}"><img src="${esc(p.media.src)}" alt="${esc(p.media.alt || "")}" style="display:block;width:100%;height:${minHeight}px;object-fit:cover" decoding="sync"></div>`
+          : `<div class="img-ph" style="min-height:${minHeight}px;${extra || ""}">${esc(p.media.imagePrompt || p.media.alt || "")}</div>`
+        : "";
+
+      /* Редакционная колонка: надзаголовок без плашки, display-заголовок во всю
+       * ширину, под ним полоса «лид + действие» — как разворот журнала. */
+      if (v === "editorial-stack") {
+        const eyebrow = p.badge
+          ? `<p class="muted" data-ir-path="props.badge" style="font-size:calc(12px*var(--fs));letter-spacing:.14em;text-transform:uppercase;margin-bottom:28px">${esc(p.badge)}</p>`
+          : "";
+        return `<section class="sec ${base}"><div class="wrap">
+          ${eyebrow}
+          <h1 data-ir-path="props.heading" style="font-size:calc(76px*var(--fs));line-height:1.02;letter-spacing:-.03em;margin-bottom:40px;max-width:16ch">${esc(p.heading || "")}</h1>
+          <div style="border-top:1px solid var(--c-border);padding-top:28px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:40px;align-items:start">
+            ${p.subheading ? `<p data-ir-path="props.subheading" style="font-size:calc(19px*var(--fs));max-width:52ch">${esc(p.subheading)}</p>` : "<div></div>"}
+            <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-start">${btnHtml(p.ctaPrimary, "primary", "props.ctaPrimary.text")}${btnHtml(p.ctaSecondary, "ghost", "props.ctaSecondary.text")}</div>
+          </div>
+          ${heroMedia(360, "margin-top:48px")}</div></section>`;
+      }
+
+      /* Плакат: плита surface с рамкой, заголовок занимает почти всю плиту,
+       * подпись и действие прижаты к её низу. Одна вертикаль, никакой сетки карточек. */
+      if (v === "poster") {
+        return `<section class="sec ${base}" style="background:var(--c-surface)"><div class="wrap">
+          <div style="border:1px solid var(--c-border);border-radius:var(--r-card);padding:56px 48px;display:flex;flex-direction:column;gap:48px;min-height:520px;justify-content:space-between;background:var(--c-bg)">
+            <div>${badge}
+              <h1 data-ir-path="props.heading" style="font-size:calc(64px*var(--fs));line-height:1.05;letter-spacing:-.03em;max-width:14ch">${esc(p.heading || "")}</h1></div>
+            ${heroMedia(300)}
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:32px;align-items:end">
+              ${p.subheading ? `<p class="muted" data-ir-path="props.subheading" style="font-size:calc(17px*var(--fs));max-width:48ch">${esc(p.subheading)}</p>` : "<div></div>"}
+              <div style="display:flex;gap:12px;flex-wrap:wrap">${btnHtml(p.ctaPrimary, "primary", "props.ctaPrimary.text")}${btnHtml(p.ctaSecondary, "outline", "props.ctaSecondary.text")}</div>
+            </div></div></div></section>`;
+      }
+
+      /* Сдвинутый сплит: узкая текстовая колонка и медиа, поднятое над базовой
+       * линией и уходящее за правый край — асимметрия вместо двух равных половин. */
+      if (v === "split-offset") {
+        const media = heroMedia(420, "margin-top:-64px;border-top-right-radius:0;border-bottom-right-radius:0") ||
+          `<div class="img-ph" style="min-height:420px;margin-top:-64px">${esc("медиа")}</div>`;
+        return `<section class="sec ${base}" style="overflow:hidden"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:56px;align-items:start">
+          <div style="display:flex;flex-direction:column;padding-top:24px">${badge}${head}${sub}${btns}</div>
+          <div style="position:relative;left:72px">${media}</div></div></section>`;
+      }
+
+      /* Нумерованный вход: тезис слева, справа — пронумерованные доказательства
+       * из children. Нумерация здесь несёт информацию (порядок шагов), а не декор. */
+      if (v === "numbered") {
+        const items = (sec.children || []).map((c, i) => `<div style="display:grid;grid-template-columns:56px 1fr;gap:20px;align-items:start;padding:20px 0;border-top:1px solid var(--c-border)">
+          <span style="font-family:var(--font-display);font-weight:var(--fw-display);font-size:calc(22px*var(--fs));color:var(--c-primary);line-height:1.2">${String(i + 1).padStart(2, "0")}</span>
+          <div>${renderElement(c, uid, false, sec.frame)}</div></div>`).join("");
+        return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:64px;align-items:start">
+          <div style="display:flex;flex-direction:column">${badge}${head}${sub}${btns}</div>
+          <div>${items}</div></div></section>`;
+      }
+
       if (v === "split" || v === "split-reverse") {
         const media = p.media
           ? p.media.src
             ? `<div class="img-ph" style="min-height:320px;overflow:hidden;padding:0"><img src="${esc(p.media.src)}" alt="${esc(p.media.alt || "")}" style="display:block;width:100%;height:320px;object-fit:cover" decoding="sync"></div>`
-            : `<div class="img-ph" style="min-height:320px">${esc(p.media.alt || p.media.imagePrompt || "")}</div>`
+            : `<div class="img-ph" style="min-height:320px">${esc(p.media.imagePrompt || p.media.alt || "")}</div>`
           : `<div class="img-ph" style="min-height:320px">медиа</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center">${badge}${head}${sub}${btns}</div>`;
         return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:48px;align-items:center">
@@ -688,6 +811,40 @@ import { isLockedNode } from "./locked";
     }
 
     if (t === "feature-grid") {
+      const kids = sec.children || [];
+      const kid = (c) => renderElement(c, uid, false, sec.frame);
+
+      /* Рейка-список: возможности идут строками с крупным индексом, разделённые
+       * линией. Плотный ритм без карточной сетки — контрапункт к grid-3. */
+      if (v === "list-rail") {
+        const rows = kids.map((c, i) => `<div style="display:grid;grid-template-columns:72px 1fr;gap:28px;align-items:start;padding:26px 0;border-top:1px solid var(--c-border)">
+          <span style="font-family:var(--font-display);font-weight:var(--fw-display);font-size:calc(26px*var(--fs));color:var(--c-primary);line-height:1.1">${String(i + 1).padStart(2, "0")}</span>
+          <div>${kid(c)}</div></div>`).join("");
+        return `<section class="sec ${base}"><div class="wrap" style="max-width:900px">
+          ${secHeadLeft(p)}<div>${rows}</div></div></section>`;
+      }
+
+      /* Асимметричное бенто: ширины плиток чередуются 4/2 → 3/3 → 2/4 по шестиколоночной
+       * сетке, первая плитка выше остальных. Ряды остаются заполненными без дыр. */
+      if (v === "bento-asym") {
+        const spans = [4, 2, 3, 3, 2, 4];
+        // display:grid у плитки — чтобы содержимое растягивалось на всю ячейку:
+        // соседи в одном ряду обязаны быть одной высоты
+        const tiles = kids.map((c, i) => `<div style="grid-column:span ${spans[i % spans.length]};${i === 0 ? "min-height:280px;" : ""}display:grid">${kid(c)}</div>`).join("");
+        return `<section class="sec ${base}"><div class="wrap">
+          ${secHead(p)}
+          <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:20px">${tiles}</div></div></section>`;
+      }
+
+      /* Манифест в две колонки: заголовок остаётся слева и залипает, тезисы
+       * читаются как сплошной текст справа, а не как карточки. */
+      if (v === "two-col-manifest") {
+        const rows = kids.map((c, i) => `<div style="${i ? "border-top:1px solid var(--c-border);padding-top:28px;" : ""}margin-bottom:28px">${kid(c)}</div>`).join("");
+        return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:72px;align-items:start">
+          <div style="position:sticky;top:32px">${secHeadLeft(p)}</div>
+          <div>${rows}</div></div></section>`;
+      }
+
       const cols = v === "grid-2" ? 2 : v === "grid-4" ? 4 : 3;
       return `<section class="sec ${base}"><div class="wrap">
         ${secHead(p)}
@@ -697,7 +854,7 @@ import { isLockedNode } from "./locked";
 
     if (t === "feature-alternating") {
       const rows = (sec.children || []).map((c, i) => {
-        const media = `<div class="img-ph" style="min-height:240px">${esc(c.alt || c.imagePrompt || "изображение")}</div>`;
+        const media = `<div class="img-ph" style="min-height:240px">${esc(c.imagePrompt || c.alt || "изображение")}</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center;gap:12px">
           ${c.title || c.text ? `<h3>${esc(c.title || "")}</h3><p class="muted">${esc(c.text || "")}</p>` : renderElement(c, uid, false, sec.frame)}
           ${(c.children || []).map(ch => renderElement(ch, uid, !!(c.frame && c.frame.layout === "free"), c.frame)).join("")}</div>`;
@@ -725,7 +882,7 @@ import { isLockedNode } from "./locked";
     if (t === "gallery") {
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:16px">
-        ${(sec.children || []).map((c, i) => `<div class="img-ph" style="min-height:${v === "masonry" ? 140 + ((i * 67) % 120) : 200}px">${esc(c.alt || c.imagePrompt || "фото")}</div>`).join("")}</div></div></section>`;
+        ${(sec.children || []).map((c, i) => `<div class="img-ph" style="min-height:${v === "masonry" ? 140 + ((i * 67) % 120) : 200}px">${esc(c.imagePrompt || c.alt || "фото")}</div>`).join("")}</div></div></section>`;
     }
 
     if (t === "testimonials") {
@@ -855,6 +1012,15 @@ import { isLockedNode } from "./locked";
   function secHead(p) {
     if (!p.heading && !p.subheading) return "";
     return `<div class="sec-head">${p.heading ? `<h2 data-ir-path="props.heading">${esc(p.heading)}</h2>` : ""}
+      ${p.subheading ? `<p class="muted" data-ir-path="props.subheading">${esc(p.subheading)}</p>` : ""}</div>`;
+  }
+
+  /** Заголовок секции без центрирования и без ограничения в 640px — для вариантов,
+   *  где шапка стоит в левой колонке (list-rail, two-col-manifest). */
+  function secHeadLeft(p) {
+    if (!p.heading && !p.subheading) return "";
+    return `<div class="sec-head" style="text-align:left;max-width:none;margin:0 0 32px">
+      ${p.heading ? `<h2 data-ir-path="props.heading">${esc(p.heading)}</h2>` : ""}
       ${p.subheading ? `<p class="muted" data-ir-path="props.subheading">${esc(p.subheading)}</p>` : ""}</div>`;
   }
 

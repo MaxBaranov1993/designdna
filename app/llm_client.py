@@ -455,28 +455,129 @@ def load(name: str) -> str:
     return text
 
 
-def build_system_prompt(mode: str = "generate") -> str:
+# Few-shot эталоны: подбираются по типу продукта из брифа. Каждый режется до
+# ~6 КБ — целиком страница занимает десятки килобайт и вытесняет саму задачу.
+EXEMPLARS_DIR = "app/exemplars"
+EXEMPLAR_BUDGET = 6144
+_EXEMPLAR_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "saas-landing": (
+        "saas", "b2b", "сервис", "платформ", "подписк", "dashboard", "дашборд", "crm",
+        "приложен", "лендинг", "landing", "software", "инструмент", "стартап", "api",
+        "аналитик", "автоматиз",
+    ),
+    "marketplace": (
+        "marketplace", "маркетплейс", "магазин", "shop", "commerce", "каталог", "товар",
+        "объявлен", "доска", "продаж", "аукцион", "аренд", "витрин", "заказ", "покупател",
+    ),
+    "restaurant": (
+        "restaurant", "ресторан", "кафе", "cafe", "бар", "food", "еда", "кухн", "меню",
+        "пекарн", "bakery", "coffee", "кофе", "бистро", "винн", "гост", "hospitality",
+    ),
+}
+# Ни одно слово не совпало — берём два самых разных по композиции эталона.
+_EXEMPLAR_FALLBACK = ("saas-landing", "restaurant")
+
+
+def exemplar_names(product_type: str, limit: int = 2) -> list[str]:
+    """Имена ближайших эталонов по типу продукта (без чтения файлов)."""
+    text = str(product_type or "").casefold()
+    scored = [
+        (sum(1 for word in words if word in text), name)
+        for name, words in _EXEMPLAR_KEYWORDS.items()
+    ]
+    matched = [name for score, name in sorted(scored, key=lambda s: (-s[0], s[1])) if score]
+    return (matched or list(_EXEMPLAR_FALLBACK))[:max(0, limit)]
+
+
+def _compact(document: dict) -> str:
+    return json.dumps(document, ensure_ascii=False, separators=(",", ":"))
+
+
+def fit_exemplar(document: dict, budget: int = EXEMPLAR_BUDGET) -> tuple[str, int]:
+    """Ужать эталон под бюджет, отбрасывая секции с конца -> (json, сколько убрано).
+
+    Резать строку по символам нельзя: модель получила бы оборванный JSON и училась
+    бы на нём. Хвост страницы (footer, cta) для few-shot наименее ценен, поэтому
+    отрезаем секции целиком, сохраняя валидный документ и начало композиции.
+    """
+    body = _compact(document)
+    if len(body) <= budget or not isinstance(document.get("tree"), list):
+        return body, 0
+    tree = list(document["tree"])
+    dropped = 0
+    while len(tree) > 1 and len(body) > budget:
+        tree.pop()
+        dropped += 1
+        body = _compact({**document, "tree": tree})
+    return body, dropped
+
+
+def load_exemplars(product_type: str, limit: int = 2) -> str:
+    """Few-shot блок для промпта: 1–2 эталонных IR, каждый ужат до EXEMPLAR_BUDGET.
+
+    Отсутствующий или битый файл эталона молча пропускается: few-shot — это
+    усилитель качества, а не обязательная часть контракта генерации.
+    """
+    chunks: list[str] = []
+    for name in exemplar_names(product_type, limit):
+        try:
+            document = json.loads(load(f"{EXEMPLARS_DIR}/{name}.json"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(document, dict):
+            continue
+        body, dropped = fit_exemplar(document)
+        meta = document.get("meta")
+        direction = meta.get("direction") if isinstance(meta, dict) else None
+        label = name
+        if isinstance(direction, dict) and direction.get("name"):
+            label += f" · направление «{direction['name']}»"
+        note = f"\n(последние {dropped} секций опущены ради размера промпта)" if dropped else ""
+        chunks.append(f"### exemplar: {label}\n```json\n{body}\n```{note}")
+    return "\n\n".join(chunks)
+
+
+def build_system_prompt(
+    mode: str = "generate",
+    *,
+    design_brief: dict | str = "",
+    exemplars: str = "",
+) -> str:
+    """Собрать system-промпт генератора.
+
+    `design_brief` (DesignBrief со стадии арт-дирекции) и `exemplars` по умолчанию
+    пустые — вызов без них полностью совместим со старой сигнатурой и кэшируется
+    по (mode, сигнатуры промпт-файлов). С непустым контекстом промпт собирается
+    каждый раз: ключом был бы весь бриф.
+    """
+    if isinstance(design_brief, dict):
+        design_brief = json.dumps(design_brief, ensure_ascii=False, indent=2)
     signature = tuple(_file_stamp(ROOT / name) for name in _PROMPT_FILES)
     key = (mode, signature)
-    with _PROMPT_LOCK:
-        cached = _PROMPT_CACHE.get(key)
-    if cached is not None:
-        return cached
+    cacheable = not design_brief and not exemplars
+    if cacheable:
+        with _PROMPT_LOCK:
+            cached = _PROMPT_CACHE.get(key)
+        if cached is not None:
+            return cached
     template = load("spike/system-prompt.md").split("---", 1)[-1]
     prompt = (
         template.replace("{{SCHEMA}}", load("schema/design-ir.schema.json"))
         .replace("{{BLOCKS}}", load("app/prompts/BLOCKS.md"))
         .replace("{{DESIGN}}", load("app/prompts/DESIGN.md") if mode == "generate" else "")
+        .replace("{{DESIGN_BRIEF}}", design_brief or "")
+        .replace("{{EXEMPLARS}}", exemplars or "")
         .replace("{{BRIEF}}", "")
         .replace("{{STYLE_HINT}}", "")
         .replace("{{MODE}}", mode)
         .strip()
     )
-    with _PROMPT_LOCK:
-        # Старые сигнатуры больше не нужны — держим только актуальный вариант mode.
-        for stale in [k for k in _PROMPT_CACHE if k[0] == mode and k != key]:
-            del _PROMPT_CACHE[stale]
-        _PROMPT_CACHE[key] = prompt
+    if cacheable:
+        with _PROMPT_LOCK:
+            # Старые сигнатуры больше не нужны — держим только актуальный вариант mode.
+            for stale in [k for k in _PROMPT_CACHE if k[0] == mode and k != key]:
+                del _PROMPT_CACHE[stale]
+            _PROMPT_CACHE[key] = prompt
     return prompt
 
 

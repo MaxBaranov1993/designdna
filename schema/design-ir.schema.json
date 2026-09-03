@@ -146,7 +146,18 @@
         "requestedComponentKey": { "type": "string" },
         "sourceTokenLock": { "type": "boolean" },
         "sourceTokenNodeId": { "type": "integer", "minimum": 1 },
-        "exactServiceCardEmbedded": { "type": "boolean" }
+        "exactServiceCardEmbedded": { "type": "boolean" },
+        "direction": {
+          "type": "object",
+          "description": "Направление варианта генерации: чем он отличается от соседних вариантов, а не «Вариант 1/2».",
+          "required": ["name", "motivation", "tradeoff"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+            "motivation": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "tradeoff": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        }
         }
       },
     "contentHash": {
@@ -915,6 +926,7 @@
             "newsletter",
             "banner",
             "footer",
+            "composition",
             "source-block"
           ]
         },
@@ -1061,6 +1073,22 @@
             "properties": {
               "props": {
                 "$ref": "#/$defs/footerProps"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "composition"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "props": {
+                "$ref": "#/$defs/compositionProps"
               }
             }
           }
@@ -1382,6 +1410,23 @@
         }
       }
     },
+    "compositionProps": {
+      "type": "object",
+      "description": "Свободная секция: всё содержимое живёт в children (frame + примитивы). props задают только рамку секции.",
+      "additionalProperties": false,
+      "properties": {
+        "heading": { "type": "string", "maxLength": 160 },
+        "subheading": { "type": "string", "maxLength": 400 },
+        "background": {
+          "enum": ["background", "surface", "primary", "accent", "none"],
+          "description": "Фон секции берётся из токенов; none — прозрачно."
+        },
+        "density": {
+          "enum": ["tight", "normal", "airy"],
+          "description": "Вертикальный ритм секции относительно spacing.section"
+        }
+      }
+    },
     "footerProps": {
       "type": "object",
       "required": [
@@ -1448,7 +1493,8 @@
             "input",
             "stat",
             "list",
-            "rect"
+            "rect",
+            "frame"
           ]
         },
         "frame": {

@@ -1,0 +1,263 @@
+{
+  "version": "1.1",
+  "meta": {
+    "name": "Сквозняк — винный бар с кухней",
+    "description": "Сайт винного бара, собранный как разворот меню: тёмная бумага, вертикальный набор, цены в правой колонке.",
+    "styleTags": ["editorial", "dark", "warm"],
+    "direction": {
+      "name": "Меню как текст",
+      "motivation": "Гость выбирает бар по тому, что в нём наливают и готовят сегодня — страница отдаёт этот текст целиком, а не прячет его за кнопкой «Меню»",
+      "tradeoff": "Ни одной фотографии еды на первом экране: тем, кто листает быстро, зацепиться почти не за что"
+    }
+  },
+  "tokens": {
+    "mode": "dark",
+    "color": {
+      "primary": "#C9633B",
+      "secondary": "#7E8F6A",
+      "accent": "#D9A441",
+      "background": "#14100D",
+      "surface": "#1D1813",
+      "text": "#F2EBE1",
+      "textMuted": "#AC9C85",
+      "border": "#322A22"
+    },
+    "font": {
+      "display": { "family": "Fraunces", "weight": 600 },
+      "body": { "family": "Inter", "weight": 400 },
+      "scale": "default"
+    },
+    "radius": { "card": "none", "button": "none", "input": "none" },
+    "spacing": { "section": "lg", "container": "narrow" },
+    "shadow": "none"
+  },
+  "tree": [
+    {
+      "id": "nav",
+      "type": "navbar",
+      "variant": "classic",
+      "props": {
+        "logoText": "Сквозняк",
+        "transparent": true,
+        "links": [
+          { "label": "Кухня", "href": "#kitchen" },
+          { "label": "Погреб", "href": "#cellar" },
+          { "label": "Как найти", "href": "#visit" }
+        ],
+        "cta": { "text": "Забронировать стол", "variant": "outline" }
+      }
+    },
+    {
+      "id": "hero",
+      "type": "hero",
+      "variant": "editorial-stack",
+      "props": {
+        "badge": "Гагаринский переулок, 12 · со среды по воскресенье, с 17:00",
+        "heading": "Двадцать две позиции по бокалам и кухня, которая под них подстраивается",
+        "subheading": "Карта переписывается в среду утром, меню — в тот же день к четырём. Что осталось с прошлой недели, уходит в бокал по цене себестоимости.",
+        "ctaPrimary": { "text": "Забронировать стол", "variant": "primary" },
+        "ctaSecondary": { "text": "Карта на эту неделю", "variant": "ghost" },
+        "media": {
+          "alt": "Барная стойка Сквозняка вечером",
+          "aspect": "16:9",
+          "imagePrompt": "Барная стойка из тёмного ореха вечером: восемь открытых бутылок в ряд, следы от бокалов на дереве, одна лампа с тёплым вольфрамовым светом сбоку, глубокие тени, зерно плёнки, охристо-красная гамма, кадр на 50 мм с высоты сидящего гостя"
+        }
+      }
+    },
+    {
+      "id": "kitchen",
+      "type": "composition",
+      "variant": "menu-column",
+      "props": {
+        "background": "surface",
+        "density": "airy",
+        "heading": "Сегодня на кухне",
+        "subheading": "Пять позиций, шестая появляется, когда с рынка приезжает что-то стоящее."
+      },
+      "children": [
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "column", "gap": 28 },
+          "children": [
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "row", "gap": 32, "justify": "space-between", "align": "start" },
+              "children": [
+                {
+                  "type": "frame",
+                  "frame": { "layout": "auto", "direction": "column", "gap": 6, "width": 520 },
+                  "children": [
+                    { "type": "heading", "level": 3, "text": "Севрюга горячего копчения, крем из печёного лука" },
+                    { "type": "text", "size": "sm", "text": "Коптим в дубовой стружке два часа. Просит что-то плотное белое — берите шенен из Луары." }
+                  ]
+                },
+                { "type": "text", "text": "890 ₽" }
+              ]
+            },
+            { "type": "divider" },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "row", "gap": 32, "justify": "space-between", "align": "start" },
+              "children": [
+                {
+                  "type": "frame",
+                  "frame": { "layout": "auto", "direction": "column", "gap": 6, "width": 520 },
+                  "children": [
+                    { "type": "heading", "level": 3, "text": "Телячий язык, хрен, маринованная черемша" },
+                    { "type": "text", "size": "sm", "text": "Черемша своя, прошлогодняя, из погреба. Единственное блюдо, которое живёт в меню круглый год." }
+                  ]
+                },
+                { "type": "text", "text": "740 ₽" }
+              ]
+            },
+            { "type": "divider" },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "row", "gap": 32, "justify": "space-between", "align": "start" },
+              "children": [
+                {
+                  "type": "frame",
+                  "frame": { "layout": "auto", "direction": "column", "gap": 6, "width": 520 },
+                  "children": [
+                    { "type": "heading", "level": 3, "text": "Паста качо-э-пепе на чёрном перце из Саравака" },
+                    { "type": "text", "size": "sm", "text": "Три ингредиента, поэтому перец мелем при заказе. Просим пятнадцать минут." }
+                  ]
+                },
+                { "type": "text", "text": "680 ₽" }
+              ]
+            },
+            { "type": "divider" },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "row", "gap": 32, "justify": "space-between", "align": "start" },
+              "children": [
+                {
+                  "type": "frame",
+                  "frame": { "layout": "auto", "direction": "column", "gap": 6, "width": 520 },
+                  "children": [
+                    { "type": "heading", "level": 3, "text": "Баранья лопатка на углях, айвовый соус" },
+                    { "type": "text", "size": "sm", "text": "На двоих, готовится сорок минут. Под неё держим гренаш из Русийона, он в карте всегда." }
+                  ]
+                },
+                { "type": "text", "text": "2 200 ₽" }
+              ]
+            },
+            { "type": "divider" },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "row", "gap": 32, "justify": "space-between", "align": "start" },
+              "children": [
+                {
+                  "type": "frame",
+                  "frame": { "layout": "auto", "direction": "column", "gap": 6, "width": 520 },
+                  "children": [
+                    { "type": "heading", "level": 3, "text": "Тарт с топинамбуром и голубым сыром" },
+                    { "type": "text", "size": "sm", "text": "Десерт, который спорит с вином, а не соглашается с ним. Берите к нему что-то окисленное." }
+                  ]
+                },
+                { "type": "text", "text": "520 ₽" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cellar",
+      "type": "composition",
+      "variant": "cellar-diptych",
+      "props": { "background": "background", "density": "normal" },
+      "children": [
+        {
+          "type": "frame",
+          "frame": { "layout": "auto", "direction": "row", "gap": 56, "align": "start", "wrap": true },
+          "children": [
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 12, "width": 440 },
+              "children": [
+                {
+                  "type": "image",
+                  "aspect": "3:4",
+                  "alt": "Полки погреба со стеллажами бутылок",
+                  "imagePrompt": "Погреб под баром: стеллажи из необработанной сосны, бутылки лежат на боку, мел на торцах ящиков, единственная лампа под потолком даёт тёплое пятно и длинные тени, влажный бетонный пол, холодные сине-серые полутени против тёплого центра, кадр на 35 мм"
+                },
+                { "type": "text", "size": "sm", "text": "Погреб на 340 бутылок. Больше не помещается — отсюда и размер карты." }
+              ]
+            },
+            {
+              "type": "frame",
+              "frame": { "layout": "auto", "direction": "column", "gap": 18, "width": "fill", "minWidth": 320 },
+              "children": [
+                { "type": "heading", "level": 2, "text": "Мы не держим позицию, которую не можем налить в бокал" },
+                { "type": "text", "text": "Каждая бутылка в карте открывается — если её не заказали за две недели, она уходит на бокалы и в карту не возвращается. Поэтому у нас нет коллекционных строк «под заказ» и нет бургундии за девяносто тысяч." },
+                { "type": "text", "text": "Зато есть двадцать две открытых позиции каждый вечер, и любую можно попробовать по 50 мл, прежде чем брать бокал. Сомелье в зале один, зовут Игорь, он подходит сам." },
+                { "type": "button", "text": "Карта на эту неделю", "variant": "outline" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "visit",
+      "type": "faq",
+      "variant": "accordion",
+      "props": {
+        "heading": "Прежде чем прийти",
+        "items": [
+          {
+            "question": "Можно без брони?",
+            "answer": "В среду и четверг — почти всегда да, у стойки шесть мест. В пятницу и субботу после восьми свободных столов не бывает; бронь открывается за две недели."
+          },
+          {
+            "question": "Есть ли что-то для тех, кто не пьёт?",
+            "answer": "Четыре позиции ферментированных напитков собственного приготовления и безалкогольный рислинг, который мы не стесняемся наливать. Чая и кофе нет."
+          },
+          {
+            "question": "Пускают ли с детьми и собаками?",
+            "answer": "С собаками — да, в зале живёт миска. С детьми до 12 лет тесно и шумно: пятнадцать посадочных мест и открытая кухня, честно предупреждаем."
+          }
+        ]
+      }
+    },
+    {
+      "id": "cta",
+      "type": "cta",
+      "variant": "centered",
+      "props": {
+        "heading": "Стол на двоих в среду в семь",
+        "subheading": "Бронь на две недели вперёд, отмена — до полудня того же дня, без депозита.",
+        "ctaPrimary": { "text": "Забронировать", "variant": "primary" },
+        "ctaSecondary": { "text": "+7 495 331-09-44", "variant": "ghost" }
+      }
+    },
+    {
+      "id": "footer",
+      "type": "footer",
+      "variant": "minimal",
+      "props": {
+        "logoText": "Сквозняк",
+        "tagline": "Гагаринский переулок, 12. Ср–Вс, 17:00–00:30",
+        "columns": [
+          {
+            "title": "Зал",
+            "links": [
+              { "label": "Бронь стола", "href": "#cta" },
+              { "label": "Карта вин", "href": "#cellar" },
+              { "label": "Меню кухни", "href": "#kitchen" }
+            ]
+          },
+          {
+            "title": "Связь",
+            "links": [
+              { "label": "+7 495 331-09-44", "href": "#phone" },
+              { "label": "hi@skvoznyak.bar", "href": "#mail" }
+            ]
+          }
+        ],
+        "copyright": "© 2026 Сквозняк"
+      }
+    }
+  ]
+}
