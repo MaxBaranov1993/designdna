@@ -96,6 +96,47 @@ def component_fidelity_status(fidelity: dict | None) -> dict:
     return {"status": "verified" if not reasons else "needs-review", "passed": not reasons, "reasons": reasons}
 
 
+_PREVIEW_VIEWPORTS = ("desktop", "tablet", "mobile")
+
+
+def _has_responsive_overrides(node: object, depth: int = 0) -> bool:
+    if depth > 40 or not isinstance(node, dict):
+        return False
+    if isinstance(node.get("responsive"), dict) and node["responsive"]:
+        return True
+    return any(_has_responsive_overrides(child, depth + 1) for child in node.get("children") or [])
+
+
+def _preview_responsive(master: dict, node: dict, wrapper_frame: dict, wrapper_responsive: dict) -> dict:
+    """Корневой ``responsive.viewports`` для превью мастера.
+
+    Рендерер применяет per-viewport override'ы узлов (visible:false у клонов
+    других вьюпортов, frame/style) ТОЛЬКО при наличии этого маркера; без него
+    desktop- и mobile-версии текста рисовались друг поверх друга. Размеры
+    вьюпортов берём от самого компонента, а не 1440×900 страницы: материализация
+    пишет их в корневой frame, и артборд превью остаётся размером с компонент."""
+    source = master.get("responsive") if isinstance(master.get("responsive"), dict) else {}
+    names = list((source.get("viewports") or {}).keys()) if isinstance(source.get("viewports"), dict) else []
+    if not names:
+        if not _has_responsive_overrides(node):
+            return {}
+        names = list(_PREVIEW_VIEWPORTS)
+    def _px(value: object) -> float | None:
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 1 else None
+
+    viewports: dict[str, dict] = {}
+    for name in names:
+        if name not in _PREVIEW_VIEWPORTS:
+            continue
+        frame = (wrapper_responsive.get(name) or {}).get("frame") or {}
+        # схема sourceViewport требует и width, и height ≥ 1
+        width = _px(frame.get("width")) or _px(wrapper_frame.get("width"))
+        height = _px(frame.get("height")) or _px(wrapper_frame.get("height"))
+        if width and height:
+            viewports[str(name)] = {"width": width, "height": height}
+    return {"responsive": {"viewports": viewports}} if viewports else {}
+
+
 def preview_ir_for_master(master: dict) -> dict:
     roots = master.get("tree") if isinstance(master.get("tree"), list) else []
     if not roots or not isinstance(roots[0], dict) or roots[0].get("type") in _SECTION_TYPES:
@@ -139,6 +180,9 @@ def preview_ir_for_master(master: dict) -> dict:
         # @font-face только отсюда, иначе компонент рисуется системным шрифтом.
         **({"meta": copy.deepcopy(master["meta"])}
            if isinstance(master.get("meta"), dict) and master["meta"] else {}),
+        # …и корневой responsive.viewports: только с ним рендерер прячет
+        # клоны других вьюпортов (visible:false) вместо наложения текста.
+        **_preview_responsive(master, node, wrapper_frame, wrapper_responsive),
         "tree": [{
             "id": "ds-master-preview", "type": "source-block", "variant": "component-master", "props": {},
             **({"frame": wrapper_frame} if wrapper_frame else {}),

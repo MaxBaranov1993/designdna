@@ -1605,6 +1605,13 @@ def _components_from_blocks(blocks: list, source_revision_hash: str, dna: dict,
                     block_meta = ir.get("meta") if isinstance(ir.get("meta"), dict) else {}
                     if block_meta.get("fontFaces"):
                         master["meta"] = {"fontFaces": copy.deepcopy(block_meta["fontFaces"])}
+                    # Корневой маркер responsive.viewports: без него рендерер не
+                    # применяет per-viewport override'ы узлов (в т.ч. visible:false
+                    # для клонов других вьюпортов) — мастер рисовал desktop и
+                    # mobile-версии текста друг поверх друга («текст дважды»).
+                    block_responsive = ir.get("responsive") if isinstance(ir.get("responsive"), dict) else {}
+                    if isinstance(block_responsive.get("viewports"), dict) and block_responsive["viewports"]:
+                        master["responsive"] = {"viewports": copy.deepcopy(block_responsive["viewports"])}
                     bounds_by_viewport = {
                         viewport_name: frame
                         for viewport_name in ("desktop", "tablet", "mobile")
