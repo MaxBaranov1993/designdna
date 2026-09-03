@@ -42,7 +42,54 @@ FONT_PAIRS: list[dict] = [
     {"name": "golos", "display": {"family": "Golos Text", "weight": 700},
      "body": {"family": "Golos Text", "weight": 400},
      "moods": {"neutral", "cyrillic", "modern", "minimal"}},
+    {"name": "fraunces-newsreader", "display": {"family": "Fraunces", "weight": 700},
+     "body": {"family": "Newsreader", "weight": 400},
+     "moods": {"editorial", "organic", "warm", "luxury"}},
+    {"name": "prata-golos", "display": {"family": "Prata", "weight": 400},
+     "body": {"family": "Golos Text", "weight": 400},
+     "moods": {"luxury", "fashion", "editorial", "elegant"}},
+    {"name": "russo-golos", "display": {"family": "Russo One", "weight": 400},
+     "body": {"family": "Golos Text", "weight": 400},
+     "moods": {"industrial", "retro-futuristic", "tech", "bold"}},
+    {"name": "cormorant-source", "display": {"family": "Cormorant Garamond", "weight": 600},
+     "body": {"family": "Source Sans 3", "weight": 400},
+     "moods": {"luxury", "editorial", "classic", "organic"}},
+    {"name": "unbounded-golos", "display": {"family": "Unbounded", "weight": 600},
+     "body": {"family": "Golos Text", "weight": 400},
+     "moods": {"retro-futuristic", "playful", "tech", "poster"}},
+    {"name": "bebas-source", "display": {"family": "Bebas Neue", "weight": 400},
+     "body": {"family": "Source Sans 3", "weight": 400},
+     "moods": {"brutal", "industrial", "poster", "bold"}},
+    {"name": "yeseva-golos", "display": {"family": "Yeseva One", "weight": 400},
+     "body": {"family": "Golos Text", "weight": 400},
+     "moods": {"playful", "retro", "warm", "editorial"}},
+    {"name": "oswald-pt", "display": {"family": "Oswald", "weight": 600},
+     "body": {"family": "PT Sans", "weight": 400},
+     "moods": {"industrial", "brutal", "editorial", "compact"}},
+    {"name": "vollkorn-golos", "display": {"family": "Vollkorn", "weight": 700},
+     "body": {"family": "Golos Text", "weight": 400},
+     "moods": {"organic", "editorial", "warm", "classic"}},
+    {"name": "poiret-commissioner", "display": {"family": "Poiret One", "weight": 400},
+     "body": {"family": "Commissioner", "weight": 400},
+     "moods": {"art-deco", "luxury", "fashion", "playful"}},
 ]
+
+# Every pair is immediately usable as CSS.  Generic faces are fallbacks only;
+# art direction deliberately chooses from the distinctive subset below.
+for _pair in FONT_PAIRS:
+    for _role in ("display", "body"):
+        _face = _pair[_role]
+        _generic = "serif" if any(
+            marker in _face["family"]
+            for marker in ("Playfair", "Prata", "Cormorant", "Newsreader", "Vollkorn")
+        ) else "sans-serif"
+        _face.setdefault("stack", f'"{_face["family"]}", system-ui, {_generic}')
+
+ART_DIRECTION_PAIR_NAMES = (
+    "fraunces-newsreader", "prata-golos", "russo-golos", "cormorant-source",
+    "unbounded-golos", "bebas-source", "yeseva-golos", "oswald-pt",
+    "vollkorn-golos", "poiret-commissioner",
+)
 PAIRS_BY_NAME = {p["name"]: p for p in FONT_PAIRS}
 
 # ---------- стилевые пресеты (тренды UI/UX) ----------
@@ -148,7 +195,10 @@ def type_scale(base: float = 16.0, ratio: float = 1.25) -> dict:
 
 def font_tokens(pair: dict, scale: str = "default") -> dict:
     """Токены font по схеме Design IR для выбранной пары."""
-    return {"display": dict(pair["display"]), "body": dict(pair["body"]),
+    # CSS fallback stacks belong to DesignBrief/type v2.  Keep the legacy IR
+    # token shape backward-compatible until its schema migration lands.
+    return {"display": {key: pair["display"][key] for key in ("family", "weight")},
+            "body": {key: pair["body"][key] for key in ("family", "weight")},
             "scale": scale}
 
 

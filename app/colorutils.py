@@ -6,6 +6,9 @@
 import math
 
 
+WCAG_AA = 4.5
+
+
 def hex_to_srgb(hex_color: str) -> tuple:
     """'#rrggbb' или '#rgb' -> (r, g, b) в 0..1."""
     h = hex_color.lstrip("#")
@@ -94,3 +97,168 @@ def mix_hex_colors(pairs: list) -> str:
         H += (ref_h + d) * w
     rgb = oklch_to_srgb((L, C, H % 360.0))
     return srgb_to_hex(rgb)
+
+
+def _in_gamut(rgb: tuple) -> bool:
+    return all(0.0 <= channel <= 1.0 for channel in rgb)
+
+
+def oklch_to_hex(lch: tuple) -> str:
+    """Convert OKLCH to displayable sRGB, reducing chroma instead of clipping."""
+    lightness, chroma, hue = lch
+    if not 0.0 <= lightness <= 1.0 or chroma < 0.0:
+        raise ValueError("OKLCH lightness must be in 0..1 and chroma must be non-negative")
+    hue %= 360.0
+    rgb = oklch_to_srgb((lightness, chroma, hue))
+    if _in_gamut(rgb):
+        return srgb_to_hex(rgb)
+    low, high = 0.0, chroma
+    for _ in range(24):
+        candidate = (low + high) / 2.0
+        if _in_gamut(oklch_to_srgb((lightness, candidate, hue))):
+            low = candidate
+        else:
+            high = candidate
+    return srgb_to_hex(oklch_to_srgb((lightness, low, hue)))
+
+
+def relative_luminance(hex_color: str) -> float:
+    r, g, b = (_linear(channel) for channel in hex_to_srgb(hex_color))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(foreground: str, background: str) -> float:
+    light, dark = sorted(
+        (relative_luminance(foreground), relative_luminance(background)), reverse=True
+    )
+    return (light + 0.05) / (dark + 0.05)
+
+
+TEXT_BACKGROUND_PAIRS = tuple(
+    (text, background)
+    for text in ("ink", "ink2", "inkMuted")
+    for background in ("bg", "bg2", "surface", "surface2")
+) + (("accentInk", "accent"), ("accentInk", "accent2"))
+
+
+def validate_palette_contrast(palette: dict, minimum: float = WCAG_AA) -> list[dict]:
+    """Return every text/background pair below WCAG AA (or missing)."""
+    failures = []
+    for foreground_key, background_key in TEXT_BACKGROUND_PAIRS:
+        foreground = palette.get(foreground_key)
+        background = palette.get(background_key)
+        if not isinstance(foreground, str) or not isinstance(background, str):
+            failures.append({"foreground": foreground_key, "background": background_key,
+                             "ratio": 0.0, "reason": "missing color"})
+            continue
+        ratio = contrast_ratio(foreground, background)
+        if ratio + 1e-9 < minimum:
+            failures.append({"foreground": foreground_key, "background": background_key,
+                             "ratio": ratio, "reason": f"below {minimum:g}"})
+    return failures
+
+
+def _seed_component(component: dict, name: str, *, max_chroma: float) -> tuple[float, float, float]:
+    if not isinstance(component, dict):
+        raise ValueError(f"palette seed {name} must be an object")
+    try:
+        lightness = float(component["lightness"])
+        chroma = float(component["chroma"])
+        hue = float(component["hue"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"palette seed {name} requires numeric lightness/chroma/hue") from exc
+    if not 0.0 <= lightness <= 1.0 or not 0.0 <= chroma <= max_chroma or not 0.0 <= hue <= 360.0:
+        raise ValueError(f"palette seed {name} is outside its OKLCH range")
+    return lightness, chroma, hue
+
+
+def _accessible_color(backgrounds: list[str], preferred_l: float, chroma: float, hue: float) -> str:
+    """Nearest OKLCH tone to ``preferred_l`` that passes against every background."""
+    def passes(lightness: float) -> tuple[bool, str]:
+        color = oklch_to_hex((lightness, chroma, hue))
+        return (min(contrast_ratio(color, background) for background in backgrounds)
+                + 1e-9 >= WCAG_AA, color)
+
+    valid, color = passes(preferred_l)
+    if valid:
+        return color
+    endpoint = 1.0 if preferred_l >= 0.5 else 0.0
+    valid, best = passes(endpoint)
+    if not valid:
+        raise ValueError("no shared WCAG AA text color exists for the backgrounds")
+    inaccessible, accessible = preferred_l, endpoint
+    for _ in range(24):
+        midpoint = (inaccessible + accessible) / 2.0
+        valid, color = passes(midpoint)
+        if valid:
+            accessible, best = midpoint, color
+        else:
+            inaccessible = midpoint
+    return best
+
+
+def generate_tonal_palette(seed: dict) -> dict[str, str]:
+    """Derive tokens.v2 colors from a compact OKLCH seed.
+
+    ``accent.hues`` carries one or two hues; its shared lightness and chroma
+    make the accents tonally related by construction.  Text colors are chosen
+    against the complete background family and verified before returning.
+    """
+    background = _seed_component(seed.get("background"), "background", max_chroma=0.08)
+    accent = seed.get("accent")
+    if not isinstance(accent, dict):
+        raise ValueError("palette seed accent must be an object")
+    try:
+        accent_lightness = float(accent["lightness"])
+        accent_chroma = float(accent["chroma"])
+        hues = [float(value) for value in accent["hues"]]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("palette seed accent requires lightness/chroma/hues") from exc
+    if (not 0.0 <= accent_lightness <= 1.0 or not 0.02 <= accent_chroma <= 0.4
+            or len(hues) not in (1, 2) or any(not 0.0 <= hue <= 360.0 for hue in hues)):
+        raise ValueError("palette seed accent is outside its OKLCH range")
+
+    bg_l, bg_c, bg_h = background
+    # Move supporting surfaces away from the mid-tone contrast danger zone.
+    base_background = oklch_to_hex(background)
+    direction = (-1.0 if contrast_ratio("#ffffff", base_background)
+                 >= contrast_ratio("#000000", base_background) else 1.0)
+    levels = (bg_l, bg_l + direction * 0.035, bg_l + direction * 0.065,
+              bg_l + direction * 0.10)
+    levels = tuple(max(0.015, min(0.985, value)) for value in levels)
+    backgrounds = {
+        key: oklch_to_hex((level, bg_c * factor, bg_h))
+        for key, level, factor in zip(
+            ("bg", "bg2", "surface", "surface2"), levels, (1.0, 0.8, 0.65, 0.5)
+        )
+    }
+    background_colors = list(backgrounds.values())
+    black_floor = min(contrast_ratio("#000000", color) for color in background_colors)
+    white_floor = min(contrast_ratio("#ffffff", color) for color in background_colors)
+    light_text = white_floor >= black_floor
+    text_lightness = (0.98, 0.92, 0.82) if light_text else (0.05, 0.12, 0.22)
+    text = {
+        key: _accessible_color(background_colors, lightness, min(bg_c, 0.025), bg_h)
+        for key, lightness in zip(("ink", "ink2", "inkMuted"), text_lightness)
+    }
+    accent_color = oklch_to_hex((accent_lightness, accent_chroma, hues[0]))
+    accent2_color = oklch_to_hex((accent_lightness, accent_chroma,
+                                  hues[1] if len(hues) == 2 else (hues[0] + 150.0) % 360.0))
+    accent_backgrounds = [accent_color, accent2_color]
+    accent_ink = _accessible_color(
+        accent_backgrounds,
+        0.98 if min(contrast_ratio("#ffffff", color) for color in accent_backgrounds)
+        >= min(contrast_ratio("#000000", color) for color in accent_backgrounds) else 0.02,
+        0.0, 0.0,
+    )
+    palette = {
+        **backgrounds, **text,
+        "line": oklch_to_hex((max(0.08, min(0.92, bg_l - direction * 0.20)),
+                               min(bg_c, 0.035), bg_h)),
+        "accent": accent_color, "accentInk": accent_ink, "accent2": accent2_color,
+    }
+    failures = validate_palette_contrast(palette)
+    if failures:
+        pairs = ", ".join(f"{item['foreground']}/{item['background']}" for item in failures)
+        raise ValueError(f"generated palette failed WCAG AA: {pairs}")
+    return palette

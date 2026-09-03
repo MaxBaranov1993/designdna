@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "design-brief/1.0",
+  "title": "DesignBrief",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "audience", "tone", "typePair", "palette", "rhythm", "copyDeck"],
+  "properties": {
+    "schemaVersion": { "const": "design-brief/1.0" },
+    "audience": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "task"],
+      "properties": {
+        "primary": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "task": { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    },
+    "tone": {
+      "enum": ["editorial", "brutalist-minimal", "soft-pastel", "luxury", "playful", "industrial", "retro-futuristic", "organic", "technical", "art-deco"]
+    },
+    "typePair": {
+      "enum": ["fraunces-newsreader", "prata-golos", "russo-golos", "cormorant-source", "unbounded-golos", "bebas-source", "yeseva-golos", "oswald-pt", "vollkorn-golos", "poiret-commissioner"]
+    },
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["background", "accent"],
+      "properties": {
+        "background": { "$ref": "#/$defs/backgroundSeed" },
+        "accent": { "$ref": "#/$defs/accentSeed" }
+      }
+    },
+    "rhythm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sections", "risk"],
+      "properties": {
+        "sections": {
+          "type": "array", "minItems": 3, "maxItems": 10,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["purpose", "density"],
+            "properties": {
+              "purpose": { "type": "string", "minLength": 1, "maxLength": 160 },
+              "density": { "enum": ["airy", "balanced", "dense"] }
+            }
+          }
+        },
+        "risk": { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    },
+    "copyDeck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hero", "cta", "proofs"],
+      "properties": {
+        "hero": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "cta": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "proofs": { "type": "array", "minItems": 1, "maxItems": 5, "items": { "type": "string", "minLength": 1, "maxLength": 180 } },
+        "imagery": { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    }
+  },
+  "$defs": {
+    "backgroundSeed": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lightness", "chroma", "hue"],
+      "properties": {
+        "lightness": { "type": "number", "minimum": 0.02, "maximum": 0.98 },
+        "chroma": { "type": "number", "minimum": 0, "maximum": 0.08 },
+        "hue": { "type": "number", "minimum": 0, "maximum": 360 }
+      }
+    },
+    "accentSeed": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lightness", "chroma", "hues"],
+      "properties": {
+        "lightness": { "type": "number", "minimum": 0.2, "maximum": 0.85 },
+        "chroma": { "type": "number", "minimum": 0.02, "maximum": 0.4 },
+        "hues": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "type": "number", "minimum": 0, "maximum": 360 } }
+      }
+    }
+  }
+}
