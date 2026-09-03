@@ -5,7 +5,7 @@
   import { flow, flowBusy, flowDesignSystemPicker, flowDesignSystems } from "../flow/state";
   import { pinnedDesignSystemRef } from "../flow/store";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
-  import type { GeneratorFlowNode } from "../flow/types";
+  import type { GeneratorFlowNode, GeneratorNodeData } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
   import InPorts from "./InPorts.svelte";
@@ -34,6 +34,34 @@
   let activeIr = $derived(data.variants.length ? data.variants[data.active] || null : null);
   let effort = $derived(["medium", "high", "max"].includes(data.effort) ? data.effort : "medium");
   let count = $derived(Math.max(1, Math.min(2, Number(data.count) || 1)));
+  type Direction = { id: string; label: string; motivation: string; tradeoff: string };
+  type QualityReview = { score: number | null; passed: boolean | null; reasons: string[] };
+  let generatorData = $derived(data as unknown as GeneratorNodeData & {
+    directions?: Direction[];
+    selectedDirection?: string;
+    variantDirections?: string[];
+    qualityReviews?: QualityReview[];
+  });
+  let directions = $derived(Array.isArray(generatorData.directions) ? generatorData.directions.slice(0, 3) : []);
+  let selectedDirection = $derived(generatorData.selectedDirection || "all");
+  let activeReview = $derived(generatorData.qualityReviews?.[data.active] || null);
+
+  async function selectDirection(direction: string) {
+    if (busy || direction === selectedDirection) return;
+    $flow.setNodeData(Number(id), { selectedDirection: direction } as unknown as Partial<GeneratorNodeData>);
+    try {
+      await fetch("/api/project/taste/outcome", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "accepted",
+          payload: { style: { tags: [`art-direction:${direction}`] } },
+        }),
+      });
+    } catch {
+      // Выбор уже сохранён в проекте; недоступная Taste Memory не блокирует UI.
+    }
+  }
 </script>
 
 <NodeShell {id} type="generator" {selected}>
@@ -74,6 +102,37 @@
       >↺</button>
     </div>
   {/if}
+  {#if directions.length}
+    <section class="direction-picker nodrag" aria-label="Направление арт-дирекции">
+      <div class="direction-heading">
+        <span>Арт-дирекция</span>
+        <button
+          class:active={selectedDirection === "all"}
+          class="direction-all"
+          type="button"
+          disabled={busy}
+          onclick={() => void selectDirection("all")}
+        >Все три</button>
+      </div>
+      <div class="direction-chips">
+        {#each directions as direction (direction.id)}
+          <button
+            type="button"
+            class:active={selectedDirection === direction.id}
+            class="direction-chip"
+            data-direction-id={direction.id}
+            disabled={busy}
+            aria-pressed={selectedDirection === direction.id}
+            onclick={() => void selectDirection(direction.id)}
+          >
+            <strong>{direction.label}</strong>
+            {#if direction.motivation}<span>{direction.motivation}</span>{/if}
+            {#if direction.tradeoff}<small>Компромисс: {direction.tradeoff}</small>{/if}
+          </button>
+        {/each}
+      </div>
+    </section>
+  {/if}
   <div class="ctl-row">
     <select
       class="f-count nodrag"
@@ -96,7 +155,7 @@
       {#each data.variants as v, i (i)}
         <div
           class={"thumb nodrag" + (i === data.active ? " active" : "")}
-          title={"Вариант " + (i + 1)}
+          title={generatorData.variantDirections?.[i] || directions[i]?.label || `Направление ${i + 1}`}
           role="button"
           tabindex="0"
           onkeydown={(event) => {
@@ -112,10 +171,22 @@
             $flow.propagate(Number(id));
           }}
         >
-          <span class="tbadge">{i + 1}</span>
+          <span class="tbadge">{generatorData.variantDirections?.[i] || directions[i]?.label || `Направление ${i + 1}`}</span>
           <IrPreview ir={v} height={96} empty="" />
         </div>
       {/each}
+    </div>
+  {/if}
+  {#if activeReview && activeReview.passed === false}
+    <div class="revision-status nodrag" role="status">
+      <strong>Нужна доработка{activeReview.score == null ? "" : ` · ${activeReview.score}/100`}</strong>
+      {#if activeReview.reasons.length}
+        <ul>
+          {#each activeReview.reasons as reason}
+            <li>{reason}</li>
+          {/each}
+        </ul>
+      {/if}
     </div>
   {/if}
   <IrPreview class="f-preview" ir={activeIr} height={180} empty="Варианты появятся после запуска" />
@@ -139,3 +210,19 @@
   <NodeStatus {id} />
   <OutPorts type="generator" />
 </NodeShell>
+
+<style>
+  .direction-picker { display: grid; gap: 6px; }
+  .direction-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--dna-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+  .direction-all, .direction-chip { border: 1px solid var(--dna-border); background: var(--dna-sunken); color: inherit; cursor: pointer; }
+  .direction-all { border-radius: 999px; padding: 3px 8px; font-size: 10px; text-transform: none; letter-spacing: 0; }
+  .direction-chips { display: grid; gap: 5px; }
+  .direction-chip { display: grid; gap: 2px; width: 100%; border-radius: 8px; padding: 7px 8px; text-align: left; }
+  .direction-chip strong { font-size: 11px; }
+  .direction-chip span, .direction-chip small { color: var(--dna-muted); font-size: 10px; line-height: 1.3; }
+  .direction-chip.active, .direction-all.active { border-color: var(--dna-violet-l); background: rgba(155, 92, 255, .1); box-shadow: 0 0 0 2px rgba(155, 92, 255, .12); }
+  .direction-chip:disabled, .direction-all:disabled { cursor: default; opacity: .65; }
+  .revision-status { border: 1px solid rgba(239, 68, 68, .35); border-radius: 8px; background: rgba(239, 68, 68, .08); padding: 8px; color: #b91c1c; font-size: 10px; line-height: 1.35; }
+  .revision-status ul { margin: 4px 0 0; padding-left: 16px; }
+  .tbadge { max-width: calc(100% - 8px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
