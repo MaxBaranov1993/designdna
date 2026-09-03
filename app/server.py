@@ -50,6 +50,7 @@ from reproduce import run_pipeline as reproduce_pipeline
 from urlguard import fetch_public_bytes, validate_public_url
 import cache_store
 import run_registry
+import cli_llm
 import blockparse
 import mergeback
 import qualitygate
@@ -1972,6 +1973,13 @@ def app_config():
         "models": {
             "generator": llm.routing_models("generator")[0],
             "motionDirector": llm.routing_models("motion_director")[0],
+        },
+        # Чем отвечает сервер без десктопа: ключ OpenAI или консольный аккаунт
+        "providers": {
+            "openaiKey": bool(os.environ.get("OPENAI_API_KEY")),
+            "codexCli": cli_llm.available("codex"),
+            "claudeCli": cli_llm.available("claude"),
+            "default": "openai" if os.environ.get("OPENAI_API_KEY") else (cli_llm.default_provider() or None),
         },
     }
 

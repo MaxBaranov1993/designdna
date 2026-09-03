@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { getConfig, type ConfigResp } from "../flow/api";
 
   /* Индикатор состояния Python-движка десктопа: точка + подпись по
    * engine:status из main.mjs. В браузере (нет window.designDNA) — «Browser mode». */
@@ -25,8 +26,20 @@
   let lastError = $derived(engine?.lastError || "");
   let showRestart = $derived(overall === "dead" || (overall !== "browser" && Boolean(lastError)));
 
+  /* Браузерный режим: сервер отвечает через ключ OpenAI или консольный аккаунт
+   * (Codex CLI / Claude Code) — показываем, через что именно, а не «Browser mode». */
+  let providers = $state<ConfigResp["providers"] | null>(null);
+  let providerLabel = $derived.by(() => {
+    if (!providers) return "Browser mode";
+    if (providers.default === "openai") return "OpenAI API";
+    if (providers.default === "codex") return "Codex CLI";
+    if (providers.default === "claude") return "Claude Code";
+    return "Нет AI-аккаунта";
+  });
+  let providerConnected = $derived(!!providers?.default);
+
   let label = $derived.by(() => {
-    if (overall === "browser") return "Browser mode";
+    if (overall === "browser") return providerLabel;
     if (overall === "dead") return `Движок упал${lastError ? `: ${truncate(lastError)}` : ""}`;
     if (overall === "starting") return "Запуск…";
     if (overall === "busy") return "Занят";
@@ -34,6 +47,16 @@
   });
 
   let details = $derived.by(() => {
+    if (!desktop) {
+      if (!providers) return "";
+      const rows = [
+        `OpenAI API-ключ: ${providers.openaiKey ? "есть" : "нет"}`,
+        `Codex CLI: ${providers.codexCli ? "найден" : "нет"}`,
+        `Claude Code: ${providers.claudeCli ? "найден" : "нет"}`,
+      ];
+      if (!providers.default) rows.push("Войдите: codex login или claude /login, либо задайте OPENAI_API_KEY");
+      return rows.join("\n");
+    }
     const current = engine;
     if (!current) return "";
     const rows = (["interactive", "long"] as const).map((scope) => {
@@ -64,7 +87,10 @@
   };
 
   onMount(() => {
-    if (!desktop) return;
+    if (!desktop) {
+      void getConfig().then((config) => { providers = config.providers ?? { default: null }; }).catch(() => { providers = { default: null }; });
+      return;
+    }
     const unsubscribe = desktop.engine.onStatus((next) => { engine = next; });
     desktop.engine.status().then((next) => { engine = next; }).catch((reason) => {
       error = reason instanceof Error ? reason.message : String(reason);
@@ -73,7 +99,7 @@
   });
 </script>
 
-<div class="engine-status" data-status={overall} title={details || label}>
+<div class="engine-status" data-status={overall} data-provider={overall === "browser" ? (providerConnected ? "connected" : providers ? "missing" : "loading") : undefined} title={details || label}>
   <span class="dot" aria-hidden="true"></span>
   <span class="label">{label}</span>
   {#if showRestart}
@@ -130,6 +156,13 @@
   .engine-status[data-status="dead"] .label { color: var(--dna-danger-text); }
 
   .engine-status[data-status="browser"] .label { color: var(--dna-dim); }
+  .engine-status[data-provider="connected"] .dot {
+    background: var(--dna-success);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--dna-success) 22%, transparent);
+  }
+  .engine-status[data-provider="connected"] .label { color: var(--dna-text-2); }
+  .engine-status[data-provider="missing"] .dot { background: var(--dna-danger); }
+  .engine-status[data-provider="missing"] .label { color: var(--dna-danger-text); }
 
   .restart {
     flex: none;

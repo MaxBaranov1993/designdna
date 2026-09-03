@@ -140,6 +140,13 @@ export type ConfigResp = {
     generator?: string;
     motionDirector?: string;
   };
+  /* Чем отвечает сервер в браузерном режиме: ключ OpenAI или консольный аккаунт */
+  providers?: {
+    openaiKey?: boolean;
+    codexCli?: boolean;
+    claudeCli?: boolean;
+    default?: "openai" | "codex" | "claude" | null;
+  };
 };
 export type StyleDnaExtractResp = { tokens?: IRObject };
 export type StyleDnaApplyResp = { ir?: IRObject };
