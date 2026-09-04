@@ -117,6 +117,21 @@ test("stale saves and conflicting external loads fail closed", () => {
   assert.equal(session.getSnapshot().dirty, true);
 });
 
+test("same revision with server-normalized bytes is a reload, not a conflict", () => {
+  const session = createSession();
+  hydrate(session);
+  // load отдаёт мигрированный payload при той же ревизии (SHA сырых байтов)
+  const normalized = session.hydrateFromLoad({ pages: [], migrated: true }, REV_A, "2026-08-25T12:00:00.000Z");
+  assert.equal(normalized.revision, REV_A);
+  assert.equal(normalized.dirty, false);
+  assert.deepEqual(normalized.project, { pages: [], migrated: true });
+  // грязная сессия при той же ревизии сохраняет свои байты
+  session.compareAndSwapApply(applyInput());
+  const kept = session.hydrateFromLoad({ pages: [], migrated: true }, session.currentRevision(), T1);
+  assert.equal(kept.dirty, true);
+  assert.notDeepEqual(kept.project, { pages: [], migrated: true });
+});
+
 test("stale loads are rejected while a newer clean external revision may hydrate", () => {
   const session = createSession();
   hydrate(session);

@@ -163,11 +163,25 @@ export class LiveProjectSession {
     const next = canonicalState(project, this.maxProjectBytes, "project", precomputed);
     if (this.revision !== null) {
       if (nextRevision === this.revision) {
-        if (next.canonical !== this.projectCanonical) {
-          throw sessionError("EXTERNAL_WRITE_CONFLICT", "The same revision contains different project bytes", "revision");
-        }
         if (nextUpdatedAtMs < this.updatedAtMs) {
           throw sessionError("STALE_LOAD", "Loaded project timestamp is older than the live session", "updatedAt", { retryable: true });
+        }
+        if (next.canonical !== this.projectCanonical) {
+          // Ревизия — SHA-256 сырых байтов в SQLite, а /api/project/load отдаёт
+          // МИГРИРОВАННЫЙ payload (project_store.inspect_project →
+          // ir.migrate_project_payload): та же ревизия, другие байты — это
+          // нормализация сервера, а не чужая запись. Раньше здесь бросался
+          // EXTERNAL_WRITE_CONFLICT, load падал с 400, ревизия рендерера не
+          // обновлялась, следующий сейв получал 409 и «Конфликт сохранения»
+          // всплывал бесконечно. Грязную живую сессию не трогаем; чистую
+          // приводим к серверным байтам.
+          if (!this.dirty) {
+            this.project = next.value;
+            this.projectCanonical = next.canonical;
+            this.updatedAt = updatedAt;
+            this.updatedAtMs = nextUpdatedAtMs;
+            this.#emit("session.normalized", { revision: nextRevision, updatedAt });
+          }
         }
         return this.getSnapshot();
       }
