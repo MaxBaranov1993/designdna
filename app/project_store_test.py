@@ -230,7 +230,8 @@ def test_generate_receives_taste_memory(tmp_path: Path) -> None:
         server.llm.chat = fake_chat
         response = server.generate(server.GenerateReq(brief="сделай hero", count=1))
         check("generate returns variant", bool(response["variants"]))
-        check("generate prompt includes taste memory", "Project Taste Memory" in seen[0] and "editorial" in seen[0], seen[0])
+        generator_prompt = next((item for item in seen if "Project Taste Memory" in item), "")
+        check("generate prompt includes taste memory", "editorial" in generator_prompt, generator_prompt)
     finally:
         server.llm.chat = old_chat
         project_store.DB_PATH = old_db
