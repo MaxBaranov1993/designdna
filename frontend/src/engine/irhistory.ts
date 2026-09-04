@@ -24,6 +24,7 @@
     let redoStack = [];
     let lastPushTime = 0;
     let lastSelKey = null; // null — следующий push не коалесцируем
+    let cancelledRedo = null;
     let lastPushedSnapshot = null; // для cancelLast: только реально запушенная запись
 
     /** Снапшот до мутации. Возвращает false, если push слился с предыдущим. */
@@ -35,6 +36,7 @@
         && (now - lastPushTime) < coalesceMs;
       lastPushTime = now;
       lastSelKey = key;
+      cancelledRedo = redoStack.slice();
       redoStack.length = 0; // новое действие инвалидирует redo-ветку
       if (coalesce) { lastPushedSnapshot = null; return false; }
       const snapshot = clone(snapshotFn());
@@ -52,11 +54,15 @@
           && undoStack[undoStack.length - 1] === lastPushedSnapshot) {
         undoStack.pop();
       }
+      if (cancelledRedo) redoStack = cancelledRedo;
+      cancelledRedo = null;
       lastPushedSnapshot = null;
       lastSelKey = null;
     }
 
     function undo(currentFn) {
+      cancelledRedo = null;
+      lastPushedSnapshot = null;
       if (!undoStack.length) return null;
       redoStack.push(clone(currentFn()));
       lastSelKey = null; // после undo серия считается разорванной
@@ -64,6 +70,8 @@
     }
 
     function redo(currentFn) {
+      cancelledRedo = null;
+      lastPushedSnapshot = null;
       if (!redoStack.length) return null;
       undoStack.push(clone(currentFn()));
       lastSelKey = null;
@@ -72,7 +80,7 @@
 
     function canUndo() { return undoStack.length > 0; }
     function canRedo() { return redoStack.length > 0; }
-    function clear() { undoStack.length = 0; redoStack.length = 0; lastSelKey = null; }
+    function clear() { cancelledRedo = null; lastPushedSnapshot = null; undoStack.length = 0; redoStack.length = 0; lastSelKey = null; }
 
     return { push, undo, redo, canUndo, canRedo, clear, cancelLast };
   }

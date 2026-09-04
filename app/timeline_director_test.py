@@ -84,3 +84,20 @@ def test_assist_endpoint_rejects_empty_prompt() -> None:
     with TestClient(app) as client:
         resp = client.post("/api/timeline/assist", json={"timeline": timeline, "prompt": "   "})
         assert resp.status_code == 422
+
+
+def test_selected_model_reaches_timeline_director(monkeypatch) -> None:
+    import json
+    import timeline_director
+    calls = []
+
+    def chat(provider, messages, temperature, **options):
+        calls.append((provider, options))
+        return json.dumps({"steps": [{"preset": "fade-in", "layers": "*", "start": 0, "duration": 0.3}]})
+
+    monkeypatch.setattr(timeline_director.llm, "chat", chat)
+    for provider in ("astra", "openai", "claude", "codex"):
+        _, _, meta = timeline_director.direct(_timeline(), "интро", allow_llm=True, provider=provider, effort="high")
+        assert meta["planSource"] == "llm"
+        assert calls[-1][0] == provider
+        assert calls[-1][1]["reasoning_effort"] == "high"

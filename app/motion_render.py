@@ -1,6 +1,8 @@
 """Deterministic Motion IR frame composition and local video encoding."""
 from __future__ import annotations
 
+import base64
+import copy
 import math
 import os
 import subprocess
@@ -101,14 +103,79 @@ def validate_render_input(motion: dict, scene_irs: list[dict]) -> tuple[int, str
     return count, output_format
 
 
+def validate_composition_layers(layers: list[dict], motion: dict) -> None:
+    if not layers or len(layers) > 200:
+        raise ValueError("Motion composition needs 1–200 layers")
+    scene_ids = {scene["id"] for scene in motion["scenes"]}
+    ids = set()
+    for layer in layers:
+        key = layer.get("id")
+        if not isinstance(key, str) or not key or key in ids:
+            raise ValueError("Motion layer IDs must be unique nonempty strings")
+        ids.add(key)
+        if layer.get("type") not in {"text", "image", "comp"}:
+            raise ValueError("Unsupported Motion layer type")
+        if layer.get("sceneId") is not None and layer["sceneId"] not in scene_ids:
+            raise ValueError("Motion layer references a missing scene")
+        if layer.get("type") == "image" and (not isinstance(layer.get("src"), str) or not layer["src"].strip()):
+            raise ValueError("Motion image layer needs a source URL")
+        for field in ("size", "weight", "w"):
+            value = layer.get(field)
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"Motion layer {field} must be a positive finite number")
+        props = layer.get("props")
+        if not isinstance(props, dict):
+            raise ValueError("Motion layer needs property tracks")
+        for prop in ("p", "s", "r", "o"):
+            track = props.get(prop)
+            keys = track.get("keys") if isinstance(track, dict) else None
+            if not isinstance(keys, list) or len(keys) > 2000:
+                raise ValueError("Invalid Motion property track")
+            previous = -1
+            for frame in keys:
+                if not isinstance(frame, dict):
+                    raise ValueError("Invalid Motion keyframe")
+                time = frame.get("t")
+                if not isinstance(time, (int, float)) or not math.isfinite(time) or time < 0 or time <= previous:
+                    raise ValueError("Motion keyframe times must be finite and strictly ascending")
+                previous = time
+                value = frame.get("v")
+                values = value if prop == "p" else [value]
+                if not isinstance(values, list) or len(values) != (2 if prop == "p" else 1) or any(
+                    not isinstance(v, (int, float)) or not math.isfinite(v) for v in values
+                ):
+                    raise ValueError("Invalid Motion keyframe value")
+                if prop == "o" and not 0 <= value <= 1 or prop == "s" and value < 0:
+                    raise ValueError("Motion opacity/scale is out of range")
+
+
+def prepare_composition_layers(layers: list[dict]) -> list[dict]:
+    """Resolve desktop blobs before queueing; exports never depend on ddna:// support."""
+    from timeline_assets import materialize_render_assets
+    assets, errors = materialize_render_assets({"tree": layers})
+    if errors:
+        raise ValueError("Motion assets: " + "; ".join(errors[:3]))
+    prepared = copy.deepcopy(layers)
+    for layer in prepared:
+        source = layer.get("src")
+        if isinstance(source, str) and source in assets:
+            asset = assets[source]
+            layer["src"] = f"data:{asset.mime};base64," + base64.b64encode(asset.data).decode("ascii")
+    return prepared
+
+
 def render_video(
     motion: dict,
     scene_irs: list[dict],
     output: Path,
     on_progress: Callable[[int, int], None] | None = None,
+    composition_layers: list[dict] | None = None,
 ) -> dict:
     """Render scene DOM at exact frame times and encode it into one video."""
     count, output_format = validate_render_input(motion, scene_irs)
+    if composition_layers is not None:
+        validate_composition_layers(composition_layers, motion)
+        composition_layers = prepare_composition_layers(composition_layers)
     if output.suffix.lower() != f".{output_format}":
         raise ValueError("output extension does not match Motion IR format")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -136,9 +203,15 @@ def render_video(
                 )
                 page.add_script_tag(path=str(RENDERER_JS))
                 page.evaluate(
-                    """({motion, sceneIrs}) => {
+                    """async ({motion, sceneIrs, compositionLayers}) => {
                       document.body.style.setProperty('--motion-bg', motion.composition.background);
                       const stage = document.querySelector('#stage');
+                      if (compositionLayers !== null) {
+                        const setFrame = await window.MotionComposition.mountComposition(stage,
+                          {motion, sceneSettings: {}}, compositionLayers);
+                        window.__motionSetFrame = ({time}) => setFrame(time);
+                        return;
+                      }
                       sceneIrs.forEach((item, index) => {
                         const layer = document.createElement('div');
                         layer.className = 'motion-layer';
@@ -186,7 +259,7 @@ def render_video(
                         }
                       };
                     }""",
-                    {"motion": motion, "sceneIrs": scene_irs},
+                    {"motion": motion, "sceneIrs": scene_irs, "compositionLayers": composition_layers},
                 )
                 page.evaluate(
                     """async () => {

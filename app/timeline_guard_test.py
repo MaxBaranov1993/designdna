@@ -364,7 +364,7 @@ def test_direct_uses_llm_plan_when_available(monkeypatch) -> None:
     # LLM отвечает — план строится моделью, фолбэк-предупреждения нет
     monkeypatch.setattr(
         timeline_director, "plan_from_llm",
-        lambda tl, prompt: [{"preset": "fade-in", "layers": "*", "start": 0.0, "duration": 0.3}])
+        lambda tl, prompt, **kwargs: [{"preset": "fade-in", "layers": "*", "start": 0.0, "duration": 0.3}])
     applied, change_set, meta = timeline_director.direct(timeline, "интро", allow_llm=True)
     assert meta["planSource"] == "llm" and meta["warning"] is None
     assert validate(applied) == []

@@ -10,8 +10,10 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
@@ -81,6 +83,8 @@ class TimelineDocumentRequest(BaseModel):
 class TimelineAssistRequest(BaseModel):
     timeline: dict
     prompt: str
+    provider: Literal["openai", "astra", "codex", "claude"] = "openai"
+    effort: Literal["medium", "high", "max"] = "medium"
 
 
 class TimelineRenderRequest(BaseModel):
@@ -192,7 +196,7 @@ def timeline_assist(req: TimelineAssistRequest):
         return _err(422, "Таймлайн невалиден до применения: " + "; ".join(errors[:3]))
     from timeline_director import direct
     try:
-        preview_timeline, change_set, meta = direct(req.timeline, req.prompt)
+        preview_timeline, change_set, meta = direct(req.timeline, req.prompt, provider=req.provider, effort=req.effort)
     except ValueError as e:
         return _err(422, str(e))
     return {
@@ -246,11 +250,30 @@ _STATUS_MAP = {"queued": "queued", "running": "running", "complete": "done",
                "error": "error", "cancelled": "cancelled"}
 
 
+def _completed_render_on_disk(render_id: str) -> Path | None:
+    if not re.fullmatch(r"[0-9a-f]{32}", render_id):
+        return None
+    for suffix in (".mp4", ".webm"):
+        candidate = TIMELINE_RENDER_DIR / f"{render_id}{suffix}"
+        if candidate.is_file() and candidate.resolve().parent == TIMELINE_RENDER_DIR.resolve():
+            return candidate
+    return None
+
+
+def _disk_job(render_id: str) -> dict | None:
+    output = _completed_render_on_disk(render_id)
+    if output is None:
+        return None
+    return {"status": "complete", "progress": 100, "output": output,
+            "filename": f"designdna-timeline-{render_id[:8]}{output.suffix}",
+            "result": {"bytes": output.stat().st_size}}
+
+
 @router.get("/api/timeline/render/{render_id}")
 def timeline_render_status(render_id: str):
     evict_expired_jobs()
     with JOBS_LOCK:
-        job = JOBS.get(render_id)
+        job = JOBS.get(render_id) or _disk_job(render_id)
         if not job:
             return _err(404, "Render job not found.")
         status = _STATUS_MAP.get(str(job.get("status")), "queued")
@@ -284,7 +307,7 @@ def timeline_render_cancel(render_id: str):
 def timeline_render_download(render_id: str):
     evict_expired_jobs()
     with JOBS_LOCK:
-        job = JOBS.get(render_id)
+        job = JOBS.get(render_id) or _disk_job(render_id)
         if not job:
             return _err(404, "Render job not found.")
         if job.get("status") != "complete":

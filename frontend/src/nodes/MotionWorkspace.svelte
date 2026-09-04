@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { useFlowStore } from "../flow/store";
+  import { IRHistory } from "../engine/irhistory";
+  import { compositionFrame, COMP_CARD_STYLE } from "./motion-composition";
   import { untrack } from "svelte";
   import { api, apiGet } from "../flow/api";
   import { flow, flowBusy } from "../flow/state";
@@ -69,7 +72,8 @@
 
   let renderSettings = $derived(data.renderSettings || { format: "mp4" as const, quality: "high" as const });
   let renderJob = $derived(data.renderJob);
-  let rendering = $derived(renderJob?.status === "queued" || renderJob?.status === "rendering");
+  let startingRender = $state(false);
+  let rendering = $derived(startingRender || renderJob?.status === "queued" || renderJob?.status === "rendering");
   let transition = $derived(activeScene?.transition || { type: "cut" as const, duration: 0, easing: "linear" as const });
 
   /* ---------- слои композиций ---------- */
@@ -106,7 +110,7 @@
     const w = stageW;
     const h = stageH;
     scenes.forEach((scene, i) => {
-      const ir = data.sceneIrs.find((item) => item.sceneId === scene.id)?.ir || null;
+      const ir = data.sceneIrs.find((item) => item.sceneId === scene.id)?.ir || data.ir;
       const { headings, first } = collectTexts(ir);
       const texts = (headings.length ? headings : [first || `Сцена ${String(i + 1).padStart(2, "0")}`]).slice(0, 4);
       texts.forEach((text, k) => {
@@ -140,14 +144,34 @@
 
   /* Локальная копия на время драга: setNodeData — только на коммите. */
   let localLayers = $state<MotionCompLayer[] | null>(null);
-  let persistedLayers = $derived(Array.isArray(data.layers) && data.layers.length ? data.layers : null);
+  let persistedLayers = $derived(Array.isArray(data.layers) ? data.layers : null);
   let baselineLayers = $derived(localLayers ?? persistedLayers ?? defaultLayers);
   let sceneLayers = $derived(activeScene ? baselineLayers.filter((l) => (l.sceneId ?? scenes[0]?.id) === activeScene.id) : []);
   let selectedLayer = $derived(sceneLayers.find((l) => l.id === moLayerSel) ?? sceneLayers[0] ?? null);
   let vals = $derived<LayerValues | null>(selectedLayer ? layerVals(selectedLayer, lt, interpMode) : null);
 
+  const layerHistory = IRHistory.createHistory({ limit: 25, coalesceMs: 0 });
+  let historyTick = $state(0);
+  const canUndo = $derived.by(() => { historyTick; return layerHistory.canUndo(); });
+  const canRedo = $derived.by(() => { historyTick; return layerHistory.canRedo(); });
+  $effect(() => {
+    if (!Array.isArray(data.layers) && defaultLayers.length) {
+      $flow.setNodeData(nodeId, { layers: JSON.parse(JSON.stringify(defaultLayers)) });
+    }
+  });
+  const restoreLayers = (redo = false) => {
+    if (rendering) return;
+    const next = (redo ? layerHistory.redo : layerHistory.undo)(() => baselineLayers);
+    if (next) { $flow.setNodeData(nodeId, { layers: next, renderJob: null }); $flow.propagate(nodeId); }
+    localLayers = null;
+    historyTick++;
+  };
   const commitLayers = (next: MotionCompLayer[]) => {
-    $flow.setNodeData(nodeId, { layers: next });
+    if (rendering) { localLayers = null; return; }
+    layerHistory.push(() => persistedLayers ?? defaultLayers, null);
+    historyTick++;
+    $flow.setNodeData(nodeId, { layers: next, renderJob: null });
+    $flow.propagate(nodeId);
     localLayers = null;
   };
 
@@ -283,6 +307,7 @@
   const onDragEnd = () => {
     window.removeEventListener("pointermove", onDragMove);
     window.removeEventListener("pointerup", onDragEnd);
+    window.removeEventListener("pointercancel", onDragEnd);
     const g = dragCtx;
     dragCtx = null;
     /* Персист — только на отпускании мыши, не на каждом движении. */
@@ -290,7 +315,7 @@
   };
 
   const onLayerPointerDown = (event: PointerEvent, layer: MotionCompLayer) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || rendering) return;
     event.preventDefault();
     event.stopPropagation();
     const key = toolProp[moTool] || "p";
@@ -299,6 +324,7 @@
     dragCtx = { id: layer.id, key, mx: event.clientX, my: event.clientY, v: layerVals(layer, lt, interpMode), lt, fit, moved: false };
     window.addEventListener("pointermove", onDragMove);
     window.addEventListener("pointerup", onDragEnd);
+    window.addEventListener("pointercancel", onDragEnd);
   };
 
   /* ---------- инспектор: степперы и кейфреймы ---------- */
@@ -498,6 +524,12 @@
   $effect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
+      const target = event.target as HTMLElement;
+      if (!target.closest("input, textarea, select, [contenteditable=true]") && (event.ctrlKey || event.metaKey)
+        && ["z", "y"].includes(event.key.toLowerCase())) {
+        event.preventDefault(); event.stopPropagation();
+        restoreLayers(event.shiftKey || event.key.toLowerCase() === "y");
+      }
       if (event.code === "Space" && !event.repeat) {
         const tag = (event.target as HTMLElement | null)?.tagName || "";
         if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
@@ -545,20 +577,40 @@
 
   const startRender = async () => {
     if (!data.ir || !data.interaction || !data.motion || rendering) return;
+    startingRender = true;
+    const sourceRevision = $flow.getNodeIrRevision(nodeId);
+    const sourcePage = $flow.activePageId;
+    const isCurrent = () => useFlowStore.getState().activePageId === sourcePage && $flow.getNodeIrRevision(nodeId) === sourceRevision;
+    const snapshot = JSON.parse(JSON.stringify(data)) as MotionNodeData;
+    const layers = JSON.parse(JSON.stringify(baselineLayers)) as MotionCompLayer[];
     try {
-      let job = await api<MotionRenderJob>("/api/motion/render", {
-        base_ir: data.ir,
-        interaction: data.interaction,
-        motion: data.motion,
+      // Rebuild scene timing/format from the visible settings before export.
+      const built = await api<{ motion: MotionNodeData["motion"] }>("/api/motion/build", {
+        base_ir: snapshot.ir, interaction: snapshot.interaction, composition: snapshot.composition,
+        scene_settings: snapshot.sceneSettings, render_settings: snapshot.renderSettings,
       });
+      if (!built.motion) throw new Error("Не удалось собрать движение");
+      if (!isCurrent()) throw new Error("Вход изменился — повторите рендер");
+      $flow.setNodeData(nodeId, { motion: built.motion, layers, renderJob: null });
+      let job = await api<MotionRenderJob>("/api/motion/render", {
+        base_ir: snapshot.ir,
+        interaction: snapshot.interaction,
+        motion: built.motion,
+        layers,
+      });
+      if (!isCurrent()) return;
       $flow.setNodeData(nodeId, { renderJob: job });
+      const deadline = Date.now() + 15 * 60_000;
       while (job.status === "queued" || job.status === "rendering") {
+        if (Date.now() > deadline) throw new Error("Рендер не завершился за 15 минут. Проверьте состояние сервера.");
         await new Promise((resolve) => window.setTimeout(resolve, 400));
         job = await apiGet<MotionRenderJob>(`/api/motion/render/${job.id}`);
+        if (!isCurrent()) return;
         $flow.setNodeData(nodeId, { renderJob: job });
       }
       if (job.status === "complete") $flow.propagate(nodeId);
     } catch (error) {
+      if (!isCurrent()) return;
       $flow.setNodeData(nodeId, {
         renderJob: {
           id: renderJob?.id || "failed",
@@ -567,6 +619,8 @@
           error: error instanceof Error ? error.message : String(error),
         },
       });
+    } finally {
+      startingRender = false;
     }
   };
 </script>
@@ -584,6 +638,8 @@
       <span class="motion-time">{formatTime(playhead)} / {formatTime(total)}</span>
     </div>
     <div class="motion-actions">
+      <button disabled={rendering || !canUndo} onclick={() => restoreLayers()}>Отменить</button>
+      <button disabled={rendering || !canRedo} onclick={() => restoreLayers(true)}>Повторить</button>
       <span class="motion-badge">Design IR</span>
       {#if rendering}<span class="motion-render-progress">Рендер {renderJob?.progress || 0}%</span>{/if}
       {#if renderJob?.status === "complete" && renderJob.downloadUrl}
@@ -662,10 +718,11 @@
 
       <div class="motion-stage" bind:this={stageEl}>
         <div class="motion-frame" style="width:{Math.round(stageW * fit)}px; height:{Math.round(stageH * fit)}px;">
-          <div class="motion-frame-scale" style="width:{stageW}px; height:{stageH}px; transform:scale({fit});">
-            <div class="motion-scene" style="opacity:{Math.min(1, lt / 260 + 0.15)};">
-              {#each sceneLayers as layer (layer.id)}
-                {@const v = layerVals(layer, lt, interpMode)}
+          <div class="motion-frame-scale" style="font-family:Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#fff; width:{stageW}px; height:{stageH}px; transform:scale({fit});">
+            <div class="motion-scene">
+              {#each compositionFrame(data, baselineLayers, playhead) as frame (frame.layer.id)}
+                {@const layer = frame.layer}
+                {@const v = frame.values}
                 <div
                   class="motion-layer {layer.type} {selectedLayer?.id === layer.id ? 'selected' : ''}"
                   style="left:{v.p[0]}px; top:{v.p[1]}px; width:{layer.w}px; transform:translate(-50%,-50%) scale({v.s}) rotate({v.r}deg); opacity:{v.o}; font-size:{layer.size}px; font-weight:{layer.weight}; color:{layer.color};"
@@ -675,7 +732,7 @@
                 >
                   {#if layer.type === "text"}{layer.text}
                   {:else if layer.type === "image"}<span class="motion-layer-img" style="background-image:url({layer.src})"></span>
-                  {:else}<span class="motion-layer-comp">{layer.name}</span>{/if}
+                  {:else}<span class="motion-layer-comp" style={COMP_CARD_STYLE}>{layer.name}</span>{/if}
                 </div>
               {/each}
             </div>
@@ -751,7 +808,7 @@
       </footer>
     </section>
 
-    <aside class={`motion-inspector ${inspectorOpen ? "open" : ""}`}>
+    <aside class={`motion-inspector ${inspectorOpen ? "open" : ""}`} inert={rendering}>
       <div class="motion-insp-head">
         <span class="motion-sec-title">СЛОЙ</span>
         <button class="motion-del-layer" onclick={delLayer}>Удалить</button>

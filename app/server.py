@@ -34,7 +34,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from interaction_capture import capture_live_flow
-from motion_render import render_video, validate_render_input
+from motion_render import render_video, validate_render_input, validate_composition_layers, prepare_composition_layers
 from ir.motion_v2 import migrate_motion_v1_to_v2, validate_motion_v2
 from quality_certification_adapter import certify_from_reports
 
@@ -417,6 +417,7 @@ class MotionRenderReq(BaseModel):
     base_ir: dict
     interaction: dict
     motion: dict
+    layers: list[dict] | None = None
 
 
 class ScrapeReq(BaseModel):
@@ -2787,7 +2788,7 @@ def _materialize_motion_scenes(base_ir: dict, interaction: dict, motion: dict) -
     return scene_irs
 
 
-def _run_motion_render(render_id: str, motion: dict, scene_irs: list[dict], output: Path) -> None:
+def _run_motion_render(render_id: str, motion: dict, scene_irs: list[dict], output: Path, layers: list[dict] | None = None) -> None:
     def progress(done: int, total: int) -> None:
         with RENDER_JOBS_LOCK:
             job = RENDER_JOBS.get(render_id)
@@ -2797,7 +2798,7 @@ def _run_motion_render(render_id: str, motion: dict, scene_irs: list[dict], outp
     try:
         with RENDER_JOBS_LOCK:
             RENDER_JOBS[render_id].update(status="rendering", progress=0)
-        result = render_video(motion, scene_irs, output, progress)
+        result = render_video(motion, scene_irs, output, progress, composition_layers=layers) if layers is not None else render_video(motion, scene_irs, output, progress)
         with RENDER_JOBS_LOCK:
             RENDER_JOBS[render_id].update(
                 status="complete",
@@ -2835,6 +2836,10 @@ def motion_render(req: MotionRenderReq):
     try:
         scene_irs = _materialize_motion_scenes(base_ir, req.interaction, req.motion)
         total_frames, output_format = validate_render_input(req.motion, scene_irs)
+        layers = None
+        if req.layers is not None:
+            validate_composition_layers(req.layers, req.motion)
+            layers = prepare_composition_layers(req.layers)
     except ValueError as exc:
         return err(422, str(exc))
 
@@ -2851,7 +2856,7 @@ def motion_render(req: MotionRenderReq):
             "filename": f"designai-motion-{render_id[:8]}.{output_format}",
             "output": output,
         }
-    RENDER_EXECUTOR.submit(_run_motion_render, render_id, copy.deepcopy(req.motion), scene_irs, output)
+    RENDER_EXECUTOR.submit(_run_motion_render, render_id, copy.deepcopy(req.motion), scene_irs, output, layers)
     return {key: value for key, value in RENDER_JOBS[render_id].items() if key != "output"}
 
 

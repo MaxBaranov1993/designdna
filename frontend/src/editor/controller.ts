@@ -2009,14 +2009,14 @@ function restoreSnapshot(snap: any) {
 }
 
 function undo() {
-  if (!state) return;
+  if (!state || aiAssistState || aiAssistAbort) return;
   const snap = state.history.undo(() => state!.ir);
   if (!snap) return;
   restoreSnapshot(snap);
 }
 
 function redo() {
-  if (!state) return;
+  if (!state || aiAssistState || aiAssistAbort) return;
   const snap = state.history.redo(() => state!.ir);
   if (!snap) return;
   restoreSnapshot(snap);

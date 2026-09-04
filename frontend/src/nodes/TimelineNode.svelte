@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
+  import { toast } from "../flow/toast";
   import { flow } from "../flow/state";
   import type { TimelineFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
@@ -18,8 +19,13 @@
   let duration = $derived(Number(timeline?.composition?.duration || 0));
 
   const openWorkspace = async () => {
-    open = true;
-    if (!TimelineWorkspace) TimelineWorkspace = (await import("../editor/TimelineWorkspace.svelte")).default;
+    try {
+      open = true;
+      if (!TimelineWorkspace) TimelineWorkspace = (await import("../editor/TimelineWorkspace.svelte")).default;
+    } catch (error) {
+      open = false;
+      toast(`Не удалось открыть редактор: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
   };
 </script>
 

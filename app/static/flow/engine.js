@@ -3,6 +3,144 @@ var DesignAIEngine = function(exports) {
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
+  function scenesOf(data) {
+    var _a;
+    const scenes = Array.isArray((_a = data.motion) == null ? void 0 : _a.scenes) ? data.motion.scenes : [];
+    let start = 0;
+    return scenes.map((scene) => {
+      var _a2;
+      const settings = ((_a2 = data.sceneSettings) == null ? void 0 : _a2[scene.interactionSceneId]) || {};
+      const duration = Math.max(250, Math.min(3e4, Number(settings.duration || scene.duration)));
+      const type = settings.transition || scene.transition.type;
+      const transition = {
+        type,
+        easing: settings.easing || scene.transition.easing,
+        duration: type === "cut" ? 0 : Math.max(100, Math.min(duration, Number(settings.transitionDuration || scene.transition.duration || 300)))
+      };
+      const next = { ...scene, start, duration, transition };
+      start += duration;
+      return next;
+    });
+  }
+  function smoothstepU(u) {
+    return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+  }
+  function interpProp(keys, lt, dims, mode = "linear") {
+    if (!keys.length) return dims === 2 ? [960, 540] : 0;
+    if (lt <= keys[0].t) return keys[0].v;
+    if (lt >= keys[keys.length - 1].t) return keys[keys.length - 1].v;
+    let i = 0;
+    for (let j = 0; j < keys.length - 1; j++) if (lt >= keys[j].t && lt < keys[j + 1].t) i = j;
+    const a = keys[i];
+    const b = keys[i + 1];
+    let u = (lt - a.t) / Math.max(1, b.t - a.t);
+    if (mode !== "linear") u = smoothstepU(u);
+    if (dims === 2) {
+      const av = a.v;
+      const bv = b.v;
+      return [av[0] + (bv[0] - av[0]) * u, av[1] + (bv[1] - av[1]) * u];
+    }
+    return a.v + (b.v - a.v) * u;
+  }
+  function layerVals(layer, lt, mode = "linear") {
+    return {
+      p: interpProp(layer.props.p.keys, lt, 2, mode),
+      s: layer.props.s.keys.length ? interpProp(layer.props.s.keys, lt, 1, mode) : 1,
+      r: interpProp(layer.props.r.keys, lt, 1, mode),
+      o: layer.props.o.keys.length ? interpProp(layer.props.o.keys, lt, 1, mode) : 1
+    };
+  }
+  const COMP_CARD_STYLE = "display:inline-block;max-width:100%;padding:0.55em 1.4em;border-radius:0.5em;background:#222;border:1px solid #444;color:#eee;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 10px 30px rgba(0,0,0,0.28)";
+  function compositionFrame(data, layers, time) {
+    var _a, _b, _c, _d, _e, _f;
+    const scenes = scenesOf(data);
+    const index = scenes.findIndex((s, i) => time >= s.start && (time < s.start + s.duration || i === scenes.length - 1));
+    const scene = scenes[index];
+    if (!scene) return [];
+    const local = Math.max(0, Math.min(time - scene.start, scene.duration));
+    const transition = scene.transition;
+    let progress = index > 0 && transition.duration > 0 ? Math.min(1, local / transition.duration) : 1;
+    if (transition.easing === "ease-in") progress *= progress;
+    else if (transition.easing === "ease-out") progress = 1 - (1 - progress) ** 2;
+    else if (["ease", "ease-in-out"].includes(transition.easing)) progress = progress * progress * (3 - 2 * progress);
+    const visible = progress < 1 && transition.type !== "cut" ? [scenes[index - 1], scene] : [scene];
+    const width = Number(((_a = data.composition) == null ? void 0 : _a.width) || ((_c = (_b = data.motion) == null ? void 0 : _b.composition) == null ? void 0 : _c.width) || 1920);
+    const height = Number(((_d = data.composition) == null ? void 0 : _d.height) || ((_f = (_e = data.motion) == null ? void 0 : _e.composition) == null ? void 0 : _f.height) || 1080);
+    return visible.flatMap((current) => {
+      const isCurrent = current.id === scene.id;
+      const local2 = Math.max(0, Math.min(time - current.start, current.duration));
+      const easing = current.transition.easing;
+      return layers.filter((layer) => {
+        var _a2;
+        return (layer.sceneId ?? ((_a2 = scenes[0]) == null ? void 0 : _a2.id)) === current.id;
+      }).map((layer) => {
+        const values = layerVals(layer, local2, easing === "linear" ? "linear" : "smoothstep");
+        if (progress < 1) {
+          if (transition.type === "fade" || transition.type === "zoom") values.o *= isCurrent ? progress : 1 - progress;
+          if (transition.type === "slide-left") values.p = [values.p[0] + width * (isCurrent ? 1 - progress : -progress), values.p[1]];
+          if (transition.type === "slide-up") values.p = [values.p[0], values.p[1] + height * (isCurrent ? 1 - progress : -progress)];
+          if (transition.type === "zoom") {
+            const scale = isCurrent ? 0.92 + 0.08 * progress : 1 + 0.04 * progress;
+            values.p = [(values.p[0] - width / 2) * scale + width / 2, (values.p[1] - height / 2) * scale + height / 2];
+            values.s *= scale;
+          }
+        }
+        return { layer, values };
+      });
+    });
+  }
+  async function mountComposition(host, data, layers) {
+    host.style.background = "#fff";
+    host.style.fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    const elements = /* @__PURE__ */ new Map();
+    const images = [];
+    for (const layer of layers) {
+      const el = document.createElement("div");
+      el.style.cssText = "position:absolute;text-align:center;line-height:1.08;letter-spacing:-0.02em;display:none";
+      if (layer.type === "image") {
+        const img = document.createElement("img");
+        img.style.cssText = "display:block;width:100%;aspect-ratio:3/2;border-radius:18px;object-fit:contain";
+        img.src = layer.src || "";
+        images.push(img.decode());
+        el.appendChild(img);
+      } else {
+        if (layer.type === "comp") {
+          const card = document.createElement("span");
+          card.style.cssText = COMP_CARD_STYLE;
+          card.textContent = layer.name;
+          el.appendChild(card);
+        } else el.textContent = layer.text || "";
+      }
+      host.appendChild(el);
+      elements.set(layer.id, el);
+    }
+    await Promise.all(images);
+    return (time) => {
+      for (const el of elements.values()) el.style.display = "none";
+      let zIndex = 0;
+      for (const { layer, values: v } of compositionFrame(data, layers, time)) {
+        const el = elements.get(layer.id);
+        Object.assign(el.style, {
+          zIndex: String(zIndex++),
+          display: "block",
+          left: `${v.p[0]}px`,
+          top: `${v.p[1]}px`,
+          width: `${layer.w}px`,
+          transform: `translate(-50%,-50%) scale(${v.s}) rotate(${v.r}deg)`,
+          opacity: String(v.o),
+          fontSize: `${layer.size}px`,
+          fontWeight: String(layer.weight),
+          color: layer.color
+        });
+      }
+    };
+  }
+  const MotionComposition = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+    __proto__: null,
+    COMP_CARD_STYLE,
+    compositionFrame,
+    mountComposition
+  }, Symbol.toStringTag, { value: "Module" }));
   const groups = [
     { label: "Sans", fonts: [
       "Inter",
@@ -1262,6 +1400,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   }
   const cloneIr = (value) => JSON.parse(JSON.stringify(value));
   const confirmedFontSpecs = /* @__PURE__ */ new Set();
+  const registeredFontFaces = /* @__PURE__ */ new Map();
   let lastFontFacesCss = "";
   function materializeResponsiveIR(source, viewport) {
     if (!source || !source.responsive || !source.responsive.viewports) return source;
@@ -1334,7 +1473,11 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       ffEl.id = "ir-fontfaces";
       document.head.appendChild(ffEl);
     }
-    const fontFacesCss = customFaces.map((f) => {
+    for (const f of customFaces) {
+      const key = [f.family, f.style, f.weight, f.url, f.unicodeRange || ""].join("|");
+      if (!registeredFontFaces.has(key)) registeredFontFaces.set(key, f);
+    }
+    const fontFacesCss = Array.from(registeredFontFaces.values()).map((f) => {
       const rawUrl = String(f.url);
       const format = /\.woff2$/i.test(rawUrl) ? "woff2" : /\.woff$/i.test(rawUrl) ? "woff" : "truetype";
       const unicode = f.unicodeRange ? "unicode-range:" + String(f.unicodeRange) + ";" : "";
@@ -4445,6 +4588,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     let redoStack = [];
     let lastPushTime = 0;
     let lastSelKey = null;
+    let cancelledRedo = null;
     let lastPushedSnapshot = null;
     function push(snapshotFn, selKey) {
       const now = Date.now();
@@ -4452,6 +4596,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const coalesce = undoStack.length > 0 && key != null && key === lastSelKey && now - lastPushTime < coalesceMs;
       lastPushTime = now;
       lastSelKey = key;
+      cancelledRedo = redoStack.slice();
       redoStack.length = 0;
       if (coalesce) {
         lastPushedSnapshot = null;
@@ -4467,16 +4612,22 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       if (lastPushedSnapshot && undoStack.length && undoStack[undoStack.length - 1] === lastPushedSnapshot) {
         undoStack.pop();
       }
+      if (cancelledRedo) redoStack = cancelledRedo;
+      cancelledRedo = null;
       lastPushedSnapshot = null;
       lastSelKey = null;
     }
     function undo(currentFn) {
+      cancelledRedo = null;
+      lastPushedSnapshot = null;
       if (!undoStack.length) return null;
       redoStack.push(clone(currentFn()));
       lastSelKey = null;
       return undoStack.pop();
     }
     function redo(currentFn) {
+      cancelledRedo = null;
+      lastPushedSnapshot = null;
       if (!redoStack.length) return null;
       undoStack.push(clone(currentFn()));
       lastSelKey = null;
@@ -4489,6 +4640,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       return redoStack.length > 0;
     }
     function clear() {
+      cancelledRedo = null;
+      lastPushedSnapshot = null;
       undoStack.length = 0;
       redoStack.length = 0;
       lastSelKey = null;
@@ -4654,6 +4807,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     propertyDefaults: TIMELINE_PROPERTY_DEFAULTS
   };
   if (typeof window !== "undefined") {
+    window.MotionComposition = MotionComposition;
     window.IRRenderer = IRRenderer;
     window.GeoEdit = GeoEdit;
     window.IRHistory = IRHistory;

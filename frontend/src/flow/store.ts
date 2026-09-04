@@ -12,6 +12,7 @@ import type {
 } from "./api";
 import { NODE_DEFS, defaultData, portsOfNode } from "./ports";
 import { deepClone, outValue, pullInput, reachable } from "./dataflow";
+import { inputFingerprint } from "./fingerprint";
 import { composeSourceInputs, sourceInputForPort } from "./sourceComposition";
 import type { SourceInputBlock } from "./sourceComposition";
 import {
@@ -606,6 +607,7 @@ export interface FlowStoreState {
   getNodeIrRevision: (id: number) => number;
   persistEditorDraft: (id: number, draft: PersistedEditorDraft) => void;
   clearEditorDraft: (id: number) => void;
+  commitTimeline: (id: number, expected: IRObject | null, irRevision: number, timeline: IRObject) => boolean;
   commitEditorDraft: (id: number, expectedRevision: number, ir: IRObject) => boolean;
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void;
   setBusy: (id: number, v: boolean) => void;
@@ -616,6 +618,7 @@ export interface FlowStoreState {
   undoGraph: () => boolean;
   redoGraph: () => boolean;
   propagate: (startId: number, visited?: Set<number>) => void;
+  refreshInputs: (id: number, visited?: Set<number>) => void;
   runNode: (id: number) => void;
   runGenerator: (id: number) => Promise<void>;
   runMix: (id: number) => Promise<void>;
@@ -904,10 +907,7 @@ function resyncAfterGraphRestore(before: FlowEdge[], after: FlowEdge[]): void {
     for (const edge of before) {
       if (afterIds.has(edge.id)) continue;
       const target = useFlowStore.getState().nodes.find((node) => node.id === edge.target);
-      if (target?.type === "edit") {
-        st.refreshEdit(Number(target.id));
-        st.propagate(Number(target.id));
-      }
+      if (target) st.refreshInputs(Number(target.id));
     }
   });
 }
@@ -1111,6 +1111,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   deleteNode: (id) => {
     const sid = String(id);
     if (!get().nodes.some((node) => node.id === sid)) return;
+    const targets = [...new Set(get().edges.filter((edge) => edge.source === sid).map((edge) => Number(edge.target)))];
     recordGraphHistory();
     if (graphHistoryMuted === 0) {
       toast("Нода удалена · Ctrl+Z вернёт", "info", {
@@ -1130,6 +1131,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         busy,
       };
     });
+    for (const target of targets) get().refreshInputs(target);
   },
 
   deleteEdge: (edgeId) => {
@@ -1138,10 +1140,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     recordGraphHistory();
     set({ edges: get().edges.filter((edge) => edge.id !== edgeId) });
     const target = get().nodes.find((node) => node.id === removed.target);
-    if (target?.type === "edit") {
-      get().refreshEdit(Number(target.id));
-      get().propagate(Number(target.id));
-    }
+    if (target) get().refreshInputs(Number(target.id));
   },
 
   disconnectNode: (id) => {
@@ -1169,10 +1168,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const isNoop = !Object.prototype.hasOwnProperty.call(patch, "ir")
       && Object.keys(patch).every((key) => beforeData[key] === (patch as Record<string, unknown>)[key]);
     if (isNoop) return;
+    const invalidatesVideo = (before.type === "motion" || before.type === "timeline")
+      && ["ir", "interaction", "motion", "timeline", "layers", "composition", "settings", "sceneSettings", "renderSettings"]
+        .some((key) => Object.prototype.hasOwnProperty.call(patch, key))
+      && !Object.prototype.hasOwnProperty.call(patch, "renderJob");
     set((state) => ({
       nodes: state.nodes.map((n) =>
         n.id === sid ? (() => {
           const nextPatch = { ...patch } as Record<string, unknown>;
+          if (invalidatesVideo) nextPatch.renderJob = null;
           if (Object.prototype.hasOwnProperty.call(nextPatch, "ir")) {
             const currentRevision = Number((n.data as Record<string, unknown>)._irRevision) || 0;
             nextPatch._irRevision = currentRevision + 1;
@@ -1181,6 +1185,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         })() : n,
       ),
     }));
+    const previousJob = beforeData.renderJob as { status?: string } | undefined;
+    const explicitJob = (patch as Record<string, unknown>).renderJob as { status?: string } | null | undefined;
+    if (previousJob?.status === "complete" && (invalidatesVideo
+      || (Object.prototype.hasOwnProperty.call(patch, "renderJob") && explicitJob?.status !== "complete"))) get().propagate(id);
   },
 
   getNodeIrRevision: (id) => {
@@ -1210,6 +1218,16 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         return { ...node, data } as FlowNode;
       }),
     }));
+  },
+
+  commitTimeline: (id, expected, irRevision, timeline) => {
+    const node = get().nodes.find((item) => Number(item.id) === id);
+    if (!node || node.type !== "timeline" || get().getNodeIrRevision(id) !== irRevision
+      || JSON.stringify(node.data.timeline) !== JSON.stringify(expected)) return false;
+    const composition = timeline.composition as TimelineNodeData["settings"];
+    get().setNodeData(id, { timeline: deepClone(timeline), settings: { ...node.data.settings, ...composition }, renderJob: null });
+    get().propagate(id);
+    return true;
   },
 
   commitEditorDraft: (id, expectedRevision, ir) => {
@@ -1313,87 +1331,103 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   propagate: (startId, visited = new Set<number>()) => {
     if (visited.has(startId)) return;
     visited.add(startId);
+    const targets = new Set(get().edges.filter((edge) => Number(edge.source) === startId).map((edge) => Number(edge.target)));
+    // Each branch reads the current store. A shared descendant must see every
+    // updated input in a diamond, not the snapshot from the first branch.
+    for (const target of targets) get().refreshInputs(target, new Set(visited));
+  },
+
+  refreshInputs: (consId, visited = new Set<number>()) => {
     const { nodes, edges } = get();
-    for (const e of edges.filter((ed) => Number(ed.source) === startId)) {
-      const consId = Number(e.target);
-      const cons = nodes.find((n) => Number(n.id) === consId);
-      if (!cons) continue;
-      if (cons.type === "edit") {
-        get().refreshEdit(consId);
-        get().propagate(consId, visited);
-      } else if (cons.type === "reference") {
-        const ir = pullInput(nodes, edges, cons, "ir");
-        if (ir) {
-          get().setNodeData(consId, { ir: deepClone(ir) });
-          get().setStatus(consId, "IR получен — можно разбить на компоненты", "ok");
-          get().propagate(consId, visited);
-        }
-      } else if (cons.type === "designui") {
-        const artifact = pullInput(nodes, edges, cons, "artifact");
-        if (artifact && typeof artifact === "object") {
-          get().setNodeData(consId, { artifact: deepClone(artifact), selectedComponent: 0 });
-          get().setStatus(consId, "Design UI synchronized", "ok");
-          get().propagate(consId, visited);
-        }
-      } else if (cons.type === "designsystem") {
-        const artifact = pullInput(nodes, edges, cons, "artifact");
-        if (artifact && typeof artifact === "object") {
-          get().setNodeData(consId, { sourceUpdate: true });
-          get().setStatus(consId, "Source changed — review and Sync before publishing", "ok");
-        }
-      } else if (cons.type === "mix") {
-        get().setStatus(consId, "Входы обновлены — нажмите «Смешать»");
-      } else if (cons.type === "derive") {
-        get().setStatus(consId, "Входы обновлены — нажмите Derive");
-      } else if (cons.type === "qualitypass") {
-        const ir = pullInput(nodes, edges, cons, "ir");
-        if (ir) {
-          get().setNodeData(consId, { ir: deepClone(ir), result: null });
-          get().setStatus(consId, "IR получен — запустите Quality Pass");
-        }
-      } else if (cons.type === "recorder") {
-        const ir = pullInput(nodes, edges, cons, "ir");
-        if (ir) {
-          get().setNodeData(consId, { ir: deepClone(ir), interaction: null, draftEvents: [], draftScenes: [{ id: "scene-0", viewport: "desktop", patch: [] }] });
-          get().setStatus(consId, "Design IR ready for interaction recording", "ok");
-        }
-      } else if (cons.type === "motion") {
-        const designIr = pullInput(nodes, edges, cons, "ir") as IRObject | null;
-        const interaction = pullInput(nodes, edges, cons, "interaction") as IRObject | null;
-        get().setNodeData(consId, {
-          ir: designIr ? deepClone(designIr) : null,
-          interaction: interaction ? deepClone(interaction) : null,
-          motion: null,
-          sceneIrs: [],
-        });
-        get().setStatus(consId, designIr && interaction ? "Motion inputs ready" : "Connect Design IR and Interaction IR");
-      } else if (cons.type === "motiondesign") {
-        const sourceMotion = pullInput(nodes, edges, cons, "motion") as IRObject | null;
-        const sourceTimeline = pullInput(nodes, edges, cons, "timeline") as IRObject | null;
-        const sourceVideo = pullInput(nodes, edges, cons, "video") as VideoArtifact | null;
-        const connectedPrompt = pullInput(nodes, edges, cons, "prompt");
-        get().setNodeData(consId, {
-          sourceMotion: sourceMotion ? deepClone(sourceMotion) : null,
-          sourceTimeline: sourceTimeline ? deepClone(sourceTimeline) : null,
-          sourceVideo: sourceVideo ? deepClone(sourceVideo) : null,
-          plannedPrompt: "",
-        });
-        get().setStatus(
-          consId,
-          sourceVideo
-            ? "Готовое видео и параметры подключены — подготовьте Seedance prompt"
-            : (sourceMotion || sourceTimeline || String(connectedPrompt || "").trim())
-              ? "Параметры движения получены — подготовьте Seedance prompt"
-              : "Подключите видео/IR или введите отдельный prompt",
-        );
-      } else if (cons.type === "timeline") {
-        const designIr = pullInput(nodes, edges, cons, "ir") as IRObject | null;
-        get().setNodeData(consId, { ir: designIr ? deepClone(designIr) : null, timeline: null });
-        get().setStatus(consId, designIr ? "Design IR получен — соберите таймлайн" : "Подключите Design IR (страница/компонент)");
-      } else if (cons.type === "pagebridge") {
-        get().runPageBridge(consId);
+    const cons = nodes.find((node) => Number(node.id) === consId);
+    if (!cons || visited.has(consId)) return;
+    if (cons.type === "edit") {
+      get().refreshEdit(consId);
+      get().propagate(consId, visited);
+    } else if (cons.type === "reference") {
+      const ir = pullInput(nodes, edges, cons, "ir");
+      get().setNodeData(consId, { ir: ir ? deepClone(ir) : null });
+      if (ir) {
+        get().setNodeData(consId, { ir: deepClone(ir) });
+        get().setStatus(consId, "IR получен — можно разбить на компоненты", "ok");
         get().propagate(consId, visited);
       }
+    } else if (cons.type === "designui") {
+      const artifact = pullInput(nodes, edges, cons, "artifact");
+      if (!artifact) get().setNodeData(consId, { artifact: null, selectedComponent: 0 });
+      if (artifact && typeof artifact === "object") {
+        get().setNodeData(consId, { artifact: deepClone(artifact), selectedComponent: 0 });
+        get().setStatus(consId, "Design UI synchronized", "ok");
+        get().propagate(consId, visited);
+      }
+    } else if (cons.type === "designsystem") {
+      const artifact = pullInput(nodes, edges, cons, "artifact");
+      if (artifact && typeof artifact === "object") {
+        get().setNodeData(consId, { sourceUpdate: true });
+        get().setStatus(consId, "Source changed — review and Sync before publishing", "ok");
+      }
+    } else if (cons.type === "page" || cons.type === "generator" || cons.type === "reskin") {
+      get().setStatus(consId, "Входы изменены — запустите ноду для обновления результата");
+    } else if (cons.type === "mix") {
+      get().setStatus(consId, "Входы обновлены — нажмите «Смешать»");
+    } else if (cons.type === "derive") {
+      get().setStatus(consId, "Входы обновлены — нажмите Derive");
+    } else if (cons.type === "qualitypass") {
+      const ir = pullInput(nodes, edges, cons, "ir");
+      if (!ir) get().setNodeData(consId, { ir: null, result: null });
+      if (ir) {
+        get().setNodeData(consId, { ir: deepClone(ir), result: null });
+        get().setStatus(consId, "IR получен — запустите Quality Pass");
+      }
+    } else if (cons.type === "recorder") {
+      const ir = pullInput(nodes, edges, cons, "ir");
+      if (!ir) get().setNodeData(consId, { ir: null, interaction: null, recording: false, draftEvents: [] });
+      if (ir) {
+        get().setNodeData(consId, { ir: deepClone(ir), interaction: null, draftEvents: [], draftScenes: [{ id: "scene-0", viewport: "desktop", patch: [] }] });
+        get().setStatus(consId, "Design IR ready for interaction recording", "ok");
+      }
+    } else if (cons.type === "motion") {
+      const designIr = pullInput(nodes, edges, cons, "ir") as IRObject | null;
+      const interaction = pullInput(nodes, edges, cons, "interaction") as IRObject | null;
+      if (JSON.stringify(cons.data.ir) === JSON.stringify(designIr)
+        && JSON.stringify(cons.data.interaction) === JSON.stringify(interaction)) return;
+      get().setNodeData(consId, {
+        renderJob: null,
+        ir: designIr ? deepClone(designIr) : null,
+        interaction: interaction ? deepClone(interaction) : null,
+        motion: null,
+        sceneIrs: [],
+      });
+      get().setStatus(consId, designIr ? "Design IR получен — соберите движение" : "Подключите Design IR");
+      get().propagate(consId, visited);
+    } else if (cons.type === "motiondesign") {
+      const sourceMotion = pullInput(nodes, edges, cons, "motion") as IRObject | null;
+      const sourceTimeline = pullInput(nodes, edges, cons, "timeline") as IRObject | null;
+      const sourceVideo = pullInput(nodes, edges, cons, "video") as VideoArtifact | null;
+      const connectedPrompt = pullInput(nodes, edges, cons, "prompt");
+      get().setNodeData(consId, {
+        sourceMotion: sourceMotion ? deepClone(sourceMotion) : null,
+        sourceTimeline: sourceTimeline ? deepClone(sourceTimeline) : null,
+        sourceVideo: sourceVideo ? deepClone(sourceVideo) : null,
+        plannedPrompt: "",
+      });
+      get().setStatus(
+        consId,
+        sourceVideo
+          ? "Готовое видео и параметры подключены — подготовьте Seedance prompt"
+          : (sourceMotion || sourceTimeline || String(connectedPrompt || "").trim())
+            ? "Параметры движения получены — подготовьте Seedance prompt"
+            : "Подключите видео/IR или введите отдельный prompt",
+      );
+    } else if (cons.type === "timeline") {
+      const designIr = pullInput(nodes, edges, cons, "ir") as IRObject | null;
+      if (JSON.stringify(cons.data.ir) === JSON.stringify(designIr)) return;
+      get().setNodeData(consId, { ir: designIr ? deepClone(designIr) : null, timeline: null, renderJob: null });
+      get().propagate(consId, visited);
+      get().setStatus(consId, designIr ? "Design IR получен — соберите таймлайн" : "Подключите Design IR (страница/компонент)");
+    } else if (cons.type === "pagebridge") {
+      get().runPageBridge(consId);
+      get().propagate(consId, visited);
     }
   },
 
@@ -1715,13 +1749,16 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const blocks = inputs
       .map((name) => sourceInputForPort(st.nodes, st.edges, n, name))
       .filter((block): block is SourceInputBlock => block !== null);
+    const fingerprint = inputFingerprint(blocks);
+    if ((data as Record<string, unknown>)._inputFingerprint === fingerprint) return;
     if (!blocks.length) {
-      get().setNodeData(id, { ir: null, sourceRegistry: {}, nodeSources: {}, layoutEvidence: [] });
+      get().setNodeData(id, { _inputFingerprint: fingerprint, ir: null, sourceRegistry: {}, nodeSources: {}, layoutEvidence: [] });
       get().setStatus(id, "Подключите хотя бы один компонент", "err");
       return;
     }
     const result = composeSourceInputs(blocks, null, "desktop", blocks.length > 1);
-    get().setNodeData(id, result);
+    if (JSON.stringify(data.ir) !== JSON.stringify(result.ir)) get().setNodeData(id, { ...result, _inputFingerprint: fingerprint });
+    else get().setNodeData(id, { _inputFingerprint: fingerprint });
     get().setStatus(id, `${blocks.length} компонент(а) · ${Object.keys(result.sourceRegistry).length} источн.`, "ok");
   },
 
@@ -2203,6 +2240,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, "Подключите Design IR", "err");
       return;
     }
+    const sourceRevision = get().getNodeIrRevision(id);
+    const stillCurrent = () => get().activePageId === st.activePageId && get().getNodeIrRevision(id) === sourceRevision;
     get().setBusy(id, true);
     get().setStatus(id, "Building editable motion timeline...");
     try {
@@ -2229,7 +2268,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         scene_settings: data.sceneSettings,
         render_settings: data.renderSettings || { format: "mp4", quality: "high" },
       });
+      if (!stillCurrent()) return;
       const motion = response.motion || null;
+      if (!motion || !Array.isArray(motion.scenes) || !motion.scenes.length) throw new Error("Сервер вернул пустое движение");
       const sceneIrs = response.sceneIrs || [];
       const scenes = Array.isArray(motion?.scenes) ? motion.scenes : [];
       get().setNodeData(id, {
@@ -2240,11 +2281,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, `Motion IR ready · ${scenes.length} scenes · ${(Number(composition?.duration || 0) / 1000).toFixed(1)}s`, "ok");
       get().propagate(id);
     } catch (error) {
+      if (!stillCurrent()) return;
       const message = error instanceof Error ? error.message : String(error);
       get().setStatus(id, "Motion: " + message, "err");
       toast("Motion: " + message, "error");
     } finally {
-      get().setBusy(id, false);
+      if (get().activePageId === st.activePageId) get().setBusy(id, false);
     }
   },
 
@@ -2466,6 +2508,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, "Подключите Design IR (страница или компонент)", "err");
       return;
     }
+    const sourceRevision = get().getNodeIrRevision(id);
+    const stillCurrent = () => get().activePageId === st.activePageId && get().getNodeIrRevision(id) === sourceRevision;
     get().setBusy(id, true);
     get().setStatus(id, "Сборка таймлайна: слои и группы из компонентов...");
     try {
@@ -2473,7 +2517,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         ir: designIr,
         settings: data.settings,
       });
+      if (!stillCurrent()) return;
       const timeline = response.timeline || null;
+      if (!timeline || !Array.isArray(timeline.layers) || !timeline.layers.length) throw new Error("Сервер вернул пустой таймлайн");
       get().setNodeData(id, { ir: deepClone(designIr), timeline, renderJob: null });
       const layers = Array.isArray((timeline as { layers?: unknown[] } | null)?.layers)
         ? ((timeline as { layers: unknown[] }).layers).length : 0;
@@ -2481,11 +2527,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, `Таймлайн готов · ${layers} слоёв · ${((Number(composition?.duration || 0)) / 1000).toFixed(1)}s`, "ok");
       get().propagate(id);
     } catch (error) {
+      if (!stillCurrent()) return;
       const message = error instanceof Error ? error.message : String(error);
       get().setStatus(id, "Timeline: " + message, "err");
       toast("Timeline: " + message, "error");
     } finally {
-      get().setBusy(id, false);
+      if (get().activePageId === st.activePageId) get().setBusy(id, false);
     }
   },
 
@@ -2611,6 +2658,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   removeEditInput: (id, name) => {
     const sid = String(id);
+    const node = get().nodes.find((item) => item.id === sid);
+    if (node?.type !== "edit" || !(node.data.inputs || ["ir"]).includes(name)) return;
+    recordGraphHistory();
     set((state) => ({
       nodes: state.nodes.map((item) => {
         if (item.id !== sid || item.type !== "edit") return item;
@@ -2714,7 +2764,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       }
     }
     const alive = new Set(get().edges.map((e) => e.id));
-    set({ nodes: nextNodes, edges: nextEdges.filter((e) => alive.has(e.id)) });
+    const canonical = new Map(get().nodes.map((node) => [node.id, node]));
+    set({ nodes: nextNodes.map((node) => ({ ...node, data: canonical.get(node.id)?.data ?? node.data }) as FlowNode),
+      edges: nextEdges.filter((e) => alive.has(e.id)) });
   },
 
   /* Зеркало load() (nodes.js:1202-1219): полная замена графа из payload */
@@ -3214,8 +3266,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   /* Параллельная видео-ветка — отдельной страницей, не трогая текущий граф:
    * Source Import (url, по умолчанию rsale.net) → Generator → Interaction
-   * Recorder → Motion Editor (MP4). AI-звено использует фиксированный
-   * gpt-5.6-sol; effort задаётся самой Generator-нодой. */
+   * Recorder → Motion Editor (MP4). Модель и effort выбираются на Generator-ноде. */
   addVideoChainPage: (options) => {
     const rawUrl = (options?.url || "rsale.net").trim() || "rsale.net";
     const url = /^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl)

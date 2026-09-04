@@ -32,6 +32,7 @@ test("a clean desktop canvas cannot overwrite SQLite before hydration", async ()
     readFile(canvasUrl, "utf8"),
   ]);
   assert.match(store, /projectHydrated:\s*Boolean\(projectSaved\)/);
-  assert.match(store, /loadPersistedProject:[\s\S]{0,2400}setTimeout\(\(\) => \{[\s\S]{0,160}projectHydrated:\s*true/);
-  assert.match(canvas, /if \(!st\.projectHydrated\) return;[\s\S]{0,120}st\.syncFromCanvas/);
+  const hydration = store.slice(store.indexOf("loadPersistedProject: async"), store.indexOf("replaceProjectFromDb: async"));
+  assert.match(hydration, /setTimeout\(\(\) => \{\s*set\(\{ projectHydrated: true \}\)/);
+  assert.match(canvas, /if \(!\$flowHydrated\) return;[\s\S]*?st\.syncFromCanvas/);
 });

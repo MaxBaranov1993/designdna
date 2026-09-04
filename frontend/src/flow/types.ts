@@ -453,6 +453,8 @@ export type MotionNodeData = {
 
 /* Video Editor: авторский таймлайн поверх входных компонентов (Timeline IR). */
 export type TimelineNodeData = {
+  provider?: NodeProvider;
+  effort?: "medium" | "high" | "max";
   ir: IRObject | null;
   timeline: IRObject | null;
   settings: { width: number; height: number; fps: number; duration: number };

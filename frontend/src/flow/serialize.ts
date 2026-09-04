@@ -1,5 +1,5 @@
-import { defaultData } from "./ports";
-import { edgeKindOf, WIRE_COLORS } from "./dataflow";
+import { defaultData, portsOfNode } from "./ports";
+import { edgeKindOf, reachable, WIRE_COLORS } from "./dataflow";
 import { isDesktopBlobUrl, offloadBlobsInPlace } from "../desktop/blobStore";
 import { toast } from "./toast";
 import type { ProjectLoadResp } from "./api";
@@ -347,11 +347,24 @@ function dataForStorage(type: NodeType, data: AnyNodeData): AnyNodeData {
   // главный поток на compact+stringify. Восстанавливаются одним /api/motion/build.
   const { renderJob: _runtime, sceneIrs: _derived, ...persistent } =
     data as AnyNodeData & { renderJob?: unknown; sceneIrs?: unknown };
-  return persistent as AnyNodeData;
+  return { ...persistent, ...(_runtime && typeof _runtime === "object" && (_runtime as { status?: string }).status === "complete" ? { renderJob: _runtime } : {}) } as AnyNodeData;
 }
 
 function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
-  if (type === "motion") return { ...defaultData("motion"), ...data, renderJob: null } as AnyNodeData;
+  const defaults = defaultData(type) as Record<string, unknown>;
+  const saved = data as Record<string, unknown>;
+  const merged = { ...defaults, ...saved };
+  // Older documents can contain only part of a node or its settings.
+  for (const key of ["settings", "composition", "renderSettings", "mask"]) {
+    if (defaults[key] && typeof defaults[key] === "object") {
+      merged[key] = { ...(defaults[key] as object), ...(saved[key] && typeof saved[key] === "object" ? saved[key] as object : {}) };
+    }
+  }
+  for (const [key, value] of Object.entries(defaults)) {
+    if (Array.isArray(value) && !Array.isArray(merged[key])) merged[key] = value;
+  }
+  data = merged as AnyNodeData;
+  if (type === "motion") return { ...defaultData("motion"), ...data, renderJob: (data as { renderJob?: { status?: string } }).renderJob?.status === "complete" ? (data as Record<string, unknown>).renderJob : null } as AnyNodeData;
   if (type === "motiondesign") {
     const defaults = defaultData("motiondesign") as Record<string, unknown>;
     const saved = data as Record<string, unknown>;
@@ -361,7 +374,7 @@ function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
       settings: { ...(defaults.settings as Record<string, unknown>), ...((saved.settings as Record<string, unknown>) || {}) },
     } as AnyNodeData;
   }
-  if (type === "timeline") return { ...defaultData("timeline"), ...data, renderJob: null } as AnyNodeData;
+  if (type === "timeline") return { ...defaultData("timeline"), ...data, renderJob: (data as { renderJob?: { status?: string } }).renderJob?.status === "complete" ? (data as Record<string, unknown>).renderJob : null } as AnyNodeData;
   if (type === "sourceimport") {
     const source = { ...defaultData("sourceimport"), ...data } as SourceImportNodeData;
     // Older saved projects already contain the complete local result but predate
@@ -505,6 +518,23 @@ export function payloadToRf(payload: LegacyGraphPayload): {
     }
   }
 
+  // Imported graphs obey the same port, single-input and DAG contracts as
+  // interactive connections. Migrations above run first to retain legacy wires.
+  const accepted: FlowEdge[] = [];
+  for (const edge of edges) {
+    const src = nodes.find((n) => n.id === edge.source);
+    const dst = nodes.find((n) => n.id === edge.target);
+    if (!src || !dst || src.id === dst.id) continue;
+    const output = portsOfNode(src).out.find((p) => p.name === edge.sourceHandle);
+    const input = portsOfNode(dst).in.find((p) => p.name === edge.targetHandle);
+    if (!output || !input || !input.kinds.includes(output.kind)) continue;
+    if (accepted.some((e) => e.target === edge.target && e.targetHandle === edge.targetHandle)) continue;
+    if (reachable(Number(edge.target), Number(edge.source), accepted)) continue;
+    accepted.push(edge);
+  }
+  if (accepted.length !== edges.length) toast("Некорректные связи пропущены при загрузке графа", "info");
+  edges = accepted;
+
   const maxId = nodes.reduce((m, n) => Math.max(m, Number(n.id) || 0), 0);
   return {
     nodes,
@@ -532,6 +562,7 @@ export function parseLegacyPayload(input: unknown): LegacyGraphPayload {
     if (typeof r.type !== "string" || !known.has(r.type)) continue; // РЅРµРёР·РІРµСЃС‚РЅС‹Р№ С‚РёРї РїСЂРѕРїСѓСЃРєР°РµРј
     let id = Number(r.id);
     if (!Number.isFinite(id) || id <= 0) id = autoId; // Р±РёС‚С‹Р№/СЃС‚СЂРѕРєРѕРІС‹Р№ id в†’ С‡РёСЃР»РѕРІРѕР№
+    if (nodes.some((node) => node.id === id)) throw new Error(`Повторяющийся ID ноды: ${id}`);
     autoId = Math.max(autoId, id) + 1;
     let data =
       r.data && typeof r.data === "object" ? (r.data as AnyNodeData) : defaultData(r.type as NodeType);

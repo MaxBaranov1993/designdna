@@ -66,7 +66,7 @@ test("Design System is the single new canvas surface for Source UI", async () =>
   assert.match(canvas, /designui: DesignUiNode/);
 });
 
-test("Design System catalog exposes guarded Sol semantic organization", async () => {
+test("Design System catalog exposes guarded user-selected semantic organization", async () => {
   const [panel, sourcePanel] = await Promise.all([
     read("../src/editor/DesignSystemPanel.svelte"),
     read("../src/editor/SourceArtifactPanel.svelte"),
@@ -79,5 +79,5 @@ test("Design System catalog exposes guarded Sol semantic organization", async ()
   }
   assert.match(panel, /catalog\.sections/);
   assert.match(sourcePanel, /catalog\.sections/);
-  assert.match(panel, /Exact masters stay locked/);
+  assert.match(panel, /Точные мастера не меняются/);
 });
