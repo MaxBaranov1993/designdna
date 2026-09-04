@@ -92,3 +92,17 @@
 - Промпт `DESIGN.md` не упоминает `typeRole` явно (правило подмешивается в user-промпт генератора строкой `_TYPE_ROLE_RULE`); эталоны в `app/exemplars/` пока без `typeRole` — при обновлении эталонов проставить роли.
 - Вариант, сохранённый из редактора, попадает в черновик: чтобы генератор его увидел, ДС нужно опубликовать (кнопка Publish в панели ДС). Компилятор ДС кладёт в промпт мастера; пользовательские варианты попадают через `registry.components`, отдельная выдача вариантов в промпт — следующий шаг.
 - Панель «Компоненты» вставляет мастер последней секцией; вставка в позицию выделения и drag из панели — следующий шаг.
+
+## 5. Второй проход: Orca-оркестрация с Codex-воркерами (2026-09-04, run_9cd1a3023739)
+
+Скрипт запуска: `tools/orca/ds-editor-run.ps1` (координатор — терминал основного воркtree, воркеры — Codex gpt-5.6-sol medium в дочерних воркtree `dse-p*`).
+
+| Задача | Что сделано | Коммит | Статус |
+|---|---|---|---|
+| P4 MCP со скиллами | `designdna_generate`, `designdna_list_design_systems`, `designdna_review`, `designdna_rules_get/set`; `skills/designdna/SKILL.md`, `docs/MCP.md`; 34 теста | 6f3fedc | слит |
+| P3 Арт-дирекция в генерации | стадия `art-direction` в `_generate`, `selectedDirection`, 2–3 эталона в системный промпт, `directions`/`variantDirections`/`generationLog.direction`, деградация без арт-дирекции | e096831 (merge 0dc2767), фикс теста f1e0d8a | слит |
+| P2 Остаток плана | `typeRole` в DESIGN.md и во всех эталонах; варианты компонентов в компиляторе ДС и exact-copy validation по хэшу варианта (`component-section` отдаёт хэш варианта); вставка компонента после выделенной секции; `ui_design_system_test.py` актуализирован; новые `design_system_remaining_test.py`, `ui_editor_components_panel_test.py`; `summary` считает пользовательские варианты | 9de8658 (merge c90d034) | слит |
+| P1 Карточка товара slsbmb | `tools/slsbmb_product_card.py`, артефакты `artifacts/slsbmb/*`, отчёт `results/slsbmb-product-card.md`. Захват дал 0 наблюдённых мастеров (7 из 9 блоков с ошибками), компонент — семантический мок `category-tile`, судья 18/100 | — | в работе |
+| P5 Карточка тарифа slsbmb | доработка P1: причина ошибок захвата, наблюдённый мастер карточки тарифа (slsbmb — SaaS с тарифами, а не магазин), запасной источник — захват из десктоп-приложения `%APPDATA%\@designdna\desktop\data` | — | ждёт P1 |
+
+Проверка слитого кода: pytest `app` 576 passed; `npm run build` 0 ошибок; UI-смоки `ui_editor_components_panel_test`, `ui_design_system_test`, `ui_editor_action_inventory_test`, `ui_generator_directions_test` — зелёные.

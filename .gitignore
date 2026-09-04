@@ -27,3 +27,5 @@ tmp/
 _ref_*.png
 _rend_*.png
 .orca-design-studio-tasks.json
+
+.orca-ds-editor-tasks.json
