@@ -23,6 +23,7 @@ def component_master_hash(component: dict) -> str:
 
 
 _INSTANCE_KEYS = {"id", "sourceKey"}
+_PLACEMENT_KEYS = {"x", "y"}
 _CONTENT_KEYS = {
     "text", "title", "placeholder", "value", "label", "name", "alt",
     "ariaLabel", "href", "src", "imagePrompt",
@@ -44,6 +45,11 @@ def _shape_value(value: Any, *, in_props: bool = False) -> Any:
                 continue
             if key in _CONTENT_KEYS:
                 shaped[key] = f"<{type(child).__name__}>"
+            elif key == "frame" and isinstance(child, dict):
+                # Положение экземпляра (x/y) — не форма: точная копия мастера,
+                # поставленная в другое место (обёртка превью обнуляет x/y), остаётся exact.
+                shaped[key] = _shape_value({k: v for k, v in child.items() if k not in _PLACEMENT_KEYS},
+                                           in_props=in_props)
             elif in_props and not isinstance(child, (dict, list)):
                 shaped[key] = f"<{type(child).__name__}>"
             else:

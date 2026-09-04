@@ -97,3 +97,56 @@ def test_strict_accepts_valid_provider_variant_as_extend_when_no_master_matches(
     warnings = response["variants"][0]["meta"]["designSystemWarnings"]
     assert any(item["code"] == "strict-fallback-extend" for item in warnings)
     assert response["designSystem"]["errors"] == []
+
+
+def test_strict_materializes_pinned_master_when_it_exceeds_the_context_budget(monkeypatch) -> None:
+    """Мастер целой секции не влезает в промпт: модель не зовём, отдаём точную копию (и в prepareOnly тоже)."""
+    master = _fixture()
+    document = _document(master)
+    monkeypatch.setattr(store, "resolve_ref", lambda _ref: (deepcopy(document), None))
+    monkeypatch.setattr(art_direction, "create_design_brief", lambda *_args, **_kwargs: [])
+    reference = deepcopy(master)
+    reference.setdefault("meta", {})["_dsMaster"] = {"systemId": "ds-pricing", "componentKey": "list-item"}
+    for prepare_only in (True, False):
+        response = server.generate(server.GenerateReq(
+            brief="карточка тарифа", count=2, prepareOnly=prepare_only, referenceIrs=[reference],
+            designSystem={"systemId": "ds-pricing", "revision": 1, "usageMode": "strict", "tokenBudget": 320},
+        ))
+        assert response.get("prompts") == [], prepare_only
+        assert len(response["variants"]) == 1
+        variant = response["variants"][0]
+        assert variant["meta"]["strictRecovery"] == "exact-master-materialized"
+        assert variant["meta"]["strictRecoveryReason"] == "pinned-master-exceeds-context-budget"
+        log = response["generationLog"]
+        assert log["strictRecovery"] == "exact-master-materialized"
+        assert log["designSystem"]["pinnedMaster"] == "list-item"
+        assert log["designSystem"]["recovered"]["reason"] == "pinned-master-exceeds-context-budget"
+        assert response["qa"][0]["recovery"] == "exact-master-materialized"
+
+
+def test_exact_copy_inside_component_ref_is_trusted_and_placement_does_not_mutate_shape() -> None:
+    """Обёртка превью обнуляет x/y и несёт измеренные цвета мастера — копия остаётся exact."""
+    from design_system import compiler, document as dsdoc
+    master = _fixture()
+    root = master["tree"][0]
+    root.setdefault("frame", {}).update({"x": 120, "y": 80})
+    root.setdefault("style", {})["color"] = "#4f4d5a"  # цвет вне палитры системы, но это цвет самого мастера
+    document = _document(master)
+    document["foundations"] = {"colors": {"semantic": {"primary": "#5b6cff", "background": "#0a0a0e",
+                                                      "text": "#f2f0ea", "textMuted": "#9d9aab", "border": "#1b1b1f"}}}
+    context = resolver.resolve_context(document, "карточка тарифа", usage_mode="strict", pinned_keys=["list-item"])
+    primary = resolver.primary_component_for_brief(context, "карточка тарифа", pinned_keys=["list-item"])
+    recovered, check = server._materialize_exact_master(primary, context, None, "test")
+    assert recovered is not None, check["errors"]
+    assert check["errors"] == []
+    # то же самое, но со сдвигом: положение — не форма
+    moved = deepcopy(root)
+    moved["frame"]["x"], moved["frame"]["y"] = 0, 0
+    assert compiler.component_shape_hash(moved) == compiler.component_shape_hash(root)
+    resized = deepcopy(root)
+    resized["frame"]["width"] = 999
+    assert compiler.component_shape_hash(resized) != compiler.component_shape_hash(root)
+    # цвет вне палитры у обычного узла в strict по-прежнему ошибка
+    stray = {"version": "1.1", "tokens": {}, "tree": [{"id": "s", "type": "composition",
+             "children": [{"type": "text", "text": "x", "style": {"color": "#4f4d5a"}}]}]}
+    assert any(e["code"] == "off-system-color" for e in resolver.validate_generation(stray, context)["errors"])

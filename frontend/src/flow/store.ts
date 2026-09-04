@@ -1538,20 +1538,26 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         }
       } else {
         const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true }, { signal });
-        if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы генератора");
-        const rawOutputs: string[] = [];
-        for (let i = 0; i < prepared.prompts.length; i += 1) {
-          const many = prepared.prompts.length > 1 ? ` ${i + 1}/${prepared.prompts.length}` : "";
-          get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: `Модель генерирует IR${many}` });
-          const answer = await desktop.providers.chatRequest({
-            ...chatRoute(provider, effort),
-            messages: prepared.prompts[i].messages,
-          });
-          if (signal.aborted) throw new DOMException("cancelled", "AbortError");
-          rawOutputs.push(answer.content);
+        if (!prepared.prompts?.length && Array.isArray(prepared.variants) && prepared.variants.length) {
+          // strict + пиннутый мастер, который не влезает в промпт: сервер уже
+          // материализовал точную копию мастера, модель не нужна.
+          res = prepared;
+        } else {
+          if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы генератора");
+          const rawOutputs: string[] = [];
+          for (let i = 0; i < prepared.prompts.length; i += 1) {
+            const many = prepared.prompts.length > 1 ? ` ${i + 1}/${prepared.prompts.length}` : "";
+            get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: `Модель генерирует IR${many}` });
+            const answer = await desktop.providers.chatRequest({
+              ...chatRoute(provider, effort),
+              messages: prepared.prompts[i].messages,
+            });
+            if (signal.aborted) throw new DOMException("cancelled", "AbortError");
+            rawOutputs.push(answer.content);
+          }
+          get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Проверка схемы и автофиксы" });
+          res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs }, { signal });
         }
-        get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Проверка схемы и автофиксы" });
-        res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs }, { signal });
       }
       const directionResponse = res as GenerateDirectionResp;
       const variants = Array.isArray(res.variants) ? res.variants : [];

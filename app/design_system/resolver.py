@@ -227,6 +227,12 @@ def validate_generation(ir: dict, context: dict) -> dict:
     system_ref = context.get("systemRef") or {}
 
     def walk(node: dict, section: str):
+        # Точная копия мастера (sourceMeta.componentRef): её измеренные цвета/шрифты —
+        # это цвета самой системы, проверять их против палитры нельзя; целостность
+        # копии контролирует проверка masterHash/shape ниже.
+        source_meta = node.get("sourceMeta") if isinstance(node.get("sourceMeta"), dict) else {}
+        if isinstance(source_meta.get("componentRef"), dict):
+            return
         style = node.get("style") or {}
         if isinstance(style, dict):
             for color_key in ("color", "background", "borderColor"):

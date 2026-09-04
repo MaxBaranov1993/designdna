@@ -621,6 +621,33 @@ def _embed_mode_block(usage_mode: str) -> str:
     )
 
 
+def _materialize_exact_master(primary: dict, ds_context: dict, ds_compiled: dict | None, reason: str):
+    """Точная копия мастера ДС как вариант генерации — без модели.
+
+    Наблюдённый мастер целой секции (шрифты, evidence, responsive) весит десятки
+    тысяч токенов и в промпт не помещается; копировать его моделью бессмысленно —
+    приложение материализует exact master само и проверяет strict-валидацией.
+    Возвращает (ir, check) или (None, check) если копия не прошла проверку."""
+    from design_system import compiler as ds_compiler, document as ds_document, resolver as ds_resolver
+    recovered = ds_document.preview_ir_for_master(copy.deepcopy(primary["masterIr"]))
+    recovered_root = recovered["tree"][0]
+    if (recovered_root.get("type") == "source-block"
+            and recovered_root.get("variant") == "component-master"
+            and recovered_root.get("children")):
+        recovered_root = recovered_root["children"][0]
+    recovered_root.setdefault("sourceMeta", {})["componentRef"] = ds_compiler.component_handle(
+        primary, ds_context.get("systemRef") or {})
+    recovered.setdefault("meta", {}).update({
+        "designSystemRef": ds_context.get("systemRef"),
+        "compiledContextHash": (ds_compiled or {}).get("compiledContextHash"),
+        "strictRecovery": "exact-master-materialized",
+        "strictRecoveryReason": reason,
+        "requestedComponentKey": primary.get("componentKey"),
+    })
+    check = ds_resolver.validate_generation(recovered, ds_context)
+    return (recovered if not check["errors"] else None), check
+
+
 def _generate(req: GenerateReq, run_id: str | None):
     # Browser mode may explicitly select a direct API account. Codex is a
     # desktop-only transport, so unknown/desktop values fall back to ROUTING.
@@ -683,7 +710,49 @@ def _generate(req: GenerateReq, run_id: str | None):
             pinned_keys=pinned_master_keys,
         )
         if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
-            return err(422, "Design System Strict: exact master не помещается в выбранный context budget. Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")
+            # Пиннутый мастер (референс = мастер ДС) не влезает в бюджет промпта —
+            # модель тут не нужна: отдаём точную копию мастера как вариант.
+            primary = (ds_resolver.primary_component_for_brief(ds_context, brief, pinned_keys=pinned_master_keys)
+                       if pinned_master_keys else None)
+            recovered, recovered_check = (_materialize_exact_master(
+                primary, ds_context, ds_compiled, "pinned-master-exceeds-context-budget")
+                if primary is not None else (None, None))
+            if recovered is None:
+                return err(422, "Design System Strict: exact master не помещается в выбранный context budget. "
+                                "Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")
+            run_registry.stage(run_id, "design-system", "Материализую точный мастер ДС (модель не нужна)")
+            recovered = ensure_current_ir(recovered, source="generate")
+            key = str(primary.get("componentKey") or "")
+            return {
+                "variants": [recovered], "errors": [], "prompts": [],
+                "qa": [{"index": 1, "fixed": 0, "violations": [], "recovery": "exact-master-materialized"}],
+                "design": {"type": ptype, "label": pinfo["label"]},
+                "generationLog": {
+                    "product": pinfo["label"], "mode": mode, "tokensLocked": True,
+                    "projectRules": bool(rules_block),
+                    "referenceScreens": len([x for x in (req.referenceIrs or []) if isinstance(x, dict)]),
+                    "designSystem": {
+                        "name": (ds_doc or {}).get("name") or "",
+                        "systemId": (ds_context.get("systemRef") or {}).get("systemId"),
+                        "revision": (ds_context.get("systemRef") or {}).get("revision"),
+                        "usageMode": ds_usage_mode,
+                        "componentsAvailable": len(ds_context.get("components") or []),
+                        "mastersInContext": [key],
+                        "strictReady": False,
+                        "errors": 0, "warnings": len((recovered_check or {}).get("warnings") or []),
+                        "recovered": {"componentKey": key, "reason": "pinned-master-exceeds-context-budget"},
+                        "pinnedMaster": key,
+                    },
+                    "pinnedMaster": key,
+                    "strictRecovery": "exact-master-materialized",
+                    "variants": [{"index": 1, "autofixes": 0, "journal": [
+                        f"strict: мастер «{key}» ≈{ds_compiled.get('estimatedTokens')} токенов не влезает в бюджет "
+                        f"{ds_compiled.get('tokenBudget')} — отдана точная копия мастера без вызова модели"],
+                        "lint": [], "recovery": "exact-master-materialized"}],
+                },
+                "designSystem": {"ref": ds_context.get("systemRef"), "errors": [], "warnings": (recovered_check or {}).get("warnings") or [],
+                                 "recovered": {"componentKey": key, "reason": "pinned-master-exceeds-context-budget"}},
+            }
         ds_prompt_block = ds_compiled["promptBlock"]
         # ДС — источник истины и для токенов, и для атмосферы: если по порту
         # пришло что-то неполное (или ничего), лочим токены из foundations
@@ -1023,23 +1092,9 @@ def _generate(req: GenerateReq, run_id: str | None):
                 primary = ds_resolver.primary_component_for_brief(
                     ds_context, brief, pinned_keys=pinned_master_keys)
                 if primary is not None:
-                    from design_system import compiler as ds_compiler, document as ds_document
-                    recovered = ds_document.preview_ir_for_master(copy.deepcopy(primary["masterIr"]))
-                    recovered_root = recovered["tree"][0]
-                    if (recovered_root.get("type") == "source-block"
-                            and recovered_root.get("variant") == "component-master"
-                            and recovered_root.get("children")):
-                        recovered_root = recovered_root["children"][0]
-                    recovered_root.setdefault("sourceMeta", {})["componentRef"] = ds_compiler.component_handle(
-                        primary, ds_context.get("systemRef") or {})
-                    recovered.setdefault("meta", {}).update({
-                        "designSystemRef": ds_context.get("systemRef"),
-                        "compiledContextHash": ds_compiled.get("compiledContextHash") if ds_compiled else None,
-                        "strictRecovery": "exact-master-materialized",
-                        "requestedComponentKey": primary.get("componentKey"),
-                    })
-                    recovered_check = ds_resolver.validate_generation(recovered, ds_context)
-                    if not recovered_check["errors"]:
+                    recovered, recovered_check = _materialize_exact_master(
+                        primary, ds_context, ds_compiled, "provider-output-failed-strict-exact-master-validation")
+                    if recovered is not None:
                         variants = [recovered]
                         qa.append({"index": 1, "fixed": 1, "violations": [],
                                    "recovery": "exact-master-materialized"})
