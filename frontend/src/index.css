@@ -1659,6 +1659,23 @@
 .port-dot.svelte-flow__handle:hover {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--port-color, #ffffff), transparent 70%);
 }
+.dna-port.in.port-cannot-drop {
+  opacity: .35;
+}
+.dna-port.in.port-can-drop .plabel {
+  color: var(--dna-text-2);
+}
+.dna-port.in.port-can-drop .port-dot.svelte-flow__handle {
+  border-color: var(--drop-color);
+  animation: port-can-drop-pulse 1.05s ease-in-out infinite;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--drop-color), transparent 68%);
+}
+.dna-port.in.port-can-drop .port-dot.svelte-flow__handle:hover {
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--drop-color), transparent 48%), 0 0 15px var(--drop-color);
+}
+@keyframes port-can-drop-pulse {
+  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--drop-color), transparent 84%); }
+}
 .fnode.snap-target .port-dot.svelte-flow__handle {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--n-accent), transparent 70%);
 }

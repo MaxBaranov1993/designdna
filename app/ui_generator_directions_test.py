@@ -133,6 +133,8 @@ def main() -> None:
         page.wait_for_function("window.GraphDev")
         page.evaluate("window.GraphDev.clear()")
         node_id = page.evaluate("window.GraphDev.add('generator', 300, 100).id")
+        check("generator keeps exactly three inputs",
+              page.locator(f'.svelte-flow__node[data-id="{node_id}"] .port-row.in').count() == 3)
         page.evaluate("id => window.GraphDev.patchData(id, {ownPrompt:'Design a calm finance landing page'})", node_id)
         page.evaluate("id => window.GraphDev.run(id)", node_id)
 

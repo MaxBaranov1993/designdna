@@ -125,10 +125,13 @@ def main() -> None:
             check("build from Source creates node", isinstance(ds_id, int) and ds_id > 0, str(ds_id))
             page.wait_for_function("id => window.GraphDev.node(id)?.data?.systemId", arg=ds_id)
             node = page.evaluate("id => window.GraphDev.node(id).data", ds_id)
+            check("autopublish defaults on", node.get("autoPublish") is True)
             check("draft document persisted on node", bool(node.get("document") and node.get("status") == "draft"))
             summary = node.get("summary") or {}
             check("summary has catalog components", int(summary.get("catalogComponents") or 0) >= 1, json.dumps(summary))
             check("Source masters stay review-gated", int(summary.get("reviewMasters") or 0) >= 1, json.dumps(summary))
+            check("review gate leaves an explanatory draft status",
+                  "ждут ревью" in page.locator(f'.n-designsystem[data-id="{ds_id}"] .n-status').inner_text())
 
             open_btn = page.locator(f'.n-designsystem[data-id="{ds_id}"] [data-ds-action="open"]')
             check("open has accessible label", (open_btn.get_attribute("aria-label") or "").startswith("Открыть"))
@@ -617,6 +620,22 @@ def main() -> None:
                 any(s.get("systemId") == published["systemId"] for s in persisted["list"]["systems"]) and bool(persisted["got"].get("document")),
                 json.dumps({"systems": [s.get("systemId") for s in persisted["list"]["systems"]], "hasDoc": bool(persisted["got"].get("document"))}),
             )
+
+            page.route("**/api/design-system/publish", lambda route: route.fulfill(
+                status=200, content_type="application/json",
+                body=json.dumps({"document": {"revision": 1, "contentHash": "auto-published"}, "summary": {"components": 0, "variants": 0}}),
+            ))
+            imported_id = page.evaluate("window.GraphDev.add('designsystem', 900, 420).id")
+            imported_ok = page.evaluate("""async (id) => {
+              return await window.__flowStore.getState().importDesignSystemDocument(id, {
+                color: {primary: {$type:'color', $value:'#7c3aed'}, background: {$type:'color', $value:'#ffffff'}}
+              }, 'tokens.json');
+            }""", imported_id)
+            page.wait_for_function("id => window.GraphDev.node(id)?.data?.status === 'published'", arg=imported_id)
+            imported_data = page.evaluate("id => window.GraphDev.node(id).data", imported_id)
+            check("review-free JSON import auto-publishes",
+                  bool(imported_ok) and imported_data.get("status") == "published" and int(imported_data.get("revision") or 0) >= 1,
+                  json.dumps(imported_data))
 
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")

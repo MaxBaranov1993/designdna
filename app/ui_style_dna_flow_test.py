@@ -87,7 +87,7 @@ def main() -> None:
         connected = page.evaluate("""(ids) => [
           window.GraphDev.connect(ids.source, 'tokens', ids.dna, 'tokens'),
           window.GraphDev.connect(ids.source, 'Header', ids.dna, 'ir'),
-          window.GraphDev.connect(ids.dna, 'tokens', ids.generator, 'tokens'),
+          window.GraphDev.connect(ids.dna, 'tokens', ids.generator, 'designSystem'),
         ]""", ids)
         check("IR and tokens inputs connect to Style DNA", connected == [True, True, True], json.dumps(connected))
         page.evaluate("id => window.GraphDev.run(id)", ids["dna"])

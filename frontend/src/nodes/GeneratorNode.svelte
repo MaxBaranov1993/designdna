@@ -136,7 +136,7 @@
       {/if}
     </div>
     {#if dsRef.wired && !dsRef.published}
-      <div class="gen-ds-warn nodrag" role="status">ДС по проводу не опубликована — откройте ноду ДС и опубликуйте её, иначе генерация не запустится.</div>
+      <div class="gen-ds-warn nodrag" role="status">ДС черновик — опубликуется автоматически при запуске.</div>
     {/if}
   {:else if dsOptedOut}
     <div class="gen-ds-row nodrag">

@@ -110,6 +110,11 @@
       aria-label="Загрузить дизайн-систему из JSON-файла" title="Документ DesignDNA, W3C / Tokens Studio JSON или карта shadcn"
       disabled={busy} onclick={() => fileInput?.click()}>Загрузить JSON</button>
   </div>
+  <label class="ds-auto-publish nodrag">
+    <input type="checkbox" checked={data.autoPublish !== false}
+      onchange={(event) => $flow.setNodeData(Number(id), { autoPublish: event.currentTarget.checked })} />
+    <span>Автопубликация</span>
+  </label>
   <NodeStatus {id} />
   <OutPorts type="designsystem" />
 </NodeShell>
@@ -149,4 +154,6 @@
   .ds-error { background: color-mix(in srgb, #f87171, transparent 88%); color: #f87171; }
   .ds-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
   .ds-actions button:disabled { cursor: not-allowed; opacity: .5; }
+  .ds-auto-publish { display: flex; align-items: center; gap: 6px; color: #9da3b3; font-size: 10px; }
+  .ds-auto-publish input { width: auto; margin: 0; }
 </style>

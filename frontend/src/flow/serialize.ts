@@ -369,6 +369,7 @@ function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
     if (!("importedUrl" in (data as object)) && source.blocks.length > 0) source.importedUrl = source.url;
     return source;
   }
+  if (type === "designsystem") return { ...defaultData("designsystem"), ...data } as AnyNodeData;
   return data;
 }
 
@@ -466,7 +467,13 @@ export function payloadToRf(payload: LegacyGraphPayload): {
       }) as FlowNode,
   );
   let edges = (payload.edges || [])
-    .map((e) => makeRfEdge(nodes, e.from, e.to))
+    .map((e) => {
+      const target = nodes.find((node) => Number(node.id) === Number(e.to.node));
+      const migratedPort = target?.type === "generator"
+        ? e.to.port === "tokens" ? "designSystem" : e.to.port === "style" ? "reference" : e.to.port
+        : e.to.port;
+      return makeRfEdge(nodes, e.from, { ...e.to, port: migratedPort });
+    })
     .filter((e) => nodes.some((node) => node.id === e.source) && nodes.some((node) => node.id === e.target));
 
   // One-way visual migration: Design UI used to be a large pass-through node

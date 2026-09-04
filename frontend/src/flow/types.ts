@@ -6,6 +6,7 @@ import type { Edge, Node } from "@xyflow/svelte";
 /* kind tokens: design-токены из Source Import/Style DNA в Reskin/Derive. */
 /* ds — ссылка на опубликованную дизайн-систему (systemId@revision), чтобы ДС шла в Генератор проводом, а не «из воздуха» */
 export type PortKind = "text" | "ir" | "tokens" | "artifact" | "interaction" | "motion" | "timeline" | "video" | "ds";
+export type PortDecl = { name: string; label: string; kind: PortKind; kinds: PortKind[] };
 
 export type NodeType =
   | "prompt"
@@ -339,6 +340,7 @@ export type DesignSystemNodeData = {
   sourceNodeId: number | string | null;
   defaultSet: boolean;
   sourceUpdate: boolean;
+  autoPublish: boolean;
   /* Кэш редактирования: полный документ живёт на сервере (draft — revision 0),
    * в ноде — только ссылка systemId@revision+contentHash; документ грузится
    * по требованию при открытии панели. */

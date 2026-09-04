@@ -4,7 +4,7 @@
 
 Проверяет: маршрут /flow; правый клик по канвасу — контекстное меню;
 создание нод Промпт/Референс/Генератор; ввод текста в Промпт; провода мышью
-prompt.out -> generator.prompt и reference.out -> generator.style (оба text->text,
+prompt.out -> generator.prompt и reference.out -> generator.reference (оба text->text,
 валидны по правилам legacy connect); после перезагрузки граф сохранён.
 Провод prompt.out -> reference.ir отклоняется (правило совпадения kind).
 """
@@ -13,11 +13,12 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
+import os
 import time
 
 from playwright.sync_api import sync_playwright
 
-BASE = "http://127.0.0.1:8420"
+BASE = os.environ.get("DESIGNAI_UI_BASE", "http://127.0.0.1:8420")
 PROMPT_TEXT = "Сгенерируй шапку маркетплейса объявлений"
 
 FAILS = []
@@ -121,7 +122,7 @@ def main():
 
         # провода мышью: оба text->text, валидны по правилам legacy connect
         drag_wire(pg, ".n-prompt .pp-out-out", ".n-generator .pp-in-prompt")
-        drag_wire(pg, ".n-reference .pp-out-out", ".n-generator .pp-in-style")
+        drag_wire(pg, ".n-reference .pp-out-out", ".n-generator .pp-in-reference")
         check("протянуты 2 провода", pg.evaluate("window.GraphDev.state().edges.length === 2"))
         check("провода видны на канвасе", pg.evaluate("document.querySelectorAll('.svelte-flow__edge').length === 2"))
         edges_ok = pg.evaluate("""(() => {
@@ -130,9 +131,9 @@ def main():
             const pr = byType('prompt'), ref = byType('reference'), g = byType('generator');
             const has = (fn, fp, tn, tp) => st.edges.some(e =>
                 e.from.node === fn.id && e.from.port === fp && e.to.node === tn.id && e.to.port === tp);
-            return has(pr, 'out', g, 'prompt') && has(ref, 'out', g, 'style');
+            return has(pr, 'out', g, 'prompt') && has(ref, 'out', g, 'reference');
         })()""")
-        check("провода: prompt.out->generator.prompt и reference.out->generator.style", bool(edges_ok))
+        check("провода: prompt.out->generator.prompt и reference.out->generator.reference", bool(edges_ok))
 
         # Контекстное действие снимает только провода; нода и её data остаются.
         pg.click(".n-generator", button="right")
@@ -150,7 +151,7 @@ def main():
             const r = st.nodes.find(n => n.type === 'reference');
             const g = st.nodes.find(n => n.type === 'generator');
             window.GraphDev.connect(p.id, 'out', g.id, 'prompt');
-            window.GraphDev.connect(r.id, 'out', g.id, 'style');
+            window.GraphDev.connect(r.id, 'out', g.id, 'reference');
         })()""")
         check("связи можно восстановить после разрыва",
               pg.evaluate("window.GraphDev.state().edges.length === 2"))

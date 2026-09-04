@@ -49,7 +49,7 @@
         const reference = st.addNode("reference", 120, 380);
         const generator = st.addNode("generator", 560, 180);
         st.connect({ node: prompt.id, port: "out" }, { node: generator.id, port: "prompt" });
-        st.connect({ node: reference.id, port: "out" }, { node: generator.id, port: "style" });
+        st.connect({ node: reference.id, port: "out" }, { node: generator.id, port: "reference" });
       },
     },
     {

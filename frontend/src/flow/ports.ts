@@ -1,6 +1,4 @@
-import type { AnyNodeData, EditNodeData, MixNodeData, NodeType, PageNodeData, PortKind, SourceImportNodeData } from "./types";
-
-export type PortDecl = { name: string; label: string; kind: PortKind };
+import type { AnyNodeData, EditNodeData, MixNodeData, NodeType, PageNodeData, PortDecl, PortKind, SourceImportNodeData } from "./types";
 
 /* Зеркало NODE_DEFS (nodes.js:24-32), расширено дизайн-хендоффом
  * design_handoff_node_editor: sub — подзаголовок шапки, accent — цвет типа
@@ -27,7 +25,8 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
 
 /* Зеркало PORTS (nodes.js:35-48); у mix входы динамические — из data.inputs (portsOfNode),
  * у Source Import выходы динамические — из выбранных блоков (portsOfNode, docs/NODES.md) */
-export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
+type RawPortDecl = Omit<PortDecl, "kinds"> & { kinds?: PortKind[] };
+const RAW_PORTS: Record<NodeType, { in: RawPortDecl[]; out: RawPortDecl[] }> = {
   prompt: { in: [], out: [{ name: "out", label: "текст", kind: "text" }] },
   reference: {
     in: [{ name: "ir", label: "IR", kind: "ir" }],
@@ -35,14 +34,9 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   },
   generator: {
     in: [
-      { name: "prompt", label: "промт", kind: "text" },
-      { name: "style", label: "стиль", kind: "text" },
-      { name: "tokens", label: "style DNA", kind: "tokens" },
-      // ДС проводом: генерация работает от загруженной или собранной из Source
-      // системы этой ноды, а не только от глобального выбора проекта.
-      { name: "designSystem", label: "дизайн-система", kind: "ds" },
-      // Существующие экраны: «рядом положил экраны — сделай так же».
-      { name: "reference", label: "экраны-референс", kind: "ir" },
+      { name: "prompt", label: "Промт", kind: "text", kinds: ["text"] },
+      { name: "designSystem", label: "Дизайн-система", kind: "ds", kinds: ["ds", "tokens"] },
+      { name: "reference", label: "Референс", kind: "ir", kinds: ["ir", "text"] },
     ],
     out: [{ name: "ir", label: "варианты", kind: "ir" }],
   },
@@ -60,8 +54,8 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   designsystem: {
     in: [{ name: "artifact", label: "Source Artifact", kind: "artifact" }],
     out: [
+      { name: "system", label: "ДС", kind: "ds" },
       { name: "tokens", label: "style DNA", kind: "tokens" },
-      { name: "system", label: "ДС → генератор", kind: "ds" },
     ],
   },
   sourceimport: { in: [], out: [
@@ -127,6 +121,15 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   },
 };
 
+const normalizePort = (p: RawPortDecl): PortDecl => ({
+  ...p,
+  kinds: [p.kind, ...(p.kinds || []).filter((kind) => kind !== p.kind)],
+});
+export const PORTS = Object.fromEntries(Object.entries(RAW_PORTS).map(([type, ports]) => [type, {
+  in: ports.in.map(normalizePort),
+  out: ports.out.map(normalizePort),
+}])) as Record<NodeType, { in: PortDecl[]; out: PortDecl[] }>;
+
 /* Зеркало portsOf (nodes.js:77-83): у mix входы строятся из data.inputs, все kind "ir";
  * у Source Import выходы — по именам зажжённых блоков (lit, handle id = имя блока) +
  * постоянный порт tokens (решение владельца 9). */
@@ -137,14 +140,14 @@ export function portsOfNode(n: {
   if (n.type === "mix") {
     const inputs = (n.data as MixNodeData | undefined)?.inputs || [];
     return {
-      in: inputs.map((name) => ({ name, label: name, kind: "ir" as PortKind })),
+      in: inputs.map((name) => normalizePort({ name, label: name, kind: "ir" })),
       out: PORTS.mix.out,
     };
   }
   if (n.type === "edit") {
     const inputs = (n.data as EditNodeData | undefined)?.inputs || ["ir"];
     return {
-      in: inputs.map((name) => ({ name, label: name, kind: "ir" as PortKind })),
+      in: inputs.map((name) => normalizePort({ name, label: name, kind: "ir" })),
       out: PORTS.edit.out,
     };
   }
@@ -152,8 +155,8 @@ export function portsOfNode(n: {
     const inputs = (n.data as PageNodeData | undefined)?.inputs || [];
     return {
       in: [
-        { name: "tokens", label: "style DNA", kind: "tokens" as PortKind },
-        ...inputs.map((name) => ({ name, label: name, kind: "ir" as PortKind })),
+        normalizePort({ name: "tokens", label: "style DNA", kind: "tokens" }),
+        ...inputs.map((name) => normalizePort({ name, label: name, kind: "ir" })),
       ],
       out: PORTS.page.out,
     };
@@ -164,7 +167,7 @@ export function portsOfNode(n: {
     return {
       in: PORTS.sourceimport.in,
       out: [
-        ...lit.map((b) => ({ name: b.name, label: b.name, kind: "ir" as PortKind })),
+        ...lit.map((b) => normalizePort({ name: b.name, label: b.name, kind: "ir" })),
         ...PORTS.sourceimport.out,
       ],
     };
@@ -233,7 +236,7 @@ export function defaultData(type: NodeType): AnyNodeData {
       };
     case "designsystem":
       return ({ systemId: null, name: "", status: "draft", revision: 0, summary: null,
-               sourceNodeId: null, defaultSet: false, sourceUpdate: false } as unknown as AnyNodeData);
+               sourceNodeId: null, defaultSet: false, sourceUpdate: false, autoPublish: true } as unknown as AnyNodeData);
     case "pagebridge":
       return { channel: "shared-component", mode: "send", ir: null };
   }

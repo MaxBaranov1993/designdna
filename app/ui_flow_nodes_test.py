@@ -4,6 +4,7 @@ No real LLM calls: /api/generate, /api/mix, /api/block-parse and
 /api/quality-pass are mocked in the browser context.
 """
 import json
+import os
 import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -13,7 +14,7 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-BASE = "http://127.0.0.1:8420"
+BASE = os.environ.get("DESIGNAI_UI_BASE", "http://127.0.0.1:8420")
 FLOW_PAGES_LS_KEY = "designai-flow-pages-v1"
 PROMPT_TEXT = "Generate a marketplace header"
 SOURCE_URL = "https://example.com/page"
@@ -257,6 +258,10 @@ def main():
                   const data = window.GraphDev.node(n.id).data;
                   return data.provider + ':' + data.effort;
               })()""") == "openai:medium")
+        check("Generator exposes three convenient inputs",
+              pg.locator(".n-generator .port-row.in").evaluate_all(
+                  "els => els.map(e => [e.dataset.port, e.innerText.trim()])") == [
+                      ["prompt", "Промт"], ["designSystem", "Дизайн-система"], ["reference", "Референс"]])
         pg.select_option(".n-generator .f-effort-select", "high")
         wait_for_saved_generator_value(pg, "effort", "high")
         pg.reload()

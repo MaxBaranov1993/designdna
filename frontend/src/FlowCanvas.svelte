@@ -15,7 +15,7 @@
   import { flow, flowActivePageId, flowEdges, flowNodes } from "./flow/state";
   import { useFlowStore } from "./flow/store";
   import { setReactFlowInstance } from "./flow/graphdev";
-  import { reachable } from "./flow/dataflow";
+  import { reachable, WIRE_COLORS } from "./flow/dataflow";
   import type { FlowEdge, FlowNode, NodeType } from "./flow/types";
   import { OPEN_NODE_MENU_EVENT } from "./flow/ui";
   import { selectReadable } from "./lib/zustand";
@@ -255,7 +255,31 @@
     if (!src || !dst || reachable(Number(targetId), Number(sourceId), st.edges)) return null;
     const outP = portsOfNode(src).out.find((p) => p.name === sourceHandle);
     if (!outP) return null;
-    return portsOfNode(dst).in.find((p) => p.kind === outP.kind) || null;
+    return portsOfNode(dst).in.find((p) => (p.kinds || [p.kind]).includes(outP.kind)) || null;
+  };
+
+  const clearPortHighlights = () => {
+    document.querySelectorAll<HTMLElement>(".dna-port.in.port-can-drop, .dna-port.in.port-cannot-drop").forEach((row) => {
+      row.classList.remove("port-can-drop", "port-cannot-drop");
+      row.style.removeProperty("--drop-color");
+    });
+  };
+
+  // Вычисляется один раз на старте провода, а не на каждом mousemove.
+  const markCompatiblePorts = (sourceId: string, sourceHandle: string) => {
+    clearPortHighlights();
+    const st = useFlowStore.getState();
+    const src = st.nodes.find((node) => node.id === sourceId);
+    const out = src && portsOfNode(src).out.find((port) => port.name === sourceHandle);
+    if (!out) return;
+    document.querySelectorAll<HTMLElement>(".dna-port.in").forEach((row) => {
+      const targetId = row.closest<HTMLElement>(".fnode")?.dataset.id || "";
+      const kinds = (row.dataset.kinds || row.dataset.kind || "").split(",");
+      const allowed = targetId !== sourceId && kinds.includes(out.kind)
+        && !reachable(Number(targetId), Number(sourceId), st.edges);
+      row.classList.add(allowed ? "port-can-drop" : "port-cannot-drop");
+      if (allowed) row.style.setProperty("--drop-color", WIRE_COLORS[out.kind]);
+    });
   };
 
   const updateSnapTarget = (clientX: number, clientY: number) => {
@@ -285,7 +309,7 @@
     if (!src || !dst) return false;
     const outP = portsOfNode(src).out.find((p) => p.name === c.sourceHandle);
     const inP = portsOfNode(dst).in.find((p) => p.name === c.targetHandle);
-    if (!outP || !inP || outP.kind !== inP.kind) return false;
+    if (!outP || !inP || !(inP.kinds || [inP.kind]).includes(outP.kind)) return false;
     return !reachable(Number(c.target), Number(c.source), st.edges);
   };
 
@@ -355,6 +379,7 @@
       if (params.handleType === "source" && params.nodeId && params.handleId) {
         didConnect = false;
         pendingConnection = { nodeId: params.nodeId, handleId: params.handleId };
+        markCompatiblePorts(params.nodeId, params.handleId);
       }
     }}
     onconnectend={(event) => {
@@ -363,6 +388,7 @@
         didConnect = false;
         pendingConnection = null;
         clearSnapTarget();
+        clearPortHighlights();
         return;
       }
       const point =
@@ -374,10 +400,16 @@
       if (point) {
         const el = document.elementFromPoint(point.clientX, point.clientY) as HTMLElement | null;
         const targetId = (el?.closest(".fnode") as HTMLElement | null)?.dataset.id;
+        const exactInput = (el?.closest(".dna-port.in") as HTMLElement | null)?.dataset.port;
         const input = targetId
           ? compatibleInput(pendingConnection.nodeId, pendingConnection.handleId, targetId)
           : null;
-        if (targetId && input) {
+        if (targetId && exactInput) {
+          useFlowStore.getState().connect(
+            { node: Number(pendingConnection.nodeId), port: pendingConnection.handleId },
+            { node: Number(targetId), port: exactInput },
+          );
+        } else if (targetId && input) {
           useFlowStore.getState().connect(
             { node: Number(pendingConnection.nodeId), port: pendingConnection.handleId },
             { node: Number(targetId), port: input.name },
@@ -386,6 +418,7 @@
       }
       pendingConnection = null;
       clearSnapTarget();
+      clearPortHighlights();
     }}
     onnodedragstart={() => {
       nodeDragActive = true;

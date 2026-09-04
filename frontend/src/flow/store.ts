@@ -1082,8 +1082,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const inP = portsOfNode(dst).in.find((p) => p.name === to.port);
     // правило 2: оба порта объявлены
     if (!outP || !inP) return false;
-    // правило 3: совпадение kind
-    if (outP.kind !== inP.kind) {
+    // правило 3: kind выхода входит в набор kind входа
+    if (!(inP.kinds || [inP.kind]).includes(outP.kind)) {
       toast(`Несовместимые порты: ${outP.kind} → ${inP.kind}`, "error");
       return false;
     }
@@ -1430,10 +1430,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, "Нет промта: подключите провод или заполните поле", "err");
       return;
     }
-    const styleRaw = pullInput(st.nodes, st.edges, n, "style");
-    const styleHint = styleRaw ? String(styleRaw) : undefined;
-    const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
-    const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as Record<string, unknown>) : undefined;
+    const designSystemInput = pullInput(st.nodes, st.edges, n, "designSystem");
+    const tokens = designSystemInput && typeof designSystemInput === "object" && !(designSystemInput as { systemId?: unknown }).systemId
+      ? (designSystemInput as Record<string, unknown>) : undefined;
+    const referenceRaw = pullInput(st.nodes, st.edges, n, "reference");
+    const styleHint = typeof referenceRaw === "string" && referenceRaw.trim() ? referenceRaw.trim() : undefined;
     const desktop = window.designDNA;
     const effort: "medium" | "high" | "max" = ["medium", "high", "max"].includes(data.effort)
       ? data.effort
@@ -1456,12 +1457,27 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       // ДС по проводу приоритетнее глобального выбора проекта: граф говорит,
       // от какой системы генерировать. Черновик не годится — strict-контекст
       // компилируется из опубликованной ревизии.
-      const wiredDs = pullInput(st.nodes, st.edges, n, "designSystem") as
+      let wiredDs = designSystemInput as
         { systemId?: string; revision?: number; contentHash?: string; status?: string; name?: string } | null;
       let designSystemRef: Record<string, unknown> | null;
       if (wiredDs && wiredDs.systemId) {
-        if (wiredDs.status !== "published") {
-          get().setStatus(id, `ДС «${wiredDs.name || wiredDs.systemId}» не опубликована: откройте ноду ДС и опубликуйте её`, "err");
+        if (wiredDs.status === "draft") {
+          get().setStatus(id, "Публикую ДС…");
+          const published = await get().publishDesignSystem(Number((wiredDs as { nodeId?: number }).nodeId));
+          if (!published) {
+            const dsNode = get().nodes.find((node) => Number(node.id) === Number((wiredDs as { nodeId?: number }).nodeId));
+            const reason = String((dsNode?.data as DesignSystemNodeData | undefined)?.lastError || "публикация заблокирована");
+            get().setStatus(id, `Не удалось опубликовать ДС: ${reason}. Откройте ноду ДС → AI-ревью`, "err");
+            get().setBusy(id, false);
+            get().setProgress(id, null);
+            return;
+          }
+          const fresh = get();
+          const freshGenerator = fresh.nodes.find((node) => Number(node.id) === id)!;
+          wiredDs = pullInput(fresh.nodes, fresh.edges, freshGenerator, "designSystem") as typeof wiredDs;
+        }
+        if (wiredDs?.status !== "published") {
+          get().setStatus(id, `ДС «${wiredDs?.name || wiredDs?.systemId}» не опубликована. Откройте ноду ДС → AI-ревью`, "err");
           get().setBusy(id, false);
           get().setProgress(id, null);
           return;
@@ -1481,7 +1497,6 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           get().designSystemPicker,
         );
       }
-      const referenceRaw = pullInput(st.nodes, st.edges, n, "reference");
       const referenceIrs = referenceRaw && typeof referenceRaw === "object" && Array.isArray((referenceRaw as IRObject).tree)
         ? [referenceRaw as IRObject]
         : undefined;
@@ -2734,9 +2749,13 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         systemId: result.document.id, name: result.document.name, status: "draft",
         revision: 0, summary: result.summary, sourceNodeId: sourceId,
         defaultSet: false, sourceUpdate: false,
-        document: result.document,
+        document: result.document, autoPublish: true,
       } as unknown as Partial<DesignSystemNodeData>);
-      get().setStatus(dsId, `Черновик готов: ${result.summary.components} компонентов · ${result.summary.variants} вариантов`, "ok");
+      const reviewMasters = Number(result.summary?.reviewMasters || 0);
+      if (reviewMasters) get().setStatus(dsId, `Черновик: ${reviewMasters} мастеров ждут ревью`, "ok");
+      else if ((get().nodes.find((x) => Number(x.id) === dsId)?.data as DesignSystemNodeData | undefined)?.autoPublish !== false) {
+        await get().publishDesignSystem(dsId);
+      } else get().setStatus(dsId, `Черновик готов: ${result.summary.components} компонентов · ${result.summary.variants} вариантов`, "ok");
       return dsId;
     } catch (e) {
       get().setStatus(dsId, "Ошибка: " + (e instanceof Error ? e.message : String(e)), "err");
@@ -2768,7 +2787,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         defaultSet: false, sourceUpdate: false, document: result.document, lastError: "",
       } as unknown as Partial<DesignSystemNodeData>);
       const count = Number(result.summary?.components || 0);
-      get().setStatus(nodeId, `ДС загружена (${result.format}): ${count} компонентов · опубликуйте, чтобы генератор её использовал`, "ok");
+      const reviewMasters = Number(result.summary?.reviewMasters || 0);
+      if (reviewMasters) get().setStatus(nodeId, `Черновик: ${reviewMasters} мастеров ждут ревью`, "ok");
+      else if ((get().nodes.find((x) => Number(x.id) === Number(nodeId))?.data as DesignSystemNodeData | undefined)?.autoPublish !== false) {
+        await get().publishDesignSystem(nodeId);
+      } else get().setStatus(nodeId, `ДС загружена (${result.format}): ${count} компонентов`, "ok");
       await get().refreshDesignSystems();
       return true;
     } catch (e) {
@@ -3207,7 +3230,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       makeRfEdge(nodes, { node: fromNode, port: fromPort }, { node: toNode, port: toPort });
     const edges = [
       edge(Number(prompt.id), "out", Number(generator.id), "prompt"),
-      edge(Number(source.id), "tokens", Number(generator.id), "tokens"),
+      edge(Number(source.id), "tokens", Number(generator.id), "designSystem"),
       edge(Number(generator.id), "ir", Number(recorder.id), "ir"),
       edge(Number(generator.id), "ir", Number(motion.id), "ir"),
       edge(Number(recorder.id), "interaction", Number(motion.id), "interaction"),

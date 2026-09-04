@@ -18,6 +18,7 @@
     class="port-row dna-port in"
     data-port={p.name}
     data-kind={p.kind}
+    data-kinds={(p.kinds || [p.kind]).join(",")}
     style={`top: ${60 + index * 24}px`}
   >
     <span class="plabel">{p.label}</span>
