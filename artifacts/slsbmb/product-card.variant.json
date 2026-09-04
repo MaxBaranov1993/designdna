@@ -1,0 +1,218 @@
+{
+  "version": "1.1",
+  "tokens": {
+    "mode": "dark",
+    "color": {
+      "primary": "#5b6cff",
+      "secondary": "#5b6cff",
+      "accent": "#9aa6ff",
+      "background": "#0a0a0e",
+      "surface": "#0a0a0e",
+      "text": "#f2f0ea",
+      "textMuted": "#9d9aab",
+      "border": "#1b1b1f"
+    },
+    "font": {
+      "display": {
+        "family": "Bricolage Grotesque",
+        "weight": 700
+      },
+      "body": {
+        "family": "Hanken Grotesk",
+        "weight": 400
+      },
+      "scale": "default"
+    },
+    "radius": {
+      "card": "lg",
+      "button": "lg",
+      "input": "none"
+    },
+    "spacing": {
+      "section": "md",
+      "container": "default"
+    },
+    "shadow": "none"
+  },
+  "meta": {
+    "name": "SLSBMB AI Market Scan pricing card",
+    "description": "User-composed offer card from observed Pricing atoms",
+    "qaWarnings": []
+  },
+  "tree": [
+    {
+      "id": "product-card",
+      "type": "source-block",
+      "variant": "ds-master",
+      "props": {},
+      "frame": {
+        "width": 820,
+        "layout": "auto",
+        "direction": "row",
+        "gap": 0,
+        "padding": 24
+      },
+      "style": {
+        "background": "#0a0a0e",
+        "borderRadius": 28
+      },
+      "children": [
+        {
+          "type": "card",
+          "role": "pricing-offer",
+          "frame": {
+            "width": "fill",
+            "layout": "auto",
+            "direction": "column",
+            "gap": 24,
+            "padding": 36
+          },
+          "style": {
+            "background": "#111119",
+            "borderColor": "#2d2d3a",
+            "borderWidth": 1,
+            "borderRadius": 22
+          },
+          "children": [
+            {
+              "type": "badge",
+              "text": "1 · MAP THE OPPORTUNITY",
+              "tone": "success",
+              "style": {
+                "color": "#a8e0c2",
+                "background": "#19271f",
+                "fontSize": 13,
+                "fontWeight": 700,
+                "letterSpacing": 1.2,
+                "borderRadius": 999
+              },
+              "frame": {
+                "width": 244,
+                "height": 34
+              }
+            },
+            {
+              "type": "heading",
+              "text": "AI Market Scan",
+              "level": 2,
+              "style": {
+                "color": "#f2f0ea",
+                "fontFamily": "Bricolage Grotesque",
+                "fontSize": 48,
+                "fontWeight": 700,
+                "lineHeight": 1.05
+              },
+              "frame": {
+                "width": "fill",
+                "height": 54
+              }
+            },
+            {
+              "type": "text",
+              "text": "A defensible market map, complete outreach, and a count of the real people you can reach.",
+              "style": {
+                "color": "#9d9aab",
+                "fontSize": 18,
+                "lineHeight": 1.5
+              },
+              "frame": {
+                "width": "fill",
+                "height": 56
+              }
+            },
+            {
+              "type": "text",
+              "text": "$400 launch · 20% off",
+              "style": {
+                "color": "#f2f0ea",
+                "fontFamily": "JetBrains Mono",
+                "fontSize": 34,
+                "fontWeight": 700,
+                "lineHeight": 1.2
+              },
+              "frame": {
+                "width": "fill",
+                "height": 44
+              }
+            },
+            {
+              "type": "card",
+              "role": "offer-features",
+              "frame": {
+                "width": "fill",
+                "layout": "auto",
+                "direction": "column",
+                "gap": 12,
+                "padding": 20
+              },
+              "style": {
+                "background": "#171720",
+                "borderColor": "#2d2d3a",
+                "borderWidth": 1,
+                "borderRadius": 16
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "text": "✓ 10–30+ target segments",
+                  "style": {
+                    "color": "#f2f0ea",
+                    "fontSize": 17,
+                    "fontWeight": 600
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": "✓ 8 emails for every segment",
+                  "style": {
+                    "color": "#f2f0ea",
+                    "fontSize": 17,
+                    "fontWeight": 600
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": "✓ Real TAM people counted",
+                  "style": {
+                    "color": "#f2f0ea",
+                    "fontSize": 17,
+                    "fontWeight": 600
+                  }
+                }
+              ]
+            },
+            {
+              "type": "button",
+              "text": "Chat with our AI to start →",
+              "variant": "primary",
+              "style": {
+                "color": "#0a0a0e",
+                "background": "#a8e0c2",
+                "fontSize": 17,
+                "fontWeight": 700,
+                "borderRadius": 14
+              },
+              "frame": {
+                "width": 700,
+                "height": 54
+              }
+            },
+            {
+              "type": "text",
+              "text": "Free interview · about ten minutes · no card required",
+              "style": {
+                "color": "#8b8898",
+                "fontSize": 14,
+                "lineHeight": 1.4
+              },
+              "frame": {
+                "width": "fill",
+                "height": 22
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

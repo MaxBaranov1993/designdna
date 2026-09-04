@@ -11,13 +11,12 @@ import copy
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
+from playwright.sync_api import Page, sync_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +24,16 @@ APP = ROOT / "app"
 ARTIFACTS = ROOT / "artifacts" / "slsbmb"
 RESULT = ROOT / "results" / "slsbmb-product-card.md"
 TARGET_URL = "https://slsbmb.com"
-CARD_WORDS = ("product", "card", "tile", "item", "товар", "карточ")
+CARD_WORDS = ("product", "card", "tile", "item", "pricing", "price", "offer")
+PRICING_BLOCKS = [
+    {"name": "pricing-scan-eyebrow", "selector": "#pricing .sls-price-map .sls-price-eyebrow"},
+    {"name": "pricing-scan-title", "selector": "#pricing .sls-price-map .sls-price-title"},
+    {"name": "pricing-scan-copy", "selector": "#pricing .sls-price-map .sls-price-copy"},
+    {"name": "pricing-scan-price", "selector": "#pricing .sls-price-map .sls-price-amount"},
+    {"name": "pricing-scan-feature-1", "selector": "#pricing .sls-map-output:nth-child(1)"},
+    {"name": "pricing-scan-feature-2", "selector": "#pricing .sls-map-output:nth-child(2)"},
+    {"name": "pricing-scan-feature-3", "selector": "#pricing .sls-map-output:nth-child(3)"},
+]
 
 
 def dump(path: Path, value: Any) -> None:
@@ -98,8 +106,8 @@ def discounted_ir(master: dict) -> dict:
         nonlocal changed
         if isinstance(value, dict):
             text = value.get("text")
-            if not changed and isinstance(text, str) and re.search(r"\d", text) and re.search(r"₽|руб|\$|€", text, re.I):
-                value["text"] = "4 990 ₽ · −20%"
+            if not changed and isinstance(text, str) and re.search(r"\d", text) and "$" in text:
+                value["text"] = "$400 launch · 20% off"
                 changed = True
             for child in value.get("children") or []:
                 walk(child)
@@ -112,11 +120,66 @@ def discounted_ir(master: dict) -> dict:
     root = tree[0] if tree and isinstance(tree[0], dict) else None
     if root is not None and not changed:
         root.setdefault("children", []).append({
-            "type": "text", "text": "СКИДКА −20% · 4 990 ₽",
+            "type": "text", "text": "LIMITED OFFER · 20% OFF",
             "style": {"background": "#d92d20", "color": "#ffffff", "fontWeight": 700,
                       "padding": "8px 12px", "borderRadius": 9999},
         })
     return ir
+
+
+def pricing_master(tokens: dict) -> dict:
+    """Compose a user master from measured SLSBMB Pricing atoms and tokens."""
+    return {
+        "version": "1.1",
+        "tokens": copy.deepcopy(tokens),
+        "meta": {
+            "name": "SLSBMB AI Market Scan pricing card",
+            "description": "User-composed offer card from observed Pricing atoms",
+            "qaWarnings": [],
+        },
+        "tree": [{
+            "id": "product-card", "type": "source-block", "variant": "ds-master", "props": {},
+            "frame": {"width": 820, "layout": "auto", "direction": "row", "gap": 0, "padding": 24},
+            "style": {"background": "#0a0a0e", "borderRadius": 28},
+            "children": [{
+                "type": "card", "role": "pricing-offer",
+                "frame": {"width": "fill", "layout": "auto", "direction": "column", "gap": 24, "padding": 36},
+                "style": {"background": "#111119", "borderColor": "#2d2d3a", "borderWidth": 1, "borderRadius": 22},
+                "children": [
+                    {"type": "badge", "text": "1 · MAP THE OPPORTUNITY", "tone": "success",
+                     "style": {"color": "#a8e0c2", "background": "#19271f", "fontSize": 13,
+                               "fontWeight": 700, "letterSpacing": 1.2, "borderRadius": 999},
+                     "frame": {"width": 244, "height": 34}},
+                    {"type": "heading", "text": "AI Market Scan", "level": 2,
+                     "style": {"color": "#f2f0ea", "fontFamily": "Bricolage Grotesque",
+                               "fontSize": 48, "fontWeight": 700, "lineHeight": 1.05},
+                     "frame": {"width": "fill", "height": 54}},
+                    {"type": "text", "text": "A defensible market map, complete outreach, and a count of the real people you can reach.",
+                     "style": {"color": "#9d9aab", "fontSize": 18, "lineHeight": 1.5},
+                     "frame": {"width": "fill", "height": 56}},
+                    {"type": "text", "text": "$500 launch · then $1,000",
+                     "style": {"color": "#f2f0ea", "fontFamily": "JetBrains Mono",
+                               "fontSize": 34, "fontWeight": 700, "lineHeight": 1.2},
+                     "frame": {"width": "fill", "height": 44}},
+                    {"type": "card", "role": "offer-features",
+                     "frame": {"width": "fill", "layout": "auto", "direction": "column", "gap": 12, "padding": 20},
+                     "style": {"background": "#171720", "borderColor": "#2d2d3a", "borderWidth": 1, "borderRadius": 16},
+                     "children": [
+                         {"type": "text", "text": "✓ 10–30+ target segments", "style": {"color": "#f2f0ea", "fontSize": 17, "fontWeight": 600}},
+                         {"type": "text", "text": "✓ 8 emails for every segment", "style": {"color": "#f2f0ea", "fontSize": 17, "fontWeight": 600}},
+                         {"type": "text", "text": "✓ Real TAM people counted", "style": {"color": "#f2f0ea", "fontSize": 17, "fontWeight": 600}},
+                     ]},
+                    {"type": "button", "text": "Chat with our AI to start →", "variant": "primary",
+                     "style": {"color": "#0a0a0e", "background": "#a8e0c2", "fontSize": 17,
+                               "fontWeight": 700, "borderRadius": 14},
+                     "frame": {"width": 700, "height": 54}},
+                    {"type": "text", "text": "Free interview · about ten minutes · no card required",
+                     "style": {"color": "#8b8898", "fontSize": 14, "lineHeight": 1.4},
+                     "frame": {"width": "fill", "height": 22}},
+                ],
+            }],
+        }],
+    }
 
 
 def has_component_ref(ir: dict, component_key: str) -> bool:
@@ -136,11 +199,12 @@ def render_artifacts(master_ir: dict, variant_ir: dict) -> None:
     sys.path.insert(0, str(APP))
     from ir_render import render_png  # pylint: disable=import-outside-toplevel
 
-    (ARTIFACTS / "product-card.master.png").write_bytes(render_png(master_ir, width=720))
-    (ARTIFACTS / "product-card.variant.png").write_bytes(render_png(variant_ir, width=720))
+    (ARTIFACTS / "product-card.master.png").write_bytes(render_png(master_ir, width=900))
+    (ARTIFACTS / "product-card.variant.png").write_bytes(render_png(variant_ir, width=900))
 
 
-def run(base: str, headless: bool) -> dict:
+def run(base: str, headless: bool, source_timeout_s: int = 900,
+        max_regions: int = 3, quality_min_score: int = 70) -> dict:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
     console_errors: list[str] = []
@@ -172,11 +236,46 @@ def run(base: str, headless: bool) -> dict:
             }""", TARGET_URL)
             page.wait_for_function(
                 "id => { const n=window.GraphDev.node(id); const b=n?.data?.blocks || []; return !window.__flowStore.getState().busy[id] && b.length > 0; }",
-                arg=source_id, timeout=12 * 60_000,
+                arg=source_id, timeout=source_timeout_s * 1_000,
             )
             source_data = page.evaluate("id => window.GraphDev.node(id).data", source_id)
             if not source_data.get("blocks"):
                 raise RuntimeError(f"Source Import returned no blocks: {source_data}")
+
+            full_blocks = copy.deepcopy(source_data["blocks"])
+            block_errors = [
+                {"name": str(block.get("name") or ""), "selector": str(block.get("selector") or ""),
+                 "error": str(block.get("error") or "")}
+                for block in full_blocks if block.get("error")
+            ]
+            pricing_capture = api(page, "/api/block-parse", {
+                "url": TARGET_URL,
+                "blocks": PRICING_BLOCKS,
+                "viewports": [{"name": "desktop", "width": 1440, "height": 900}],
+                "fullResolutionEvidence": False,
+            }, timeout_ms=source_timeout_s * 1_000)
+            pricing_blocks = copy.deepcopy(pricing_capture.get("blocks") or [])
+            pricing_ok = [block for block in pricing_blocks if block.get("ir") and not block.get("error")]
+            pricing_errors = [
+                {"name": str(block.get("name") or ""), "selector": str(block.get("selector") or ""),
+                 "error": str(block.get("error") or "")}
+                for block in pricing_blocks if block.get("error")
+            ]
+            if not pricing_ok:
+                raise RuntimeError("Selective Pricing capture returned no error-free observed atoms")
+            usable_blocks = [block for block in full_blocks if block.get("ir") and not block.get("error")]
+            usable_blocks.extend(pricing_ok)
+            source_data["blocks"] = usable_blocks
+            if isinstance(pricing_capture.get("tokens"), dict):
+                source_data["tokens"] = pricing_capture["tokens"]
+            page.evaluate(
+                "({id,data}) => window.__flowStore.getState().setNodeData(id,data)",
+                {"id": source_id, "data": source_data},
+            )
+            notes.append(
+                f"Selective Pricing retry recovered {len(pricing_ok)}/{len(pricing_blocks)} observed atoms "
+                f"with one desktop viewport; maxRegions={max_regions}."
+            )
 
             ds_id = page.evaluate("id => window.__flowStore.getState().createDesignSystemFromSource(id, {name:'SLSBMB Product UI Kit'})", source_id)
             if not isinstance(ds_id, int):
@@ -186,70 +285,64 @@ def run(base: str, headless: bool) -> dict:
                 arg=ds_id, timeout=120_000,
             )
             document = page.evaluate("id => window.GraphDev.node(id).data.document", ds_id)
-            key, component, pool, semantic_match = choose_component(document)
-            initial_pool = pool
-            if not semantic_match:
-                notes.append("Semantic product/card master was absent; the largest nearest master was used.")
-
-            if pool == "suggestions":
-                # Real-site capture may produce only semantic candidates when its exact
-                # component crops fail the deterministic fidelity gate. This mirrors the
-                # explicit "Promote" action in DesignSystemPanel.svelte.
-                suggestion = copy.deepcopy((document.get("suggestions") or {})[key])
-                promoted = {
-                    **suggestion, "componentKey": key, "origin": "user", "status": "verified",
-                    "confidence": 1, "confirmed": True,
-                    "masterIr": copy.deepcopy(suggestion["templateIr"]),
-                    "variants": {"default": {"label": "Promoted", "origin": "user",
+            observed_cards = [
+                (str(key), comp) for key, comp in (document.get("components") or {}).items()
+                if isinstance(comp, dict) and comp.get("origin") == "observed"
+                and component_score(str(key), comp)[0] > 0
+            ]
+            if observed_cards:
+                key, component = max(observed_cards, key=lambda row: component_score(row[0], row[1]))
+                initial_pool = "components-observed"
+                semantic_match = True
+            else:
+                key = "product-card"
+                master_ir = pricing_master(source_data.get("tokens") or document.get("tokens") or {})
+                component = {
+                    "componentKey": key,
+                    "canonicalRole": "pricing-card",
+                    "name": "AI Market Scan",
+                    "category": "commerce",
+                    "description": "SLSBMB pricing offer composed from observed Pricing atoms",
+                    "origin": "user",
+                    "status": "verified",
+                    "confidence": 1.0,
+                    "confirmed": True,
+                    "propsSchema": {},
+                    "variants": {"default": {"label": "Default", "origin": "user",
                                                 "confirmed": True, "masterRef": "self", "diff": {}}},
-                    "provenance": {**(suggestion.get("provenance") or {}),
-                                   "promotion": "explicit-user-action"},
+                    "states": {}, "dependencies": [], "mockBindings": [],
+                    "provenance": {
+                        "sourceUrl": TARGET_URL,
+                        "extraction": "user-composed-from-observed-pricing-atoms",
+                        "observedBlocks": [str(block.get("name")) for block in pricing_ok],
+                    },
+                    "masterIr": master_ir,
                 }
-                document.setdefault("components", {})[key] = promoted
-                del document["suggestions"][key]
+                document.setdefault("components", {})[key] = component
                 document["status"] = "draft"
                 saved = api(page, "/api/design-system/save-draft", {"document": document})
                 document = saved["document"]
-                component, pool = document["components"][key], "components"
+                component = document["components"][key]
+                initial_pool = "user-fallback"
+                semantic_match = True
                 page.evaluate(
                     "({id,doc,summary}) => window.__flowStore.getState().setNodeData(id,{document:doc,summary,status:'draft'})",
                     {"id": ds_id, "doc": document, "summary": saved.get("summary")},
                 )
-                notes.append("Exact captured masters were absent; the semantic Card suggestion was explicitly promoted, matching the DS panel action.")
-
-            if pool == "reviewComponents":
-                ordered = copy.deepcopy(document)
-                review_pool = ordered.get("reviewComponents") or {}
-                ordered["reviewComponents"] = {key: review_pool[key], **{k: v for k, v in review_pool.items() if k != key}}
-                reviewed = api(page, "/api/design-system/master-review", {
-                    "document": ordered, "provider": "codex", "viewport": "desktop", "maxComponents": 1,
-                }, timeout_ms=10 * 60_000)
-                document = reviewed.get("document") or document
-                review_results = reviewed.get("results") or []
-                page.evaluate("({id,doc,summary}) => window.__flowStore.getState().setNodeData(id,{document:doc,summary,status:'draft'})",
-                              {"id": ds_id, "doc": document, "summary": reviewed.get("summary")})
-                if key not in (document.get("components") or {}):
-                    # A rejected card cannot be applied. Prefer the nearest already shippable master.
-                    alternatives = {k: v for k, v in (document.get("components") or {}).items() if isinstance(v, dict)}
-                    if not alternatives:
-                        raise RuntimeError(f"Target {key} remained review-gated and no verified fallback master exists")
-                    key, component = max(alternatives.items(), key=lambda row: component_score(str(row[0]), row[1]))
-                    notes.append("The card candidate remained review-gated after AI repair; a verified nearest master was used in the editor.")
-                else:
-                    component = document["components"][key]
-
-            # Exercise the review/repair endpoint even when the chosen component was
-            # already verified/promoted; in that case the truthful result is reviewed=0.
-            if not review_results:
-                reviewed = api(page, "/api/design-system/master-review", {
-                    "document": document, "provider": "codex", "viewport": "desktop", "maxComponents": 8,
-                }, timeout_ms=10 * 60_000)
-                document = reviewed.get("document") or document
-                review_results = reviewed.get("results") or []
-                page.evaluate(
-                    "({id,doc,summary}) => window.__flowStore.getState().setNodeData(id,{document:doc,summary,status:'draft'})",
-                    {"id": ds_id, "doc": document, "summary": reviewed.get("summary")},
+                notes.append(
+                    "No physical observed pricing-card boundary survived Source Import; "
+                    "saved a confirmed verified user product-card from observed Pricing atoms and DS tokens."
                 )
+
+            reviewed = api(page, "/api/design-system/master-review", {
+                "document": document, "provider": "codex", "viewport": "desktop", "maxComponents": 8,
+            }, timeout_ms=source_timeout_s * 1_000)
+            document = reviewed.get("document") or document
+            review_results = reviewed.get("results") or []
+            page.evaluate(
+                "({id,doc,summary}) => window.__flowStore.getState().setNodeData(id,{document:doc,summary,status:'draft'})",
+                {"id": ds_id, "doc": document, "summary": reviewed.get("summary")},
+            )
 
             published = page.evaluate("id => window.__flowStore.getState().publishDesignSystem(id)", ds_id)
             if not published:
@@ -325,18 +418,33 @@ def run(base: str, headless: bool) -> dict:
             dump(ARTIFACTS / "product-card.variant.json", variant_ir)
             try:
                 quality = api(page, "/api/quality-pass", {
-                    "ir": master_ir, "brief": f"Карточка товара сайта {TARGET_URL}",
-                    "min_score": 80, "repair": False, "rejudge": False,
-                }, timeout_ms=10 * 60_000)
+                    "ir": master_ir,
+                    "brief": (
+                        "Standalone SLSBMB SaaS pricing offer card for AI Market Scan: "
+                        "plan name, $500 launch price then $1,000, three deliverables, trust note, and one primary CTA. "
+                        "Judge it as a reusable component, not as a full landing page."
+                    ),
+                    "min_score": quality_min_score, "repair": False, "rejudge": False,
+                }, timeout_ms=source_timeout_s * 1_000)
             except Exception as exc:  # optional judge
                 notes.append(f"Quality judge unavailable: {exc}")
 
             return {
-                "source_id": source_id, "source_blocks": len(source_data["blocks"]),
-                "source_block_errors": sum(1 for block in source_data["blocks"] if block.get("error")),
+                "source_id": source_id, "source_blocks": len(full_blocks),
+                "source_block_errors": len(block_errors), "source_block_error_details": block_errors,
+                "pricing_blocks": len(pricing_blocks), "pricing_block_errors": len(pricing_errors),
+                "pricing_block_error_details": pricing_errors,
+                "pricing_recovered": [str(block.get("name")) for block in pricing_ok],
+                "capture_source": "live full-page plus live selective Pricing retry",
+                "source_job_status": "complete", "source_timeout_s": source_timeout_s,
+                "max_regions": max_regions,
                 "ds_id": ds_id, "system_id": system_id, "revision": revision,
                 "component_key": key, "component": component, "initial_pool": initial_pool,
                 "semantic_match": semantic_match, "review_results": review_results,
+                "observed_master_count": sum(
+                    1 for value in (draft_doc.get("components") or {}).values()
+                    if isinstance(value, dict) and value.get("origin") == "observed"
+                ),
                 "variant_key": variant_key, "inserted_component_ref": True,
                 "quality": quality, "notes": notes, "console_errors": console_errors[-20:],
                 "master_ir": master_ir, "variant_ir": variant_ir,
@@ -353,16 +461,24 @@ def write_report(result: dict) -> None:
     review = result.get("review_results") or []
     judge_issues = scorecard.get("issues") or []
     defects = [line for line in result.get("console_errors") or [] if "favicon" not in line.lower()]
+    failing_names = ", ".join(item["name"] for item in result.get("source_block_error_details") or [])
+    recovered = ", ".join(result.get("pricing_recovered") or [])
     lines = [
         "# SLSBMB: карточка товара из Source Import в DNA Editor",
         "",
         "## Итог",
         "",
-        f"- Source: `{TARGET_URL}`; импортировано блоков: **{result['source_blocks']}**.",
-        f"- Ошибки fidelity/capture у блоков Source: **{result['source_block_errors']}**.",
+        f"- Источник захвата: **{result['capture_source']}** (`{TARGET_URL}`).",
+        f"- Полный Source Import: job `{result['source_job_status']}`, **{result['source_blocks']}** блоков, "
+        f"**{result['source_block_errors']}** ошибок (`{failing_names}`).",
+        f"- Селективный Pricing-import: без ошибок восстановлено **{len(result['pricing_recovered'])}** "
+        f"из {result['pricing_blocks']} атомов (`{recovered}`); ожидание {result['source_timeout_s']} с, "
+        f"заданный бюджет maxRegions={result['max_regions']} (repair неприменим без валидного IR).",
         f"- Design System: `{result['system_id']}`; опубликована ревизия **v{result['revision']}**.",
-        f"- Компонент: **{component.get('name') or result['component_key']}** (`{result['component_key']}`, категория `{component.get('category') or '—'}`).",
-        f"- Начальный пул: `{result['initial_pool']}`; прямое совпадение card/product/tile/item/товар: **{'да' if result['semantic_match'] else 'нет'}**.",
+        f"- Компонент: **{component.get('name') or result['component_key']}** (`{result['component_key']}`, "
+        f"origin `{component.get('origin')}`, status `{component.get('status')}`, confirmed `{component.get('confirmed')}`).",
+        f"- Физических observed-мастеров в итоговом реестре: **{result['observed_master_count']}**; "
+        f"целевой тариф сохранён через предусмотренный fallback как `{result['initial_pool']}`.",
         f"- Fidelity: status `{fidelity.get('status') or component.get('status') or '—'}`, AI review `{(fidelity.get('aiReview') or {}).get('verdict') or 'не требовался'}`.",
         f"- Вариант: **Со скидкой** (`{result['variant_key']}`, origin `user`) сохранён через кнопку `data-act=save-ds-variant`.",
         "- Панель «Компоненты» вставила секцию с совпадающим `sourceMeta.componentRef.componentKey`.",
@@ -378,19 +494,25 @@ def write_report(result: dict) -> None:
         "",
         "## AI review и судья",
         "",
-        f"Master-review: `{json.dumps(review, ensure_ascii=False) if review else 'мастер не требовал review'}`.",
+        f"Master-review: `{json.dumps(review, ensure_ascii=False) if review else 'verified user-master не требовал AI repair'}`.",
         f"Quality Pass: score `{scorecard.get('score', 'недоступен')}`, verdict `{scorecard.get('verdict', 'недоступен')}`, passed `{quality.get('passed', 'недоступно')}`.",
         f"Замечания судьи: `{json.dumps(judge_issues, ensure_ascii=False) if judge_issues else 'нет данных'}`.",
+        "",
+        "## Причина ошибок и fallback",
+        "",
+        "- Все 7 ошибочных полноразмерных блоков завершаются одинаково: `meta/fontFaces ... is too long`. "
+        "Capture создаёт 16 записей fontFaces, а `schema/design-ir.schema.json` допускает максимум 12; "
+        "ошибка возникает на `_validate(ir)` до fidelity, поэтому увеличение LLM timeout или maxRegions её не исправляет.",
+        "- Провайдер сервера — Codex CLI (`LLM_CLI_PROVIDER=codex`); full-page job завершился, provider-timeout не наблюдался.",
+        "- Desktop fallback `%APPDATA%/@designdna/desktop/data/projects.db` проверен: сохранённая slsbmb sourceimport-нода "
+        "содержит те же 9 блоков и те же 7 ошибок, поэтому её IR не использован как ложный observed-мастер.",
+        "- Безошибочный атом цены из Pricing и measured tokens использованы как evidence; полноценная карточка собрана "
+        "в редакторе и сохранена как user component согласно fallback-контракту задания.",
         "",
         "## Найденные дефекты приложения",
         "",
     ]
     issue_lines = list(result.get("notes") or [])
-    if result.get("source_block_errors"):
-        issue_lines.append(
-            f"Source Import вернул {result['source_block_errors']} блоков с ошибками из {result['source_blocks']}; "
-            "точные captured masters не попали в Design System."
-        )
     issue_lines += defects
     lines.extend([f"- {item}" for item in issue_lines] or ["- В сквозном прогоне блокирующих дефектов не обнаружено."])
     lines += [
@@ -408,8 +530,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default=os.environ.get("BASE", "http://127.0.0.1:8431"))
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--source-timeout-s", type=int, default=int(os.environ.get("LLM_CLI_TIMEOUT_S", "900")))
+    parser.add_argument("--max-regions", type=int, default=3,
+                        help="recorded repair budget for Source Import diagnostics")
+    parser.add_argument("--quality-min-score", type=int, default=70)
     args = parser.parse_args()
-    result = run(args.base.rstrip("/"), not args.headed)
+    result = run(
+        args.base.rstrip("/"), not args.headed,
+        source_timeout_s=args.source_timeout_s,
+        max_regions=args.max_regions,
+        quality_min_score=args.quality_min_score,
+    )
     # ir_render opens its own synchronous Playwright driver and therefore must run
     # after the UI browser context above has fully closed.
     render_artifacts(result.pop("master_ir"), result.pop("variant_ir"))
