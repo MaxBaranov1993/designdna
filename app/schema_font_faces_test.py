@@ -31,8 +31,8 @@ def _face(i: int) -> dict:
             "url": f"/fonts/{i:032x}.woff2"}
 
 
-def _ir(face_count: int) -> dict:
-    return {"version": "1.1", "tokens": TOKENS,
+def _ir(face_count: int, version: str = "1.1") -> dict:
+    return {"version": version, "tokens": TOKENS,
             "meta": {"name": "Импорт: pricing", "fontFaces": [_face(i) for i in range(face_count)]},
             "tree": [{"id": "s", "type": "composition", "children": []}]}
 
@@ -43,6 +43,13 @@ def _font_errors(ir: dict) -> list:
 
 def test_capture_with_sixteen_faces_passes_schema():
     assert _font_errors(_ir(16)) == []
+
+
+def test_every_schema_version_accepts_capture_faces():
+    # Захват (scraper) пишет version "1.0", и валидатор берёт design-ir-1.0.schema.json —
+    # лимит должен быть одинаковым во всех версиях, иначе фикс в канонической схеме не работает.
+    for version in ("1.0", "1.1", "2.0"):
+        assert _font_errors(_ir(16, version)) == [], version
 
 
 def test_schema_limit_matches_scraper_limit():
