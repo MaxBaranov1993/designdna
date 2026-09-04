@@ -86,7 +86,8 @@ def _has_masters(components) -> bool:
                for c in components or [])
 
 
-def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", token_budget: int = 1200) -> dict:
+def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", token_budget: int = 1200,
+                    pinned_keys=None) -> dict:
     # Потолок поднят с 4000: exact master IR целой секции сам по себе занимает
     # тысячи токенов, и strict-режим падал «master не помещается в бюджет».
     # Современные контексты это выдерживают, а расход всё равно ограничен
@@ -105,19 +106,44 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
     omitted: list[str] = []
     lines = ["DESIGN SYSTEM COMPILED PROFILE (source of truth):"]
     used = _tokens(lines[0])
+    pinned_order = [str(key) for key in (pinned_keys or []) if key]
+    pinned_set = set(pinned_order)
+    components = [item for item in (context.get("components") or []) if isinstance(item, dict)]
+    components.sort(key=lambda item: (
+        str(item.get("componentKey") or "") not in pinned_set,
+        pinned_order.index(str(item.get("componentKey") or ""))
+        if str(item.get("componentKey") or "") in pinned_set else 0,
+    ))
 
-    def add(rule_id: str, line: str, *, required: bool = False) -> bool:
-        nonlocal used
+    def master_line(component: dict) -> tuple[str, str]:
+        key = str(component.get("componentKey") or "")
+        payload = {
+            "componentRef": component_handle(component, context.get("systemRef") or {}),
+            "masterIr": component["masterIr"],
+            "variants": compact_variants(component),
+        }
+        return key, f"- Exact master {key}: {_json(payload)}"
+
+    pinned_master_lines = [master_line(component) for component in components
+                           if str(component.get("componentKey") or "") in pinned_set
+                           and isinstance(component.get("masterIr"), dict)]
+    pinned_reserve = sum(_tokens(line) for _, line in pinned_master_lines)
+
+    def add(rule_id: str, line: str, *, required: bool = False, consume_reserve: int = 0) -> bool:
+        nonlocal used, pinned_reserve
+        if consume_reserve:
+            pinned_reserve = max(0, pinned_reserve - consume_reserve)
         cost = _tokens(line)
-        if used + cost <= token_budget:
+        limit = max(used, token_budget - pinned_reserve)
+        if used + cost <= limit:
             lines.append(line)
             included.append(rule_id)
             used += cost
             return True
-        elif required and used < token_budget:
+        elif required and used < limit:
             # Hard cap is part of the provider contract. Keep the rule marker
             # and as much deterministic content as fits; never overrun budget.
-            remaining = token_budget - used
+            remaining = limit - used
             clipped = line[:max(1, remaining * 4)]
             lines.append(clipped)
             included.append(rule_id)
@@ -188,7 +214,6 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
     coverage = identity.get("paletteCoverage") or {}
     if coverage.get("roles"):
         add("identity.palette-coverage", f"- Palette role coverage target: {_json(coverage.get('roles'))}; method={coverage.get('method')}")
-    components = context.get("components") or []
     component_handles = [component_handle(c, ref) for c in components if isinstance(c, dict)]
     included_master_keys: list[str] = []
     if components:
@@ -206,13 +231,9 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
         for component in components:
             if not isinstance(component, dict) or not isinstance(component.get("masterIr"), dict):
                 continue
-            key = str(component.get("componentKey") or "")
-            payload = {
-                "componentRef": component_handle(component, ref),
-                "masterIr": component["masterIr"],
-                "variants": compact_variants(component),
-            }
-            if add(f"registry.master.{key}", f"- Exact master {key}: {_json(payload)}"):
+            key, line = master_line(component)
+            reserved_cost = _tokens(line) if key in pinned_set else 0
+            if add(f"registry.master.{key}", line, consume_reserve=reserved_cost):
                 included_master_keys.append(key)
         compact = [{
             "key": c.get("componentKey"),
@@ -263,8 +284,11 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
         "validationPlan": [str(t.get("id")) for t in tests],
         "componentHandles": component_handles,
         "includedMasterKeys": included_master_keys,
+        "pinnedMasterKeys": [key for key in pinned_order if key in included_master_keys],
         # Пустой реестр в strict — не провал бюджета: копировать нечего,
         # обязательными остаются foundations/токены. Провал — только когда
         # мастера СУЩЕСТВУЮТ, но ни один не поместился в контекст.
-        "strictReady": mode != "strict" or not _has_masters(components) or bool(included_master_keys),
+        "strictReady": mode != "strict" or not _has_masters(components) or (
+            all(key in included_master_keys for key in pinned_order) if pinned_order else bool(included_master_keys)
+        ),
     }

@@ -52,8 +52,8 @@
   let dsOptedOut = $derived(!wiredDs && String((data as Record<string, unknown>).designSystemSelection || "") === "none");
   type LogVariant = { index?: number; autofixes?: number; journal?: string[]; lint?: { rule: string; severity?: string; path?: string; message?: string }[] };
   type GenerationLog = {
-    product?: string; tokensLocked?: boolean; projectRules?: boolean; referenceScreens?: number;
-    designSystem?: { name?: string; usageMode?: string; componentsAvailable?: number; mastersInContext?: string[]; strictReady?: boolean; errors?: number; warnings?: number; recovered?: unknown } | null;
+    product?: string; tokensLocked?: boolean; projectRules?: boolean; referenceScreens?: number; strictFallback?: string;
+    designSystem?: { name?: string; usageMode?: string; componentsAvailable?: number; mastersInContext?: string[]; pinnedMaster?: string | null; strictReady?: boolean; errors?: number; warnings?: number; recovered?: unknown } | null;
     variants?: LogVariant[];
   };
   let generationLog = $derived((data.generationLog || null) as GenerationLog | null);
@@ -245,6 +245,7 @@
         <span>Журнал решений</span>
         <span class="gen-log-sum">
           {#if generationLog.designSystem}◈ {generationLog.designSystem.usageMode}{/if}
+          {#if generationLog.strictFallback}· fallback {generationLog.strictFallback}{/if}
           {#if activeLog}· автофиксов {activeLog.autofixes || 0} · линт {lintWarnings.length}{lintErrors.length ? ` · ошибок ${lintErrors.length}` : ""}{/if}
           {logOpen ? " ▴" : " ▾"}
         </span>
@@ -262,6 +263,12 @@
             </dd>
             {#if (generationLog.designSystem.mastersInContext || []).length}
               <dt>Мастера в контексте</dt><dd>{(generationLog.designSystem.mastersInContext || []).join(", ")}</dd>
+            {/if}
+            {#if generationLog.designSystem.pinnedMaster}
+              <dt>Референс</dt><dd>пиннутый мастер: {generationLog.designSystem.pinnedMaster}</dd>
+            {/if}
+            {#if generationLog.strictFallback}
+              <dt>Strict fallback</dt><dd>{generationLog.strictFallback === "extend" ? "мастера не использованы, результат принят в режиме extend" : generationLog.strictFallback}</dd>
             {/if}
           {:else}
             <dt>Дизайн-система</dt><dd>не подключена</dd>

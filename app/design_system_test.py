@@ -534,7 +534,11 @@ def main() -> None:
             "rawOutputs": [json.dumps(dsdoc.preview_ir_for_master(strict_context["components"][0]["masterIr"]), ensure_ascii=False)],
             "designSystem": strict_ref_request,
         })
-        check("generate endpoint blocks strict output without refs", generated_without_ref.status_code == 422, generated_without_ref.text)
+        missing_ref_body = generated_without_ref.json() if generated_without_ref.status_code == 200 else {}
+        check("generate endpoint materializes relevant strict master without provider refs",
+              generated_without_ref.status_code == 200
+              and (missing_ref_body.get("variants") or [{}])[0].get("meta", {}).get("strictRecovery") == "exact-master-materialized",
+              generated_without_ref.text)
         generated_exact = client.post("/api/generate", json={
             "brief": "кнопка поиска", "count": 1,
             "rawOutputs": [json.dumps(strict_master, ensure_ascii=False)],

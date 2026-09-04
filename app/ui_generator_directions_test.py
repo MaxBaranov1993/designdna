@@ -160,6 +160,16 @@ def main() -> None:
               "Нужна доработка" in node.locator(".n-status").inner_text()
               and "equal visual weight" in node.locator(".n-status").inner_text())
 
+        page.evaluate("""id => window.GraphDev.patchData(id, {generationLog: {
+          product: 'Landing', strictFallback: 'extend',
+          designSystem: {name: 'SLSBMB kit', usageMode: 'strict', componentsAvailable: 4,
+            mastersInContext: ['list-item'], pinnedMaster: 'list-item'}
+        }})""", node_id)
+        node.locator(".gen-log-head").click()
+        log_text = node.locator(".gen-log").inner_text()
+        check("generation log shows strict fallback", "Strict fallback" in log_text and "режиме extend" in log_text)
+        check("generation log identifies pinned reference master", "пиннутый мастер: list-item" in log_text)
+
         node.locator('.direction-chip[data-direction-id="soft-pastel"]').click()
         page.wait_for_function(
             "id => window.GraphDev.node(id).data.selectedDirection === 'soft-pastel'",

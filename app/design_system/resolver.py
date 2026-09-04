@@ -34,6 +34,38 @@ _COMPONENT_INTENT_WORDS = {
     "header-actions": ("header actions", "действия шапки", "шапк"),
 }
 
+_MASTER_CONTENT_KEYS = {"text", "title", "label", "value"}
+_SEMANTIC_SYNONYMS = {
+    "pricing": ("тариф", "цена", "стоим", "price", "$", "month", "месяц", "₽", "руб"),
+    "card": ("карточ", "card", "tile", "panel", "панел", "плит"),
+}
+
+
+def _master_content(component: dict) -> str:
+    values: list[str] = []
+
+    def visit(value: Any, key: str = "") -> None:
+        if isinstance(value, dict):
+            for child_key, child in value.items():
+                visit(child, str(child_key))
+        elif isinstance(value, list):
+            for child in value:
+                visit(child, key)
+        elif key in _MASTER_CONTENT_KEYS and isinstance(value, (str, int, float)):
+            values.append(str(value))
+
+    visit(component.get("masterIr") or {})
+    return " ".join(values).lower()
+
+
+def _semantic_terms(text: str) -> set[str]:
+    lowered = str(text or "").lower()
+    terms = set(re.findall(r"[a-zа-яё]+|\d+(?:[.,]\d+)?|[$€₽]", lowered))
+    for canonical, synonyms in _SEMANTIC_SYNONYMS.items():
+        if any(synonym in lowered for synonym in synonyms):
+            terms.add(canonical)
+    return terms
+
 
 def component_relevance(component: dict, brief: str) -> int:
     """Rank observed masters by explicit intent before compact prompt packing."""
@@ -51,23 +83,31 @@ def component_relevance(component: dict, brief: str) -> int:
     for token in re.findall(r"[a-zа-яё]{4,}", brief_l):
         if token in name_l or token in key_l:
             score += 3
+    component_terms = _semantic_terms(" ".join((name_l, key_l, category, _master_content(component))))
+    brief_terms = _semantic_terms(brief_l)
+    for token in brief_terms & component_terms:
+        score += 3 if token in _SEMANTIC_SYNONYMS else 2
     if component.get("origin") == "observed":
         score += 1
     return score
 
 
-def primary_component_for_brief(context: dict, brief: str) -> dict | None:
+def primary_component_for_brief(context: dict, brief: str, *, pinned_keys=None) -> dict | None:
     """Return an unambiguous exact-master target for strict generation recovery."""
+    pinned = [str(key) for key in (pinned_keys or []) if key]
+    components = [item for item in context.get("components") or [] if isinstance(item, dict)]
+    for key in pinned:
+        match = next((item for item in components if str(item.get("componentKey") or "") == key), None)
+        if match is not None:
+            return match
     ranked = sorted(
-        [item for item in context.get("components") or [] if isinstance(item, dict)],
+        components,
         key=lambda item: component_relevance(item, brief),
         reverse=True,
     )
-    if not ranked or component_relevance(ranked[0], brief) < 6:
+    if not ranked or component_relevance(ranked[0], brief) < 3:
         return None
-    top_score = component_relevance(ranked[0], brief)
-    second_score = component_relevance(ranked[1], brief) if len(ranked) > 1 else -1
-    return ranked[0] if top_score > second_score else None
+    return ranked[0]
 
 
 def _release_component(component: dict) -> bool:
@@ -99,21 +139,27 @@ def fixture_for_component(document: dict, component: dict | None, profile: str) 
 
 
 def resolve_context(document: dict, brief: str, *, usage_mode: str = "strict",
-                    fixture_profile: str = "typical", component_key: str = "") -> dict:
+                    fixture_profile: str = "typical", component_key: str = "",
+                    pinned_keys=None) -> dict:
     """Компактный resolved context (§20): без сериализации полного registry в промпт."""
     ensure_identity(document)
     components = [
         c for c in (document.get("components") or {}).values()
         if isinstance(c, dict) and _release_component(c)
     ]
-    ranked = sorted(
-        components,
-        key=lambda comp: (
-            str(comp.get("componentKey") or "") == component_key,
-            component_relevance(comp, brief),
-        ),
-        reverse=True,
-    )[:MAX_COMPONENTS_IN_CONTEXT]
+    requested_pins = [str(key) for key in (pinned_keys or []) if key]
+    if component_key and component_key not in requested_pins:
+        requested_pins.insert(0, component_key)
+    pin_order = {key: index for index, key in enumerate(requested_pins)}
+    pinned = sorted(
+        [comp for comp in components if str(comp.get("componentKey") or "") in pin_order],
+        key=lambda comp: pin_order[str(comp.get("componentKey") or "")],
+    )
+    remaining = sorted(
+        [comp for comp in components if str(comp.get("componentKey") or "") not in pin_order],
+        key=lambda comp: component_relevance(comp, brief), reverse=True,
+    )
+    ranked = (pinned + remaining)[:max(MAX_COMPONENTS_IN_CONTEXT, len(pinned))]
     selected_keys = {c.get("componentKey") or "" for c in ranked}
 
     # замыкание зависимостей
@@ -140,13 +186,15 @@ def resolve_context(document: dict, brief: str, *, usage_mode: str = "strict",
         "reconstruction": document.get("reconstruction") or {},
         "fixture": fixture,
         "constraints": {"usageMode": usage_mode},
+        "pinnedKeys": [str(comp.get("componentKey") or "") for comp in pinned],
     }
 
 
 def compiled_context(context: dict, *, brief: str = "", archetype_id: str = "",
-                     token_budget: int = 1200) -> dict:
+                     token_budget: int = 1200, pinned_keys=None) -> dict:
     return compile_profile(context, brief=brief, archetype_id=archetype_id,
-                           token_budget=token_budget)
+                           token_budget=token_budget,
+                           pinned_keys=pinned_keys if pinned_keys is not None else context.get("pinnedKeys"))
 
 
 def compact_prompt_block(context: dict) -> str:

@@ -1,0 +1,99 @@
+import json
+from copy import deepcopy
+from pathlib import Path
+
+import art_direction
+import server
+from design_system import resolver, store
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _fixture() -> dict:
+    return json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
+
+
+def _document(master: dict) -> dict:
+    return {
+        "id": "ds-pricing", "name": "Pricing kit", "revision": 1, "contentHash": "published-hash",
+        "foundations": {}, "styleGuide": {},
+        "components": {
+            "list-item": {
+                "componentKey": "list-item", "name": "List item", "category": "content",
+                "origin": "user", "confirmed": True, "masterIr": master,
+            },
+            "small-link": {
+                "componentKey": "small-link", "name": "Small link", "category": "navigation",
+                "origin": "user", "confirmed": True,
+                "masterIr": {"version": "1.1", "tree": [{"type": "text", "text": "Learn more"}]},
+            },
+        },
+    }
+
+
+def test_relevance_uses_master_copy_and_pricing_synonyms() -> None:
+    pricing = {
+        "componentKey": "list-item", "name": "List item", "category": "content", "origin": "observed",
+        "masterIr": {"tree": [{"type": "card", "children": [
+            {"type": "text", "title": "Sending Engine"}, {"type": "text", "value": "$49 / month"},
+        ]}]},
+    }
+    generic = {
+        "componentKey": "process-step", "name": "Process step", "category": "content", "origin": "observed",
+        "masterIr": {"tree": [{"type": "card", "text": "Create an account"}]},
+    }
+    brief = "Карточка тарифа для лендинга"
+    assert resolver.component_relevance(pricing, brief) > resolver.component_relevance(generic, brief)
+    assert resolver.component_relevance(pricing, brief) >= 3
+
+
+def test_reference_pins_by_ref_shape_and_editor_meta() -> None:
+    master = _fixture()
+    document = _document(master)
+    explicit = {"tree": [{"type": "text", "sourceMeta": {"componentRef": {"componentKey": "small-link"}}}]}
+    shaped = {"tree": [deepcopy(master["tree"][0])]}
+    editor = {"meta": {"_dsMaster": {"systemId": "ds-pricing", "componentKey": "list-item"}}, "tree": []}
+    assert server._reference_pinned_component_keys([explicit, shaped, editor], document) == ["small-link", "list-item"]
+
+
+def test_pinned_master_is_packed_before_smaller_masters() -> None:
+    document = _document(_fixture())
+    context = resolver.resolve_context(document, "unrelated", usage_mode="strict", pinned_keys=["list-item"])
+    compiled = resolver.compiled_context(
+        context, brief="unrelated", token_budget=500, pinned_keys=["list-item"])
+    assert context["components"][0]["componentKey"] == "list-item"
+    assert compiled["includedMasterKeys"][0] == "list-item"
+    assert "small-link" not in compiled["includedMasterKeys"]
+    assert compiled["pinnedMasterKeys"] == ["list-item"]
+
+
+def test_strict_materializes_pinned_master_without_provider_component_ref(monkeypatch) -> None:
+    master = _fixture()
+    document = _document(master)
+    monkeypatch.setattr(store, "resolve_ref", lambda _ref: (deepcopy(document), None))
+    monkeypatch.setattr(art_direction, "create_design_brief", lambda *_args, **_kwargs: [])
+    reference = deepcopy(master)
+    reference.setdefault("meta", {})["_dsMaster"] = {"systemId": "ds-pricing", "componentKey": "list-item"}
+    response = server.generate(server.GenerateReq(
+        brief="unrelated request", count=1, rawOutputs=[json.dumps(master)], referenceIrs=[reference],
+        designSystem={"systemId": "ds-pricing", "revision": 1, "usageMode": "strict"},
+    ))
+    assert response["variants"][0]["meta"]["strictRecovery"] == "exact-master-materialized"
+    assert response["generationLog"]["designSystem"]["pinnedMaster"] == "list-item"
+    assert response["generationLog"]["designSystem"]["recovered"]["componentKey"] == "list-item"
+
+
+def test_strict_accepts_valid_provider_variant_as_extend_when_no_master_matches(monkeypatch) -> None:
+    master = _fixture()
+    document = _document(master)
+    monkeypatch.setattr(store, "resolve_ref", lambda _ref: (deepcopy(document), None))
+    monkeypatch.setattr(art_direction, "create_design_brief", lambda *_args, **_kwargs: [])
+    response = server.generate(server.GenerateReq(
+        brief="unrelated canvas", count=1, rawOutputs=[json.dumps(master)],
+        designSystem={"systemId": "ds-pricing", "revision": 1, "usageMode": "strict"},
+    ))
+    assert response["generationLog"]["strictFallback"] == "extend"
+    warnings = response["variants"][0]["meta"]["designSystemWarnings"]
+    assert any(item["code"] == "strict-fallback-extend" for item in warnings)
+    assert response["designSystem"]["errors"] == []

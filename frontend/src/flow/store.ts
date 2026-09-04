@@ -1434,6 +1434,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const tokens = designSystemInput && typeof designSystemInput === "object" && !(designSystemInput as { systemId?: unknown }).systemId
       ? (designSystemInput as Record<string, unknown>) : undefined;
     const referenceRaw = pullInput(st.nodes, st.edges, n, "reference");
+    const referenceEdge = st.edges.find((edge) => edge.target === n.id && edge.targetHandle === "reference");
+    const referenceNode = referenceEdge ? st.nodes.find((node) => node.id === referenceEdge.source) : null;
+    const referenceMaster = referenceNode
+      ? (referenceNode.data as Record<string, unknown>)._dsMaster as Record<string, unknown> | undefined
+      : undefined;
     const styleHint = typeof referenceRaw === "string" && referenceRaw.trim() ? referenceRaw.trim() : undefined;
     const desktop = window.designDNA;
     const effort: "medium" | "high" | "max" = ["medium", "high", "max"].includes(data.effort)
@@ -1450,6 +1455,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     get().setBusy(id, true);
     const startedAt = Date.now();
     const progressLabel = `Генерация · ${providerLabel}`;
+    let designSystemRef: Record<string, unknown> | null = null;
     // Стадии честные: клиент знает только «ждём модель» и «Quality Pass»,
     // процента у синхронного POST нет — NodeShell показывает indeterminate.
     get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Готовлю промпт" });
@@ -1459,7 +1465,6 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       // компилируется из опубликованной ревизии.
       let wiredDs = designSystemInput as
         { systemId?: string; revision?: number; contentHash?: string; status?: string; name?: string } | null;
-      let designSystemRef: Record<string, unknown> | null;
       if (wiredDs && wiredDs.systemId) {
         if (wiredDs.status === "draft") {
           get().setStatus(id, "Публикую ДС…");
@@ -1498,7 +1503,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         );
       }
       const referenceIrs = referenceRaw && typeof referenceRaw === "object" && Array.isArray((referenceRaw as IRObject).tree)
-        ? [referenceRaw as IRObject]
+        ? [{
+            ...(referenceRaw as IRObject),
+            ...(referenceMaster ? {
+              meta: { ...(((referenceRaw as IRObject).meta || {}) as Record<string, unknown>), _dsMaster: referenceMaster },
+            } : {}),
+          } as IRObject]
         : undefined;
       const request = {
         brief,
@@ -1602,7 +1612,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       const needsRevision = qualityReviews
         .map((review, index) => ({ review, index }))
         .filter(({ review }) => review.passed === false || (review.score != null && review.score < 80));
-      if (needsRevision.length) {
+      const strictFallback = String((generationLog as Record<string, unknown> | undefined)?.strictFallback || "");
+      if (strictFallback === "extend") {
+        get().setStatus(id, "strict: мастера не использованы, результат принят в режиме extend", "err");
+      } else if (needsRevision.length) {
         const reasons = needsRevision.flatMap(({ review }) => review.reasons).slice(0, 3);
         const reasonNote = reasons.length ? `: ${reasons.join("; ")}` : "";
         get().setStatus(id, `Нужна доработка${reasonNote}`, "err");
@@ -1615,7 +1628,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         get().setStatus(id, `Отменено · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "err");
       } else {
         const msg = friendlyProviderError(e);
-        get().setStatus(id, "Ошибка: " + msg, "err");
+        const strictFailure = String(designSystemRef?.usageMode || "") === "strict"
+          && /Design System Strict|Strict.*мастер|strict.*master/i.test(msg);
+        get().setStatus(id, strictFailure
+          ? `Strict не смог использовать мастер: ${msg}. Проверьте референс или переключите режим ДС на extend.`
+          : "Ошибка: " + msg, "err");
         toast("Генератор: " + msg, "error");
       }
     } finally {

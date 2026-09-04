@@ -70,6 +70,31 @@ def test_generate_can_prepare_prompts_without_server_llm() -> None:
     assert "### exemplar: marketplace" in response["prompts"][0]["messages"][0]["content"]
 
 
+def test_strict_prepare_prompt_identifies_reference_master(monkeypatch) -> None:
+    from design_system import store
+
+    fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
+    document = {
+        "id": "ds-prompt", "name": "Prompt kit", "revision": 1, "contentHash": "hash",
+        "foundations": {}, "styleGuide": {},
+        "components": {"list-item": {
+            "componentKey": "list-item", "name": "List item", "category": "content",
+            "origin": "user", "confirmed": True, "masterIr": fixture,
+        }},
+    }
+    monkeypatch.setattr(store, "resolve_ref", lambda _ref: (deepcopy(document), None))
+    reference = deepcopy(fixture)
+    reference.setdefault("meta", {})["_dsMaster"] = {"systemId": "ds-prompt", "componentKey": "list-item"}
+
+    response = server.generate(server.GenerateReq(
+        brief="Карточка тарифа", count=1, prepareOnly=True, referenceIrs=[reference],
+        designSystem={"systemId": "ds-prompt", "revision": 1, "usageMode": "strict"},
+    ))
+    prompt = response["prompts"][0]["messages"][1]["content"]
+    assert "Референс — это мастер list-item" in prompt
+    assert "результат обязан быть копией этого мастера с componentRef" in prompt
+
+
 def test_generate_finalizes_external_provider_outputs_without_server_llm(monkeypatch) -> None:
     fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
 

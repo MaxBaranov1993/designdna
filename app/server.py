@@ -484,6 +484,57 @@ def _walk_ir_elements(node):
             yield from _walk_ir_elements(child)
 
 
+def _reference_pinned_component_keys(reference_irs, document: dict) -> list[str]:
+    """Resolve DS masters carried by a reference, even when editor metadata is partial."""
+    if not isinstance(reference_irs, list):
+        return []
+    from design_system.compiler import component_shape_hash
+
+    components = {
+        str(component.get("componentKey") or key): component
+        for key, component in (document.get("components") or {}).items()
+        if isinstance(component, dict) and isinstance(component.get("masterIr"), dict)
+    }
+    result: list[str] = []
+
+    def pin(value) -> None:
+        key = str(value or "")
+        if key in components and key not in result:
+            result.append(key)
+
+    def inspect(value, parent_key: str = "") -> None:
+        if isinstance(value, dict):
+            if parent_key in ("_dsMaster", "dsMaster", "designSystemMaster"):
+                pin(value.get("componentKey"))
+            ref = value.get("componentRef")
+            if isinstance(ref, dict):
+                pin(ref.get("componentKey"))
+            for key, child in value.items():
+                inspect(child, str(key))
+        elif isinstance(value, list):
+            for child in value:
+                inspect(child, parent_key)
+
+    master_shapes: dict[str, str] = {}
+    for key, component in components.items():
+        tree = component["masterIr"].get("tree")
+        if isinstance(tree, list) and tree and isinstance(tree[0], dict):
+            master_shapes[key] = component_shape_hash(tree[0])
+
+    for reference in [item for item in reference_irs if isinstance(item, dict)]:
+        inspect(reference)
+        tree = reference.get("tree") if isinstance(reference.get("tree"), list) else []
+        candidates = [root for root in tree if isinstance(root, dict)]
+        for root in list(candidates):
+            if root.get("type") == "source-block" and root.get("variant") == "component-master":
+                candidates.extend(child for child in (root.get("children") or []) if isinstance(child, dict))
+        candidate_shapes = {component_shape_hash(candidate) for candidate in candidates}
+        for key, shape in master_shapes.items():
+            if shape in candidate_shapes:
+                pin(key)
+    return result
+
+
 def _reference_screens_block(irs) -> str:
     """Компактный дайджест существующих экранов: секции, мастера ДС, роли текста.
 
@@ -611,13 +662,17 @@ def _generate(req: GenerateReq, run_id: str | None):
     ds_prompt_block = ""
     ds_compiled = None
     ds_usage_mode = ""
+    pinned_master_keys: list[str] = []
+    ds_reference_instruction = ""
     if isinstance(req.designSystem, dict) and req.designSystem.get("systemId"):
         from design_system import resolver as ds_resolver, store as ds_store
         ds_doc, ds_error = ds_store.resolve_ref(req.designSystem)
         if ds_error:
             return err(422, f"Design System: {ds_error}")
         ds_usage_mode = str(req.designSystem.get("usageMode") or "strict")
-        ds_context = ds_resolver.resolve_context(ds_doc, brief, usage_mode=ds_usage_mode)
+        pinned_master_keys = _reference_pinned_component_keys(req.referenceIrs, ds_doc)
+        ds_context = ds_resolver.resolve_context(
+            ds_doc, brief, usage_mode=ds_usage_mode, pinned_keys=pinned_master_keys)
         # Strict обязан вместить exact master целой секции — на 4000 токенов
         # он не помещался и генерация падала «не помещается в context budget».
         provider_budget = 24_000 if ds_usage_mode == "strict" else 1200
@@ -625,6 +680,7 @@ def _generate(req: GenerateReq, run_id: str | None):
             ds_context, brief=brief,
             archetype_id=str(req.designSystem.get("archetypeId") or ""),
             token_budget=int(req.designSystem.get("tokenBudget") or provider_budget),
+            pinned_keys=pinned_master_keys,
         )
         if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
             return err(422, "Design System Strict: exact master не помещается в выбранный context budget. Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")
@@ -638,6 +694,16 @@ def _generate(req: GenerateReq, run_id: str | None):
                 ds_style_review.ir_tokens(ds_doc.get("foundations") or {}))
         ds_prompt_block += "\n\n" + ds_style_review.profile_prompt(ds_doc)
         ds_prompt_block += _embed_mode_block(ds_usage_mode)
+        if ds_usage_mode == "strict" and pinned_master_keys:
+            pinned = next((component for component in ds_context.get("components") or []
+                           if str(component.get("componentKey") or "") == pinned_master_keys[0]), None)
+            if pinned is not None:
+                from design_system import compiler as ds_compiler
+                handle = ds_compiler.component_handle(pinned, ds_context.get("systemRef") or {})
+                ds_reference_instruction = (
+                    f"Референс — это мастер {pinned_master_keys[0]}; результат обязан быть копией этого мастера "
+                    f"с componentRef {json.dumps(handle, ensure_ascii=False)}, меняй только контент."
+                )
 
     directions: list[dict] = []
     art_direction_error = ""
@@ -802,6 +868,8 @@ def _generate(req: GenerateReq, run_id: str | None):
             user += "\n\n" + reference_block
         if ds_prompt_block:
             user += "\n\n" + ds_prompt_block
+        if ds_reference_instruction:
+            user += "\n\n" + ds_reference_instruction
         if rules_block:
             user += "\n\n" + rules_block
         if req.prepareOnly:
@@ -900,18 +968,18 @@ def _generate(req: GenerateReq, run_id: str | None):
             errors.append({"index": i + 1, "error": error})
     if run_registry.is_cancelled(run_id):
         return err(CANCELLED_STATUS, "Генерация отменена")
-    if not variants:
+    if not variants and not (ds_usage_mode == "strict" and ds_context is not None):
         return err(502, f"Ни один вариант не сгенерирован. {errors[0]['error'] if errors else ''}")
     run_registry.stage(run_id, "design-system", "Проверка дизайн-системы и сборка ответа")
     design_system_report = None
+    strict_fallback = ""
     if ds_context is not None:
         from design_system import resolver as ds_resolver
         design_system_report = {"errors": [], "warnings": []}
         accepted_variants = []
-        saw_component_ref = False
+        strict_candidate_variants = list(variants)
         for variant_index, variant in enumerate(variants, start=1):
             check = ds_resolver.validate_generation(variant, ds_context)
-            saw_component_ref = saw_component_ref or bool(check.get("componentRefs"))
             if check["errors"] or check["warnings"]:
                 variant.setdefault("meta", {})
                 if check["errors"]:
@@ -952,11 +1020,16 @@ def _generate(req: GenerateReq, run_id: str | None):
                 # with lossless image evidence) may not fit the provider prompt
                 # budget. The provider still interprets the brief, while the
                 # application owns exact-master materialisation and verification.
-                primary = ds_resolver.primary_component_for_brief(ds_context, brief) if saw_component_ref else None
+                primary = ds_resolver.primary_component_for_brief(
+                    ds_context, brief, pinned_keys=pinned_master_keys)
                 if primary is not None:
                     from design_system import compiler as ds_compiler, document as ds_document
                     recovered = ds_document.preview_ir_for_master(copy.deepcopy(primary["masterIr"]))
-                    recovered_root = recovered["tree"][0]["children"][0]
+                    recovered_root = recovered["tree"][0]
+                    if (recovered_root.get("type") == "source-block"
+                            and recovered_root.get("variant") == "component-master"
+                            and recovered_root.get("children")):
+                        recovered_root = recovered_root["children"][0]
                     recovered_root.setdefault("sourceMeta", {})["componentRef"] = ds_compiler.component_handle(
                         primary, ds_context.get("systemRef") or {})
                     recovered.setdefault("meta", {}).update({
@@ -974,6 +1047,23 @@ def _generate(req: GenerateReq, run_id: str | None):
                             "componentKey": primary.get("componentKey"),
                             "reason": "provider-output-failed-strict-exact-master-validation",
                         }
+                if not variants and strict_candidate_variants:
+                    strict_fallback = "extend"
+                    fallback_warning = {
+                        "code": "strict-fallback-extend",
+                        "message": "Strict: мастера не использованы, результат принят в режиме extend",
+                    }
+                    for variant in strict_candidate_variants:
+                        meta = variant.setdefault("meta", {})
+                        meta.pop("designSystemErrors", None)
+                        meta.setdefault("designSystemWarnings", []).append(fallback_warning)
+                    variants = strict_candidate_variants
+                    errors = [item for item in errors
+                              if not str(item.get("error") or "").startswith("Design System Strict:")]
+                    rejected = list(design_system_report["errors"])
+                    design_system_report["errors"] = []
+                    design_system_report["warnings"].extend(rejected)
+                    design_system_report["warnings"].append(fallback_warning)
                 if not variants:
                     first = design_system_report["errors"][0]["message"] if design_system_report["errors"] else "strict validation failed"
                     return err(422, f"Design System Strict отклонил все варианты: {first}")
@@ -984,6 +1074,7 @@ def _generate(req: GenerateReq, run_id: str | None):
         "tokensLocked": bool(dna),
         "projectRules": bool(rules_block),
         "referenceScreens": len([x for x in (req.referenceIrs or []) if isinstance(x, dict)]),
+        **({"strictFallback": strict_fallback} if strict_fallback else {}),
         "direction": {
             "selected": selected_direction,
             "variants": [
@@ -1000,6 +1091,7 @@ def _generate(req: GenerateReq, run_id: str | None):
             "usageMode": ds_usage_mode,
             "componentsAvailable": len(ds_context.get("components") or []),
             "mastersInContext": list((ds_compiled or {}).get("includedMasterKeys") or []),
+            "pinnedMaster": pinned_master_keys[0] if pinned_master_keys else None,
             "strictReady": (ds_compiled or {}).get("strictReady"),
             "errors": len((design_system_report or {}).get("errors") or []),
             "warnings": len((design_system_report or {}).get("warnings") or []),
