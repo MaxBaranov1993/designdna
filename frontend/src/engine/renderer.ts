@@ -1335,6 +1335,7 @@ import { isLockedNode } from "./locked";
   /* Шрифты источника, чью загрузку document.fonts уже подтвердил: повторный
    * load на каждый ререндер — лишние промисы и шум в консоли. */
   const confirmedFontSpecs = new Set<string>();
+  const registeredFontFaces = new Map();
   let lastFontFacesCss = "";
 
   function materializeResponsiveIR(source, viewport) {
@@ -1433,7 +1434,15 @@ import { isLockedNode } from "./locked";
       ffEl.id = "ir-fontfaces";
       document.head.appendChild(ffEl);
     }
-    const fontFacesCss = customFaces.map((f) => {
+    // Реестр @font-face накопительный: панель ДС рендерит десятки превью подряд,
+    // и последний IR без fontFaces стирал шрифты источника у всех предыдущих —
+    // глифы fallback-шрифта шире, «$3K» наезжал на «/ month». Ключ — семейство,
+    // начертание, вес и файл; повторные faces не дублируются.
+    for (const f of customFaces) {
+      const key = [f.family, f.style, f.weight, f.url, f.unicodeRange || ""].join("|");
+      if (!registeredFontFaces.has(key)) registeredFontFaces.set(key, f);
+    }
+    const fontFacesCss = Array.from(registeredFontFaces.values()).map((f) => {
       const rawUrl = String(f.url);
       const format = /\.woff2$/i.test(rawUrl) ? "woff2" : /\.woff$/i.test(rawUrl) ? "woff" : "truetype";
       const unicode = f.unicodeRange ? "unicode-range:" + String(f.unicodeRange) + ";" : "";
