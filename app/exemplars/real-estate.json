@@ -116,13 +116,12 @@
                   },
                   "children": [
                     {
-                      "type": "text",
-                      "size": "sm",
+                      "type": "text", "typeRole": "eyebrow",
                       "text": "ХАМОВНИКИ · 28 КВАРТИР · IV КВАРТАЛ 2027"
                     },
                     {
                       "type": "heading",
-                      "level": 1,
+                      "level": 1, "typeRole": "display",
                       "text": "Дом, где окно начинается от пола, а двор — от порога"
                     }
                   ]
@@ -176,11 +175,11 @@
               "children": [
                 {
                   "type": "heading",
-                  "level": 2,
+                  "level": 2, "typeRole": "h2",
                   "text": "Шесть этажей вокруг тихого двора"
                 },
                 {
-                  "type": "text",
+                  "type": "text", "typeRole": "body",
                   "text": "Первый этаж поднят на 90 сантиметров над тротуаром. Окна квартир выходят либо на южную улицу, либо в закрытый двор без машин."
                 }
               ]
@@ -195,19 +194,18 @@
               },
               "children": [
                 {
-                  "type": "text",
-                  "size": "sm",
+                  "type": "text", "typeRole": "eyebrow",
                   "text": "РАЗРЕЗ А–А"
                 },
                 {
                   "type": "divider"
                 },
                 {
-                  "type": "text",
+                  "type": "text", "typeRole": "body",
                   "text": "Высота потолка 3,2 м · окна 2,7 м · наружная стена 640 мм · два лифта на секцию · не больше трёх квартир на площадке."
                 },
                 {
-                  "type": "text",
+                  "type": "text", "typeRole": "body",
                   "text": "Вентиляция индивидуальная для каждой квартиры; внешние блоки кондиционеров спрятаны в технических лоджиях и доступны из общего коридора."
                 }
               ]
@@ -235,7 +233,7 @@
           "children": [
             {
               "type": "heading",
-              "level": 2,
+              "level": 2, "typeRole": "h2",
               "text": "Квартиры в продаже"
             },
             {
@@ -257,17 +255,16 @@
                   },
                   "children": [
                     {
-                      "type": "text",
-                      "size": "sm",
+                      "type": "text", "typeRole": "eyebrow",
                       "text": "3 ЭТАЖ · ОКНА ВО ДВОР"
                     },
                     {
                       "type": "heading",
-                      "level": 3,
+                      "level": 3, "typeRole": "h3",
                       "text": "2 спальни · 104,6 м²"
                     },
                     {
-                      "type": "text",
+                      "type": "text", "typeRole": "body",
                       "text": "Кухня-гостиная 41 м², мастер-блок, постирочная · 118 млн ₽"
                     },
                     {
@@ -285,17 +282,16 @@
                   },
                   "children": [
                     {
-                      "type": "text",
-                      "size": "sm",
+                      "type": "text", "typeRole": "eyebrow",
                       "text": "5 ЭТАЖ · ЮГ И ЗАПАД"
                     },
                     {
                       "type": "heading",
-                      "level": 3,
+                      "level": 3, "typeRole": "h3",
                       "text": "3 спальни · 156,2 м²"
                     },
                     {
-                      "type": "text",
+                      "type": "text", "typeRole": "body",
                       "text": "Три стороны света, две ванные, кабинет у входа · 189 млн ₽"
                     },
                     {
@@ -344,17 +340,16 @@
               },
               "children": [
                 {
-                  "type": "text",
-                  "size": "sm",
+                  "type": "text", "typeRole": "eyebrow",
                   "text": "АВГУСТ 2026 · 38% ГОТОВНОСТИ"
                 },
                 {
                   "type": "heading",
-                  "level": 2,
+                  "level": 2, "typeRole": "h2",
                   "text": "Монолит завершён, началась кладка фасада"
                 },
                 {
-                  "type": "text",
+                  "type": "text", "typeRole": "body",
                   "text": "Каждые две недели публикуем фото одного и того же узла с датой. Следующий контрольный этап — закрытие теплового контура в феврале 2027."
                 }
               ]
@@ -385,7 +380,7 @@
           "children": [
             {
               "type": "heading",
-              "level": 2,
+              "level": 2, "typeRole": "h2",
               "text": "Посмотреть макет и пройти вокруг участка"
             },
             {
@@ -398,7 +393,7 @@
               },
               "children": [
                 {
-                  "type": "text",
+                  "type": "text", "typeRole": "body",
                   "text": "Встреча занимает 50 минут. Покажем вид из выбранной квартиры по высоте камеры и дадим распечатанный план с размерами."
                 },
                 {

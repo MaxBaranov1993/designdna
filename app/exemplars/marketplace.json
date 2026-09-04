@@ -92,32 +92,32 @@
           "type": "frame",
           "frame": { "layout": "auto", "direction": "column", "gap": 8 },
           "children": [
-            { "type": "heading", "level": 1, "text": "Допуск к торгам" },
-            { "type": "text", "text": "Покупатель подтверждает юрлицо и вносит задаток 5% на номинальный счёт. Задаток возвращается в течение суток после закрытия торгов, если лот ушёл другому." }
+            { "type": "heading", "level": 1, "typeRole": "h1", "text": "Допуск к торгам" },
+            { "type": "text", "typeRole": "lead", "text": "Покупатель подтверждает юрлицо и вносит задаток 5% на номинальный счёт. Задаток возвращается в течение суток после закрытия торгов, если лот ушёл другому." }
           ]
         },
         {
           "type": "frame",
           "frame": { "layout": "auto", "direction": "column", "gap": 8 },
           "children": [
-            { "type": "heading", "level": 3, "text": "Осмотр или выездная проверка" },
-            { "type": "text", "text": "Приезжаете сами либо отправляете нашего инженера: два часа на станке, протокол геометрии, фото узлов и запись работы под нагрузкой. Отчёт видят все участники торгов." }
+            { "type": "heading", "level": 3, "typeRole": "h3", "text": "Осмотр или выездная проверка" },
+            { "type": "text", "typeRole": "body", "text": "Приезжаете сами либо отправляете нашего инженера: два часа на станке, протокол геометрии, фото узлов и запись работы под нагрузкой. Отчёт видят все участники торгов." }
           ]
         },
         {
           "type": "frame",
           "frame": { "layout": "auto", "direction": "column", "gap": 8 },
           "children": [
-            { "type": "heading", "level": 3, "text": "Торги и подписание" },
-            { "type": "text", "text": "Ставки идут открыто, шаг фиксированный. Победитель подписывает договор в тот же день, деньги остаются на номинальном счёте до приёмки." }
+            { "type": "heading", "level": 3, "typeRole": "h3", "text": "Торги и подписание" },
+            { "type": "text", "typeRole": "body", "text": "Ставки идут открыто, шаг фиксированный. Победитель подписывает договор в тот же день, деньги остаются на номинальном счёте до приёмки." }
           ]
         },
         {
           "type": "frame",
           "frame": { "layout": "auto", "direction": "column", "gap": 8 },
           "children": [
-            { "type": "heading", "level": 3, "text": "Демонтаж, вывоз, приёмка" },
-            { "type": "text", "text": "Такелаж заказывается через площадку и стоит по прайсу, а не по договорённости. Деньги уходят продавцу после того, как покупатель подписал приёмку на своей территории." }
+            { "type": "heading", "level": 3, "typeRole": "h3", "text": "Демонтаж, вывоз, приёмка" },
+            { "type": "text", "typeRole": "body", "text": "Такелаж заказывается через площадку и стоит по прайсу, а не по договорённости. Деньги уходят продавцу после того, как покупатель подписал приёмку на своей территории." }
           ]
         }
       ]
@@ -141,8 +141,8 @@
               "type": "frame",
               "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
               "children": [
-                { "type": "heading", "level": 3, "text": "Фрезерные центры" },
-                { "type": "text", "size": "sm", "text": "214 лотов · от 1,2 до 14 млн ₽" },
+                { "type": "heading", "level": 3, "typeRole": "h3", "text": "Фрезерные центры" },
+                { "type": "text", "typeRole": "small", "text": "214 лотов · от 1,2 до 14 млн ₽" },
                 { "type": "divider" }
               ]
             },
@@ -150,8 +150,8 @@
               "type": "frame",
               "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
               "children": [
-                { "type": "heading", "level": 3, "text": "Токарные с ЧПУ" },
-                { "type": "text", "size": "sm", "text": "188 лотов · от 900 тыс. до 9 млн ₽" },
+                { "type": "heading", "level": 3, "typeRole": "h3", "text": "Токарные с ЧПУ" },
+                { "type": "text", "typeRole": "small", "text": "188 лотов · от 900 тыс. до 9 млн ₽" },
                 { "type": "divider" }
               ]
             },
@@ -159,8 +159,8 @@
               "type": "frame",
               "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
               "children": [
-                { "type": "heading", "level": 3, "text": "Листогибы и прессы" },
-                { "type": "text", "size": "sm", "text": "141 лот · от 600 тыс. до 6 млн ₽" },
+                { "type": "heading", "level": 3, "typeRole": "h3", "text": "Листогибы и прессы" },
+                { "type": "text", "typeRole": "small", "text": "141 лот · от 600 тыс. до 6 млн ₽" },
                 { "type": "divider" }
               ]
             },
@@ -168,8 +168,8 @@
               "type": "frame",
               "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
               "children": [
-                { "type": "heading", "level": 3, "text": "Лазерная резка" },
-                { "type": "text", "size": "sm", "text": "97 лотов · от 2,4 до 21 млн ₽" },
+                { "type": "heading", "level": 3, "typeRole": "h3", "text": "Лазерная резка" },
+                { "type": "text", "typeRole": "small", "text": "97 лотов · от 2,4 до 21 млн ₽" },
                 { "type": "divider" }
               ]
             },
@@ -177,8 +177,8 @@
               "type": "frame",
               "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
               "children": [
-                { "type": "heading", "level": 3, "text": "Компрессорные" },
-                { "type": "text", "size": "sm", "text": "76 лотов · от 180 тыс. до 3 млн ₽" },
+                { "type": "heading", "level": 3, "typeRole": "h3", "text": "Компрессорные" },
+                { "type": "text", "typeRole": "small", "text": "76 лотов · от 180 тыс. до 3 млн ₽" },
                 { "type": "divider" }
               ]
             },
@@ -186,8 +186,8 @@
               "type": "frame",
               "frame": { "layout": "auto", "direction": "column", "gap": 8, "width": 272, "padding": [20, 0] },
               "children": [
-                { "type": "heading", "level": 3, "text": "Оснастка и инструмент" },
-                { "type": "text", "size": "sm", "text": "352 лота · от 15 тыс. до 800 тыс. ₽" },
+                { "type": "heading", "level": 3, "typeRole": "h3", "text": "Оснастка и инструмент" },
+                { "type": "text", "typeRole": "small", "text": "352 лота · от 15 тыс. до 800 тыс. ₽" },
                 { "type": "divider" }
               ]
             }

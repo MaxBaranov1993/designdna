@@ -217,10 +217,25 @@ def validate_generation(ir: dict, context: dict) -> dict:
                     if component is None:
                         errors.append({"code": "unregistered-component", "message": f"Компонент {key or 'без ключа'} не зарегистрирован в системе (Strict)"})
                     else:
+                        ref_hash = str(ref.get("masterHash") or "") if isinstance(ref, dict) else ""
+                        matched_master = component.get("masterIr") if isinstance(component.get("masterIr"), dict) else None
+                        expected_hash = component_master_hash(component)
+                        if ref_hash != expected_hash:
+                            matched_master = None
+                            for variant in (component.get("variants") or {}).values():
+                                if (not isinstance(variant, dict)
+                                        or variant.get("origin") != "user"
+                                        or not isinstance(variant.get("masterIr"), dict)):
+                                    continue
+                                variant_hash = component_master_hash({"masterIr": variant["masterIr"]})
+                                if ref_hash == variant_hash and str(variant.get("masterHash") or "") == variant_hash:
+                                    matched_master = variant["masterIr"]
+                                    expected_hash = variant_hash
+                                    break
                         expected = {
                             "systemId": str(system_ref.get("systemId") or ""),
                             "revision": int(system_ref.get("revision") or 0),
-                            "masterHash": component_master_hash(component),
+                            "masterHash": expected_hash,
                         }
                         try:
                             actual_revision = int(ref.get("revision") or 0) if isinstance(ref, dict) else 0
@@ -228,13 +243,14 @@ def validate_generation(ir: dict, context: dict) -> dict:
                             actual_revision = -1
                         if (str(ref.get("systemId") or "") != expected["systemId"]
                                 or actual_revision != expected["revision"]
-                                or str(ref.get("masterHash") or "") != expected["masterHash"]):
+                                or ref_hash != expected["masterHash"]
+                                or matched_master is None):
                             errors.append({
                                 "code": "stale-component-ref",
                                 "message": f"Компонент {key}: componentRef не совпадает с закреплённым exact master",
                             })
                         else:
-                            master_tree = ((component.get("masterIr") or {}).get("tree") or [])
+                            master_tree = (matched_master.get("tree") or [])
                             master_root = master_tree[0] if master_tree and isinstance(master_tree[0], dict) else {}
                             if component_shape_hash(node) != component_shape_hash(master_root):
                                 errors.append({

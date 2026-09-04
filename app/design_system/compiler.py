@@ -68,6 +68,19 @@ def component_handle(component: dict, system_ref: dict) -> dict:
     }
 
 
+def compact_variants(component: dict) -> list[dict]:
+    """Prompt-safe variant choices without duplicating their master IR."""
+    return [
+        {
+            "key": str(key),
+            "label": str(variant.get("label") or key),
+            "origin": str(variant.get("origin") or component.get("origin") or "observed"),
+        }
+        for key, variant in (component.get("variants") or {}).items()
+        if isinstance(variant, dict)
+    ]
+
+
 def _has_masters(components) -> bool:
     return any(isinstance(c, dict) and isinstance(c.get("masterIr"), dict)
                for c in components or [])
@@ -179,6 +192,11 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
     component_handles = [component_handle(c, ref) for c in components if isinstance(c, dict)]
     included_master_keys: list[str] = []
     if components:
+        add(
+            "registry.variant-selection-contract",
+            "- COMPONENT VARIANTS: choose the variant whose label and meaning best fit the brief; do not default blindly when a semantically closer variant is available.",
+            required=mode == "strict",
+        )
         if mode == "strict":
             add(
                 "registry.component-ref-contract",
@@ -192,6 +210,7 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
             payload = {
                 "componentRef": component_handle(component, ref),
                 "masterIr": component["masterIr"],
+                "variants": compact_variants(component),
             }
             if add(f"registry.master.{key}", f"- Exact master {key}: {_json(payload)}"):
                 included_master_keys.append(key)
@@ -201,6 +220,7 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
             "props": list((c.get("propsSchema") or {}).keys()),
             "componentRef": component_handle(c, ref),
             "shapeHash": component_shape_hash(((c.get("masterIr") or {}).get("tree") or [{}])[0]),
+            "variants": compact_variants(c),
         } for c in components if str(c.get("componentKey") or "") in included_master_keys]
         add("registry.components", f"- Masters available in this prompt: {_json(compact)}", required=mode == "strict")
     # Многословная часть стиль-гайда идёт ПОСЛЕ мастеров и не помечена

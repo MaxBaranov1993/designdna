@@ -2781,7 +2781,7 @@ export function currentIrSnapshot(): any | null {
   return state ? deepClone(state.ir) : null;
 }
 
-/** Вставить секцию-мастер ДС последней секцией страницы: один шаг undo,
+/** Вставить секцию-мастер ДС после выделенной секции или в конец: один шаг undo,
  * черновик сохраняется, шрифты мастера доезжают через meta.fontFaces. */
 export function insertDesignSystemSection(section: any, meta?: any): boolean {
   if (!state || !section || typeof section !== "object") return false;
@@ -2794,7 +2794,11 @@ export function insertDesignSystemSection(section: any, meta?: any): boolean {
   let n = 2;
   while (ids.has(id)) id = `${base}-${n++}`;
   copy.id = id;
-  state.ir.tree.push(copy);
+  const selectedSection = state.sel.find((item) => Number.isInteger(item.ref.secIdx))?.ref.secIdx;
+  const insertAt = selectedSection == null
+    ? state.ir.tree.length
+    : Math.min(state.ir.tree.length, selectedSection + 1);
+  state.ir.tree.splice(insertAt, 0, copy);
   const faces = meta && Array.isArray(meta.fontFaces) ? meta.fontFaces : [];
   if (faces.length) {
     if (!state.ir.meta || typeof state.ir.meta !== "object") state.ir.meta = {};

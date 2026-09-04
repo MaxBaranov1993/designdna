@@ -176,7 +176,10 @@ def test_variant_save_adds_a_user_variant_and_component_section_pins_a_ref():
 
     variant_section = client.post("/api/design-system/component-section", json={
         "systemId": doc["id"], "revision": 0, "componentKey": "promo-card", "variantKey": "user-1"})
-    assert variant_section.json()["section"]["children"][0]["children"][0]["text"] == "Promo · dark"
+    variant_body = variant_section.json()
+    assert variant_body["section"]["children"][0]["children"][0]["text"] == "Promo · dark"
+    assert variant_body["componentRef"]["masterHash"] == variant["masterHash"]
+    assert variant_body["componentRef"]["masterHash"] != ref["masterHash"]
     missing = client.post("/api/design-system/variant/save", json={
         "systemId": doc["id"], "componentKey": "nope", "ir": edited})
     assert missing.status_code == 404

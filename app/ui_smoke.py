@@ -27,6 +27,8 @@ TESTS = [
     "ui_storage_compaction_test.py",
     "ui_timeline_workspace_test.py",
     "ui_motion_design_node_test.py",
+    "ui_design_system_test.py",
+    "ui_editor_components_panel_test.py",
 ]
 
 
