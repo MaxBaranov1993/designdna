@@ -17,6 +17,8 @@ import os
 import re
 import socket
 import sys
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,8 @@ if str(APP_DIR) not in sys.path:
 
 import ir  # noqa: E402
 import project_store  # noqa: E402
+from design_system import resolver as design_system_resolver  # noqa: E402
+from design_system import store as design_system_store  # noqa: E402
 
 MODERN_PROTOCOL_VERSION = "2026-07-28"
 LEGACY_PROTOCOL_VERSIONS = ("2025-11-25", "2024-11-05")
@@ -34,13 +38,15 @@ SUPPORTED_PROTOCOL_VERSIONS = (MODERN_PROTOCOL_VERSION,) + LEGACY_PROTOCOL_VERSI
 PREFERRED_PROTOCOL_VERSION = MODERN_PROTOCOL_VERSION
 PREFERRED_LEGACY_PROTOCOL_VERSION = "2025-11-25"
 SERVER_NAME = "designdna-project"
-SERVER_VERSION = "1.2.0"
+SERVER_VERSION = "1.3.0"
 MAX_MESSAGE_BYTES = 2_097_152
 MAX_REQUEST_BYTES = MAX_MESSAGE_BYTES
 MAX_RESPONSE_BYTES = MAX_MESSAGE_BYTES
 MAX_ID_LEN = 128
 _ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 CACHE_TTL_MS = 3_600_000
+DEFAULT_SERVER_URL = "http://127.0.0.1:8420"
+HTTP_TIMEOUT_SECONDS = 130.0
 JSONRPC_PARSE = -32700
 JSONRPC_INVALID_REQUEST = -32600
 JSONRPC_METHOD_NOT_FOUND = -32601
@@ -104,9 +110,12 @@ def _discover_result() -> dict[str, Any]:
             "supportedVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
             "capabilities": {"tools": {}},
             "instructions": (
-                "DesignDNA saved-project database. Use designdna_project_get, then "
-                "designdna_project_put with expectedRevision from get. Validate Design IR "
-                "with designdna_design_ir_validate. While Electron is running, use "
+                "Use designdna_generate for new screens, designdna_list_design_systems "
+                "before choosing a pinned design-system revision, and designdna_review "
+                "before presenting or applying IR. Use designdna_rules_get/set for the same "
+                "rules as the Generator. designdna_project_put is a low-level transfer "
+                "primitive, not a design authoring tool; it requires expectedRevision from "
+                "designdna_project_get. While Electron is running, use "
                 "designdna_live_command for approved Preview/Apply against the open editor."
             ),
         },
@@ -340,6 +349,81 @@ def project_summary(payload: dict[str, Any]) -> dict[str, Any]:
 def _tool_defs() -> list[dict[str, Any]]:
     return [
         {
+            "name": "designdna_generate",
+            "description": "Preferred high-level screen creation tool. Runs the full DesignDNA Generator pipeline (design direction, composition, token/DS enforcement and QA); use it instead of assembling IR by hand or writing through project_put.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["brief", "designSystem", "count"],
+                "properties": {
+                    "brief": {"type": "string"},
+                    "designSystem": {
+                        "type": "object",
+                        "required": ["systemId", "usageMode"],
+                        "properties": {
+                            "systemId": {"type": "string"},
+                            "revision": {"type": "integer", "minimum": 0},
+                            "usageMode": {"type": "string", "enum": ["strict", "extend", "style-only"]},
+                        },
+                        "additionalProperties": False,
+                    },
+                    "count": {"type": "integer", "minimum": 1},
+                    "referenceIrs": {"type": "array", "items": {"type": "object"}},
+                },
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
+        },
+        {
+            "name": "designdna_list_design_systems",
+            "description": "List compact DesignDNA design-system revisions, component keys/categories/variants and locked IR tokens. Call this before generate or review; preserve the returned component keys in componentRef.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"projectId": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True},
+        },
+        {
+            "name": "designdna_review",
+            "description": "Run deterministic Quality Gate autofix with strict token enforcement and, when supplied, design-system validation. Call after every manual IR change and before preview/apply; use fixed_ir as the reviewed result.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["ir"],
+                "properties": {
+                    "ir": {"type": "object"},
+                    "designSystem": {
+                        "type": "object",
+                        "required": ["systemId", "usageMode"],
+                        "properties": {
+                            "systemId": {"type": "string"},
+                            "revision": {"type": "integer", "minimum": 0},
+                            "usageMode": {"type": "string", "enum": ["strict", "extend", "style-only"]},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
+        },
+        {
+            "name": "designdna_rules_get",
+            "description": "Read the built-in DESIGN/RUBRIC/BLOCKS rules and current project rules used by both Generator and review. Call before authoring IR outside designdna_generate.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True},
+        },
+        {
+            "name": "designdna_rules_set",
+            "description": "Replace the project-specific DesignDNA rules used by Generator and review; built-in rules remain read-only.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {"text": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True},
+        },
+        {
             "name": "designdna_project_get",
             "description": "Read the saved DesignDNA project. payload is migrated; revision is SHA-256 of the exact raw stored JSON so put-after-get is stable.",
             "inputSchema": {
@@ -354,7 +438,7 @@ def _tool_defs() -> list[dict[str, Any]]:
         },
         {
             "name": "designdna_project_put",
-            "description": "Replace the saved project if expectedRevision matches the raw stored SHA-256. dryRun returns the revision that json.dumps(project, ensure_ascii=False) would store, without writing.",
+            "description": "Service/transfer-only low-level primitive: replace the saved project if expectedRevision matches the raw stored SHA-256. Do not use it to author screens; prefer designdna_generate, designdna_review and live preview/apply. dryRun validates without writing.",
             "inputSchema": {
                 "type": "object",
                 "required": ["project", "expectedRevision"],
@@ -415,6 +499,27 @@ def _tool_defs() -> list[dict[str, Any]]:
 
 
 _TOOL_ARGS = {
+    "designdna_generate": {
+        "allowed": {"brief", "designSystem", "count", "referenceIrs"},
+        "required": {"brief", "designSystem", "count"},
+        "types": {"brief": str, "designSystem": dict, "count": int, "referenceIrs": list},
+    },
+    "designdna_list_design_systems": {
+        "allowed": {"projectId"},
+        "required": set(),
+        "types": {"projectId": str},
+    },
+    "designdna_review": {
+        "allowed": {"ir", "designSystem"},
+        "required": {"ir"},
+        "types": {"ir": dict, "designSystem": dict},
+    },
+    "designdna_rules_get": {"allowed": set(), "required": set(), "types": {}},
+    "designdna_rules_set": {
+        "allowed": {"text"},
+        "required": {"text"},
+        "types": {"text": str},
+    },
     "designdna_project_get": {
         "allowed": {"userId", "projectId"},
         "required": set(),
@@ -466,7 +571,7 @@ def _check_arguments(name: str, arguments: Any) -> list[str]:
         if expected is dict and not isinstance(value, dict):
             errors.append(f"arguments.{key}: must be an object")
         elif expected is str:
-            if not isinstance(value, str) or not value.strip():
+            if not isinstance(value, str) or (key != "text" and not value.strip()):
                 errors.append(f"arguments.{key}: must be a non-empty string")
             elif key in ("userId", "projectId") and not _ID_RE.fullmatch(value):
                 errors.append(
@@ -474,7 +579,159 @@ def _check_arguments(name: str, arguments: Any) -> list[str]:
                 )
         elif expected is bool and not isinstance(value, bool):
             errors.append(f"arguments.{key}: must be a boolean")
+        elif expected is int and (isinstance(value, bool) or not isinstance(value, int)):
+            errors.append(f"arguments.{key}: must be an integer")
+        elif expected is list and not isinstance(value, list):
+            errors.append(f"arguments.{key}: must be an array")
     return errors
+
+
+def _server_url() -> str:
+    return (os.environ.get("DESIGNDNA_SERVER_URL") or DEFAULT_SERVER_URL).rstrip("/")
+
+
+def _http_json(method: str, path: str, payload: dict[str, Any] | None = None) -> tuple[dict[str, Any], bool]:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(_server_url() + path, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read(MAX_RESPONSE_BYTES + 1)
+        try:
+            detail = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            detail = {"message": str(exc.reason or "DesignDNA server request failed")}
+        return {"ok": False, "error": {"code": f"HTTP_{exc.code}", "message": "DesignDNA server rejected the request", "detail": detail}}, True
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return {"ok": False, "error": {"code": "DESIGNDNA_SERVER_UNAVAILABLE", "message": str(getattr(exc, "reason", exc))[:300]}}, True
+    if len(raw) > MAX_RESPONSE_BYTES:
+        return {"ok": False, "error": {"code": "DESIGNDNA_RESPONSE_TOO_LARGE", "message": "DesignDNA server response exceeds the MCP bound"}}, True
+    try:
+        decoded = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return {"ok": False, "error": {"code": "DESIGNDNA_RESPONSE_INVALID", "message": "DesignDNA server returned invalid JSON"}}, True
+    if not isinstance(decoded, dict):
+        return {"ok": False, "error": {"code": "DESIGNDNA_RESPONSE_INVALID", "message": "DesignDNA server returned a non-object JSON response"}}, True
+    return decoded, False
+
+
+def _check_design_system_ref(value: Any, path: str = "arguments.designSystem") -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return [f"{path}: must be an object"]
+    extra = sorted(set(value) - {"systemId", "revision", "usageMode"})
+    errors = [f"{path}: unexpected {extra}"] if extra else []
+    system_id = value.get("systemId")
+    if not isinstance(system_id, str) or not system_id.strip():
+        errors.append(f"{path}.systemId: required non-empty string")
+    usage_mode = value.get("usageMode")
+    if usage_mode not in ("strict", "extend", "style-only"):
+        errors.append(f"{path}.usageMode: must be strict, extend or style-only")
+    revision = value.get("revision")
+    if revision is not None and (isinstance(revision, bool) or not isinstance(revision, int) or revision < 0):
+        errors.append(f"{path}.revision: must be a non-negative integer")
+    return errors
+
+
+def _call_generate(arguments: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    errors = _check_design_system_ref(arguments.get("designSystem"))
+    count = arguments.get("count")
+    references = arguments.get("referenceIrs")
+    if isinstance(count, int) and not isinstance(count, bool) and count < 1:
+        errors.append("arguments.count: must be at least 1")
+    if isinstance(references, list) and not all(isinstance(item, dict) for item in references):
+        errors.append("arguments.referenceIrs: must contain IR objects")
+    if errors:
+        return {"ok": False, "errors": errors}, True
+    request = {key: arguments[key] for key in ("brief", "designSystem", "count", "referenceIrs") if key in arguments}
+    response, failed = _http_json("POST", "/api/generate", request)
+    if failed:
+        return response, True
+    result = {
+        "ok": True,
+        "variants": response.get("variants") or [],
+        "generationLog": response.get("generationLog") or {},
+        "qa": response.get("qa") or [],
+    }
+    for key in ("errors", "design", "designSystem"):
+        if key in response:
+            result[key] = response[key]
+    return result, False
+
+
+def _compact_component(key: str, component: Any) -> dict[str, Any]:
+    source = component if isinstance(component, dict) else {}
+    variants = source.get("variants") if isinstance(source.get("variants"), dict) else {}
+    return {
+        "key": key,
+        "name": str(source.get("name") or key),
+        "category": str(source.get("category") or ""),
+        "variants": [{
+            "key": str(variant_key),
+            "label": str(variant.get("label") or variant_key) if isinstance(variant, dict) else str(variant_key),
+            "semanticKey": str(variant.get("semanticKey") or variant_key) if isinstance(variant, dict) else str(variant_key),
+        } for variant_key, variant in variants.items()],
+    }
+
+
+def _call_list_design_systems(arguments: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    project_id = str(arguments.get("projectId") or "default")
+    systems = []
+    for entry in design_system_store.list_systems(project_id):
+        revision = int(entry.get("revision") or 0)
+        document = design_system_store.get_revision(str(entry.get("systemId") or ""), revision) or {}
+        components = document.get("components") if isinstance(document.get("components"), dict) else {}
+        style_guide = document.get("styleGuide") if isinstance(document.get("styleGuide"), dict) else {}
+        systems.append({
+            "systemId": entry.get("systemId"),
+            "name": entry.get("name"),
+            "status": entry.get("status"),
+            "revision": revision,
+            "components": [_compact_component(str(key), value) for key, value in components.items()],
+            "irTokens": style_guide.get("irTokens") or document.get("irTokens") or {},
+        })
+    return {"ok": True, "systems": systems}, False
+
+
+def _call_review(arguments: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    design_system = arguments.get("designSystem")
+    errors = _check_design_system_ref(design_system)
+    if errors:
+        return {"ok": False, "errors": errors}, True
+    gate, failed = _http_json("POST", "/api/quality-gate", {
+        "ir": arguments["ir"], "fix": True, "strictTokens": True,
+    })
+    if failed:
+        return gate, True
+    result = {
+        "ok": True,
+        "passed": bool(gate.get("passed")),
+        "violations": gate.get("violations") or [],
+        "journal": gate.get("journal") or [],
+        "fixed_ir": gate.get("fixed_ir") or arguments["ir"],
+    }
+    if isinstance(design_system, dict):
+        context_payload, context_failed = _http_json("POST", "/api/design-system/resolve-context", {
+            "ref": {key: design_system[key] for key in ("systemId", "revision") if key in design_system},
+            "usageMode": design_system["usageMode"],
+            "brief": "",
+        })
+        if context_failed:
+            return context_payload, True
+        context = context_payload.get("context")
+        if not isinstance(context, dict):
+            return {"ok": False, "error": {"code": "DESIGNDNA_RESPONSE_INVALID", "message": "resolve-context response has no context"}}, True
+        ds_report = design_system_resolver.validate_generation(result["fixed_ir"], context)
+        result["designSystem"] = ds_report
+        if ds_report.get("errors"):
+            result["passed"] = False
+    return result, False
 
 
 def _ids(arguments: dict[str, Any]) -> tuple[str, str]:
@@ -650,6 +907,16 @@ def _dispatch_tool(name: str, arguments: Any) -> tuple[dict[str, Any], bool] | s
     if arg_errors:
         return "invalid-args:" + "; ".join(arg_errors)
     args = arguments if isinstance(arguments, dict) else {}
+    if name == "designdna_generate":
+        return _call_generate(args)
+    if name == "designdna_list_design_systems":
+        return _call_list_design_systems(args)
+    if name == "designdna_review":
+        return _call_review(args)
+    if name == "designdna_rules_get":
+        return _http_json("GET", "/api/rules")
+    if name == "designdna_rules_set":
+        return _http_json("POST", "/api/rules/project", {"text": args["text"]})
     if name == "designdna_project_get":
         return _call_get(args)
     if name == "designdna_project_put":

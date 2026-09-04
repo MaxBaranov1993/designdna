@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 
 import project_store  # noqa: E402
+import designdna_mcp_server as mcp_server  # noqa: E402
 from designdna_mcp_server import (  # noqa: E402
     CACHE_TTL_MS,
     JSONRPC_UNSUPPORTED_PROTOCOL,
@@ -33,12 +34,27 @@ from designdna_mcp_server import (  # noqa: E402
     SERVER_NAME,
     SERVER_VERSION,
     SUPPORTED_PROTOCOL_VERSIONS,
+    _dispatch_tool,
     validate_embedded_irs,
     validate_project_shape,
 )
+from design_system import document as design_system_document  # noqa: E402
+from design_system import store as design_system_store  # noqa: E402
 
 SERVER = ROOT / "app" / "designdna_mcp_server.py"
 FRAME = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
+TOOL_NAMES = [
+    "designdna_generate",
+    "designdna_list_design_systems",
+    "designdna_review",
+    "designdna_rules_get",
+    "designdna_rules_set",
+    "designdna_project_get",
+    "designdna_project_put",
+    "designdna_design_ir_validate",
+    "designdna_project_summary",
+    "designdna_live_command",
+]
 
 
 def _env(data_dir: Path) -> dict[str, str]:
@@ -166,18 +182,13 @@ def test_initialize_list_get_round_trip(data_dir):
         listed = mcp.rpc("tools/list", {})
         assert "resultType" not in listed["result"]
         names = [tool["name"] for tool in listed["result"]["tools"]]
-        assert names == [
-            "designdna_project_get",
-            "designdna_project_put",
-            "designdna_design_ir_validate",
-            "designdna_project_summary",
-            # Live Command Bus: превью/применение к открытому редактору.
-            "designdna_live_command",
-        ]
+        assert names == TOOL_NAMES
         by_name = {tool["name"]: tool for tool in listed["result"]["tools"]}
         assert by_name["designdna_project_get"]["annotations"]["readOnlyHint"] is True
         assert by_name["designdna_project_put"]["annotations"]["readOnlyHint"] is False
         assert by_name["designdna_project_put"]["annotations"]["destructiveHint"] is True
+        assert "Service/transfer-only" in by_name["designdna_project_put"]["description"]
+        assert "full DesignDNA Generator pipeline" in by_name["designdna_generate"]["description"]
         reply, body = mcp.tool("designdna_project_get", {})
         assert reply["result"]["isError"] is False
         assert body["ok"] is True
@@ -188,6 +199,172 @@ def test_initialize_list_get_round_trip(data_dir):
             assert parsed.get("jsonrpc") == "2.0"
     finally:
         assert mcp.stop() == 0
+
+
+class _FakeHttpResponse:
+    def __init__(self, payload):
+        self.raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self, limit):
+        return self.raw[:limit]
+
+
+def _mock_http(monkeypatch, responses):
+    calls = []
+    queue = list(responses)
+
+    def open_request(request, timeout):
+        calls.append({
+            "url": request.full_url,
+            "method": request.get_method(),
+            "body": json.loads(request.data.decode("utf-8")) if request.data else None,
+            "timeout": timeout,
+        })
+        return _FakeHttpResponse(queue.pop(0))
+
+    monkeypatch.setattr(mcp_server.urllib.request, "urlopen", open_request)
+    return calls
+
+
+def test_generate_uses_configured_http_server_and_returns_pipeline_fields(monkeypatch):
+    monkeypatch.setenv("DESIGNDNA_SERVER_URL", "http://127.0.0.1:8499/")
+    calls = _mock_http(monkeypatch, [{
+        "variants": [{"version": "1.1", "tokens": {}, "tree": []}],
+        "generationLog": {"variants": [{"index": 0}]},
+        "qa": [{"index": 0, "journal": []}],
+        "designSystem": {"errors": [], "warnings": []},
+    }])
+    payload, failed = _dispatch_tool("designdna_generate", {
+        "brief": "Account settings",
+        "designSystem": {"systemId": "ds-main", "revision": 4, "usageMode": "strict"},
+        "count": 1,
+        "referenceIrs": [{"version": "1.1", "tokens": {}, "tree": []}],
+    })
+    assert failed is False
+    assert payload["ok"] is True
+    assert set(("variants", "generationLog", "qa")) <= set(payload)
+    assert calls == [{
+        "url": "http://127.0.0.1:8499/api/generate",
+        "method": "POST",
+        "body": {
+            "brief": "Account settings",
+            "designSystem": {"systemId": "ds-main", "revision": 4, "usageMode": "strict"},
+            "count": 1,
+            "referenceIrs": [{"version": "1.1", "tokens": {}, "tree": []}],
+        },
+        "timeout": mcp_server.HTTP_TIMEOUT_SECONDS,
+    }]
+
+
+def test_generate_rejects_bad_count_reference_irs_and_design_system():
+    payload, failed = _dispatch_tool("designdna_generate", {
+        "brief": "Settings",
+        "designSystem": {"systemId": "", "revision": -1, "usageMode": "free"},
+        "count": 0,
+        "referenceIrs": [{}, "not-an-ir"],
+    })
+    assert failed is True
+    assert len(payload["errors"]) >= 4
+
+
+def test_list_design_systems_returns_compact_component_registry(data_dir):
+    document = design_system_document.new_document("Acme")
+    document["components"] = {
+        "button": {
+            "name": "Button",
+            "category": "action",
+            "origin": "user",
+            "confirmed": True,
+            "masterIr": FRAME,
+            "variants": {
+                "primary": {"label": "Primary", "semanticKey": "primary"},
+                "quiet": {"label": "Quiet", "semanticKey": "secondary"},
+            },
+        }
+    }
+    document["styleGuide"] = {"irTokens": {"color": {"primary": "#123456"}}}
+    design_system_store.save_draft(document)
+    payload, failed = _dispatch_tool("designdna_list_design_systems", {})
+    assert failed is False
+    assert payload["systems"][0] == {
+        "systemId": document["id"],
+        "name": "Acme",
+        "status": "draft",
+        "revision": 0,
+        "components": [{
+            "key": "button", "name": "Button", "category": "action",
+            "variants": [
+                {"key": "primary", "label": "Primary", "semanticKey": "primary"},
+                {"key": "quiet", "label": "Quiet", "semanticKey": "secondary"},
+            ],
+        }],
+        "irTokens": {"color": {"primary": "#123456"}},
+    }
+
+
+def test_review_calls_quality_gate_then_resolve_context(monkeypatch):
+    source_ir = {"version": "1.1", "tokens": {}, "tree": []}
+    fixed_ir = {"version": "1.1", "tokens": {"color": {}}, "tree": []}
+    calls = _mock_http(monkeypatch, [
+        {"passed": False, "violations": [{"rule": "token-color"}], "journal": [{"action": "snap"}], "fixed_ir": fixed_ir},
+        {"context": {"systemRef": {"systemId": "ds-main", "revision": 2}}},
+    ])
+    validated = {}
+
+    def validate(candidate, context):
+        validated.update({"ir": candidate, "context": context})
+        return {"errors": [], "warnings": [], "identity": {"score": 95}}
+
+    monkeypatch.setattr(mcp_server.design_system_resolver, "validate_generation", validate)
+    payload, failed = _dispatch_tool("designdna_review", {
+        "ir": source_ir,
+        "designSystem": {"systemId": "ds-main", "revision": 2, "usageMode": "strict"},
+    })
+    assert failed is False
+    assert payload["violations"] == [{"rule": "token-color"}]
+    assert payload["journal"] == [{"action": "snap"}]
+    assert payload["fixed_ir"] == fixed_ir
+    assert payload["designSystem"]["identity"]["score"] == 95
+    assert validated["ir"] == fixed_ir
+    assert [call["url"] for call in calls] == [
+        "http://127.0.0.1:8420/api/quality-gate",
+        "http://127.0.0.1:8420/api/design-system/resolve-context",
+    ]
+    assert calls[0]["body"] == {"ir": source_ir, "fix": True, "strictTokens": True}
+    assert calls[1]["body"] == {
+        "ref": {"systemId": "ds-main", "revision": 2},
+        "usageMode": "strict",
+        "brief": "",
+    }
+
+
+def test_review_without_design_system_only_calls_quality_gate(monkeypatch):
+    ir_doc = {"version": "1.1", "tokens": {}, "tree": []}
+    calls = _mock_http(monkeypatch, [{"passed": True, "violations": [], "journal": [], "fixed_ir": ir_doc}])
+    payload, failed = _dispatch_tool("designdna_review", {"ir": ir_doc})
+    assert failed is False and payload["passed"] is True
+    assert len(calls) == 1
+
+
+def test_rules_tools_proxy_shared_server_rules(monkeypatch):
+    calls = _mock_http(monkeypatch, [
+        {"builtIn": {"design": "..."}, "project": "old"},
+        {"builtIn": {"design": "..."}, "project": "new"},
+    ])
+    got, get_failed = _dispatch_tool("designdna_rules_get", {})
+    saved, set_failed = _dispatch_tool("designdna_rules_set", {"text": "new"})
+    assert get_failed is False and set_failed is False
+    assert got["project"] == "old" and saved["project"] == "new"
+    assert [(call["method"], call["url"], call["body"]) for call in calls] == [
+        ("GET", "http://127.0.0.1:8420/api/rules", None),
+        ("POST", "http://127.0.0.1:8420/api/rules/project", {"text": "new"}),
+    ]
 
 
 def test_valid_dry_run_then_put_and_store_round_trip(data_dir):
@@ -524,14 +701,7 @@ def test_modern_tools_list_and_get_without_initialize(data_dir):
         assert result["ttlMs"] == CACHE_TTL_MS
         assert result["cacheScope"] == "public"
         assert result["_meta"][META_SERVER_INFO]["name"] == SERVER_NAME
-        assert [tool["name"] for tool in result["tools"]] == [
-            "designdna_project_get",
-            "designdna_project_put",
-            "designdna_design_ir_validate",
-            "designdna_project_summary",
-            # Live Command Bus: превью/применение к открытому редактору.
-            "designdna_live_command",
-        ]
+        assert [tool["name"] for tool in result["tools"]] == TOOL_NAMES
         reply, body = mcp.tool("designdna_project_get", {}, params=_modern_params())
         assert reply["result"]["resultType"] == "complete"
         assert reply["result"]["_meta"][META_SERVER_INFO]["version"] == SERVER_VERSION
