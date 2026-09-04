@@ -7,7 +7,9 @@ project load/save so an existing user project can never be read or overwritten.
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
+import io
 import json
 import os
 import re
@@ -24,8 +26,13 @@ APP = ROOT / "app"
 ARTIFACTS = ROOT / "artifacts" / "slsbmb"
 RESULT = ROOT / "results" / "slsbmb-product-card.md"
 TARGET_URL = "https://slsbmb.com"
-CARD_WORDS = ("product", "card", "tile", "item", "pricing", "price", "offer")
+CARD_WORDS = (
+    "product", "card", "tile", "item", "pricing", "price", "offer",
+    "market scan", "sending engine",
+)
 PRICING_BLOCKS = [
+    {"name": "pricing-ai-market-scan-card", "selector": "#pricing .sls-price-panel.sls-price-map"},
+    {"name": "pricing-sending-engine-card", "selector": "#pricing .sls-price-panel.sls-price-engine"},
     {"name": "pricing-scan-eyebrow", "selector": "#pricing .sls-price-map .sls-price-eyebrow"},
     {"name": "pricing-scan-title", "selector": "#pricing .sls-price-map .sls-price-title"},
     {"name": "pricing-scan-copy", "selector": "#pricing .sls-price-map .sls-price-copy"},
@@ -78,7 +85,9 @@ def api(page: Page, path: str, payload: dict, timeout_ms: int = 60_000) -> dict:
 def component_score(key: str, component: dict) -> tuple[int, int]:
     haystack = " ".join(
         str(component.get(field) or "") for field in ("name", "category", "componentKey")
-    ).lower() + " " + key.lower()
+    ).lower() + " " + key.lower() + " " + json.dumps(
+        component.get("masterIr") or component.get("templateIr") or {}, ensure_ascii=False,
+    ).lower()
     hits = sum(1 for word in CARD_WORDS if word in haystack)
     # Prefer product/card semantics, then larger masters (usually not atoms/icons).
     size = len(json.dumps(component.get("masterIr") or component.get("templateIr") or {}))
@@ -195,21 +204,74 @@ def has_component_ref(ir: dict, component_key: str) -> bool:
     return walk(ir)
 
 
-def render_artifacts(master_ir: dict, variant_ir: dict) -> None:
+def component_ref_count(ir: dict, component_key: str) -> int:
+    if isinstance(ir, dict):
+        ref = ((ir.get("sourceMeta") or {}).get("componentRef") or {}).get("componentKey")
+        return int(ref == component_key) + sum(component_ref_count(value, component_key) for value in ir.values())
+    if isinstance(ir, list):
+        return sum(component_ref_count(value, component_key) for value in ir)
+    return 0
+
+
+def observed_card_candidates(document: dict, *, registry_only: bool = False) -> list[tuple[str, dict, str]]:
+    pools = ("components",) if registry_only else ("components", "reviewComponents", "suggestions")
+    found: list[tuple[str, dict, str]] = []
+    for pool in pools:
+        for key, component in (document.get(pool) or {}).items():
+            if (isinstance(component, dict) and component.get("origin") == "observed"
+                    and component_score(str(key), component)[0] > 0):
+                found.append((str(key), component, pool))
+    return sorted(found, key=lambda row: component_score(row[0], row[1]), reverse=True)
+
+
+def source_crop_data_url(document: dict, component: dict) -> str:
     sys.path.insert(0, str(APP))
+    from design_system.styleguide import proof_crop  # pylint: disable=import-outside-toplevel
+
+    value, _size, _note = proof_crop(document, component, "desktop", budget_left=4_000_000)
+    return value if isinstance(value, str) and value.startswith("data:image/") else ""
+
+
+def quality_ir_for_master(master_ir: dict) -> dict:
+    """Wrap a registry master as document IR and normalize measured token weights."""
+    sys.path.insert(0, str(APP))
+    from design_system.document import preview_ir_for_master  # pylint: disable=import-outside-toplevel
+
+    ir = preview_ir_for_master(master_ir)
+    allowed = (300, 400, 500, 600, 700, 800, 900)
+    for font in (((ir.get("tokens") or {}).get("primitives") or {}).get("fonts") or []):
+        weight = font.get("weight") if isinstance(font, dict) else None
+        if isinstance(weight, (int, float)) and weight not in allowed:
+            font["weight"] = min(allowed, key=lambda value: abs(value - weight))
+    return ir
+
+
+def render_artifacts(master_ir: dict, variant_ir: dict, source_crop: str = "") -> None:
+    sys.path.insert(0, str(APP))
+    from design_system.document import preview_ir_for_master  # pylint: disable=import-outside-toplevel
     from ir_render import render_png  # pylint: disable=import-outside-toplevel
 
-    (ARTIFACTS / "product-card.master.png").write_bytes(render_png(master_ir, width=900))
-    (ARTIFACTS / "product-card.variant.png").write_bytes(render_png(variant_ir, width=900))
+    (ARTIFACTS / "product-card.master.png").write_bytes(
+        render_png(preview_ir_for_master(master_ir), width=900))
+    (ARTIFACTS / "product-card.variant.png").write_bytes(
+        render_png(preview_ir_for_master(variant_ir), width=900))
+    if source_crop:
+        from PIL import Image  # pylint: disable=import-outside-toplevel
+
+        raw = base64.b64decode(source_crop.split(",", 1)[1])
+        with Image.open(io.BytesIO(raw)) as image:
+            image.convert("RGB").save(ARTIFACTS / "product-card.source-crop.png", format="PNG")
 
 
 def run(base: str, headless: bool, source_timeout_s: int = 900,
-        max_regions: int = 3, quality_min_score: int = 70) -> dict:
+        max_regions: int = 3, quality_min_score: int = 80,
+        require_observed: bool = False) -> dict:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
     console_errors: list[str] = []
     review_results: list[dict] = []
     quality: dict | None = None
+    component_section_requests: list[dict] = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=headless)
         page = browser.new_page(viewport={"width": 1600, "height": 1000}, device_scale_factor=1)
@@ -219,6 +281,8 @@ def run(base: str, headless: bool, source_timeout_s: int = 900,
         page.route("**/api/project/save", lambda route: route.fulfill(
             status=200, content_type="application/json", body='{"ok":true}'))
         page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+        page.on("request", lambda req: component_section_requests.append(req.post_data_json)
+                if req.url.endswith("/api/design-system/component-section") and req.post_data else None)
         try:
             wait_server(page, base)
             page.evaluate("localStorage.clear()")
@@ -285,16 +349,59 @@ def run(base: str, headless: bool, source_timeout_s: int = 900,
                 arg=ds_id, timeout=120_000,
             )
             document = page.evaluate("id => window.GraphDev.node(id).data.document", ds_id)
-            observed_cards = [
-                (str(key), comp) for key, comp in (document.get("components") or {}).items()
-                if isinstance(comp, dict) and comp.get("origin") == "observed"
-                and component_score(str(key), comp)[0] > 0
+            physical_observed_cards = observed_card_candidates(document)
+            if physical_observed_cards:
+                notes.append(
+                    "Physical observed pricing-card candidates before review: "
+                    + ", ".join(f"{pool}:{key}" for key, _comp, pool in physical_observed_cards)
+                )
+
+            reviewed = api(page, "/api/design-system/master-review", {
+                "document": document, "provider": "codex", "viewport": "desktop", "maxComponents": 32,
+            }, timeout_ms=source_timeout_s * 1_000)
+            document = reviewed.get("document") or document
+            review_results = reviewed.get("results") or []
+            page.evaluate(
+                "({id,doc,summary}) => window.__flowStore.getState().setNodeData(id,{document:doc,summary,status:'draft'})",
+                {"id": ds_id, "doc": document, "summary": reviewed.get("summary")},
+            )
+
+            registry_observed_cards = [
+                row for row in observed_card_candidates(document, registry_only=True)
+                if row[1].get("status") == "verified"
             ]
-            if observed_cards:
-                key, component = max(observed_cards, key=lambda row: component_score(row[0], row[1]))
+            if registry_observed_cards:
+                key, component, _pool = registry_observed_cards[0]
                 initial_pool = "components-observed"
                 semantic_match = True
+                master_text = json.dumps(component.get("masterIr") or {}, ensure_ascii=False)
+                if "Sending Engine" in master_text:
+                    component.update({
+                        "name": "Sending Engine",
+                        "category": "pricing",
+                        "canonicalRole": "pricing-card",
+                        "description": "Observed SLSBMB Sending Engine pricing panel",
+                    })
+                elif "AI Market Scan" in master_text:
+                    component.update({
+                        "name": "AI Market Scan",
+                        "category": "pricing",
+                        "canonicalRole": "pricing-card",
+                        "description": "Observed SLSBMB AI Market Scan pricing panel",
+                    })
+            elif physical_observed_cards:
+                remaining = [
+                    {"key": key, "pool": pool, "status": comp.get("status"),
+                     "review": comp.get("review"), "fidelity": comp.get("fidelity")}
+                    for key, comp, pool in observed_card_candidates(document)
+                ]
+                raise RuntimeError(
+                    "Observed pricing-card exists physically but master-review did not produce a verified registry master: "
+                    + json.dumps(remaining, ensure_ascii=False)
+                )
             else:
+                if require_observed:
+                    raise RuntimeError("--require-observed: no physical observed pricing-card was built from capture")
                 key = "product-card"
                 master_ir = pricing_master(source_data.get("tokens") or document.get("tokens") or {})
                 component = {
@@ -333,16 +440,6 @@ def run(base: str, headless: bool, source_timeout_s: int = 900,
                     "No physical observed pricing-card boundary survived Source Import; "
                     "saved a confirmed verified user product-card from observed Pricing atoms and DS tokens."
                 )
-
-            reviewed = api(page, "/api/design-system/master-review", {
-                "document": document, "provider": "codex", "viewport": "desktop", "maxComponents": 8,
-            }, timeout_ms=source_timeout_s * 1_000)
-            document = reviewed.get("document") or document
-            review_results = reviewed.get("results") or []
-            page.evaluate(
-                "({id,doc,summary}) => window.__flowStore.getState().setNodeData(id,{document:doc,summary,status:'draft'})",
-                {"id": ds_id, "doc": document, "summary": reviewed.get("summary")},
-            )
 
             published = page.evaluate("id => window.__flowStore.getState().publishDesignSystem(id)", ds_id)
             if not published:
@@ -394,6 +491,29 @@ def run(base: str, headless: bool, source_timeout_s: int = 900,
                 raise RuntimeError("save-ds-variant did not open window.prompt")
             page.screenshot(path=str(ARTIFACTS / "editor.variant.png"), full_page=True)
 
+            draft_doc = api(page, "/api/design-system/get", {"systemId": system_id, "revision": 0})["document"]
+            variant_key, variant = next(
+                (str(k), v) for k, v in draft_doc["components"][key]["variants"].items()
+                if isinstance(v, dict) and v.get("label") == "Со скидкой"
+            )
+            variant_ir = variant["masterIr"]
+            # save-ds-variant writes revision 0. Publish that draft so the
+            # Components panel can exercise the saved variant through its normal UI.
+            page.evaluate(
+                "({id,doc}) => window.__flowStore.getState().setNodeData(id,{document:doc,status:'draft'})",
+                {"id": ds_id, "doc": draft_doc},
+            )
+            republished = page.evaluate("id => window.__flowStore.getState().publishDesignSystem(id)", ds_id)
+            if not republished:
+                raise RuntimeError("publishDesignSystem after save-ds-variant failed")
+            page.wait_for_function(
+                "({id,rev}) => window.GraphDev.node(id)?.data?.status === 'published' && Number(window.GraphDev.node(id)?.data?.revision)>rev",
+                arg={"id": ds_id, "rev": revision}, timeout=60_000,
+            )
+            ds_data = page.evaluate("id => window.GraphDev.node(id).data", ds_id)
+            revision = int(ds_data["revision"])
+            draft_doc = api(page, "/api/design-system/get", {"systemId": system_id, "revision": revision})["document"]
+
             page.locator(".dna-editor [data-act='components']").click()
             page.wait_for_selector("[data-components-panel]", timeout=20_000)
             insert = page.locator(f'[data-component-insert="{key}"]')
@@ -407,22 +527,27 @@ def run(base: str, headless: bool, source_timeout_s: int = 900,
             if not has_component_ref(inserted_ir, key):
                 raise RuntimeError("Components panel inserted no matching componentRef")
 
-            draft_doc = api(page, "/api/design-system/get", {"systemId": system_id, "revision": 0})["document"]
-            variant_key, variant = next(
-                (str(k), v) for k, v in draft_doc["components"][key]["variants"].items()
-                if isinstance(v, dict) and v.get("label") == "Со скидкой"
+            refs_before_variant = component_ref_count(inserted_ir, key)
+            page.locator(f'[data-component-key="{key}"] select.fe-comps-variant').select_option(variant_key)
+            page.locator(f'[data-component-insert="{key}"]').click()
+            page.wait_for_function(
+                "({id,key,count}) => { const ir=window.GraphDev.node(id)?.data?._editorDraft?.ir; const walk=v=>v&&typeof v==='object'?((v.sourceMeta?.componentRef?.componentKey===key?1:0)+Object.values(v).reduce((n,x)=>n+walk(x),0)):0; return walk(ir)>count; }",
+                arg={"id": edit_id, "key": key, "count": refs_before_variant}, timeout=30_000,
             )
-            variant_ir = variant["masterIr"]
+            if not any(req.get("componentKey") == key and req.get("variantKey") == variant_key
+                       for req in component_section_requests if isinstance(req, dict)):
+                raise RuntimeError(f"Components panel did not request saved variantKey {variant_key}")
             dump(ARTIFACTS / "design-system.json", draft_doc)
             dump(ARTIFACTS / "product-card.master.json", master_ir)
             dump(ARTIFACTS / "product-card.variant.json", variant_ir)
             try:
                 quality = api(page, "/api/quality-pass", {
-                    "ir": master_ir,
+                    "ir": quality_ir_for_master(master_ir),
                     "brief": (
-                        "Standalone SLSBMB SaaS pricing offer card for AI Market Scan: "
-                        "plan name, $500 launch price then $1,000, three deliverables, trust note, and one primary CTA. "
-                        "Judge it as a reusable component, not as a full landing page."
+                        "Exact observed SLSBMB pricing panel for AI Market Scan or Sending Engine: "
+                        "plan name, price, features or capacity examples, and supporting notes. The live site has one "
+                        "shared CTA above both pricing panels, outside this observed boundary; do not penalize the exact "
+                        "component for not duplicating it. Judge it as a reusable observed panel, not a full page."
                     ),
                     "min_score": quality_min_score, "repair": False, "rejudge": False,
                 }, timeout_ms=source_timeout_s * 1_000)
@@ -446,7 +571,9 @@ def run(base: str, headless: bool, source_timeout_s: int = 900,
                     if isinstance(value, dict) and value.get("origin") == "observed"
                 ),
                 "variant_key": variant_key, "inserted_component_ref": True,
+                "inserted_variant_key": variant_key,
                 "quality": quality, "notes": notes, "console_errors": console_errors[-20:],
+                "source_crop": source_crop_data_url(draft_doc, draft_doc["components"][key]),
                 "master_ir": master_ir, "variant_ir": variant_ir,
             }
         finally:
@@ -478,10 +605,11 @@ def write_report(result: dict) -> None:
         f"- Компонент: **{component.get('name') or result['component_key']}** (`{result['component_key']}`, "
         f"origin `{component.get('origin')}`, status `{component.get('status')}`, confirmed `{component.get('confirmed')}`).",
         f"- Физических observed-мастеров в итоговом реестре: **{result['observed_master_count']}**; "
-        f"целевой тариф сохранён через предусмотренный fallback как `{result['initial_pool']}`.",
+        f"целевой тариф выбран из `{result['initial_pool']}`.",
         f"- Fidelity: status `{fidelity.get('status') or component.get('status') or '—'}`, AI review `{(fidelity.get('aiReview') or {}).get('verdict') or 'не требовался'}`.",
         f"- Вариант: **Со скидкой** (`{result['variant_key']}`, origin `user`) сохранён через кнопку `data-act=save-ds-variant`.",
-        "- Панель «Компоненты» вставила секцию с совпадающим `sourceMeta.componentRef.componentKey`.",
+        f"- Панель «Компоненты» вставила мастер и вариант с совпадающим `sourceMeta.componentRef.componentKey`; "
+        f"для варианта UI отправил `variantKey={result['inserted_variant_key']}`.",
         "",
         "## Редактор и артефакты",
         "",
@@ -489,6 +617,7 @@ def write_report(result: dict) -> None:
         "",
         "- `artifacts/slsbmb/design-system.json` — draft после сохранения пользовательского варианта.",
         "- `artifacts/slsbmb/product-card.master.json` / `.png` — мастер.",
+        "- `artifacts/slsbmb/product-card.source-crop.png` — исходный crop evidence для observed-мастера (если evidence доступен).",
         "- `artifacts/slsbmb/product-card.variant.json` / `.png` — вариант со скидкой.",
         "- `artifacts/slsbmb/editor.master.png` / `editor.variant.png` — состояния DNA Editor.",
         "",
@@ -498,16 +627,14 @@ def write_report(result: dict) -> None:
         f"Quality Pass: score `{scorecard.get('score', 'недоступен')}`, verdict `{scorecard.get('verdict', 'недоступен')}`, passed `{quality.get('passed', 'недоступно')}`.",
         f"Замечания судьи: `{json.dumps(judge_issues, ensure_ascii=False) if judge_issues else 'нет данных'}`.",
         "",
-        "## Причина ошибок и fallback",
+        "## Ошибки захвата и fallback",
         "",
-        "- Все 7 ошибочных полноразмерных блоков завершаются одинаково: `meta/fontFaces ... is too long`. "
-        "Capture создаёт 16 записей fontFaces, а `schema/design-ir.schema.json` допускает максимум 12; "
-        "ошибка возникает на `_validate(ir)` до fidelity, поэтому увеличение LLM timeout или maxRegions её не исправляет.",
+        f"- До schema-фикса P5: 9 блоков, 7 ошибок `meta/fontFaces ... is too long`; после фикса P6: "
+        f"{result['source_blocks']} блоков, {result['source_block_errors']} ошибок. "
+        f"Текущие `block.error`: `{json.dumps(result.get('source_block_error_details') or [], ensure_ascii=False)}`.",
         "- Провайдер сервера — Codex CLI (`LLM_CLI_PROVIDER=codex`); full-page job завершился, provider-timeout не наблюдался.",
-        "- Desktop fallback `%APPDATA%/@designdna/desktop/data/projects.db` проверен: сохранённая slsbmb sourceimport-нода "
-        "содержит те же 9 блоков и те же 7 ошибок, поэтому её IR не использован как ложный observed-мастер.",
-        "- Безошибочный атом цены из Pricing и measured tokens использованы как evidence; полноценная карточка собрана "
-        "в редакторе и сохранена как user component согласно fallback-контракту задания.",
+        "- Пользовательский product-card из P5 используется только при физическом отсутствии observed pricing-card; "
+        "при наличии observed-кандидата, который не прошёл master-review, harness завершает прогон ошибкой вместо подмены origin.",
         "",
         "## Найденные дефекты приложения",
         "",
@@ -529,21 +656,27 @@ def write_report(result: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default=os.environ.get("BASE", "http://127.0.0.1:8431"))
+    parser.add_argument("--data-dir", default=os.environ.get("DESIGNDNA_DATA_DIR", str(ROOT / ".tmp-data-p6")),
+                        help="font/blob store used by the dedicated server and offline artifact renderer")
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--source-timeout-s", type=int, default=int(os.environ.get("LLM_CLI_TIMEOUT_S", "900")))
     parser.add_argument("--max-regions", type=int, default=3,
                         help="recorded repair budget for Source Import diagnostics")
-    parser.add_argument("--quality-min-score", type=int, default=70)
+    parser.add_argument("--quality-min-score", type=int, default=80)
+    parser.add_argument("--require-observed", action="store_true",
+                        help="fail instead of using the P5 user fallback when no observed pricing-card exists")
     args = parser.parse_args()
+    os.environ["DESIGNDNA_DATA_DIR"] = str(Path(args.data_dir).resolve())
     result = run(
         args.base.rstrip("/"), not args.headed,
         source_timeout_s=args.source_timeout_s,
         max_regions=args.max_regions,
         quality_min_score=args.quality_min_score,
+        require_observed=args.require_observed,
     )
     # ir_render opens its own synchronous Playwright driver and therefore must run
     # after the UI browser context above has fully closed.
-    render_artifacts(result.pop("master_ir"), result.pop("variant_ir"))
+    render_artifacts(result.pop("master_ir"), result.pop("variant_ir"), result.pop("source_crop", ""))
     write_report(result)
     print(json.dumps({"ok": True, "report": str(RESULT), "component": result["component_key"]}, ensure_ascii=False))
 

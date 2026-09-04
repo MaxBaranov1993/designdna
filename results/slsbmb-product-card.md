@@ -1,44 +1,38 @@
-# SLSBMB: карточка товара из Source Import в DNA Editor
+# SLSBMB: наблюдённый мастер тарифной карточки
 
 ## Итог
 
-- Источник захвата: **live full-page plus live selective Pricing retry** (`https://slsbmb.com`).
-- Полный Source Import: job `complete`, **9** блоков, **7** ошибок (`cta, cta-2, section, gallery, section-2, pricing, footer`).
-- Селективный Pricing-import: без ошибок восстановлено **4** из 7 атомов (`pricing-scan-eyebrow, pricing-scan-title, pricing-scan-copy, pricing-scan-price`); ожидание 900 с, заданный бюджет maxRegions=3 (repair неприменим без валидного IR).
-- Design System: `ds-98d49b55acd6`; опубликована ревизия **v7**.
-- Компонент: **AI Market Scan** (`product-card`, origin `user`, status `verified`, confirmed `True`).
-- Физических observed-мастеров в итоговом реестре: **0**; целевой тариф сохранён через предусмотренный fallback как `user-fallback`.
-- Fidelity: status `verified`, AI review `не требовался`.
-- Вариант: **Со скидкой** (`user-1`, origin `user`) сохранён через кнопку `data-act=save-ds-variant`.
-- Панель «Компоненты» вставила секцию с совпадающим `sourceMeta.componentRef.componentKey`.
+- Источник: live Source Import `https://slsbmb.com`, сервер `127.0.0.1:8431`, чистый `DESIGNDNA_DATA_DIR=.tmp-data-p6`, `LLM_CLI_PROVIDER=codex`, timeout 900 секунд. Запросы `**/api/project/load|save` замоканы в Playwright-harness.
+- До полного schema-fix (P5): 9 блоков, 7 ошибок `meta/fontFaces ... is too long`. После фикса `design-ir.schema.json` и `design-ir-1.0.schema.json`: 9 блоков, 0 ошибок; `block.error` после фикса: `[]`.
+- Селективный Pricing-capture: 9/9 блоков без ошибок, включая цельные `.sls-price-panel.sls-price-map` и `.sls-price-panel.sls-price-engine` и семь измеряемых атомов.
+- Design System `ds-98d49b55acd6` опубликована как revision 4. В реестре 17 компонентов, review pool пуст; 12 review-мастеров получили AI-review, после review/repair незавершённых review-компонентов нет.
+- Целевой мастер: `list-item`, семантические метаданные исправлены по observed evidence на **Sending Engine**, category `pricing`, canonicalRole `pricing-card`; origin `observed`, status `verified`, confirmed `true`. Пользовательский `product-card` из P5 не использован.
+- Fidelity observed-мастера: desktop 97.03, tablet 96.62, mobile 95.55 pixel similarity; bbox p95 3 px, paint coverage 100%, source gate passed на всех трёх viewport.
 
-## Редактор и артефакты
+## Редактор, вариант и повторное использование
 
-Мастер и вариант реально открыты в DNA Editor; сняты полные скриншоты редактора и отдельные PNG через `app/ir_render.py`.
+- Мастер открыт через `applyDesignSystemToEditor` в ноде «Редактор (DNA)»; состояние сохранено в `editor.master.png`.
+- Через `data-act=save-ds-variant` сохранён пользовательский вариант **«Со скидкой»**, key `user-1`; затем draft перепубликован, чтобы вариант был доступен нормальному UI реестра.
+- Панель «Компоненты» вставила default-мастер с точным `sourceMeta.componentRef.componentKey=list-item`, затем UI отправил второй `/api/design-system/component-section` с `componentKey=list-item`, `variantKey=user-1`; число точных componentRef в editor draft выросло.
+- Вариант меняет строку описания на `$400 launch · 20% off`; состояние редактора сохранено в `editor.variant.png`.
 
-- `artifacts/slsbmb/design-system.json` — draft после сохранения пользовательского варианта.
-- `artifacts/slsbmb/product-card.master.json` / `.png` — мастер.
-- `artifacts/slsbmb/product-card.variant.json` / `.png` — вариант со скидкой.
-- `artifacts/slsbmb/editor.master.png` / `editor.variant.png` — состояния DNA Editor.
+## Master review и Quality Pass
 
-## AI review и судья
+- Целевой Sending Engine master сразу прошёл детерминированный fidelity gate и находился в verified registry; master-review был выполнен для review pool и довёл остальные 12 кандидатов до approved/verified.
+- Quality Pass с ошибочным требованием встроенного CTA дал 78/100 и `needs_repair`: судья верно заметил, что CTA отсутствует внутри карточки.
+- Повторная оценка точного observed-boundary дала **92/100**, verdict `pass`. Два minor-замечания: слабая читаемость горизонтальной линии и слишком приглушённые подписи `/ month` / `CAMPAIGN SENDS / DAY`.
+- Поле API `passed=false`, несмотря на score 92, потому что общий детерминированный page-linter применяет к exact component capture правила полной страницы: требует H1, 8px-округление высоты, font size ≥12 и трактует DOM overlay/background layers как overlap. Это отдельная несовместимость Quality Pass с observed component masters; целевой порог оценки ≥80 достигнут.
 
-Master-review: `verified user-master не требовал AI repair`.
-Quality Pass: score `84`, verdict `needs_repair`, passed `False`.
-Замечания судьи: `[{"category": "hierarchy", "severity": "major", "path": "tree[0].children[0].children[5]", "problem": "Основной CTA имеет ширину около 263 px вместо заданных 700 px, поэтому выглядит второстепенным и не продолжает общую ширину блока преимуществ.", "instruction": "Растянуть кнопку до ширины контейнера контента — 700 px при текущем размере карточки — сохранив высоту 54 px и выравнивание текста по центру."}, {"category": "rhythm", "severity": "minor", "path": "tree[0].children[0].children[5]", "problem": "После полноширинного блока преимуществ резко появляется короткий элемент, из-за чего левый край композиции перегружен, а справа образуется необоснованный провал.", "instruction": "Сделать CTA полноширинным; остальные вертикальные интервалы оставить без изменений."}]`.
+## Source crop и артефакты
 
-## Причина ошибок и fallback
+- `artifacts/slsbmb/design-system.json` — опубликованная revision 4 с observed-мастером и вариантом.
+- `artifacts/slsbmb/product-card.master.json` / `.png` — exact Sending Engine master.
+- `artifacts/slsbmb/product-card.variant.json` / `.png` — вариант «Со скидкой».
+- `artifacts/slsbmb/product-card.source-crop.png` — crop исходного Pricing evidence по `sourceRef.bounds` для визуального сравнения с master render.
+- `artifacts/slsbmb/editor.master.png` / `editor.variant.png` — мастер и вариант в DNA Editor.
 
-- Все 7 ошибочных полноразмерных блоков завершаются одинаково: `meta/fontFaces ... is too long`. Capture создаёт 16 записей fontFaces, а `schema/design-ir.schema.json` допускает максимум 12; ошибка возникает на `_validate(ir)` до fidelity, поэтому увеличение LLM timeout или maxRegions её не исправляет.
-- Провайдер сервера — Codex CLI (`LLM_CLI_PROVIDER=codex`); full-page job завершился, provider-timeout не наблюдался.
-- Desktop fallback `%APPDATA%/@designdna/desktop/data/projects.db` проверен: сохранённая slsbmb sourceimport-нода содержит те же 9 блоков и те же 7 ошибок, поэтому её IR не использован как ложный observed-мастер.
-- Безошибочный атом цены из Pricing и measured tokens использованы как evidence; полноценная карточка собрана в редакторе и сохранена как user component согласно fallback-контракту задания.
+## Что осталось
 
-## Найденные дефекты приложения
-
-- Selective Pricing retry recovered 4/7 observed atoms with one desktop viewport; maxRegions=3.
-- No physical observed pricing-card boundary survived Source Import; saved a confirmed verified user product-card from observed Pricing atoms and DS tokens.
-
-## Продуктовый смысл
-
-Сценарий закрывает разрыв конкурентов между импортом реального сайта и повторным использованием: один и тот же проверяемый мастер доступен как редактируемый DNA-компонент, пользовательский вариант и вставляемая strict-ссылка, а не как одноразовая картинка.
+- На live-странице один общий CTA расположен над двумя тарифными панелями, а не внутри AI Market Scan / Sending Engine. Добавлять его внутрь exact master нельзя без ложного `origin=observed`; это расхождение исходной DOM-границы с формулировкой desired component.
+- Builder первоначально назвал observed boundary `List item`, хотя `sourceLabel` и содержимое — Sending Engine; harness исправил только метаданные, не IR/evidence. Автоматическую семантическую классификацию builder стоит улучшить отдельно.
+- Quality Pass должен иметь component-mode для exact observed masters, чтобы page-level H1/grid/min-font/overlay правила не делали `passed=false` при vision score 92 и fidelity >95.
