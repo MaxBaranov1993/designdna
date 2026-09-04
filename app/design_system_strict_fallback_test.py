@@ -107,21 +107,39 @@ def test_strict_materializes_pinned_master_when_it_exceeds_the_context_budget(mo
     monkeypatch.setattr(art_direction, "create_design_brief", lambda *_args, **_kwargs: [])
     reference = deepcopy(master)
     reference.setdefault("meta", {})["_dsMaster"] = {"systemId": "ds-pricing", "componentKey": "list-item"}
-    for prepare_only in (True, False):
-        response = server.generate(server.GenerateReq(
-            brief="карточка тарифа", count=2, prepareOnly=prepare_only, referenceIrs=[reference],
-            designSystem={"systemId": "ds-pricing", "revision": 1, "usageMode": "strict", "tokenBudget": 320},
-        ))
-        assert response.get("prompts") == [], prepare_only
-        assert len(response["variants"]) == 1
-        variant = response["variants"][0]
-        assert variant["meta"]["strictRecovery"] == "exact-master-materialized"
-        assert variant["meta"]["strictRecoveryReason"] == "pinned-master-exceeds-context-budget"
-        log = response["generationLog"]
-        assert log["strictRecovery"] == "exact-master-materialized"
-        assert log["designSystem"]["pinnedMaster"] == "list-item"
-        assert log["designSystem"]["recovered"]["reason"] == "pinned-master-exceeds-context-budget"
-        assert response["qa"][0]["recovery"] == "exact-master-materialized"
+    ds = {"systemId": "ds-pricing", "revision": 1, "usageMode": "strict", "tokenBudget": 320}
+    # prepareOnly (десктоп): точная копия + промпты на переписывание контента, без IR в промпте
+    prepared = server.generate(server.GenerateReq(brief="карточка тарифа", count=2, prepareOnly=True,
+                                                  referenceIrs=[reference], designSystem=ds))
+    slots = server._content_slots(prepared["variants"][0])
+    assert slots and prepared["contentRewrite"]["slots"] == len(slots)
+    assert len(prepared["prompts"]) == 2
+    user_prompt = prepared["prompts"][0]["messages"][1]["content"]
+    assert "карточка тарифа" in user_prompt and slots[0]["id"] in user_prompt and "tree" not in user_prompt
+    # второй вызов с ответами модели: тот же мастер, другой контент; strict-копия остаётся валидной
+    answer = json.dumps({"slots": [{"id": slots[0]["id"], "text": "Новый заголовок тарифа"}]}, ensure_ascii=False)
+    response = server.generate(server.GenerateReq(brief="карточка тарифа", count=2, rawOutputs=[answer, "not json"],
+                                                  referenceIrs=[reference], designSystem=ds))
+    assert response.get("prompts") == []
+    assert len(response["variants"]) == 2
+    first, second = response["variants"]
+    assert first["meta"]["strictRecovery"] == "exact-master-materialized"
+    assert first["meta"]["strictRecoveryReason"] == "pinned-master-exceeds-context-budget"
+    assert first["meta"]["contentRewrite"]["replaced"] == 1
+    found, value = __import__("qualitygate").get_path(first, slots[0]["path"])
+    assert found and value == "Новый заголовок тарифа"
+    assert second["meta"]["contentRewrite"]["replaced"] == 0 and "JSON" in second["meta"]["contentRewrite"]["error"]
+    log = response["generationLog"]
+    assert log["strictRecovery"] == "exact-master-materialized"
+    assert log["designSystem"]["pinnedMaster"] == "list-item"
+    assert log["contentRewrite"]["slots"] == len(slots)
+    assert response["qa"][0]["recovery"] == "exact-master-materialized"
+    context = resolver.resolve_context(document, "карточка тарифа", usage_mode="strict", pinned_keys=["list-item"])
+    assert resolver.validate_generation(first, context)["errors"] == []
+    # серверный путь без rawOutputs зовёт модель сам
+    monkeypatch.setattr(server.llm, "chat", lambda *_a, **_k: answer)
+    direct = server.generate(server.GenerateReq(brief="карточка тарифа", count=1, referenceIrs=[reference], designSystem=ds))
+    assert direct["variants"][0]["meta"]["contentRewrite"]["replaced"] == 1
 
 
 def test_exact_copy_inside_component_ref_is_trusted_and_placement_does_not_mutate_shape() -> None:

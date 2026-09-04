@@ -648,6 +648,93 @@ def _materialize_exact_master(primary: dict, ds_context: dict, ds_compiled: dict
     return (recovered if not check["errors"] else None), check
 
 
+_CONTENT_SLOT_KEYS = ("text", "title", "placeholder", "value", "label", "alt")
+_CONTENT_SLOT_LIMIT = 80
+
+
+def _content_slots(ir: dict) -> list[dict]:
+    """Текстовые слоты точной копии мастера: {id, path, key, role, text}.
+
+    Модель переписывает только их — структура, стили и геометрия мастера
+    остаются пиннутыми (component_shape_hash игнорирует контентные ключи)."""
+    slots: list[dict] = []
+
+    def role_of(node: dict, key: str) -> str:
+        if node.get("typeRole"):
+            return str(node["typeRole"])
+        t = str(node.get("type") or "")
+        if t == "heading":
+            return f"h{node.get('level') or 2}"
+        if t in ("button", "badge", "input", "stat"):
+            return t if key != "placeholder" else "placeholder"
+        return "text"
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for key in _CONTENT_SLOT_KEYS:
+                value = node.get(key)
+                if isinstance(value, str) and value.strip() and len(slots) < _CONTENT_SLOT_LIMIT:
+                    slots.append({"id": f"s{len(slots) + 1}", "path": f"{path}.{key}", "key": key,
+                                  "role": role_of(node, key), "text": value})
+            for i, child in enumerate(node.get("children") or []):
+                walk(child, f"{path}.children.{i}")
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                walk(item, f"{path}.{i}")
+
+    for i, section in enumerate(ir.get("tree") or []):
+        walk(section, f"tree.{i}")
+    return slots
+
+
+def _content_rewrite_messages(slots: list[dict], brief: str, ds_doc: dict | None,
+                              variant_index: int, count: int, rules_block: str = "") -> list[dict]:
+    """Промпт «тот же мастер, другой контент»: только слоты, без IR — влезает в любой бюджет."""
+    site = (ds_doc or {}).get("siteBrief") or {}
+    voice = {k: site.get(k) for k in ("summary", "audience", "offer", "tone") if site.get(k)}
+    system = (
+        "Ты копирайтер и дизайнер интерфейсов. Тебе дан список текстовых слотов существующего компонента "
+        "дизайн-системы (структура, стили и геометрия зафиксированы и меняться не будут). "
+        "Перепиши тексты под бриф: тот же смысловой порядок и роли слотов, близкая длина (±30%), "
+        "тот же формат чисел/валют, без плейсхолдеров и «Lorem». Язык — как в брифе, если бриф не просит иначе. "
+        "Верни ТОЛЬКО JSON вида {\"slots\": [{\"id\": \"s1\", \"text\": \"...\"}, ...]} со всеми id из списка."
+    )
+    user = (
+        f"## Бриф\n{brief}\n\n"
+        + (f"## Голос сайта\n{json.dumps(voice, ensure_ascii=False)}\n\n" if voice else "")
+        + (f"{rules_block}\n\n" if rules_block else "")
+        + (f"Вариант {variant_index} из {count}: сделай контент отличным от других вариантов "
+           f"(другие акценты/формулировки при том же смысле).\n\n" if count > 1 else "")
+        + "## Слоты (id · роль · текущий текст)\n"
+        + "\n".join(f"{s['id']} · {s['role']} · {json.dumps(s['text'], ensure_ascii=False)}" for s in slots)
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _apply_content_answer(ir: dict, slots: list[dict], raw: str) -> tuple[dict, int, str]:
+    """Применить ответ модели к копии мастера. Возвращает (ir, число заменённых слотов, ошибка)."""
+    out = copy.deepcopy(ir)
+    try:
+        parsed = json.loads(llm.extract_json(raw or ""))
+    except Exception as exc:  # noqa: BLE001 — ответ модели произвольный
+        return out, 0, f"ответ не JSON: {exc}"
+    items = parsed.get("slots") if isinstance(parsed, dict) else parsed
+    if not isinstance(items, list):
+        return out, 0, "в ответе нет slots"
+    by_id = {str(item.get("id")): item.get("text") for item in items
+             if isinstance(item, dict) and isinstance(item.get("text"), str)}
+    replaced = 0
+    for slot in slots:
+        text = by_id.get(slot["id"])
+        if text is None or text == slot["text"]:
+            continue
+        found, container = qualitygate.get_path(out, slot["path"].rsplit(".", 1)[0])
+        if found and isinstance(container, dict):
+            container[slot["key"]] = text.strip()[:600]
+            replaced += 1
+    return out, replaced, ""
+
+
 def _generate(req: GenerateReq, run_id: str | None):
     # Browser mode may explicitly select a direct API account. Codex is a
     # desktop-only transport, so unknown/desktop values fall back to ROUTING.
@@ -720,12 +807,49 @@ def _generate(req: GenerateReq, run_id: str | None):
             if recovered is None:
                 return err(422, "Design System Strict: exact master не помещается в выбранный context budget. "
                                 "Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")
-            run_registry.stage(run_id, "design-system", "Материализую точный мастер ДС (модель не нужна)")
+            run_registry.stage(run_id, "design-system", "Материализую точный мастер ДС, модель переписывает контент")
             recovered = ensure_current_ir(recovered, source="generate")
             key = str(primary.get("componentKey") or "")
+            # Тот же мастер — другой контент: точная копия референса как результат
+            # бессмысленна, поэтому модель переписывает только текстовые слоты по брифу.
+            slots = _content_slots(recovered)
+            content_prompts = [_content_rewrite_messages(slots, brief, ds_doc, n + 1, count, rules_block)
+                               for n in range(count)] if slots else []
+            if req.prepareOnly:
+                return {
+                    "variants": [recovered], "errors": [], "prompts": [{"messages": m} for m in content_prompts],
+                    "contentRewrite": {"slots": len(slots), "componentKey": key},
+                    "design": {"type": ptype, "label": pinfo["label"]},
+                }
+            variants_out, journal_lines, errors_out = [], [], []
+            for n in range(count):
+                if not slots:
+                    variants_out.append(copy.deepcopy(recovered))
+                    journal_lines.append(["у мастера нет текстовых слотов — отдана точная копия"])
+                    continue
+                if req.rawOutputs is not None:
+                    raw = req.rawOutputs[n] if n < len(req.rawOutputs) else ""
+                else:
+                    run_registry.stage(run_id, "llm", f"Модель переписывает контент мастера ({n + 1}/{count})")
+                    try:
+                        raw = llm.chat(provider, content_prompts[n], 0.7, role="edit", reasoning_effort=effort)
+                    except Exception as exc:  # noqa: BLE001
+                        raw = ""
+                        errors_out.append({"index": n + 1, "error": f"контент: {exc}"})
+                variant, replaced, apply_error = _apply_content_answer(recovered, slots, raw)
+                variant = ensure_current_ir(variant, source="generate")
+                variant.setdefault("meta", {})["contentRewrite"] = {"slots": len(slots), "replaced": replaced,
+                                                                    **({"error": apply_error} if apply_error else {})}
+                variants_out.append(variant)
+                journal_lines.append([
+                    f"strict: мастер «{key}» ≈{ds_compiled.get('estimatedTokens')} токенов не влезает в бюджет "
+                    f"{ds_compiled.get('tokenBudget')} — точная копия мастера, модель переписала контент",
+                    f"контент: заменено {replaced} из {len(slots)} слотов" + (f" ({apply_error})" if apply_error else ""),
+                ])
             return {
-                "variants": [recovered], "errors": [], "prompts": [],
-                "qa": [{"index": 1, "fixed": 0, "violations": [], "recovery": "exact-master-materialized"}],
+                "variants": variants_out, "errors": errors_out, "prompts": [],
+                "qa": [{"index": n + 1, "fixed": 0, "violations": [], "recovery": "exact-master-materialized"}
+                       for n in range(len(variants_out))],
                 "design": {"type": ptype, "label": pinfo["label"]},
                 "generationLog": {
                     "product": pinfo["label"], "mode": mode, "tokensLocked": True,
@@ -745,10 +869,10 @@ def _generate(req: GenerateReq, run_id: str | None):
                     },
                     "pinnedMaster": key,
                     "strictRecovery": "exact-master-materialized",
-                    "variants": [{"index": 1, "autofixes": 0, "journal": [
-                        f"strict: мастер «{key}» ≈{ds_compiled.get('estimatedTokens')} токенов не влезает в бюджет "
-                        f"{ds_compiled.get('tokenBudget')} — отдана точная копия мастера без вызова модели"],
-                        "lint": [], "recovery": "exact-master-materialized"}],
+                    "contentRewrite": {"slots": len(slots)},
+                    "variants": [{"index": n + 1, "autofixes": 0, "journal": journal_lines[n],
+                                  "lint": [], "recovery": "exact-master-materialized"}
+                                 for n in range(len(variants_out))],
                 },
                 "designSystem": {"ref": ds_context.get("systemRef"), "errors": [], "warnings": (recovered_check or {}).get("warnings") or [],
                                  "recovered": {"componentKey": key, "reason": "pinned-master-exceeds-context-budget"}},
