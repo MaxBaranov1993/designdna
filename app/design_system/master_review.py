@@ -6,8 +6,12 @@
 рендер мастера, ищет РЕАЛЬНЫЕ дефекты (пропавшие элементы, иной перенос
 строк, наложения, чужой шрифт/вес, другие цвета) и выносит вердикт.
 Одобренный мастер переезжает в реестр со статусом verified и записью
-``fidelity.aiReview``; отклонённый остаётся на ревью с конкретными дефектами.
-Сам masterIr агент не меняет — это точная копия источника.
+``fidelity.aiReview``; отклонённый уходит в цикл починки
+(`master_repair.repair_master`), где второй агент правит только визуальные
+каналы (цвета с альфой, рамки, тени, вес, трекинг, прозрачность) и тот же судья
+пересматривает результат. Не починенный мастер остаётся на ревью с конкретными
+дефектами. Геометрию, текст и состав узлов не меняет никто: это точная копия
+источника.
 """
 from __future__ import annotations
 
@@ -163,9 +167,16 @@ def _data_url(png: bytes) -> str:
 
 def run(document: dict, *, provider: str = "auto", viewport: str = "desktop", max_components: int = 8,
         chat_vision: Callable[..., str] | None = None,
-        render: Callable[[Any, dict, str], bytes] | None = None) -> tuple[dict, list[dict]]:
-    """Прогнать AI-ревью по кандидатам. Возвращает (обновлённый документ, вердикты)."""
-    from . import styleguide
+        render: Callable[[Any, dict, str], bytes] | None = None,
+        repair: bool = True, chat_repair: Callable[..., str] | None = None,
+        repair_rounds: int = 3) -> tuple[dict, list[dict]]:
+    """Прогнать AI-ревью по кандидатам. Возвращает (обновлённый документ, вердикты).
+
+    Отклонённый мастер не остаётся ждать человека: при ``repair`` включается
+    цикл `master_repair.repair_master` — второй агент чинит визуальные каналы, а
+    тот же судья пересматривает результат.
+    """
+    from . import master_repair, styleguide
 
     updated = copy.deepcopy(document)
     candidates = review_candidates(updated)[:max(1, int(max_components))]
@@ -176,6 +187,11 @@ def run(document: dict, *, provider: str = "auto", viewport: str = "desktop", ma
         import llm_client
         chat_vision = lambda images, prompt: llm_client.chat_vision(  # noqa: E731
             provider if provider != "auto" else "auto", images, prompt, REVIEW_SYSTEM, 0.1, role="quality_judge")
+    if chat_repair is None:
+        import llm_client
+        chat_repair = lambda images, prompt: llm_client.chat_vision(  # noqa: E731
+            provider if provider != "auto" else "auto", images, prompt,
+            master_repair.REPAIR_SYSTEM, 0.1, role="quality_judge")
     render_fn = render or render_master_png
 
     def _review_all(page) -> None:
@@ -188,10 +204,24 @@ def run(document: dict, *, provider: str = "auto", viewport: str = "desktop", ma
                 master_png = render_fn(page, comp, viewport)
                 raw = chat_vision([original, _data_url(master_png)], build_prompt(comp, viewport))
                 verdict = parse_verdict(raw)
+                repair_result = None
+                if repair and not verdict["approved"]:
+                    repair_result = master_repair.repair_master(
+                        updated, key, comp, verdict, chat_repair=chat_repair, chat_vision=chat_vision,
+                        render=render_fn, viewport=viewport, max_rounds=repair_rounds,
+                        page=page, original=original)
+                    verdict = repair_result["verdict"]
                 apply_verdict(updated, key, verdict, provider=provider, viewport=viewport)
+                if repair_result is not None:
+                    # apply_verdict переписывает aiReview целиком — след починки
+                    # дописываем поверх итоговой записи.
+                    master_repair.annotate_review(comp, repair_result)
                 entry.update(verdict)
+                entry["repaired"] = bool(repair_result and repair_result["repaired"])
+                entry["rounds"] = int(repair_result["rounds"]) if repair_result else 0
             except Exception as exc:  # noqa: BLE001 — один сбой не должен ронять ревью остальных
-                entry.update({"approved": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
+                entry.update({"approved": False, "repaired": False, "rounds": 0,
+                              "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
             results.append(entry)
 
     if render is not None:
