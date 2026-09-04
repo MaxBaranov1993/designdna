@@ -1770,6 +1770,11 @@ def _collect_used_font_weights(node, out: dict[str, set[int]]) -> None:
         _collect_used_font_weights(ch, out)
 
 
+# Лимит meta.fontFaces: должен совпадать с maxItems в schema/design-ir.schema.json,
+# иначе блоки с богатой типографикой падают на схеме до fidelity (slsbmb: 16 faces).
+MAX_FONT_FACES = 48
+
+
 def _resolve_font_faces(raw_faces: list, used: set,
                         used_weights: dict[str, set[int]] | None = None,
                         download_cache: dict[str, bytes | None] | None = None) -> list:
@@ -1780,8 +1785,9 @@ def _resolve_font_faces(raw_faces: list, used: set,
     # Раньше лимит был 12 faces: у страницы с тремя семьями × subsets × веса
     # (Hanken 400/500/600/700 × 2) он срезал JetBrains Mono 500/600, и рендер
     # синтезировал faux-bold там, где сайт объявляет 500 поверх файла 400.
-    # Сначала — faces с реально используемыми весами, потом остальные; лимит 48.
-    max_faces = 48
+    # Сначала — faces с реально используемыми весами, потом остальные; лимит —
+    # MAX_FONT_FACES, тот же, что maxItems у meta.fontFaces в схеме IR.
+    max_faces = MAX_FONT_FACES
     used_weights = used_weights or {}
 
     def _face_used_weight(face: dict) -> bool:

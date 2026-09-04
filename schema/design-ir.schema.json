@@ -47,7 +47,7 @@
         },
         "fontFaces": {
           "type": "array",
-          "maxItems": 12,
+          "maxItems": 48,
           "items": {
             "type": "object",
             "required": [
