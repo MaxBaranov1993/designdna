@@ -17,7 +17,7 @@ import typography
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = ROOT / "schema" / "design-brief.schema.json"
 CACHE_KIND = "art_direction"
-CACHE_VERSION = "design-brief/1.0"
+CACHE_VERSION = "design-directions/1.0"
 
 
 def load_schema() -> dict:
@@ -32,28 +32,50 @@ def validate_design_brief(value: dict) -> dict:
     return value
 
 
-def cache_key(brief: Any, product_type: str) -> str:
+def cache_key(
+    brief: Any,
+    product_type: str,
+    style_dna: dict | None = None,
+    *,
+    count: int = 1,
+) -> str:
     canonical = json.dumps(
-        {"version": CACHE_VERSION, "brief": brief, "productType": product_type},
+        {
+            "version": CACHE_VERSION,
+            "brief": brief,
+            "productType": product_type,
+            "styleDNA": style_dna,
+            "count": count,
+        },
         ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _prompt(brief: Any, product_type: str, style_dna: dict | None) -> list[dict]:
+def _prompt(brief: Any, product_type: str, style_dna: dict | None, count: int) -> list[dict]:
     pair_catalog = [
         {"id": name, "display": typography.PAIRS_BY_NAME[name]["display"],
          "body": typography.PAIRS_BY_NAME[name]["body"]}
         for name in typography.ART_DIRECTION_PAIR_NAMES
     ]
-    system = (
-        "You are the art-direction stage for a product UI generator. Return JSON only, "
-        "matching the supplied DesignBrief schema exactly. Settle one bold, coherent aesthetic. "
-        "Use exactly one rhythm.risk. Accent hues share the one accent lightness and chroma."
-    )
+    if count == 1:
+        system = (
+            "You are the fast art-direction stage for a product UI generator. Return JSON only, "
+            "matching the supplied DesignBrief schema exactly. Settle one bold, coherent aesthetic. "
+            "Use exactly one rhythm.risk. Accent hues share the one accent lightness and chroma."
+        )
+    else:
+        system = (
+            "You are the fast art-direction stage for a product UI generator. Return JSON only as "
+            "an object with a directions array of exactly the requested count. Each direction must "
+            "have id, label, motivation, tradeoff, and designBrief. Make the directions materially "
+            "different in composition, rhythm, and hero shape, not merely palette swaps. Each "
+            "designBrief must match the supplied DesignBrief schema exactly, use one rhythm.risk, "
+            "and keep accent hues on one shared lightness and chroma."
+        )
     payload = {
         "brief": brief, "productType": product_type, "styleDNA": style_dna,
-        "typePairs": pair_catalog, "schema": load_schema(),
+        "count": count, "typePairs": pair_catalog, "designBriefSchema": load_schema(),
     }
     return [{"role": "system", "content": system},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
@@ -65,28 +87,76 @@ def create_design_brief(
     *,
     style_dna: dict | None = None,
     provider: str | None = None,
-) -> dict:
-    """Create or load a DesignBrief cached by the source brief and product type."""
+    count: int = 1,
+    generate_if_missing: bool = True,
+) -> dict | list[dict]:
+    """Create cached art direction(s) for a brief, product type and design system.
+
+    The legacy one-direction call returns a DesignBrief directly. ``count > 1``
+    returns direction records with public chip copy plus a validated DesignBrief.
+    """
     if not isinstance(product_type, str) or not product_type.strip():
         raise ValueError("product_type must be a non-empty string")
-    key = cache_key(brief, product_type)
+    count = max(1, min(int(count), 3))
+    key = cache_key(brief, product_type, style_dna, count=count)
     cached = cache_store.get(CACHE_KIND, key)
-    if isinstance(cached, dict):
+    if count == 1 and isinstance(cached, dict):
         return deepcopy(validate_design_brief(cached))
+    if count > 1 and isinstance(cached, list):
+        return deepcopy(_validate_directions(cached, count))
+    if not generate_if_missing:
+        raise LookupError("art direction is not cached")
 
     raw = llm.chat(
-        provider, _prompt(brief, product_type, style_dna), 0.2,
+        provider, _prompt(brief, product_type, style_dna, count), 0.2,
         timeout=30, role="art-direction", reasoning_effort="medium",
     )
     try:
         result = json.loads(llm.extract_json(raw))
     except (TypeError, json.JSONDecodeError) as exc:
         raise ValueError("art direction returned invalid JSON") from exc
-    if not isinstance(result, dict):
-        raise ValueError("art direction must return a JSON object")
-    validate_design_brief(result)
-    cache_store.put(CACHE_KIND, key, result)
-    return deepcopy(result)
+    if count == 1:
+        if not isinstance(result, dict):
+            raise ValueError("art direction must return a JSON object")
+        validate_design_brief(result)
+        cache_store.put(CACHE_KIND, key, result)
+        return deepcopy(result)
+
+    directions = result.get("directions") if isinstance(result, dict) else None
+    directions = _validate_directions(directions, count)
+    cache_store.put(CACHE_KIND, key, directions)
+    return deepcopy(directions)
+
+
+def _validate_directions(value: Any, count: int) -> list[dict]:
+    if not isinstance(value, list) or len(value) != count:
+        raise ValueError(f"art direction must return exactly {count} directions")
+    result: list[dict] = []
+    seen: set[str] = set()
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"direction {index} must be a JSON object")
+        direction_id = str(item.get("id") or "").strip()
+        label = str(item.get("label") or "").strip()
+        motivation = str(item.get("motivation") or "").strip()
+        tradeoff = str(item.get("tradeoff") or "").strip()
+        design_brief = item.get("designBrief")
+        if not direction_id or direction_id in seen:
+            raise ValueError(f"direction {index} must have a unique non-empty id")
+        if not label or not motivation or not tradeoff:
+            raise ValueError(f"direction {index} must have label, motivation, and tradeoff")
+        if not isinstance(design_brief, dict):
+            raise ValueError(f"direction {index} must have a DesignBrief")
+        validate_design_brief(design_brief)
+        seen.add(direction_id)
+        result.append({
+            "id": direction_id,
+            "label": label,
+            "motivation": motivation,
+            "tradeoff": tradeoff,
+            "designBrief": design_brief,
+        })
+    return result
 
 
 generate = create_design_brief

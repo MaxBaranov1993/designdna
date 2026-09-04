@@ -257,6 +257,7 @@ class GenerateReq(BaseModel):
     preset: str = ""  # стилевой пресет: minimal|bento|editorial|brutal|glass
     prepareOnly: bool = False
     rawOutputs: list[str] | None = None
+    selectedDirection: str = "all"
     # ТЗ §19: закреплённая ревизия дизайн-системы {systemId, revision, contentHash, usageMode}
     designSystem: dict | None = None
     # Существующие экраны проекта (порт reference): агент видит их паттерны и
@@ -587,6 +588,8 @@ def _generate(req: GenerateReq, run_id: str | None):
     memory_hint = project_store.build_prompt_memory_hint()
     memory = f"\n\n{memory_hint}" if memory_hint else ""
     mode = "edit" if has_style else "generate"
+    if run_registry.is_cancelled(run_id):
+        return err(CANCELLED_STATUS, "Генерация отменена")
     rules_block = project_rules.prompt_block("generation")
     reference_block = _reference_screens_block(req.referenceIrs)
     dna, complete_dna = _locked_generation_dna(req.tokens)
@@ -636,8 +639,77 @@ def _generate(req: GenerateReq, run_id: str | None):
         ds_prompt_block += "\n\n" + ds_style_review.profile_prompt(ds_doc)
         ds_prompt_block += _embed_mode_block(ds_usage_mode)
 
+    directions: list[dict] = []
+    art_direction_error = ""
+    exemplars = ""
+    if mode == "generate":
+        run_registry.stage(run_id, "art-direction", "Формирую три арт-направления")
+        try:
+            import art_direction
+            generated_directions = art_direction.create_design_brief(
+                brief,
+                ptype,
+                style_dna={"tokens": dna, "designSystem": req.designSystem},
+                provider=provider,
+                count=3,
+                generate_if_missing=req.rawOutputs is None,
+            )
+            if isinstance(generated_directions, list):
+                directions = generated_directions
+        except Exception as exc:
+            # Art direction raises the quality ceiling but is deliberately not
+            # a dependency: provider/cache failures keep generation available.
+            art_direction_error = str(exc)
+        exemplars = llm.load_exemplars(ptype, limit=3)
+
+    public_directions = [
+        {key: item[key] for key in ("id", "label", "motivation", "tradeoff")}
+        for item in directions
+    ]
+    requested_direction = str(req.selectedDirection or "all")
+    chosen_direction = next(
+        (item for item in directions if str(item.get("id")) == requested_direction),
+        None,
+    )
+    selected_direction = requested_direction if chosen_direction is not None else "all"
+
+    def direction_for(n: int) -> dict | None:
+        if chosen_direction is not None:
+            return chosen_direction
+        return directions[(n - 1) % len(directions)] if directions else None
+
+    def call_context_llm(user_content: str, direction: dict | None):
+        pending_chars = 0
+
+        def on_delta(delta: str) -> None:
+            nonlocal pending_chars
+            if run_registry.is_cancelled(run_id):
+                raise RuntimeError("cancelled")
+            pending_chars += len(delta)
+            if pending_chars >= 512:
+                run_registry.add_received_chars(run_id, pending_chars)
+                pending_chars = 0
+
+        try:
+            raw = llm.chat(provider, [
+                {"role": "system", "content": llm.build_system_prompt(
+                    mode,
+                    design_brief=(direction or {}).get("designBrief") or "",
+                    exemplars=exemplars,
+                )},
+                {"role": "user", "content": user_content},
+            ], 0.8 if mode == "generate" else 0.3,
+                role="generator" if mode == "generate" else "edit",
+                reasoning_effort=effort, on_delta=on_delta)
+        except Exception as exc:
+            return None, str(exc)
+        finally:
+            run_registry.add_received_chars(run_id, pending_chars)
+        return parse_ir_response(raw)
+
 
     def gen_one(n: int):
+        variant_direction = direction_for(n)
         if mode == "edit":
             user = (
                 f"## Reference context\n{req.styleHint.strip()}\n\n"
@@ -654,6 +726,15 @@ def _generate(req: GenerateReq, run_id: str | None):
                 f"## Brief\n{brief}\n\n"
                 f"Вариант {n} из {count}: сделай визуально отличное решение №{n} — "
                 f"{vary}, не повторяй другие варианты."
+            )
+        if mode == "generate" and variant_direction:
+            user += (
+                "\n\n## Assigned art direction\n"
+                f"ID: {variant_direction['id']}\n"
+                f"Label: {variant_direction['label']}\n"
+                f"Motivation: {variant_direction['motivation']}\n"
+                f"Tradeoff: {variant_direction['tradeoff']}\n"
+                "Follow this direction consistently; do not substitute another direction."
             )
         if req.seedTag:
             user += f"\nseedTag: {req.seedTag}"
@@ -732,14 +813,20 @@ def _generate(req: GenerateReq, run_id: str | None):
             ir, error = parse_ir_response(req.rawOutputs[n - 1])
         else:
             run_registry.stage(run_id, "llm", f"Модель генерирует IR ({count} вар.)" if count > 1 else "Модель генерирует IR")
-            ir, error = call_llm_ir(
-                provider, user, 0.8 if mode == "generate" else 0.3,
-                mode, effort, run_id=run_id,
-            )
+            if mode == "generate":
+                ir, error = call_context_llm(user, variant_direction)
+            else:
+                ir, error = call_llm_ir(provider, user, 0.3, mode, effort, run_id=run_id)
             run_registry.stage(run_id, "validate", "Проверка схемы и автофиксы")
         qa = None
         if ir is not None:
             ir = sanitize_generated_ir(ir)
+            if variant_direction:
+                ir.setdefault("meta", {})["direction"] = {
+                    "name": str(variant_direction["label"])[:60],
+                    "motivation": str(variant_direction["motivation"])[:200],
+                    "tradeoff": str(variant_direction["tradeoff"])[:200],
+                }
             if dna:
                 # Give QA the locked palette first; inline styles are applied
                 # after autofix so QA cannot silently overwrite the DNA lock.
@@ -777,16 +864,25 @@ def _generate(req: GenerateReq, run_id: str | None):
         return ir, error, qa
 
     if req.prepareOnly:
-        system = llm.build_system_prompt(mode)
+        prepared_directions = [direction_for(i + 1) for i in range(count)]
         return {
             "prompts": [
                 {"messages": [
-                    {"role": "system", "content": system},
+                    {"role": "system", "content": llm.build_system_prompt(
+                        mode,
+                        design_brief=(prepared_directions[i] or {}).get("designBrief") or "",
+                        exemplars=exemplars,
+                    )},
                     {"role": "user", "content": gen_one(i + 1)[0]},
                 ]}
                 for i in range(count)
             ],
             "design": {"type": ptype, "label": pinfo["label"]},
+            "directions": public_directions,
+            "variantDirections": [item["label"] if item else "" for item in prepared_directions],
+            "designBrief": ((prepared_directions[0] or {}).get("designBrief")
+                            if prepared_directions else None),
+            "designBriefs": [(item or {}).get("designBrief") for item in prepared_directions],
             **({"designSystem": {"ref": ds_context.get("systemRef"), **ds_compiled}}
                if ds_context is not None and ds_compiled else {}),
         }
@@ -888,6 +984,15 @@ def _generate(req: GenerateReq, run_id: str | None):
         "tokensLocked": bool(dna),
         "projectRules": bool(rules_block),
         "referenceScreens": len([x for x in (req.referenceIrs or []) if isinstance(x, dict)]),
+        "direction": {
+            "selected": selected_direction,
+            "variants": [
+                (variant.get("meta") or {}).get("direction", {}).get("name", "")
+                for variant in variants
+            ],
+            "degraded": not bool(directions),
+            **({"error": art_direction_error} if art_direction_error else {}),
+        },
         "designSystem": ({
             "name": (ds_doc or {}).get("name") or "",
             "systemId": (ds_context.get("systemRef") or {}).get("systemId"),
@@ -910,6 +1015,11 @@ def _generate(req: GenerateReq, run_id: str | None):
     }
     return {"variants": variants, "errors": errors, "qa": qa,
             "design": {"type": ptype, "label": pinfo["label"]},
+            "directions": public_directions,
+            "variantDirections": [
+                (variant.get("meta") or {}).get("direction", {}).get("name", "")
+                for variant in variants
+            ],
             "generationLog": generation_log,
             **({"designSystem": design_system_report} if design_system_report else {})}
 

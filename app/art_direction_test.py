@@ -28,6 +28,21 @@ def result() -> dict:
     }
 
 
+def directions() -> list[dict]:
+    items = []
+    for index, tone in enumerate(("technical", "editorial", "industrial"), start=1):
+        brief = result()
+        brief["tone"] = tone
+        items.append({
+            "id": f"direction-{index}",
+            "label": f"Direction {index}",
+            "motivation": f"Motivation {index}",
+            "tradeoff": f"Tradeoff {index}",
+            "designBrief": brief,
+        })
+    return items
+
+
 def test_art_direction_uses_fast_role_and_caches_by_brief_and_product(monkeypatch) -> None:
     stored: dict[tuple[str, str], dict] = {}
     calls = []
@@ -41,7 +56,7 @@ def test_art_direction_uses_fast_role_and_caches_by_brief_and_product(monkeypatc
 
     monkeypatch.setattr(art_direction.llm, "chat", fake_chat)
     first = art_direction.create_design_brief("Cash-flow SaaS", "saas", style_dna={"tone": "calm"})
-    second = art_direction.create_design_brief("Cash-flow SaaS", "saas", style_dna={"tone": "loud"})
+    second = art_direction.create_design_brief("Cash-flow SaaS", "saas", style_dna={"tone": "calm"})
 
     assert first == second == result()
     assert len(calls) == 1
@@ -50,8 +65,31 @@ def test_art_direction_uses_fast_role_and_caches_by_brief_and_product(monkeypatc
     assert calls[0][1]["timeout"] == 30
 
 
+def test_art_direction_returns_three_validated_cached_directions(monkeypatch) -> None:
+    stored: dict[tuple[str, str], object] = {}
+    calls = []
+    monkeypatch.setattr(art_direction.cache_store, "get", lambda kind, key: stored.get((kind, key)))
+    monkeypatch.setattr(art_direction.cache_store, "put",
+                        lambda kind, key, value: stored.__setitem__((kind, key), value))
+    monkeypatch.setattr(art_direction.llm, "chat", lambda *args, **kwargs: (
+        calls.append((args, kwargs)), json.dumps({"directions": directions()})
+    )[1])
+
+    first = art_direction.create_design_brief(
+        "Cash-flow SaaS", "saas", style_dna={"systemId": "ds-1"}, count=3)
+    second = art_direction.create_design_brief(
+        "Cash-flow SaaS", "saas", style_dna={"systemId": "ds-1"}, count=3,
+        generate_if_missing=False)
+
+    assert first == second == directions()
+    assert len(calls) == 1
+    assert calls[0][1]["role"] == "art-direction"
+
+
 def test_cache_key_changes_with_product_type_and_is_order_stable() -> None:
     left = art_direction.cache_key({"goal": "sell", "audience": "teams"}, "saas")
     right = art_direction.cache_key({"audience": "teams", "goal": "sell"}, "saas")
     assert left == right
     assert left != art_direction.cache_key({"audience": "teams", "goal": "sell"}, "marketplace")
+    assert left != art_direction.cache_key(
+        {"audience": "teams", "goal": "sell"}, "saas", {"systemId": "ds-1"})
