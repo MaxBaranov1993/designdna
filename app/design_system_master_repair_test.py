@@ -134,6 +134,25 @@ def test_validate_operations_accepts_alpha_hex_and_drops_geometry():
     assert master["tree"][0]["style"]["borderColor"] == "#8fb6ff"
 
 
+def test_restore_layout_is_bounded_and_keeps_content_structure():
+    master = _master()
+    operations = master_repair.validate_operations({"operations": [
+        {"op": "restore-layout", "sourceKey": "field-label", "property": "width", "value": 220},
+        {"op": "restore-layout", "sourceKey": "field-label", "property": "x", "value": 14},
+        # More than 20% and outside the section are rejected.
+        {"op": "restore-layout", "sourceKey": "field-label", "property": "height", "value": 40},
+        {"op": "restore-layout", "sourceKey": "field-label", "property": "y", "value": 100},
+    ]}, master)
+    assert operations == [
+        {"op": "restore-layout", "sourceKey": "field-label", "property": "width", "value": 220.0},
+        {"op": "restore-layout", "sourceKey": "field-label", "property": "x", "value": 14.0},
+    ]
+    fixed = master_repair.apply_operations(master, operations)
+    assert fixed["tree"][0]["children"][0]["frame"]["width"] == 220
+    assert fixed["tree"][0]["children"][0]["text"] == "Sending Engine"
+    assert master["tree"][0]["children"][0]["frame"]["width"] == 200
+
+
 def test_parse_operations_survives_prose_and_broken_json():
     master = _master()
     assert master_repair.parse_operations("no json here", master) == []

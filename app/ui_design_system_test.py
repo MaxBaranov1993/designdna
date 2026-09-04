@@ -181,6 +181,10 @@ def main() -> None:
               doc.components[key].states = Object.assign({}, doc.components[key].states || {}, {
                 hover: {origin: 'generated', confirmed: false, diff: {opacity: 0.92}},
               });
+              doc.components[key].fidelity = Object.assign({}, doc.components[key].fidelity || {}, {
+                polish: {accepted: true, defectsBefore: [{path:'tree.0',kind:'overflow',px:8}], defectsAfter: [], rounds: 1},
+              });
+              doc.components[key].polish = {before: structuredClone(doc.components[key].masterIr || doc.components[key].templateIr)};
               await state.saveDesignSystemDocument(id, doc);
             }""", ds_id)
             page.locator("[data-ds-editor] [data-ds-action='publish']").click()
@@ -207,6 +211,8 @@ def main() -> None:
             page.wait_for_selector("[data-ds-editor] [data-ds-component]")
             first_comp = page.locator("[data-ds-editor] [data-ds-component][data-ds-pool='components']").first
             first_comp.click()
+            check("polished master badge is visible",
+                  page.locator("[data-ds-editor] .ds-polish-badge", has_text="Доведён").count() >= 1)
             page.wait_for_selector("[data-ds-preview-host]")
             page.locator("[data-ds-viewport='tablet']").click()
             page.wait_for_function("""() => {

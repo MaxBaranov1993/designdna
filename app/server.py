@@ -1932,10 +1932,33 @@ Design IR дан только как карта для адресных путе
 }
 score — целое 0..100. Следуй приложенной рубрике и учитывай только наблюдаемое."""
 
+COMPONENT_RUBRIC = """## Component mode
+This IR is one component/source section, not a complete page. Do not apply page-level
+requirements such as a single H1, hero hierarchy, page grid, section count or page density.
+Score only readability, spacing/rhythm inside the component, clipping/overlap, and visual
+correspondence to the supplied Source master. A pass requires score >= 80."""
+
+
+def _component_quality_mode(ir: dict) -> bool:
+    meta = ir.get("meta") if isinstance(ir.get("meta"), dict) else {}
+    tree = ir.get("tree") if isinstance(ir.get("tree"), list) else []
+    return bool(meta.get("strictRecovery") or
+                (len(tree) == 1 and isinstance(tree[0], dict)
+                 and tree[0].get("type") == "source-block"))
+
+
+def _quality_violations(ir: dict) -> list[dict]:
+    violations = qualitygate.check(ir)
+    if not _component_quality_mode(ir):
+        return violations
+    page_rules = {"single-h1", "grid-8", "frame-overflow"}
+    return [item for item in violations if item.get("rule") not in page_rules]
+
 
 def _quality_judge_messages(ir: dict, brief: str) -> list[dict]:
+    mode = _component_quality_mode(ir)
     return [
-        {"role": "system", "content": QUALITY_JUDGE_SYSTEM},
+        {"role": "system", "content": QUALITY_JUDGE_SYSTEM + ("\n\n" + COMPONENT_RUBRIC if mode else "")},
         {"role": "user", "content": "## Бриф\n" + (brief.strip() or "(не указан)")
          + "\n\n## Design IR\n" + json.dumps(ir, ensure_ascii=False)},
     ]
@@ -2056,6 +2079,9 @@ def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None) -> dict:
     screenshot = render_png(ir, width=1440, webfonts=True)
     image_data_url = _judge_images(screenshot)
     rubric = (APP_ROOT / "prompts" / "RUBRIC.md").read_text(encoding="utf-8")
+    component_mode = _component_quality_mode(ir)
+    if component_mode:
+        rubric = COMPONENT_RUBRIC
     rules_block = project_rules.prompt_block("judge")
     if rules_block:
         rubric += "\n\n" + rules_block
@@ -2073,7 +2099,9 @@ def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None) -> dict:
         "auto", image_data_url, prompt, QUALITY_JUDGE_SYSTEM, 0.2,
         role="quality_judge",
     )
-    return _parse_quality_scorecard(raw, "LLM vision / quality_judge")
+    scorecard = _parse_quality_scorecard(raw, "LLM vision / quality_judge")
+    scorecard["mode"] = "component" if component_mode else "page"
+    return scorecard
 
 
 def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None, str | None]:
@@ -2109,7 +2137,7 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
     schema_errors = validate_ir(sanitize_font_face_weights(req.ir))
     if schema_errors:
         return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    deterministic_before = qualitygate.check(req.ir)
+    deterministic_before = _quality_violations(req.ir)
     try:
         initial = _quality_scorecard(req.ir, req.brief, run_id)
     except Exception as e:
@@ -2139,7 +2167,7 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
                     final = _quality_scorecard(output_ir, req.brief, run_id)
                 except Exception as e:
                     repair["error"] = f"rejudge недоступен: {e}"
-    deterministic_after = qualitygate.check(output_ir)
+    deterministic_after = _quality_violations(output_ir)
     passed = (final["score"] >= min_score and final["verdict"] == "pass"
               and qualitygate.passed(deterministic_after))
     return {
@@ -2174,7 +2202,7 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
     if outputs.rejudge is not None and outputs.repair is None:
         return err(422, "Quality Pass: rejudge без repair — неконсистентное состояние Codex")
 
-    deterministic_before = qualitygate.check(req.ir)
+    deterministic_before = _quality_violations(req.ir)
     if outputs.judge is None:
         return {"pending": {
             "stage": "judge",
@@ -2183,6 +2211,7 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
         }}
     try:
         initial = _parse_quality_scorecard(outputs.judge, "Codex app-server / quality_judge")
+        initial["mode"] = "component" if _component_quality_mode(req.ir) else "page"
     except Exception as e:
         return err(502, f"Quality Pass judge вернул неверный ответ: {e}")
 
@@ -2224,12 +2253,13 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
                         final = _parse_quality_scorecard(
                             outputs.rejudge, "Codex app-server / quality_judge"
                         )
+                        final["mode"] = "component" if _component_quality_mode(output_ir) else "page"
                     except Exception as e:
                         return err(502, f"Quality Pass rejudge вернул неверный ответ: {e}")
 
     if outputs.rejudge is not None and not repair["applied"]:
         return err(422, "Quality Pass: rejudge без применённого repair — неконсистентное состояние Codex")
-    deterministic_after = qualitygate.check(output_ir)
+    deterministic_after = _quality_violations(output_ir)
     passed = (final["score"] >= min_score and final["verdict"] == "pass"
               and qualitygate.passed(deterministic_after))
     return {

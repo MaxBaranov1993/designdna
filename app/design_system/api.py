@@ -122,6 +122,13 @@ class VariantSaveRequest(BaseModel):
     ir: dict
 
 
+class PolishRequest(BaseModel):
+    document: dict | None = None
+    systemId: str = ""
+    componentKey: str = ""
+    headless: bool = True
+
+
 def _err(status: int, message: str):
     return JSONResponse({"error": message, "status": status}, status_code=status)
 
@@ -150,6 +157,12 @@ def import_design_system(req: ImportRequest):
     """Файл → draft: та же форма документа, что у ДС из Source, генератор лочит её так же."""
     try:
         document = importer.import_design_system(req.payload, name=req.name, file_name=req.fileName)
+        from .polish import polish_document
+        imported_components = list((document.get("components") or {}).values()) + list((document.get("reviewComponents") or {}).values())
+        has_fonts = any(isinstance(item, dict) and isinstance(item.get("masterIr"), dict)
+                        and ((item["masterIr"].get("meta") or {}).get("fontFaces") or [])
+                        for item in imported_components)
+        document, _polish_results = polish_document(document, headless=has_fonts)
     except ValueError as exc:
         return _err(422, str(exc))
     errors = dsdoc.validate_document(document)
@@ -163,6 +176,58 @@ def import_design_system(req: ImportRequest):
     document = saved.get("document") or document
     return {"document": document, "summary": summary(document),
             "format": (document.get("provenance") or {}).get("imported", {}).get("format")}
+
+
+@router.post("/api/design-system/polish")
+def polish_design_system(req: PolishRequest):
+    """Lint and deterministically polish masters, using production headless rendering by default."""
+    document = req.document or (store.get_revision(req.systemId, 0) if req.systemId else None)
+    if not isinstance(document, dict) or not document.get("id"):
+        return _err(422, "No Design System document")
+    from . import polish
+    try:
+        updated, results = polish.polish_document(document, headless=req.headless)
+        if req.componentKey:
+            wanted = [item for item in results if item.get("componentKey") == req.componentKey]
+            if not wanted:
+                return _err(404, f"Component {req.componentKey} not found")
+            # Do not alter unrelated components when polishing a single card.
+            polished_all = updated
+            updated = __import__("copy").deepcopy(document)
+            for item in wanted:
+                pool = item["pool"]
+                updated[pool][req.componentKey] = polished_all[pool][req.componentKey]
+            results = wanted
+        saved = store.save_draft(updated)
+    except Exception as exc:
+        return _err(502, f"Layout polish failed: {exc}")
+    from .document import summary
+    result_doc = saved.get("document") or updated
+    return {"document": result_doc, "results": results, "summary": summary(result_doc)}
+
+
+@router.post("/api/design-system/polish/rollback")
+def rollback_design_system_polish(req: PolishRequest):
+    document = req.document or (store.get_revision(req.systemId, 0) if req.systemId else None)
+    if not isinstance(document, dict) or not document.get("id") or not req.componentKey:
+        return _err(422, "Design System document and componentKey are required")
+    import copy
+    from .polish import rollback_component
+    updated = copy.deepcopy(document)
+    component = None
+    for pool in ("components", "reviewComponents"):
+        candidate = (updated.get(pool) or {}).get(req.componentKey)
+        if isinstance(candidate, dict):
+            component = candidate
+            break
+    if component is None:
+        return _err(404, f"Component {req.componentKey} not found")
+    if not rollback_component(component):
+        return _err(409, "Component has no polish snapshot")
+    saved = store.save_draft(updated)
+    from .document import summary
+    result_doc = saved.get("document") or updated
+    return {"document": result_doc, "rolledBack": True, "summary": summary(result_doc)}
 
 
 def _master_root(ir: dict) -> dict | None:
@@ -346,13 +411,16 @@ def master_review_design_system(req: MasterReviewRequest):
         updated, results = master_review.run(
             document, provider=req.provider or "auto", viewport=req.viewport or "desktop",
             max_components=req.maxComponents)
+        from .polish import polish_document
+        updated, polish_results = polish_document(updated, headless=False)
         saved = store.save_draft(updated)
     except (ValueError, RuntimeError) as exc:
         return _err(422, str(exc))
     except Exception as exc:
         return _err(502, f"AI master review failed: {exc}")
     document = saved.get("document") or updated
-    return {"document": document, "results": results, "summary": summary(document),
+    return {"document": document, "results": results, "polishResults": polish_results,
+            "summary": summary(document),
             "reviewed": len(results), "approved": sum(1 for r in results if r.get("approved"))}
 
 
