@@ -34,7 +34,9 @@ REPAIR_SYSTEM = (
     "the master's nodes with their current visual styles. Fix ONLY the defects the reviewer listed, "
     "by restoring visual channels: colors (hex, 8 digits when the original is translucent), border "
     "color and width, shadows, font weight, letter spacing, opacity. Never touch text, sizes, "
-    "positions or the set of nodes. Return ONE JSON object with an \"operations\" array and no prose."
+    "the set of nodes. Layout defects may use restore-layout for width, height, x, y, gap or padding, "
+    "within 20 percent of the measured value and inside the component bounds. Return ONE JSON object "
+    "with an \"operations\" array and no prose."
 )
 
 # Каналы поверх набора fidelity_repair: поверхность и рамка компонента — ровно
@@ -60,6 +62,7 @@ NUMERIC_LIMITS = {
 HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$")
 MAX_OPERATIONS = 12
 MAX_PROMPT_NODES = 40
+LAYOUT_PROPS = {"width", "height", "x", "y", "gap", "padding"}
 
 
 def _fidelity_repair():
@@ -125,15 +128,20 @@ def build_repair_prompt(comp: dict, verdict: dict, viewport: str, nodes: list[di
                      "borderWidth/fontWeight/letterSpacing/opacity",
         }]},
     }
+    payload["output"]["layoutOperation"] = {
+        "op": "restore-layout", "sourceKey": "<sourceKey from nodes above>",
+        "property": "width|height|x|y|gap|padding", "value": "number or four-number padding",
+    }
     return (
         f"Component: {comp.get('name') or comp.get('componentKey')} "
         f"({comp.get('category') or 'component'}), viewport {viewport}.\n"
         "Image 1 = ORIGINAL crop from the site screenshot. Image 2 = current RENDER of the "
         "reconstructed master.\n"
         "Defects found by the reviewer:\n- " + "\n- ".join(defects) + "\n"
-        "Hard rules: change ONLY visual channels (colors including alpha, border color and width, "
-        "shadows, font weight, letter spacing, opacity). Never change text, never change sizes or "
-        "positions, never add or remove nodes, never invent a sourceKey. Use an 8-digit hex when the "
+        "Hard rules: change visual channels, or use restore-layout only for a listed layout defect. "
+        "Layout values stay within +/-20% and inside component bounds; never change sizes or positions "
+        "except through a validated restore-layout operation. Never change text, never add "
+        "or remove nodes, never invent a sourceKey. Use an 8-digit hex when the "
         "original channel is translucent. Emit only the operations needed to fix the listed defects.\n"
         f"Master nodes and their current styles:\n{json.dumps(payload, ensure_ascii=False)}\n"
         "Answer with ONE JSON object and nothing else."
@@ -171,18 +179,59 @@ def validate_operations(parsed: Any, ir: dict) -> list[dict]:
     if not isinstance(raw_ops, list):
         raise ValueError("operations must be a list")
     allowed = repairable_props()
-    known = {str(node.get("sourceKey") or "") for node in _walk((ir or {}).get("tree") or [])
-             if node.get("sourceKey")}
+    known_nodes = {str(node.get("sourceKey") or ""): node
+                   for node in _walk((ir or {}).get("tree") or []) if node.get("sourceKey")}
+    known = set(known_nodes)
+    root = next(iter(_walk((ir or {}).get("tree") or [])), {})
+    root_frame = root.get("frame") if isinstance(root, dict) and isinstance(root.get("frame"), dict) else {}
+    root_w, root_h = float(root_frame.get("width") or 0), float(root_frame.get("height") or 0)
     clean: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for raw in raw_ops[:MAX_OPERATIONS]:
         if not isinstance(raw, dict):
             continue
-        if str(raw.get("op") or "restore-style") != "restore-style":
-            continue
+        op = str(raw.get("op") or "restore-style")
         source_key = str(raw.get("sourceKey") or "")
         prop = str(raw.get("property") or "")
-        if source_key not in known or prop not in allowed:
+        if source_key not in known:
+            continue
+        if op == "restore-layout":
+            if prop not in LAYOUT_PROPS or (source_key, prop) in seen:
+                continue
+            frame = known_nodes[source_key].get("frame")
+            if not isinstance(frame, dict):
+                continue
+            old, value = frame.get(prop), raw.get("value")
+            if prop == "padding":
+                old_values = old if isinstance(old, list) and len(old) == 4 else [old] * 4
+                new_values = value if isinstance(value, list) and len(value) == 4 else [value] * 4
+                if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in new_values):
+                    continue
+                limits = [max(2.0, abs(float(v or 0)) * .2) for v in old_values]
+                if any(abs(float(n) - float(o or 0)) > limit + 1e-6
+                       for n, o, limit in zip(new_values, old_values, limits)):
+                    continue
+                clean_value: Any = [max(0.0, float(v)) for v in new_values]
+            else:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    continue
+                old_num = float(old or 0)
+                base = root_w if prop in {"x", "width", "gap"} else root_h
+                limit = max(2.0, abs(old_num) * .2,
+                            base * .2 if prop in {"x", "y"} and old_num == 0 else 0)
+                clean_value = float(value)
+                if abs(clean_value - old_num) > limit + 1e-6 or clean_value < 0:
+                    continue
+                candidate = dict(frame); candidate[prop] = clean_value
+                x, y = float(candidate.get("x") or 0), float(candidate.get("y") or 0)
+                width, height = float(candidate.get("width") or 0), float(candidate.get("height") or 0)
+                if ((root_w and x + width > root_w + .5)
+                        or (root_h and y + height > root_h + .5)):
+                    continue
+            seen.add((source_key, prop))
+            clean.append({"op": op, "sourceKey": source_key, "property": prop, "value": clean_value})
+            continue
+        if op != "restore-style" or prop not in allowed:
             continue
         value = _clean_value(prop, raw.get("value"))
         if value is None or (source_key, prop) in seen:
@@ -204,8 +253,17 @@ def parse_operations(raw: str, ir: dict) -> list[dict]:
 
 
 def apply_operations(ir: dict, operations: list[dict]) -> dict:
-    """Применить правки к КОПИИ IR (реализация fidelity_repair: геометрию не трогает)."""
-    return _fidelity_repair().apply_operations(ir, operations)
+    """Apply validated style/layout operations to a copy of the master."""
+    style_ops = [op for op in operations if op.get("op") == "restore-style"]
+    fixed = _fidelity_repair().apply_operations(ir, style_ops)
+    by_key = {str(node.get("sourceKey") or ""): node for node in _walk(fixed.get("tree") or [])}
+    for op in operations:
+        if op.get("op") != "restore-layout":
+            continue
+        node = by_key.get(str(op.get("sourceKey") or ""))
+        if isinstance(node, dict) and isinstance(node.get("frame"), dict):
+            node["frame"][str(op.get("property"))] = copy.deepcopy(op.get("value"))
+    return fixed
 
 
 def _data_url(png: bytes) -> str:

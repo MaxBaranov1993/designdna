@@ -403,6 +403,72 @@ def _render_block_png(page, ir: dict, viewport_name: str, width: int, height: in
     return page.locator("#preview").screenshot(type="png", timeout=15000)
 
 
+def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int) -> dict:
+    """Render *ir* with source fonts and return deterministic text/layout defects.
+
+    The measurement deliberately runs through :func:`_render_block_png`, so the
+    font and two-frame paint barriers are identical to the fidelity harness.
+    Paths are renderer ``data-ir-path`` values (sourceKey for captured masters).
+    """
+    png = _render_block_png(page, ir, viewport_name, width, height)
+    measured = page.evaluate("""() => {
+      const root = document.querySelector('#preview');
+      const nodes = Array.from(root.querySelectorAll('[data-ir-path]'));
+      const visible = el => {
+        const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+        return cs.display !== 'none' && cs.visibility !== 'hidden' &&
+          Number(cs.opacity || 1) > 0 && r.width > .25 && r.height > .25;
+      };
+      const directText = el => Array.from(el.childNodes || [])
+        .filter(n => n.nodeType === Node.TEXT_NODE).map(n => n.textContent || '').join('').trim();
+      const records = nodes.filter(visible).map((el, index) => {
+        const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+        const text = directText(el) || (!el.querySelector('[data-ir-path]') ? (el.textContent || '').trim() : '');
+        let clipped = 0, parent = el.parentElement;
+        while (parent && parent !== root.parentElement) {
+          const ps = getComputedStyle(parent);
+          if (['hidden','clip'].includes(ps.overflowX) || ['hidden','clip'].includes(ps.overflowY)) {
+            const pr = parent.getBoundingClientRect();
+            clipped = Math.max(clipped, Math.max(0, pr.left-r.left, r.right-pr.right,
+              pr.top-r.top, r.bottom-pr.bottom));
+          }
+          parent = parent.parentElement;
+        }
+        const family = (cs.fontFamily || '').split(',')[0].replace(/["']/g, '').trim();
+        return {index, path:el.dataset.irPath || `(dom:${index})`, text,
+          left:r.left, top:r.top, right:r.right, bottom:r.bottom,
+          width:r.width, height:r.height,
+          overflowX:Math.max(0, el.scrollWidth-el.clientWidth),
+          overflowY:Math.max(0, el.scrollHeight-el.clientHeight), clipped,
+          overflowHidden:['hidden','clip'].includes(cs.overflowX) || ['hidden','clip'].includes(cs.overflowY),
+          fontFamily:family, fontLoaded:!text || !document.fonts || document.fonts.check(`${cs.fontSize} "${family}"`, text)};
+      });
+      const defects = [];
+      for (const a of records) {
+        if (!a.text) continue;
+        const overflow = Math.max(a.overflowX, a.overflowY);
+        if (overflow > .5) defects.push({path:a.path, kind:'overflow', px:Math.round(overflow*100)/100});
+        if (a.clipped > .5 || (a.overflowHidden && overflow > .5))
+          defects.push({path:a.path, kind:'clip', px:Math.round(Math.max(a.clipped, overflow)*100)/100});
+      }
+      for (let i=0; i<records.length; i++) for (let j=i+1; j<records.length; j++) {
+        const a=records[i], b=records[j];
+        if (!a.text || !b.text) continue;
+        const ae=nodes[a.index], be=nodes[b.index];
+        if (ae.contains(be) || be.contains(ae) || ae.parentElement !== be.parentElement) continue;
+        const ix=Math.max(0, Math.min(a.right,b.right)-Math.max(a.left,b.left));
+        const iy=Math.max(0, Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
+        if (ix > .5 && iy > .5) defects.push({path:b.path, kind:'overlap',
+          px:Math.round(Math.min(ix,iy)*100)/100, otherPath:a.path});
+      }
+      return {defects, nodes:records.map(({index,left,top,right,bottom,...r}) => r),
+        fontsLoaded:records.filter(r=>r.text).every(r=>r.fontLoaded)};
+    }""")
+    measured["viewport"] = viewport_name
+    measured["png"] = png
+    return measured
+
+
 AA_SHIFT_TOLERANCE_PX = 1
 
 

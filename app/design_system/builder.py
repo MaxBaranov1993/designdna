@@ -1922,6 +1922,23 @@ def build_draft(pack: dict, *, name: str | None = None, locale: str = "ru",
     ensure_style_guide(doc)
     doc["referenceAssets"] = _reference_assets(blocks)
 
+    # Every catalog path consumes masterIr after this point. Run the pure,
+    # deterministic polish pass during construction; the explicit /polish
+    # endpoint can repeat the same lint in Chromium when source fonts/crops are
+    # available. Keeping this pass model-free makes Source and JSON imports
+    # reproducible and safe in offline desktop builds.
+    from .polish import polish_document
+    polish_pools = list((doc.get("components") or {}).values()) + list((doc.get("reviewComponents") or {}).values())
+    has_captured_fonts = any(
+        isinstance(component, dict)
+        and isinstance(component.get("masterIr"), dict)
+        and bool(((component["masterIr"].get("meta") or {}).get("fontFaces") or []))
+        for component in polish_pools
+    )
+    polished, _polish_results = polish_document(doc, headless=has_captured_fonts)
+    doc["components"] = polished.get("components") or {}
+    doc["reviewComponents"] = polished.get("reviewComponents") or {}
+
     # Deterministic first pass: measurements and provenance are available even
     # when no interpretation model is connected. AI may later propose wording,
     # but it cannot replace these measured fields silently.

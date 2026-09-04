@@ -83,3 +83,20 @@ def test_quality_pass_repair_rejudges_a_fresh_screenshot(monkeypatch):
 def test_quality_pass_default_threshold_is_80():
     assert server.QualityPassReq(ir=copy.deepcopy(BASE_IR)).min_score == 80
 
+
+def test_component_mode_uses_component_rubric_and_skips_page_rules(monkeypatch):
+    component = copy.deepcopy(BASE_IR)
+    component["tree"] = [{"type": "source-block", "children": [{"type": "text", "text": "Readable"}]}]
+    monkeypatch.setattr(server, "render_png", lambda *args, **kwargs: b"png")
+    calls = []
+    monkeypatch.setattr(server.llm, "chat_vision", lambda provider, images, prompt, system, *args, **kwargs:
+                        calls.append((prompt, system)) or _score(80, "pass"))
+    monkeypatch.setattr(server.qualitygate, "check", lambda ir: [
+        {"rule": "single-h1", "severity": "error"},
+        {"rule": "free-overlap", "severity": "error"},
+    ])
+    scorecard = server._quality_scorecard(component, "component")
+    assert scorecard["mode"] == "component"
+    assert "not a complete page" in calls[0][0]
+    violations = server._quality_violations(component)
+    assert [item["rule"] for item in violations] == ["free-overlap"]

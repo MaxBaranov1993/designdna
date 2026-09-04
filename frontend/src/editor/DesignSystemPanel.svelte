@@ -246,6 +246,8 @@
   const fidelityMetrics = $derived((previewMeta?.fidelity?.viewports?.[viewport]
     || selectedVariantData?.fidelity?.viewports?.[viewport]
     || selectedComp?.fidelity?.viewports?.[viewport] || {}) as Record<string, any>);
+  const selectedPolish = $derived((selectedComp?.fidelity?.polish || {}) as Record<string, any>);
+  const selectedPolishDefects = $derived((selectedPolish.defectsAfter || []) as Array<Record<string, any>>);
   let previewRequest = 0;
   let rendererReady = false;
 
@@ -826,6 +828,23 @@
     await persist(next);
   }
 
+  async function rollbackPolish() {
+    if (!selectedKey || !selectedComp?.polish?.before) return;
+    actionError = "";
+    try {
+      const resp = await fetch("/api/design-system/polish/rollback", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: doc, componentKey: selectedKey }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
+      pushUndo();
+      $flow.setNodeData(Number(nodeId), { document: result.document, summary: result.summary, status: "draft" });
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   async function updateSoul(value: string) {
     const text = value.trim();
     if (!text || text === identity.soul?.oneLine?.value) return;
@@ -1372,6 +1391,7 @@
                 <span class="ds-card-title">
                   <span class="ds-status-dot" class:verified={comp.status === "verified"} aria-hidden="true"></span>
                   <span class="ds-card-name">{comp.name}</span>
+                  {#if comp.fidelity?.polish?.accepted}<span class="ds-polish-badge">Доведён</span>{/if}
                   {#if fidelity != null}<span class="ds-card-fidelity">{fidelity}%</span>{/if}
                 </span>
                 <small>{comp.provenance?.occurrenceCount || 1} observed · {variantCount} variant{variantCount === 1 ? "" : "s"}</small>
@@ -1388,6 +1408,8 @@
             <h2>{selectedComp.name}</h2>
             <div class="ds-component-meta">
               <span class:verified={selectedComp.status === "verified"}>{selectedComp.status === "verified" ? "Готов" : masterReviewing ? "AI доводит…" : "AI-доводка"}</span>
+              {#if selectedPolish.accepted}<span class="ds-polish-badge">Доведён</span>{/if}
+              {#if selectedPolishDefects.length}<span class="ds-polish-needed">Нужна доводка · {selectedPolishDefects.length}</span>{/if}
               <span>{selectedComp.provenance?.occurrenceCount || 1} наблюдений</span>
               <span>{Object.keys(selectedComp.variants || {}).length} вариантов</span>
             </div>
@@ -1397,9 +1419,12 @@
           {:else if selectedIsSuggestion}
             <button type="button" class="ds-promote" data-ds-action="promote" aria-label={selectedCanPromote ? "Продвинуть предложение в registry" : "Требуется повторная fidelity-проверка Source master"} onclick={() => void promoteSuggestion()} disabled={busy || !selectedCanPromote}>{selectedCanPromote ? "Включить в UI Kit" : "Нужна fidelity-проверка"}</button>
           {:else}
-            <button type="button" class="ds-edit-master" data-ds-action="apply" aria-label="Применить мастер-компонент в DNA Editor" aria-busy={applying} onclick={applyToEditor} disabled={busy || !hasSelection}>
-              {applying ? "Открываю…" : "Открыть в DNA Editor"}
-            </button>
+            <div class="ds-master-actions">
+              {#if selectedComp.polish?.before}<button type="button" class="ds-promote" data-ds-action="rollback-polish" onclick={() => void rollbackPolish()} disabled={busy}>Откатить доводку</button>{/if}
+              <button type="button" class="ds-edit-master" data-ds-action="apply" aria-label="Применить мастер-компонент в DNA Editor" aria-busy={applying} onclick={applyToEditor} disabled={busy || !hasSelection}>
+                {applying ? "Открываю…" : "Открыть в DNA Editor"}
+              </button>
+            </div>
           {/if}
         </header>
 
@@ -1486,6 +1511,8 @@
             <dt>Ключ</dt><dd><code>{selectedComp.componentKey}</code></dd>
             <dt>Происхождение</dt><dd>{originIcon(selectedComp.origin)} {selectedComp.origin} {selectedComp.confidence != null ? `· ${Math.round(selectedComp.confidence * 100)}%` : ""}</dd>
             <dt>Статус</dt><dd class:ds-fidelity-fail={selectedComp.status !== "verified"}>{selectedComp.status || "draft"}</dd>
+            {#if selectedPolish.accepted}<dt>Доводка</dt><dd><span class="ds-polish-badge">Доведён</span></dd>{/if}
+            {#if selectedPolishDefects.length}<dt>Нужна доводка</dt><dd>{selectedPolishDefects.map((d) => `${d.kind}: ${d.path} (${d.px}px)`).join("; ")}</dd>{/if}
             <dt>Категория</dt><dd>{selectedComp.category}</dd>
             <dt title="Props — параметры компонента в Design IR (промежуточном представлении макета), которыми его наполняет Генератор">Props</dt><dd>{Object.keys(selectedComp.propsSchema || {}).join(", ") || "—"}</dd>
             <dt>Состояния</dt>
@@ -1729,6 +1756,9 @@
   .ds-card-title { display: flex; align-items: center; gap: 7px; }
   .ds-card-name { min-width: 0; flex: 1; overflow: hidden; font-size: 13px; font-weight: 700; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; }
   .ds-card-fidelity { flex: none; color: var(--dna-violet-text); font-size: 11px; font-weight: 700; }
+  .ds-polish-badge { flex:none; color:var(--dna-success-text); font-size:11px; font-weight:700; }
+  .ds-polish-needed { color:var(--dna-warning-text); font-size:11px; font-weight:700; }
+  .ds-master-actions { display:flex; gap:8px; align-items:center; }
   .ds-card-info small { overflow: hidden; color: var(--dna-dim); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
 
   .ds-comp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
