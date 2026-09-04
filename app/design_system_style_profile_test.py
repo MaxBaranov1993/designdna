@@ -88,6 +88,30 @@ def test_style_profile_and_prompt_carry_atmosphere_and_copy_voice():
     assert "атмосфера" in prompt and "Sending Engine" in prompt and "неоновыми" in prompt
 
 
+def test_site_brief_from_ai_review_and_prompt():
+    doc = style_review.ensure_style_guide(_document())
+    doc["referenceContent"] = {"brand": "Etoso", "nav": ["Home", "Pricing"], "heading": ["Sending Engine"],
+                               "cta": ["Prove it →"]}
+    doc["sourceRefs"] = [{"url": "https://etoso.ai"}]
+    messages = style_review.build_style_review_prompt(doc)
+    assert "siteBrief" in messages[1]["content"] and "siteCopy" in messages[1]["content"]
+    raw = json.dumps({
+        "siteBrief": {"summary": "Сервис автоматизации продаж.", "audience": "B2B-фаундеры", "offer": "Продажи на автопилоте",
+                      "tone": "коротко, дерзко", "sections": ["hero", "процесс", "тарифы"],
+                      "componentUsage": {"hero": "первый экран", "unknown": "x"}},
+        "styleGuide": {"tone": "тёмный неон", "doRules": ["моно-лейблы"]},
+    }, ensure_ascii=False)
+    updated = style_review.apply_style_review(doc, raw, provider="codex")
+    brief = updated["siteBrief"]
+    assert brief["summary"].startswith("Сервис") and brief["sections"] == ["hero", "процесс", "тарифы"]
+    assert brief["componentUsage"] == {"hero": "первый экран"} and brief["brand"] == "Etoso"
+    prompt = style_review.profile_prompt(updated)
+    assert "Сайт, в который встраивается" in prompt and "B2B-фаундеры" in prompt and "hero → процесс" in prompt
+    # без AI — детерминированный бриф из копирайта
+    fallback = style_review.profile_prompt(doc)
+    assert "Etoso" in fallback and "Sending Engine" in fallback
+
+
 def test_compiled_profile_includes_style_profile_as_required_line():
     from design_system import resolver
     doc = style_review.ensure_style_guide(_document())

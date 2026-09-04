@@ -563,6 +563,9 @@ def main() -> None:
         check("prepared prompt carries the style profile / atmosphere block",
               prepared.status_code == 200 and "Style profile" in prepared_prompt and "атмосфера" in prepared_prompt,
               prepared_prompt[:300])
+        check("prepared prompt carries the site brief and embed mode",
+              "Сайт, в который встраивается" in prepared_prompt and "Режим встраивания" in prepared_prompt,
+              prepared_prompt[-400:])
         ctx_ref = client.post("/api/design-system/resolve-context", json={
             "ref": {"systemId": system_id, "revision": 2},
             "brief": "кнопка поиска", "usageMode": "extend",

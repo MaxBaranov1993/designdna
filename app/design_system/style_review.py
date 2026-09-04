@@ -393,7 +393,25 @@ def profile_prompt(document: dict) -> str:
     guide = document.get("styleGuide") if isinstance(document.get("styleGuide"), dict) else {}
     profile = guide.get("profile") or style_profile(document)
     voice = profile.get("copyVoice") or {}
-    lines = [
+    brief = document.get("siteBrief") if isinstance(document.get("siteBrief"), dict) else site_brief(document)
+    lines = ["## Сайт, в который встраивается результат"]
+    if brief.get("summary"):
+        lines.append(f"- {brief['summary']}")
+    else:
+        if brief.get("brand") or brief.get("url"):
+            lines.append(f"- {brief.get('brand') or ''} {brief.get('url') or ''}".strip())
+        if brief.get("headings"):
+            lines.append("- Заголовки сайта: " + " | ".join(brief["headings"][:5]))
+    for key, label in (("audience", "Аудитория"), ("offer", "Оффер"), ("tone", "Голос текста")):
+        if brief.get(key):
+            lines.append(f"- {label}: {brief[key]}")
+    if brief.get("sections"):
+        lines.append("- Секции сайта по порядку: " + " → ".join(brief["sections"][:10]))
+    usage = brief.get("componentUsage") or {}
+    if usage:
+        lines.append("- Где живут компоненты: " + "; ".join(f"{key} — {note}" for key, note in list(usage.items())[:8]))
+    lines += [
+        "",
         "## Стиль и атмосфера исходного сайта (компонент обязан встраиваться, а не выделяться)",
         f"- Тема: {profile.get('mode')}; углы: {profile.get('cornerCharacter')}; плотность: {profile.get('density')}; "
         f"тени: {profile.get('shadowUsage')}; палитра: {profile.get('paletteCharacter')}.",
@@ -481,18 +499,32 @@ def build_style_review_prompt(document: dict) -> list[dict]:
         if isinstance(ref, dict) and ref.get("url"):
             source_url = str(ref["url"])
             break
+    reference = document.get("referenceContent") if isinstance(document.get("referenceContent"), dict) else {}
     digest = {
         "url": source_url,
         "semanticTokens": guide.get("tokens") or semantic_tokens(foundations),
         "measuredCharacter": guide.get("measured") or measured_character(foundations),
+        "styleProfile": guide.get("profile") or style_profile(document),
         "typography": {
             "families": typography.get("families") or [],
             "scale": typography.get("scale") or {},
             "weights": typography.get("weights") or [],
         },
         "components": _component_digest(document),
+        # Копирайт сайта: по нему модель понимает, ЧТО это за сайт и для кого
+        "siteCopy": {key: (reference.get(key) if isinstance(reference.get(key), (list, str)) else None)
+                     for key in ("brand", "nav", "heading", "title", "cta", "category", "badge", "price", "question")
+                     if reference.get(key)},
     }
     schema = {
+        "siteBrief": {
+            "summary": "2–3 sentences: what the site is, what it sells/does, for whom",
+            "audience": "who uses it",
+            "offer": "the core offer / value proposition in the site's own words",
+            "tone": "voice of the copy (register, length, punctuation habits)",
+            "sections": ["ordered list of page sections as the site has them"],
+            "componentUsage": {"<componentKey>": "where on the site it is used and for what"},
+        },
         "styleGuide": {
             "tone": "how the site feels in one sentence",
             "density": "spacing / whitespace character",
@@ -507,11 +539,12 @@ def build_style_review_prompt(document: dict) -> list[dict]:
     }
     system = (
         "You are a senior design-system reviewer. Study the measured design language "
-        "of an existing website and write the style guide that future generated "
-        "components must follow so they blend into the site perfectly. "
-        "Ground every statement in the supplied measured data; never invent brand "
-        "values that are not present. Return ONE JSON object exactly matching the "
-        "requested shape, no prose."
+        "and the copy of an existing website and write (1) a short brief of the site "
+        "itself and (2) the style guide that future generated components must follow "
+        "so they blend into the site perfectly. Write the brief and rules in the same "
+        "language as the site copy (Russian if the copy is Russian). "
+        "Ground every statement in the supplied data; never invent brand values that "
+        "are not present. Return ONE JSON object exactly matching the requested shape, no prose."
     )
     user = json.dumps({"task": "Write the style guide", "output": schema, "data": digest},
                       ensure_ascii=False)
@@ -552,14 +585,63 @@ def validate_review(parsed: Any, document: dict) -> dict:
     return out
 
 
+_BRIEF_TEXT_FIELDS = ("summary", "audience", "offer", "tone")
+
+
+def validate_site_brief(parsed: Any, document: dict) -> dict:
+    """Описание сайта из ответа модели: только текстовые поля, ограниченные по длине."""
+    brief = parsed.get("siteBrief") if isinstance(parsed, dict) and isinstance(parsed.get("siteBrief"), dict) else None
+    if not brief:
+        return {}
+    out: dict[str, Any] = {}
+    for field in _BRIEF_TEXT_FIELDS:
+        text = _clean_text(brief.get(field), 600)
+        if text:
+            out[field] = text
+    sections = brief.get("sections")
+    if isinstance(sections, list):
+        out["sections"] = [s for s in (_clean_text(item, 120) for item in sections[:16]) if s]
+    usage = brief.get("componentUsage")
+    if isinstance(usage, dict):
+        known = set((document.get("components") or {}).keys()) | set((document.get("reviewComponents") or {}).keys())
+        out["componentUsage"] = {
+            str(key): _clean_text(value, 240)
+            for key, value in list(usage.items())[:40]
+            if str(key) in known and _clean_text(value, 240)
+        }
+    return out
+
+
+def site_brief(document: dict) -> dict:
+    """Детерминированная часть описания сайта — из копирайта источника."""
+    reference = document.get("referenceContent") if isinstance(document.get("referenceContent"), dict) else {}
+    source_url = ""
+    for ref in document.get("sourceRefs") or []:
+        if isinstance(ref, dict) and ref.get("url"):
+            source_url = str(ref["url"])
+            break
+    brief = {
+        "url": source_url,
+        "brand": _clean_text(reference.get("brand"), 80),
+        "nav": [_clean_text(item, 40) for item in (reference.get("nav") or [])[:8] if _clean_text(item, 40)],
+        "headings": [_clean_text(item, 120) for item in (reference.get("heading") or [])[:8] if _clean_text(item, 120)],
+        "ctas": [_clean_text(item, 60) for item in (reference.get("cta") or [])[:6] if _clean_text(item, 60)],
+    }
+    return {key: value for key, value in brief.items() if value}
+
+
 def apply_style_review(document: dict, raw_output: str, *, provider: str = "openai") -> dict:
-    """Применить AI-ревью. Меняется только document["styleGuide"]["review"]."""
+    """Применить AI-ревью: document["styleGuide"]["review"] и document["siteBrief"]."""
     match = re.search(r"\{.*\}", str(raw_output or ""), re.S)
     if not match:
         raise ValueError("Style review response contains no JSON object")
-    review = validate_review(json.loads(match.group(0)), document)
+    parsed = json.loads(match.group(0))
+    review = validate_review(parsed, document)
     updated = copy.deepcopy(document)
     ensure_style_guide(updated)
+    brief = validate_site_brief(parsed, updated)
+    if brief:
+        updated["siteBrief"] = {**site_brief(updated), **brief, "origin": "ai", "provider": str(provider)[:40]}
     updated["styleGuide"]["review"] = review
     updated["styleGuide"]["origin"] = "ai"
     updated["styleGuide"]["provider"] = str(provider)[:40]

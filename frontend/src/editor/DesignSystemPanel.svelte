@@ -35,7 +35,10 @@
   let componentSearch = $state("");
   let viewport = $state<"desktop" | "tablet" | "mobile">("desktop");
   let fixtureProfile = $state("source");
-  let previewMode = $state<"reference" | "master" | "compare">("compare");
+  // Пользователю нужны готовые компоненты, а не «до/после»: по умолчанию
+  // показываем мастер, сравнение с Source и fidelity — только по тумблеру «Точность».
+  let previewMode = $state<"reference" | "master" | "compare">("master");
+  let showFidelity = $state(false);
   let publishing = $state(false);
   let validating = $state(false);
   let applying = $state(false);
@@ -1384,13 +1387,13 @@
             <span class="ds-eyebrow">{selectedComp.category || "component"} · exact Source family</span>
             <h2>{selectedComp.name}</h2>
             <div class="ds-component-meta">
-              <span class:verified={selectedComp.status === "verified"}>{selectedComp.status === "verified" ? "Source verified" : "Needs review"}</span>
+              <span class:verified={selectedComp.status === "verified"}>{selectedComp.status === "verified" ? "Готов" : masterReviewing ? "AI доводит…" : "AI-доводка"}</span>
               <span>{selectedComp.provenance?.occurrenceCount || 1} наблюдений</span>
               <span>{Object.keys(selectedComp.variants || {}).length} вариантов</span>
             </div>
           </div>
           {#if selectedIsReview}
-            <button type="button" class="ds-promote" data-ds-action="review" aria-label="Компонент сохранён в каталоге, но требует повторной fidelity-проверки" disabled>Нужна fidelity-проверка</button>
+            <button type="button" class="ds-promote" data-ds-action="review" aria-label="Агент сверяет мастер с оригиналом и доводит его до готовности" onclick={() => void runMasterReview()} disabled={busy || masterReviewing}>{masterReviewing ? "AI доводит…" : "Довести агентом"}</button>
           {:else if selectedIsSuggestion}
             <button type="button" class="ds-promote" data-ds-action="promote" aria-label={selectedCanPromote ? "Продвинуть предложение в registry" : "Требуется повторная fidelity-проверка Source master"} onclick={() => void promoteSuggestion()} disabled={busy || !selectedCanPromote}>{selectedCanPromote ? "Включить в UI Kit" : "Нужна fidelity-проверка"}</button>
           {:else}
@@ -1408,13 +1411,18 @@
               </button>
             {/each}
           </div>
-          <div class="ds-viewport-switch" role="group" aria-label="Режим сравнения с Source">
-            {#each ["reference", "master", "compare"] as mode (mode)}
-              <button type="button" class:active={previewMode === mode} aria-pressed={previewMode === mode} onclick={() => { previewMode = mode as "reference" | "master" | "compare"; }}>
-                {mode === "reference" ? "Source" : mode === "master" ? "Мастер" : "Сравнить"}
-              </button>
-            {/each}
-          </div>
+          <label class="ds-fixture" title="Показать сравнение с Source и метрики точности">
+            <input type="checkbox" bind:checked={showFidelity} onchange={() => { if (!showFidelity) previewMode = "master"; }} /> Точность
+          </label>
+          {#if showFidelity}
+            <div class="ds-viewport-switch" role="group" aria-label="Режим сравнения с Source">
+              {#each ["reference", "master", "compare"] as mode (mode)}
+                <button type="button" class:active={previewMode === mode} aria-pressed={previewMode === mode} onclick={() => { previewMode = mode as "reference" | "master" | "compare"; }}>
+                  {mode === "reference" ? "Source" : mode === "master" ? "Мастер" : "Сравнить"}
+                </button>
+              {/each}
+            </div>
+          {/if}
           <label class="ds-fixture">
             Данные
             <select data-ds-field="preview-fixture" aria-label="Профиль mock в превью" bind:value={fixtureProfile}>
@@ -1497,7 +1505,7 @@
             {#if selectedComp.dependencies?.length}<dt>Зависимости</dt><dd>{selectedComp.dependencies.join(", ")}</dd>{/if}
             {#if selectedSourceRef.sourceBlock || selectedComp.provenance?.sourceBlock}<dt>Source</dt><dd>{selectedSourceRef.sourceBlock || selectedComp.provenance.sourceBlock}</dd>{/if}
             {#if selectedComp.provenance?.sourceBlocks?.length}<dt>Блоки</dt><dd>{selectedComp.provenance.sourceBlocks.join(", ")}</dd>{/if}
-            {#if Object.keys(fidelityMetrics).length}
+            {#if showFidelity && Object.keys(fidelityMetrics).length}
               <dt title="Fidelity — точность воспроизведения мастера относительно Source: сходство пикселей, покрытие краски, ошибка рамок">Fidelity</dt>
               <dd class:ds-fidelity-fail={selectedComp.status !== "verified"}>
                 similarity {fidelityMetrics.pixelSimilarity ?? "—"}% · paint {fidelityMetrics.paintCoverage ?? "—"}%<br />

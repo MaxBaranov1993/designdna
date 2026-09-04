@@ -148,6 +148,17 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
     measured_character = style_guide.get("measured") or {}
     if measured_character:
         add("styleguide.character", f"- Measured character: {_json(measured_character)}", required=True)
+    # Описание сайта (что это, для кого, оффер, секции) — обязательная строка:
+    # генератор встраивает компонент в существующий сайт, а не рисует с нуля.
+    brief = context.get("siteBrief") or {}
+    if brief:
+        compact_brief = {key: brief[key] for key in ("summary", "audience", "offer", "tone", "sections")
+                         if brief.get(key)}
+        if compact_brief:
+            add("site.brief", f"- Site brief (embed target): {_json(compact_brief)}", required=True)
+        usage = brief.get("componentUsage") or {}
+        if usage:
+            add("site.component-usage", f"- Where components live on the site: {_json(dict(list(usage.items())[:12]))}")
     # Профиль атмосферы — короткий и обязательный: именно он, а не hex-карта,
     # заставляет новый компонент «звучать» как сайт (тема/углы/плотность/тип/голос).
     profile = style_guide.get("profile") or {}
