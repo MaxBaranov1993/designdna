@@ -2,10 +2,57 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
+
+import art_direction
 import server
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def design_brief(tone: str) -> dict:
+    return {
+        "schemaVersion": "design-brief/1.0",
+        "audience": {"primary": "Product teams", "task": "Choose the right product"},
+        "tone": tone,
+        "typePair": "russo-golos",
+        "palette": {
+            "background": {"lightness": 0.97, "chroma": 0.01, "hue": 250},
+            "accent": {"lightness": 0.58, "chroma": 0.16, "hues": [250]},
+        },
+        "rhythm": {
+            "sections": [
+                {"purpose": "promise", "density": "airy"},
+                {"purpose": "evidence", "density": "dense"},
+                {"purpose": "action", "density": "balanced"},
+            ],
+            "risk": f"Use one {tone} compositional gesture",
+        },
+        "copyDeck": {"hero": "A specific product promise", "cta": "Start now", "proofs": ["Proof"]},
+    }
+
+
+def art_directions() -> list[dict]:
+    return [
+        {
+            "id": direction_id,
+            "label": label,
+            "motivation": f"{label} fits the product task",
+            "tradeoff": f"{label} reduces secondary emphasis",
+            "designBrief": design_brief(tone),
+        }
+        for direction_id, label, tone in (
+            ("editorial", "Editorial Focus", "editorial"),
+            ("soft", "Soft Product", "soft-pastel"),
+            ("industrial", "Industrial Grid", "industrial"),
+        )
+    ]
+
+
+@pytest.fixture(autouse=True)
+def _mock_art_direction(monkeypatch):
+    monkeypatch.setattr(art_direction, "create_design_brief", lambda *_args, **_kwargs: art_directions())
 
 
 def test_generate_can_prepare_prompts_without_server_llm() -> None:
@@ -13,6 +60,14 @@ def test_generate_can_prepare_prompts_without_server_llm() -> None:
     assert len(response["prompts"]) == 2
     assert response["prompts"][0]["messages"][0]["role"] == "system"
     assert "hero for a marketplace" in response["prompts"][0]["messages"][1]["content"]
+    assert response["directions"] == [
+        {key: item[key] for key in ("id", "label", "motivation", "tradeoff")}
+        for item in art_directions()
+    ]
+    assert response["variantDirections"] == ["Editorial Focus", "Soft Product"]
+    assert response["designBrief"]["tone"] == "editorial"
+    assert '"tone": "editorial"' in response["prompts"][0]["messages"][0]["content"]
+    assert "### exemplar: marketplace" in response["prompts"][0]["messages"][0]["content"]
 
 
 def test_generate_finalizes_external_provider_outputs_without_server_llm(monkeypatch) -> None:
@@ -46,7 +101,9 @@ def test_generate_sanitizes_provider_meta_and_typography_aliases(monkeypatch) ->
     ))
 
     result = response["variants"][0]
-    assert result["meta"] == {"name": "Provider result"}
+    assert result["meta"]["name"] == "Provider result"
+    assert "pageType" not in result["meta"]
+    assert result["meta"]["direction"]["name"] == "Editorial Focus"
     assert result["tree"][0]["children"][0]["children"][3]["size"] == "display"
     assert server.validate_ir(result) == []
 
@@ -57,9 +114,9 @@ def test_browser_generate_migrates_every_saved_provider_to_openai(monkeypatch) -
 
     def fake_call(provider, *_args, **_kwargs):
         seen.append(provider)
-        return deepcopy(fixture), None
+        return json.dumps(deepcopy(fixture))
 
-    monkeypatch.setattr(server, "call_llm_ir", fake_call)
+    monkeypatch.setattr(server.llm, "chat", fake_call)
     # Ретро-провайдеры (kimi/glm/zai/grok/openrouter/auto) схлопываются в Sol;
     # codex и claude — консольные аккаунты (cli_llm) и проходят как есть.
     for requested in ("kimi", "openai", "glm", "zai", "grok", "openrouter", "auto"):
@@ -123,3 +180,65 @@ def test_retired_provider_options_are_rejected() -> None:
         )
         issues = " ".join(request.validate())
         assert "retired providers" in issues, provider
+
+
+def test_generate_assigns_distinct_or_selected_direction(monkeypatch) -> None:
+    fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
+    raw = json.dumps(fixture)
+
+    all_response = server.generate(server.GenerateReq(
+        brief="marketplace page", count=2, rawOutputs=[raw, raw], selectedDirection="all",
+    ))
+    assert all_response["variantDirections"] == ["Editorial Focus", "Soft Product"]
+    assert all_response["generationLog"]["direction"]["selected"] == "all"
+    assert all_response["variants"][0]["meta"]["direction"]["name"] == "Editorial Focus"
+    assert all_response["variants"][1]["meta"]["direction"]["name"] == "Soft Product"
+
+    selected_response = server.generate(server.GenerateReq(
+        brief="marketplace page", count=2, rawOutputs=[raw, raw], selectedDirection="industrial",
+    ))
+    assert selected_response["variantDirections"] == ["Industrial Grid", "Industrial Grid"]
+    assert selected_response["generationLog"]["direction"]["selected"] == "industrial"
+
+
+def test_two_phase_generate_only_creates_art_direction_during_prepare(monkeypatch) -> None:
+    fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
+    generate_flags = []
+
+    def fake_direction(*_args, **kwargs):
+        generate_flags.append(kwargs["generate_if_missing"])
+        return art_directions()
+
+    monkeypatch.setattr(art_direction, "create_design_brief", fake_direction)
+    prepared = server.generate(server.GenerateReq(
+        brief="marketplace page", count=2, prepareOnly=True, selectedDirection="industrial",
+    ))
+    applied = server.generate(server.GenerateReq(
+        brief="marketplace page", count=2, rawOutputs=[json.dumps(fixture), json.dumps(fixture)],
+        selectedDirection="industrial",
+    ))
+
+    assert generate_flags == [True, False]
+    assert prepared["variantDirections"] == ["Industrial Grid", "Industrial Grid"]
+    assert [item["meta"]["direction"]["name"] for item in applied["variants"]] == [
+        "Industrial Grid", "Industrial Grid",
+    ]
+
+
+def test_generate_degrades_when_fast_art_direction_fails(monkeypatch) -> None:
+    fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
+    stages = []
+    monkeypatch.setattr(art_direction, "create_design_brief", lambda *_args, **_kwargs: (
+        _ for _ in ()).throw(RuntimeError("fast model unavailable")))
+    monkeypatch.setattr(server.run_registry, "stage", lambda _run_id, stage, *_args, **_kwargs: stages.append(stage))
+
+    response = server.generate(server.GenerateReq(
+        brief="marketplace page", count=1, rawOutputs=[json.dumps(fixture)], runId="art-test",
+    ))
+
+    assert response["variants"]
+    assert response["directions"] == []
+    assert response["variantDirections"] == [""]
+    assert response["generationLog"]["direction"]["degraded"] is True
+    assert "fast model unavailable" in response["generationLog"]["direction"]["error"]
+    assert "art-direction" in stages

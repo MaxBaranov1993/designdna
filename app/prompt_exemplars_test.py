@@ -90,12 +90,20 @@ def test_prompt_files_are_read_once_per_build(monkeypatch, tmp_path):
 def test_exemplar_selection_follows_product_type(product_type, expected):
     names = llm_client.exemplar_names(product_type)
     assert names[0] == expected, names
-    assert 1 <= len(names) <= 2
+    assert 2 <= len(names) <= 3
 
 
 def test_unknown_product_type_falls_back_to_two_exemplars():
     names = llm_client.exemplar_names("нечто без единого ключевого слова")
-    assert names == list(llm_client._EXEMPLAR_FALLBACK)
+    assert names[:2] == list(llm_client._EXEMPLAR_FALLBACK)
+    assert len(names) == 3
+
+
+@pytest.mark.parametrize("product_type", [
+    "ecommerce", "education", "fintech", "healthcare", "portfolio", "real-estate", "travel",
+])
+def test_product_id_selects_its_own_exemplar_first(product_type):
+    assert llm_client.exemplar_names(product_type)[0] == product_type
 
 
 def test_load_exemplars_emits_valid_json_within_budget():

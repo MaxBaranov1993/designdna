@@ -9,7 +9,7 @@
 - `{{DESIGN}}` — app/prompts/DESIGN.md (анти-слоп craft-правила, только режим generate)
 - `{{DESIGN_BRIEF}}` — JSON `DesignBrief` со стадии арт-дирекции (`app/art_direction.py`).
   Может быть пустым: тогда направление выбирает сама модель.
-- `{{EXEMPLARS}}` — 1–2 эталонных IR из `app/exemplars/` по типу продукта
+- `{{EXEMPLARS}}` — 2–3 эталонных IR из `app/exemplars/` по типу продукта
   (`llm_client.load_exemplars`). Может быть пустым.
 - `{{BRIEF}}` — инструкция пользователя (задача или правка)
 - `{{STYLE_HINT}}` — описание референса / стиль
@@ -57,9 +57,12 @@ sometimes exemplar IR documents. Produce a complete, opinionated page.
 
 ### Variants are directions, not palettes
 
-When more than one variant of the page is requested, each variant must be a
-DIFFERENT DESIGN DIRECTION — a different composition, rhythm and hero shape —
-not the same skeleton in another colour. Every variant declares itself:
+When an assigned art direction is present in the user message, honour it
+exactly. Sibling variants may intentionally share that assignment; vary their
+composition without drifting into another direction. Without an assignment,
+multiple variants must be DIFFERENT DESIGN DIRECTIONS — different composition,
+rhythm and hero shape, not the same skeleton in another colour. Every variant
+declares itself:
 
 ```json
 "meta": {"direction": {

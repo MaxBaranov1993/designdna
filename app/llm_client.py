@@ -34,6 +34,7 @@ _ROLES = (
     "judge", "quality_judge", "quality_repair", "edit", "derive", "optimizer",
     "tokens", "components", "clone", "blockparse", "source_semantics",
     "source_vision_audit", "reproduce", "a11y", "docs", "mechanics", "taste",
+    "art-direction",
 )
 ROUTING = {role: [f"openai/{SOL_MODEL}"] for role in _ROLES}
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
@@ -488,7 +489,7 @@ def load(name: str) -> str:
     return text
 
 
-# Few-shot эталоны: подбираются по типу продукта из брифа. Каждый режется до
+# Few-shot эталоны: 2–3 подбираются по типу продукта из брифа. Каждый режется до
 # ~6 КБ — целиком страница занимает десятки килобайт и вытесняет саму задачу.
 EXEMPLARS_DIR = "app/exemplars"
 EXEMPLAR_BUDGET = 6144
@@ -506,12 +507,31 @@ _EXEMPLAR_KEYWORDS: dict[str, tuple[str, ...]] = {
         "restaurant", "ресторан", "кафе", "cafe", "бар", "food", "еда", "кухн", "меню",
         "пекарн", "bakery", "coffee", "кофе", "бистро", "винн", "гост", "hospitality",
     ),
+    "ecommerce": ("ecommerce", "e-commerce", "online store", "store", "retail"),
+    "education": ("education", "school", "course", "learning", "university", "edtech"),
+    "fintech": ("fintech", "finance", "bank", "payments", "cash flow", "accounting"),
+    "healthcare": ("healthcare", "health", "clinic", "medical", "wellness", "patient"),
+    "portfolio": ("portfolio", "agency", "studio", "designer", "photographer", "architect"),
+    "real-estate": ("realestate", "real-estate", "real estate", "property", "housing"),
+    "travel": ("travel", "trip", "hotel", "tour", "booking", "destination"),
 }
-# Ни одно слово не совпало — берём два самых разных по композиции эталона.
+# Ни одно слово не совпало — начинаем с двух самых разных по композиции эталонов.
 _EXEMPLAR_FALLBACK = ("saas-landing", "restaurant")
+_EXEMPLAR_NEIGHBORS: dict[str, tuple[str, ...]] = {
+    "saas-landing": ("fintech", "education"),
+    "marketplace": ("ecommerce", "real-estate"),
+    "restaurant": ("travel", "ecommerce"),
+    "ecommerce": ("marketplace", "portfolio"),
+    "education": ("saas-landing", "healthcare"),
+    "fintech": ("saas-landing", "healthcare"),
+    "healthcare": ("education", "saas-landing"),
+    "portfolio": ("ecommerce", "travel"),
+    "real-estate": ("marketplace", "travel"),
+    "travel": ("restaurant", "real-estate"),
+}
 
 
-def exemplar_names(product_type: str, limit: int = 2) -> list[str]:
+def exemplar_names(product_type: str, limit: int = 3) -> list[str]:
     """Имена ближайших эталонов по типу продукта (без чтения файлов)."""
     text = str(product_type or "").casefold()
     scored = [
@@ -519,7 +539,11 @@ def exemplar_names(product_type: str, limit: int = 2) -> list[str]:
         for name, words in _EXEMPLAR_KEYWORDS.items()
     ]
     matched = [name for score, name in sorted(scored, key=lambda s: (-s[0], s[1])) if score]
-    return (matched or list(_EXEMPLAR_FALLBACK))[:max(0, limit)]
+    selected = list(matched or _EXEMPLAR_FALLBACK)
+    if selected:
+        selected.extend(name for name in _EXEMPLAR_NEIGHBORS.get(selected[0], ()) if name not in selected)
+    selected.extend(name for name in _EXEMPLAR_FALLBACK if name not in selected)
+    return selected[:max(0, limit)]
 
 
 def _compact(document: dict) -> str:
@@ -545,8 +569,8 @@ def fit_exemplar(document: dict, budget: int = EXEMPLAR_BUDGET) -> tuple[str, in
     return body, dropped
 
 
-def load_exemplars(product_type: str, limit: int = 2) -> str:
-    """Few-shot блок для промпта: 1–2 эталонных IR, каждый ужат до EXEMPLAR_BUDGET.
+def load_exemplars(product_type: str, limit: int = 3) -> str:
+    """Few-shot блок для промпта: 2–3 эталонных IR, каждый ужат до EXEMPLAR_BUDGET.
 
     Отсутствующий или битый файл эталона молча пропускается: few-shot — это
     усилитель качества, а не обязательная часть контракта генерации.
