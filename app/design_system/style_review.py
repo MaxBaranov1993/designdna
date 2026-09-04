@@ -70,7 +70,10 @@ def semantic_tokens(foundations: dict) -> dict:
     primary = _hex(semantic.get("primary")) or text
     accent = _hex(semantic.get("accent")) or primary
     muted_fg = _hex(semantic.get("textMuted")) or text
-    border = _hex(semantic.get("border")) or "#e5e7eb"
+    # Рамка: захват схлопывает rgba в непрозрачный цвет; приглушаем, иначе
+    # и кит, и AI-ревью описывают «белые рамки», которых на сайте нет.
+    border = soften_border({"background": background,
+                            "border": _hex(semantic.get("border")) or "#e5e7eb"})["border"]
     secondary = _hex(semantic.get("secondary")) or surface
 
     radius_px = foundations.get("radius") or {}
@@ -264,18 +267,45 @@ def _walk_text(node: Any, out: dict[str, list[str]], depth: int = 0) -> None:
         _walk_text(child, out, depth + 1)
 
 
+def _default_content_values() -> set[str]:
+    """Значения мок-контента по умолчанию (builder._DEFAULT_CONTENT*): они попадают
+    в referenceContent, когда на сайте нет категории/цены/FAQ, и не должны
+    выдаваться за копирайт сайта («Electronics | Home | Accessories»)."""
+    from .builder import _DEFAULT_CONTENT, _DEFAULT_CONTENT_EN  # noqa: WPS433
+
+    values: set[str] = set()
+    for table in (_DEFAULT_CONTENT, _DEFAULT_CONTENT_EN):
+        for value in table.values():
+            if isinstance(value, list):
+                values.update(str(v) for v in value)
+            elif isinstance(value, str):
+                values.add(value)
+    return values
+
+
+def real_reference_content(document: dict) -> dict[str, list[str]]:
+    """referenceContent без дефолтных мок-значений."""
+    reference = document.get("referenceContent") if isinstance(document.get("referenceContent"), dict) else {}
+    defaults = _default_content_values()
+    out: dict[str, list[str]] = {}
+    for key, value in reference.items():
+        items = value if isinstance(value, list) else [value] if isinstance(value, str) else []
+        kept = [" ".join(str(item).split()) for item in items if str(item).strip() and str(item) not in defaults]
+        if kept:
+            out[str(key)] = kept
+    return out
+
+
 def _copy_voice(document: dict) -> dict[str, list[str]]:
     """Образцы текста сайта: заголовки, надзаголовки, CTA, бейджи — голос бренда.
 
     Сначала referenceContent (собран со всей страницы), затем тексты мастеров
     (включая review-пул: компонентов с verified-статусом может не быть)."""
     out: dict[str, list[str]] = {"heading": [], "eyebrow": [], "cta": [], "badge": [], "text": []}
-    reference = document.get("referenceContent") if isinstance(document.get("referenceContent"), dict) else {}
+    reference = real_reference_content(document)
     for key, bucket in (("heading", "heading"), ("title", "heading"), ("cta", "cta"), ("badge", "badge"),
                         ("category", "eyebrow"), ("price", "badge")):
-        values = reference.get(key)
-        if isinstance(values, list):
-            out[bucket].extend(" ".join(str(v).split())[:90] for v in values if str(v).strip())
+        out[bucket].extend(v[:90] for v in reference.get(key) or [])
     for pool in ("components", "reviewComponents"):
         for component in (document.get(pool) or {}).values():
             master = component.get("masterIr") if isinstance(component, dict) else None
@@ -499,7 +529,7 @@ def build_style_review_prompt(document: dict) -> list[dict]:
         if isinstance(ref, dict) and ref.get("url"):
             source_url = str(ref["url"])
             break
-    reference = document.get("referenceContent") if isinstance(document.get("referenceContent"), dict) else {}
+    reference = real_reference_content(document)
     digest = {
         "url": source_url,
         "semanticTokens": guide.get("tokens") or semantic_tokens(foundations),
@@ -512,7 +542,7 @@ def build_style_review_prompt(document: dict) -> list[dict]:
         },
         "components": _component_digest(document),
         # Копирайт сайта: по нему модель понимает, ЧТО это за сайт и для кого
-        "siteCopy": {key: (reference.get(key) if isinstance(reference.get(key), (list, str)) else None)
+        "siteCopy": {key: reference[key][:12]
                      for key in ("brand", "nav", "heading", "title", "cta", "category", "badge", "price", "question")
                      if reference.get(key)},
     }
@@ -614,7 +644,7 @@ def validate_site_brief(parsed: Any, document: dict) -> dict:
 
 def site_brief(document: dict) -> dict:
     """Детерминированная часть описания сайта — из копирайта источника."""
-    reference = document.get("referenceContent") if isinstance(document.get("referenceContent"), dict) else {}
+    reference = real_reference_content(document)
     source_url = ""
     for ref in document.get("sourceRefs") or []:
         if isinstance(ref, dict) and ref.get("url"):
@@ -622,7 +652,7 @@ def site_brief(document: dict) -> dict:
             break
     brief = {
         "url": source_url,
-        "brand": _clean_text(reference.get("brand"), 80),
+        "brand": _clean_text((reference.get("brand") or [""])[0], 80),
         "nav": [_clean_text(item, 40) for item in (reference.get("nav") or [])[:8] if _clean_text(item, 40)],
         "headings": [_clean_text(item, 120) for item in (reference.get("heading") or [])[:8] if _clean_text(item, 120)],
         "ctas": [_clean_text(item, 60) for item in (reference.get("cta") or [])[:6] if _clean_text(item, 60)],
