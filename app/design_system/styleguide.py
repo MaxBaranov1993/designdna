@@ -1,19 +1,29 @@
 """Живой UI kit одним самодостаточным HTML-файлом.
 
 Страница не пишется руками по впечатлению от сайта — она СОБИРАЕТСЯ из
-измеренной дизайн-системы. Отсюда четыре свойства, которых нет у рукописного
-стайлгайда: компоненты настоящие (точные мастера из DOM, а не перерисованные
-`.btn`), у каждого есть доказательство точности (пиксельное сходство рядом с
-оригиналом), код копируется как есть, и всё пересобирается одной кнопкой после
-любого переимпорта.
+измеренной дизайн-системы. Читатель у неё двойной: дизайнер/разработчик,
+который встраивает новые компоненты в существующий сайт, и AI-генератор,
+которому она служит справочником. Поэтому страница отвечает на вопрос «как
+сделать в этом стиле», а не «насколько точно мы скопировали»:
+
+1. Стиль сайта — описание и дизайн-язык;
+2. Токены — измеренные основы;
+3. Компоненты — все мастера как готовые к использованию блоки;
+4. Правила — do/don't;
+5. Код — CSS-переменные, Tailwind, Figma-токены.
+
+Доказательство точности (кроп источника рядом с рендером, таблицы fidelity,
+бейджи «нужна проверка», пулы ревью) — инструмент верификации, а не документ
+для встраивания: по умолчанию его на странице нет. `include_fidelity=True`
+возвращает компактную сноску с процентами, `proof_crop` остаётся публичным для
+панели ревью мастеров.
 
 Файл открывается двойным кликом: шрифты, картинки и движок рендера встроены,
 наружу страница не ходит ни одним запросом.
 
 Честность важнее полноты: состояния компонентов в документе — заглушки без
 визуальных данных, поэтому страница их перечисляет с пометкой «не наблюдалось»,
-а не рисует выдуманный hover. Мастера, не прошедшие проверку точности,
-показываются с причинами, а не прячутся.
+а не рисует выдуманный hover.
 """
 from __future__ import annotations
 
@@ -392,15 +402,69 @@ def _section_label(catalog: dict, key: str) -> str:
     return ""
 
 
-def component_cards(document: dict, *, include_proof: bool = True,
+def _component_ref(document: dict, component: dict) -> dict:
+    """Ссылка на мастера в том же виде, что получает генератор.
+
+    Та же форма, что `compiler.component_handle`: страница обязана давать
+    ref, который примет strict-режим, иначе скопированный со страницы сниппет
+    отвалится на валидации.
+    """
+    from .compiler import component_master_hash
+
+    return {
+        "systemId": str(document.get("id") or ""),
+        "revision": int(document.get("revision") or 0),
+        "componentKey": str(component.get("componentKey") or component.get("key") or ""),
+        "masterHash": component_master_hash(component),
+    }
+
+
+def _accuracy(fidelity_viewports: dict) -> str:
+    """Компактная строка точности: `desktop=93.38;mobile=97.10`.
+
+    Живёт в data-атрибуте карточки: отладка не требует, чтобы страница
+    показывала таблицы, но и терять измерение незачем.
+    """
+    parts = []
+    for name, metrics in (fidelity_viewports or {}).items():
+        similarity = _num((metrics or {}).get("pixelSimilarity")) if isinstance(metrics, dict) else None
+        if similarity is not None:
+            parts.append(f"{name}={similarity:.2f}")
+    return ";".join(parts)
+
+
+def _usage_note(document: dict, key: str, component: dict) -> str:
+    """Одна строка «зачем этот компонент». Описание → сводка ревью → заметка."""
+    review = component.get("review") if isinstance(component.get("review"), dict) else {}
+    note = str(((document.get("styleGuide") or {}).get("review") or {})
+               .get("componentNotes", {}).get(key, ""))
+    for candidate in (component.get("description"), review.get("summary"), note):
+        text = " ".join(str(candidate or "").split())
+        if text:
+            return text
+    return ""
+
+
+def component_cards(document: dict, *, include_proof: bool = False,
                     include_review: bool = True, viewport: str = "desktop",
                     proof_budget: int = PROOF_BUDGET) -> tuple[list[dict], list[str], int]:
-    """Карточки компонентов, сгруппированные по уровням атомарного дизайна."""
+    """Карточки всех мастеров документа: components + reviewComponents.
+
+    include_review оставлен ради обратной совместимости и по умолчанию
+    включён: мастер «на ревью» — такой же точный захват с сайта, прятать его
+    из кита незачем. include_proof по умолчанию выключен — кроп источника
+    нужен панели ревью, а не документу для встраивания.
+    """
     catalog = document.get("catalog") if isinstance(document.get("catalog"), dict) else {}
     meta = catalog.get("componentMeta") if isinstance(catalog.get("componentMeta"), dict) else {}
     pools = {**(document.get("components") or {})}
     if include_review:
         pools.update(document.get("reviewComponents") or {})
+        # Черновики до появления reviewComponents держали наблюдённых мастеров
+        # в suggestions — иначе часть кита просто не доедет до страницы.
+        for key, candidate in (document.get("suggestions") or {}).items():
+            if isinstance(candidate, dict) and candidate.get("origin") == "observed":
+                pools.setdefault(str(key), candidate)
     warnings: list[str] = []
     proof_used = 0
     cards: list[dict] = []
@@ -447,8 +511,14 @@ def component_cards(document: dict, *, include_proof: bool = True,
             review = component.get("review") if isinstance(component.get("review"), dict) else {}
             provenance = component.get("provenance") if isinstance(component.get("provenance"), dict) else {}
             source_ref = component.get("sourceRef") if isinstance(component.get("sourceRef"), dict) else {}
+            category = str(component.get("category") or "")
             cards.append({
                 "key": key,
+                "componentRef": _component_ref(document, {**component, "componentKey":
+                                                          component.get("componentKey") or key}),
+                "usage": _usage_note(document, key, component),
+                "accuracy": _accuracy(fidelity.get("viewports") or {}),
+                "categoryLabel": _section_label(catalog, key) or category.title() or "Компоненты",
                 "level": str(level.get("key") or ""),
                 "levelLabel": str(level.get("label") or ""),
                 "section": _section_label(catalog, key),
@@ -510,18 +580,26 @@ section>header{margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #2
 .chip{border:1px solid #2c3340;border-radius:999px;background:#151a23;padding:4px 10px;font-size:11px}
 .chip small{color:#7f8899;margin-right:5px}
 .comp{border:1px solid #232935;border-radius:14px;background:#0f131a;margin-bottom:14px;overflow:hidden}
-.comp.review{border-color:#5a4526}
 .comp>header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:13px 15px;border-bottom:1px solid #1c212b;margin:0}
 .comp h4{margin:0 0 3px;font-size:14px}
 .comp .meta{color:#7f8899;font-size:10.5px}
-.badge{flex:none;border-radius:999px;padding:4px 9px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
-.badge.ok{background:#12291f;color:#5fd3a2}
-.badge.warn{background:#33270f;color:#d9a441}
+.comp .use{margin:0;padding:11px 15px 0;color:#98a1b3;font-size:12.5px;line-height:1.5}
 .panes{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;padding:14px 15px}
 .pane{min-width:0}
 .pane>span{display:block;margin-bottom:6px;color:#7f8899;font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 .stage{border:1px solid #232935;border-radius:10px;background:#0b0d12;padding:10px;overflow:auto;max-height:340px}
 .stage img{display:block;max-width:100%}
+.vpbar{display:inline-flex;gap:2px;border:1px solid #2c3340;border-radius:999px;background:#151a23;padding:3px}
+.vpbar button{border:0;border-radius:999px;background:transparent;padding:5px 13px;color:#98a1b3;font:inherit;font-size:11.5px;cursor:pointer}
+.vpbar button[aria-pressed="true"]{background:#2a3242;color:#e6eaf2}
+.snippet{padding:0 15px 14px}
+.snippet pre{max-height:200px;font-size:10.5px}
+.voice{display:grid;gap:8px;margin-top:8px}
+.voice .row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px;align-items:baseline}
+.voice .row>b{color:#9aa3b5;font-size:11px;font-weight:600}
+.quote{border:1px solid #2c3340;border-radius:8px;background:#151a23;padding:4px 9px;color:#d8dded;font-size:11.5px}
+.prose{margin:0 0 10px;color:#c3cad8;font-size:13.5px;line-height:1.6;max-width:78ch}
+.oneline{margin:0 0 14px;color:#e6eaf2;font-size:16px;line-height:1.45;max-width:70ch}
 .variants{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;padding:0 15px 14px}
 .variant{border:1px solid #1e2430;border-radius:10px;overflow:hidden}
 .variant>b{display:block;padding:7px 9px;border-bottom:1px solid #1e2430;font-size:11px}
@@ -529,8 +607,6 @@ section>header{margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #2
 table{width:100%;border-collapse:collapse;font-size:11px}
 th,td{padding:5px 8px;text-align:left;border-bottom:1px solid #1c212b}
 th{color:#7f8899;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.05em}
-td.bad{color:#f0907f}
-td.good{color:#5fd3a2}
 .foot{padding:11px 15px;border-top:1px solid #1c212b;color:#7f8899;font-size:10.5px}
 .states{margin:0;padding-left:16px;color:#8d95a6;font-size:11.5px}
 .states li{margin-bottom:3px}
@@ -543,8 +619,6 @@ pre{margin:0;overflow:auto;max-height:420px;border:1px solid #232935;border-radi
 .codehead{display:flex;justify-content:space-between;align-items:center;margin:18px 0 7px}
 button.copy{border:1px solid #394252;border-radius:8px;background:#1b222d;padding:5px 10px;color:#dfe4ee;font-size:11px;cursor:pointer}
 button.copy:hover{border-color:#5e6a7f}
-.warns{border:1px solid #4a3b22;border-radius:10px;background:#1a1509;padding:11px 13px;color:#d9a441;font-size:11.5px}
-.warns ul{margin:6px 0 0;padding-left:16px}
 @media (max-width:900px){.wrap{grid-template-columns:1fr}nav.toc{position:static}.rules{grid-template-columns:1fr}}
 @media print{nav.toc{display:none}.wrap{grid-template-columns:1fr}.stage{max-height:none}}
 """
@@ -575,6 +649,22 @@ BOOTSTRAP_JS = r"""
 
   function renderAll(){ containers.forEach(renderOne); }
   DDNA.renderAll = renderAll;
+
+  // Переключатель вьюпорта: тот же IR, другой набор responsive-оверрайдов.
+  // Перерисовываем всё разом — переключение это явный клик, не скролл.
+  function setViewport(name){
+    DDNA.viewport = name;
+    containers.forEach(function(el){
+      delete el.dataset.rendered;
+      el.innerHTML = '';
+      el.style.zoom = '';
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.vpbar button'), function(button){
+      button.setAttribute('aria-pressed', button.dataset.vp === name ? 'true' : 'false');
+    });
+    renderAll();
+  }
+  DDNA.setViewport = setViewport;
 
   function boot(){
     containers = Array.prototype.slice.call(document.querySelectorAll('[data-ddna-render]'));
@@ -607,6 +697,8 @@ BOOTSTRAP_JS = r"""
     .then(boot, boot);
 
   document.addEventListener('click', function(event){
+    var vp = event.target.closest ? event.target.closest('.vpbar button') : null;
+    if(vp && vp.dataset.vp){ setViewport(vp.dataset.vp); return; }
     var button = event.target.closest ? event.target.closest('button.copy') : null;
     if(!button) return;
     var target = document.getElementById(button.dataset.target);
@@ -634,6 +726,185 @@ def _swatch(name: str, value: str) -> str:
             f'<div><b>{_esc(name)}</b><span>{_esc(value)}</span></div></div>')
 
 
+# ---------- стиль сайта ----------
+
+# Профиль хранит машинные значения (dark/pill/airy). Страницу читает человек,
+# поэтому подписи переводятся — но только известные: незнакомое значение
+# показываем как есть, а не прячем.
+_PROFILE_LABELS = (
+    ("mode", "Тема"),
+    ("cornerCharacter", "Углы"),
+    ("density", "Плотность"),
+    ("shadowUsage", "Тени"),
+    ("paletteCharacter", "Палитра"),
+    ("accent", "Акцент"),
+    ("typographyCharacter", "Типографика"),
+    ("labelStyle", "Лейблы и надзаголовки"),
+    ("monoFamily", "Служебный шрифт"),
+    ("imageDirection", "Изображения"),
+    ("iconStyle", "Иконки"),
+)
+_PROFILE_VALUES = {
+    "mode": {"dark": "тёмная", "light": "светлая"},
+    "cornerCharacter": {"sharp": "острые", "subtle": "слегка скруглённые",
+                        "rounded": "скруглённые", "pill": "капсульные"},
+    "density": {"compact": "плотная", "comfortable": "комфортная", "airy": "просторная"},
+    "shadowUsage": {"none": "не используются", "subtle": "едва заметные", "layered": "многослойные"},
+}
+_REVIEW_LABELS = (
+    ("tone", "Тон"),
+    ("density", "Плотность"),
+    ("cornerCharacter", "Формы"),
+    ("colorUsage", "Цвет"),
+    ("typographyCharacter", "Типографика"),
+    ("imageryStyle", "Изображения"),
+)
+_VOICE_LABELS = (
+    ("heading", "Заголовки"),
+    ("eyebrow", "Надзаголовки"),
+    ("cta", "Кнопки и CTA"),
+    ("badge", "Бейджи и цифры"),
+    ("text", "Текст"),
+)
+_CONTENT_LABELS = (
+    ("brand", "Бренд"),
+    ("nav", "Навигация"),
+    ("cta", "Призывы к действию"),
+    ("heading", "Заголовки"),
+    ("title", "Названия"),
+    ("category", "Категории"),
+    ("badge", "Бейджи"),
+    ("price", "Цены"),
+    ("question", "Вопросы"),
+)
+
+
+def _as_list(value: Any) -> list[str]:
+    """Строка, список строк или список словарей → плоский список строк."""
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        value = list(value.values())
+    out: list[str] = []
+    for item in value if isinstance(value, list) else []:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+        elif isinstance(item, dict):
+            head = str(item.get("label") or item.get("title") or item.get("name")
+                       or item.get("key") or "").strip()
+            tail = str(item.get("summary") or item.get("description") or item.get("value") or "").strip()
+            joined = " — ".join(part for part in (head, tail) if part)
+            if joined:
+                out.append(joined)
+    return out
+
+
+def _kv_rows(pairs: list[tuple[str, str]]) -> str:
+    return "".join(f'<div class="rowline"><code>{_esc(label)}</code>'
+                   f'<div>{_esc(value)}</div><span></span></div>'
+                   for label, value in pairs if value)
+
+
+def _quote_chips(values: list[str], limit: int = 5) -> str:
+    return "".join(f'<span class="quote">«{_esc(value)}»</span>' for value in values[:limit])
+
+
+def _style_html(document: dict, *, url: str = "", generated_at: str = "",
+                stats: list[tuple[str, str]] | None = None) -> str:
+    """«Стиль сайта»: чем сайт является и на каком языке он говорит.
+
+    Всё опционально: siteBrief может отсутствовать, AI-ревью — не выполняться,
+    профиль — быть только детерминированным. Секция показывает то, что есть,
+    и не выдумывает недостающее.
+    """
+    brief = document.get("siteBrief") if isinstance(document.get("siteBrief"), dict) else {}
+    guide = document.get("styleGuide") if isinstance(document.get("styleGuide"), dict) else {}
+    profile = guide.get("profile") if isinstance(guide.get("profile"), dict) else {}
+    review = guide.get("review") if isinstance(guide.get("review"), dict) else {}
+    identity = document.get("identity") if isinstance(document.get("identity"), dict) else {}
+    one_line = str((((identity.get("soul") or {}).get("oneLine") or {}).get("value")) or "").strip()
+    reference = (document.get("referenceContent")
+                 if isinstance(document.get("referenceContent"), dict) else {})
+
+    parts = ['<section id="style"><header>',
+             f'<h1>{_esc(document.get("name") or "UI Kit")}</h1>',
+             '<p class="lead">Как выглядит и звучит этот сайт. Новый компонент должен встраиваться '
+             'в этот язык, а не выделяться на его фоне.</p>',
+             '</header>']
+
+    meta_bits = [f'Источник: {_esc(url)}' if url else "",
+                 f'ревизия {_esc(document.get("revision"))}',
+                 _esc((document.get("contentHash") or "")[:19]),
+                 _esc(generated_at) if generated_at else ""]
+    parts.append('<p class="lead">' + " · ".join(bit for bit in meta_bits if bit) + "</p>")
+
+    if stats:
+        parts.append('<div class="stats">')
+        parts.extend(f'<div class="stat"><b>{_esc(value)}</b><span>{_esc(label)}</span></div>'
+                     for value, label in stats)
+        parts.append("</div>")
+
+    if one_line:
+        parts.append(f'<p class="oneline" style="margin-top:18px">{_esc(one_line)}</p>')
+    for field in ("summary", "description", "about"):
+        text = " ".join(str(brief.get(field) or "").split())
+        if text:
+            parts.append(f'<p class="prose">{_esc(text)}</p>')
+
+    brief_rows = [("Аудитория", " ".join(str(brief.get("audience") or "").split())),
+                  ("Тон", " ".join(str(brief.get("tone") or "").split()))]
+    voice_text = brief.get("voice")
+    if isinstance(voice_text, str) and voice_text.strip():
+        brief_rows.append(("Голос", " ".join(voice_text.split())))
+    rows = _kv_rows(brief_rows)
+    if rows:
+        parts.append("<h3>О сайте</h3>" + rows)
+
+    sections = _as_list(brief.get("sections"))
+    if sections:
+        parts.append("<h3>Разделы сайта</h3><div class=\"chips\">")
+        parts.extend(f'<span class="chip">{_esc(item)}</span>' for item in sections[:24])
+        parts.append("</div>")
+
+    language: list[tuple[str, str]] = []
+    for field, label in _PROFILE_LABELS:
+        raw = profile.get(field)
+        if raw in (None, "", [], {}):
+            continue
+        value = str(raw)
+        language.append((label, _PROFILE_VALUES.get(field, {}).get(value, value)))
+    for field, label in _REVIEW_LABELS:
+        text = " ".join(str(review.get(field) or "").split())
+        if text:
+            language.append((f"{label} (ревью)", text))
+    if language:
+        parts.append('<h3>Дизайн-язык</h3>' + _kv_rows(language))
+
+    voice = profile.get("copyVoice") if isinstance(profile.get("copyVoice"), dict) else {}
+    voice_rows = [(label, _quote_chips(_as_list(voice.get(field)))) for field, label in _VOICE_LABELS]
+    voice_rows = [(label, chips) for label, chips in voice_rows if chips]
+    if voice_rows:
+        parts.append('<h3>Голос копирайта</h3><p class="lead">Образцы взяты со страницы источника — '
+                     'новый текст пишется в том же регистре и той же длины.</p><div class="voice">')
+        parts.extend(f'<div class="row"><b>{_esc(label)}</b><div class="chips">{chips}</div></div>'
+                     for label, chips in voice_rows)
+        parts.append("</div>")
+
+    content_rows = [(label, _quote_chips(_as_list(reference.get(field)), limit=6))
+                    for field, label in _CONTENT_LABELS]
+    content_rows = [(label, chips) for label, chips in content_rows if chips]
+    if content_rows:
+        parts.append('<h3>Слова сайта</h3><div class="voice">')
+        parts.extend(f'<div class="row"><b>{_esc(label)}</b><div class="chips">{chips}</div></div>'
+                     for label, chips in content_rows)
+        parts.append("</div>")
+
+    parts.append("</section>")
+    return "".join(parts)
+
+
 def _foundations_html(document: dict) -> str:
     foundations = document.get("foundations") or {}
     guide = document.get("styleGuide") or {}
@@ -647,7 +918,7 @@ def _foundations_html(document: dict) -> str:
     spacing = foundations.get("spacing") or {}
     measurement = foundations.get("measurement") or {}
 
-    parts = ['<section id="foundations"><header><h2>Основы</h2>'
+    parts = ['<section id="tokens"><header><h2>Токены</h2>'
              '<p class="lead">Значения измерены на странице источника, а не подобраны на глаз. '
              'Семантические роли следуют соглашению shadcn/ui — их и должен использовать генератор новых компонентов.</p></header>']
 
@@ -737,106 +1008,105 @@ def _foundations_html(document: dict) -> str:
                      f'размеров шрифта {_esc(measurement.get("fontSizeCount"))} · '
                      f'отступов {_esc(measurement.get("spacingCount"))} · '
                      f'радиусов {_esc(measurement.get("radiusCount"))}.</p>')
+
+    ir_tokens = guide.get("irTokens")
+    if isinstance(ir_tokens, dict) and ir_tokens:
+        parts.append('<h3>Design IR tokens</h3><p class="lead">Полная форма токенов, которую лочит '
+                     'генератор: те же значения, но в схеме Design IR.</p>')
+        parts.append(_code_block("code-ir-tokens", "styleGuide.irTokens",
+                                 json.dumps(ir_tokens, ensure_ascii=False, indent=2)))
     parts.append("</section>")
     return "".join(parts)
 
 
-def _fidelity_table(card: dict, thresholds: dict) -> str:
-    viewports = card.get("fidelity") or {}
-    if not viewports:
-        return '<p class="lead">Метрики точности не измерялись для этого мастера.</p>'
-    rows = ['<table><tr><th>Вьюпорт</th><th>Сходство</th><th>Покрытие краски</th>'
-            '<th>bbox p95</th><th>Смещение</th><th>Потери</th><th>Гейт</th></tr>']
-    for name, metrics in viewports.items():
-        if not isinstance(metrics, dict):
-            continue
-        similarity = _num(metrics.get("pixelSimilarity"))
-        good = similarity is not None and similarity >= thresholds["minPixelSimilarity"]
-        cell = "good" if good else "bad"
-        gate = metrics.get("sourceGatePassed")
-        rows.append(
-            f'<tr><td>{_esc(name)}</td>'
-            f'<td class="{cell}">{"—" if similarity is None else f"{similarity:.2f}%"}</td>'
-            f'<td>{_esc(metrics.get("paintCoverage", "—"))}</td>'
-            f'<td>{_esc(metrics.get("bboxP95", "—"))}</td>'
-            f'<td>{_esc(metrics.get("originError", "—"))}</td>'
-            f'<td>{_esc(metrics.get("unexplainedLosses", "—"))}</td>'
-            f'<td>{"пройден" if gate else "нет" if gate is False else "—"}</td></tr>')
-    rows.append("</table>")
-    rows.append(f'<p class="lead" style="margin-top:8px">Порог публикации: сходство ≥ '
-                f'{thresholds["minPixelSimilarity"]}% (растровые {thresholds["minRasterPixelSimilarity"]}%, '
-                f'компактные контролы {thresholds["minCompactPixelSimilarity"]}%), '
-                f'покрытие ≥ {thresholds["minPaintCoverage"]}%, смещение ≤ {thresholds["maxOriginError"]}px, '
-                f'bbox p95 ≤ {thresholds["maxBboxP95"]}px, необъяснённых потерь {thresholds["maxUnexplainedLosses"]}.</p>')
-    return "".join(rows)
+def _accuracy_note(card: dict) -> str:
+    """Компактная сноска точности — только проценты, без порогов и вердиктов.
+
+    Появляется лишь при include_fidelity=True: страница для встраивания не
+    обсуждает, насколько хорошо мы скопировали — она даёт то, что копируют.
+    """
+    pairs = []
+    for name, metrics in (card.get("fidelity") or {}).items():
+        similarity = _num((metrics or {}).get("pixelSimilarity")) if isinstance(metrics, dict) else None
+        if similarity is not None:
+            pairs.append(f"{name} {similarity:.1f}%")
+    if not pairs:
+        return ""
+    return f'<div class="foot">Точность: {_esc(" · ".join(pairs))}</div>'
 
 
-def _component_html(card: dict, thresholds: dict, ir_index: dict) -> str:
-    review = card["status"] != "verified"
-    badge = ('<span class="badge warn">нужна проверка</span>' if review
-             else '<span class="badge ok">проверен</span>')
-    parts = [f'<article class="comp{" review" if review else ""}" id="c-{_esc(card["key"])}">']
-    parts.append(
-        '<header><div>'
-        f'<h4>{_esc(card["name"])}</h4>'
-        f'<div class="meta">{_esc(card["levelLabel"])}'
-        f'{" · " + _esc(card["section"]) if card["section"] else ""}'
-        f' · {_esc(card["key"])} · встречается {_esc(card["occurrences"])}×</div>'
-        f'</div>{badge}</header>')
+def _snippet(card: dict) -> str:
+    """Копируемая ссылка на мастера — то, что вставляют в задание генератору."""
+    anchor = "snip-" + re.sub(r"[^A-Za-z0-9_-]+", "-", card["key"])
+    payload = {
+        "componentKey": card["key"],
+        "componentRef": card["componentRef"],
+        "variants": [render["variantKey"] for render in card["renders"]],
+    }
+    if card["props"]:
+        payload["props"] = card["props"]
+    return ('<div class="snippet">'
+            + _code_block(anchor, "Ссылка на мастер",
+                          json.dumps(payload, ensure_ascii=False, indent=2))
+            + "</div>")
 
-    if card["description"]:
-        parts.append(f'<div style="padding:0 15px"><p class="lead">{_esc(card["description"])}</p></div>')
-    if card["note"]:
-        parts.append(f'<div style="padding:8px 15px 0"><p class="lead">Заметка ревью: {_esc(card["note"])}</p></div>')
-    if review and card["reviewReasons"]:
-        reasons = "".join(f"<li>{_esc(reason)}</li>" for reason in card["reviewReasons"])
-        parts.append(f'<div style="padding:8px 15px 0"><div class="warns"><b>Не прошёл проверку точности:</b>'
-                     f'<ul>{reasons}</ul></div></div>')
 
-    proof = card.get("proof") or {}
-    main_ir = card["renders"][0] if card["renders"] else None
-    parts.append('<div class="panes">')
-    if main_ir:
-        ir_id = ir_index[id(main_ir["ir"])]
-        width = int(_num((main_ir["ir"].get("tree") or [{}])[0].get("frame", {}).get("width")) or 0)
-        parts.append('<div class="pane"><span>Мастер из источника</span>'
-                     f'<div class="stage"><div data-ddna-render data-ir="{_esc(ir_id)}" data-width="{width}"></div></div></div>')
-    if proof.get("image"):
-        parts.append('<div class="pane"><span>Оригинал сайта</span>'
-                     f'<div class="stage"><img src="{proof["image"]}" alt="source"></div>'
-                     + (f'<p class="lead">{_esc(proof.get("note"))}</p>' if proof.get("note") else "")
-                     + '</div>')
-    elif proof.get("note"):
-        parts.append(f'<div class="pane"><span>Оригинал сайта</span><p class="lead">{_esc(proof["note"])}</p></div>')
-    parts.append("</div>")
+def _stage(render: dict, ir_index: dict, *, max_height: int = 340) -> str:
+    ir_id = ir_index[id(render["ir"])]
+    width = int(_num((render["ir"].get("tree") or [{}])[0].get("frame", {}).get("width")) or 0)
+    return (f'<div class="stage" style="max-height:{max_height}px">'
+            f'<div data-ddna-render data-ir="{_esc(ir_id)}" data-width="{width}"></div></div>')
 
-    if len(card["renders"]) > 1:
-        parts.append('<h3 style="margin:0 15px 8px">Варианты</h3><div class="variants">')
-        for render in card["renders"]:
-            ir_id = ir_index[id(render["ir"])]
-            width = int(_num((render["ir"].get("tree") or [{}])[0].get("frame", {}).get("width")) or 0)
+
+def _component_html(card: dict, ir_index: dict, *, include_fidelity: bool = False) -> str:
+    """Карточка готового к использованию компонента.
+
+    Ни бейджа статуса, ни кропа источника, ни таблицы точности: у читателя
+    задача «встроить», а не «проверить». Всё, что нужно для встраивания —
+    как выглядит, где встречается, какие варианты и как на него сослаться.
+    """
+    meta = [card["categoryLabel"], card["key"],
+            f'{card["occurrences"]}× на сайте']
+    if card["variantCount"] > 1:
+        meta.append(f'вариантов: {card["variantCount"]}')
+    parts = [f'<article class="comp" id="c-{_esc(card["key"])}"'
+             f' data-accuracy="{_esc(card["accuracy"])}"'
+             f' data-component-key="{_esc(card["key"])}">',
+             '<header><div>'
+             f'<h4>{_esc(card["name"])}</h4>'
+             f'<div class="meta">{_esc(" · ".join(part for part in meta if part))}</div>'
+             '</div></header>']
+
+    if card["usage"]:
+        parts.append(f'<p class="use">{_esc(card["usage"])}</p>')
+
+    renders = card["renders"]
+    if len(renders) == 1:
+        parts.append('<div class="panes"><div class="pane">'
+                     + _stage(renders[0], ir_index) + "</div></div>")
+    elif renders:
+        parts.append('<h3 style="margin:14px 15px 8px">Варианты</h3><div class="variants">')
+        for render in renders:
             style_rows = "".join(
                 f"<tr><td>{_esc(name)}</td><td>{_esc(value)}</td></tr>"
                 for name, value in (render.get("observedStyle") or {}).items())
             parts.append(
                 f'<div class="variant"><b>{_esc(render["label"])}'
                 f'<small>×{_esc(render["observedCount"])}</small></b>'
-                f'<div class="stage" style="max-height:200px"><div data-ddna-render data-ir="{_esc(ir_id)}" data-width="{width}"></div></div>'
+                + _stage(render, ir_index, max_height=220)
                 + (f"<table>{style_rows}</table>" if style_rows else "")
                 + "</div>")
         parts.append("</div>")
 
-    parts.append('<div style="padding:0 15px 14px">')
-    parts.append("<h3>Точность</h3>")
-    parts.append(_fidelity_table(card, thresholds))
     if card["states"]:
         items = "".join(f'<li>{_esc(state["label"])} — {_esc(state["description"])}</li>'
                         for state in card["states"])
-        parts.append('<h3>Состояния</h3>'
+        parts.append('<div style="padding:0 15px"><h3>Состояния</h3>'
                      f'<ul class="states">{items}</ul>'
                      '<p class="lead">Состояния не наблюдались в источнике: статичный захват страницы их не содержит. '
-                     'DesignDNA не рисует то, чего не измерил — подтвердите их вручную в редакторе системы.</p>')
-    parts.append("</div>")
+                     'DesignDNA не рисует то, чего не измерил — подтвердите их вручную в редакторе системы.</p></div>')
+
+    parts.append(_snippet(card))
 
     accessibility = card.get("accessibility") or {}
     parts.append(
@@ -845,36 +1115,47 @@ def _component_html(card: dict, thresholds: dict, ir_index: dict) -> str:
         f'{" · роль " + _esc(accessibility.get("role")) if accessibility.get("role") else ""}'
         f'{" · свойства: " + _esc(", ".join(card["props"])) if card["props"] else ""}'
         "</div>")
+    if include_fidelity:
+        parts.append(_accuracy_note(card))
     parts.append("</article>")
     return "".join(parts)
 
 
 def _rules_html(document: dict) -> str:
+    """Правила встраивания: AI-ревью + siteBrief, без дублей.
+
+    Правила не выдумываются: если ни ревью, ни брифа нет, показан только
+    измеренный характер — и об этом сказано прямо.
+    """
     guide = document.get("styleGuide") or {}
     review = guide.get("review") or {}
     measured = guide.get("measured") or {}
-    parts = ['<section id="rules"><header><h2>Правила использования</h2>'
-             '<p class="lead">Дизайн-язык сайта: по нему генерируются новые компоненты, чтобы они вписывались в существующий продукт.</p></header>']
-    if not review:
-        chips = "".join(f'<span class="chip"><small>{_esc(name)}</small>{_esc(value)}</span>'
-                        for name, value in measured.items())
-        parts.append(f'<div class="chips">{chips}</div>'
-                     '<p class="lead" style="margin-top:12px">AI-ревью ещё не выполнялось — показан только измеренный характер. '
-                     'Правила не выдумываются: пока модель не изучила сайт, их здесь нет.</p></section>')
-        return "".join(parts)
+    brief = document.get("siteBrief") if isinstance(document.get("siteBrief"), dict) else {}
+    do_list = list(dict.fromkeys(_as_list(review.get("doRules")) + _as_list(brief.get("doRules"))))
+    dont_list = list(dict.fromkeys(_as_list(review.get("dontRules")) + _as_list(brief.get("dontRules"))))
+
+    parts = ['<section id="rules"><header><h2>Правила</h2>'
+             '<p class="lead">По ним новый компонент вписывается в существующий продукт, '
+             'а не выглядит вставкой из другого сайта.</p></header>']
 
     labels = [("tone", "Тон"), ("density", "Плотность"), ("cornerCharacter", "Формы"),
               ("colorUsage", "Цвет"), ("typographyCharacter", "Типографика"), ("imageryStyle", "Изображения")]
-    for field, label in labels:
-        if review.get(field):
-            parts.append(f'<div class="rowline"><code>{_esc(label)}</code>'
-                         f'<div>{_esc(review[field])}</div><span></span></div>')
-    do_rules = "".join(f"<li>{_esc(rule)}</li>" for rule in review.get("doRules") or [])
-    dont_rules = "".join(f"<li>{_esc(rule)}</li>" for rule in review.get("dontRules") or [])
-    if do_rules or dont_rules:
+    rows = _kv_rows([(label, " ".join(str(review.get(field) or "").split())) for field, label in labels])
+    if rows:
+        parts.append(rows)
+
+    if do_list or dont_list:
+        do_rules = "".join(f"<li>{_esc(rule)}</li>" for rule in do_list)
+        dont_rules = "".join(f"<li>{_esc(rule)}</li>" for rule in dont_list)
         parts.append('<div class="rules" style="margin-top:18px">'
                      f'<div class="do"><h3>Делать</h3><ul>{do_rules}</ul></div>'
                      f'<div class="dont"><h3>Не делать</h3><ul>{dont_rules}</ul></div></div>')
+    elif not rows:
+        chips = "".join(f'<span class="chip"><small>{_esc(name)}</small>{_esc(value)}</span>'
+                        for name, value in measured.items())
+        parts.append(f'<div class="chips">{chips}</div>'
+                     '<p class="lead" style="margin-top:12px">Правил в документе пока нет — показан только '
+                     'измеренный характер. Правила не выдумываются: пока сайт не описан, их здесь не будет.</p>')
     parts.append("</section>")
     return "".join(parts)
 
@@ -888,7 +1169,7 @@ def _code_block(anchor: str, title: str, body: str, language: str = "") -> str:
 def _code_html(document: dict) -> str:
     tailwind = json.dumps(tailwind_theme(document), ensure_ascii=False, indent=2)
     figma = json.dumps(figma_tokens(document), ensure_ascii=False, indent=2)
-    return ('<section id="code"><header><h2>Живой код</h2>'
+    return ('<section id="code"><header><h2>Код</h2>'
             '<p class="lead">Значения те же, что на странице — они не переписаны руками, а собраны из документа системы.</p></header>'
             + _code_block("code-tokens", "tokens.css", tokens_css(document))
             + _code_block("code-tailwind", "tailwind.config — theme", tailwind)
@@ -896,29 +1177,37 @@ def _code_html(document: dict) -> str:
             + "</section>")
 
 
-def _method_html(document: dict, report: dict) -> str:
-    foundations = document.get("foundations") or {}
-    measurement = foundations.get("measurement") or {}
-    warnings = report.get("warnings") or []
-    parts = ['<section id="method"><header><h2>Методика</h2>'
-             '<p class="lead">Откуда взялось каждое значение и чему здесь можно доверять.</p></header>']
-    parts.append(
-        "<ul class=\"states\" style=\"font-size:12.5px\">"
-        f"<li><b>Измерено:</b> цвета, размеры шрифта, отступы и радиусы сняты с реальной страницы "
-        f"({_esc(measurement.get('basis') or 'source-ir')}), а не подобраны по скриншоту.</li>"
-        "<li><b>Компоненты</b> — точные поддеревья DOM, вырезанные по измеренным границам. Это те же мастера, "
-        "которые использует генератор, поэтому страница не может разойтись с системой.</li>"
-        "<li><b>Точность</b> измеряется тем же harness, что решает публикуемость: рендер сравнивается с "
-        "исходным скриншотом попиксельно. Числа в карточках — результат этого сравнения, а не оценка.</li>"
-        "<li><b>Состояния</b> пусты намеренно: статичный захват страницы не содержит hover и focus. "
-        "Показать их означало бы выдумать.</li>"
-        "<li><b>Мастера на ревью</b> показаны вместе с причинами, а не спрятаны — иначе картина кита была бы приукрашена.</li>"
-        "<li><b>Обновление:</b> переимпортируйте Source, пересоберите систему кнопкой Sync и выгрузите страницу заново. "
-        "Ручной правки не требуется.</li>"
-        "</ul>")
-    if warnings:
-        items = "".join(f"<li>{_esc(item)}</li>" for item in warnings[:40])
-        parts.append(f'<div class="warns" style="margin-top:14px"><b>Предупреждения сборки:</b><ul>{items}</ul></div>')
+VIEWPORTS = (("desktop", "Desktop"), ("tablet", "Tablet"), ("mobile", "Mobile"))
+
+
+def _viewport_bar(active: str) -> str:
+    buttons = "".join(
+        f'<button type="button" data-vp="{_esc(key)}" '
+        f'aria-pressed="{"true" if key == active else "false"}">{_esc(label)}</button>'
+        for key, label in VIEWPORTS)
+    return f'<div class="vpbar" role="group" aria-label="Вьюпорт">{buttons}</div>'
+
+
+def _components_html(cards: list[dict], ir_index: dict, *, viewport: str = "desktop",
+                     include_fidelity: bool = False) -> str:
+    """«Компоненты»: каждый мастер как готовый к вставке блок, по категориям."""
+    groups: dict[str, list[dict]] = {}
+    for card in cards:
+        groups.setdefault(card["categoryLabel"] or "Компоненты", []).append(card)
+
+    parts = ['<section id="components"><header>'
+             '<div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap">'
+             '<div><h2>Компоненты</h2>'
+             '<p class="lead">Готовые блоки сайта: возьмите нужный, сошлитесь на его мастер и наполните '
+             'своим содержимым. Каждый отрисован движком редактора из точного захвата страницы.</p></div>'
+             + _viewport_bar(viewport) + '</div></header>']
+    if not cards:
+        parts.append('<p class="lead">В документе нет мастеров — соберите UI Kit из Source.</p></section>')
+        return "".join(parts)
+    for label, items in groups.items():
+        parts.append(f"<h3>{_esc(label)}</h3>")
+        parts.extend(_component_html(card, ir_index, include_fidelity=include_fidelity)
+                     for card in items)
     parts.append("</section>")
     return "".join(parts)
 
@@ -927,8 +1216,19 @@ def render_styleguide(document: dict, *, include_proof: bool = True,
                       include_review_components: bool = True,
                       viewport: str = "desktop",
                       generated_at: str = "",
-                      max_bytes: int = DEFAULT_MAX_BYTES) -> tuple[str, dict]:
+                      max_bytes: int = DEFAULT_MAX_BYTES,
+                      include_fidelity: bool = False) -> tuple[str, dict]:
     """Документ дизайн-системы → (самодостаточный HTML, отчёт сборки).
+
+    Страница — документ для встраивания: стиль сайта, токены, все компоненты,
+    правила, код. Верификационной обвязки (кроп источника, таблицы точности,
+    бейджи «нужна проверка», пулы ревью) на ней нет.
+
+    `include_review_components` сохранён ради совместимости и трактуется как
+    всегда включённый: мастер «на ревью» — такой же точный захват сайта.
+    `include_proof` игнорируется: кроп источника не рендерится ни при каких
+    значениях. `include_fidelity=True` добавляет к карточке компактную сноску
+    с процентами — и только её.
 
     Документ не мутируется. Страница не делает ни одного внешнего запроса:
     шрифты, картинки и движок рендера встроены.
@@ -937,8 +1237,7 @@ def render_styleguide(document: dict, *, include_proof: bool = True,
     faces = collect_font_faces(source)
     font_css, font_specs, font_warnings = inline_font_css(faces)
     cards, card_warnings, proof_bytes = component_cards(
-        source, include_proof=include_proof,
-        include_review=include_review_components, viewport=viewport)
+        source, include_proof=False, include_review=True, viewport=viewport)
 
     # IR складываем в один индекс: одинаковые мастера не дублируются в payload.
     irs: dict[str, dict] = {}
@@ -957,7 +1256,6 @@ def render_styleguide(document: dict, *, include_proof: bool = True,
         "warnings": warnings,
     }
 
-    thresholds = dsdoc.MASTER_FIDELITY_THRESHOLDS
     summary = dsdoc.summary(source)
     url = ""
     for ref in source.get("sourceRefs") or []:
@@ -965,40 +1263,18 @@ def render_styleguide(document: dict, *, include_proof: bool = True,
             url = str(ref["url"])
             break
 
-    levels: dict[str, list[dict]] = {}
-    for card in cards:
-        levels.setdefault(card["levelLabel"] or "Компоненты", []).append(card)
+    stats = [(str(summary["catalogComponents"]), "компонентов"),
+             (str(summary["catalogVariants"]), "вариантов"),
+             (str(len(((source.get("styleGuide") or {}).get("tokens") or {}))), "токенов"),
+             (str(len(font_specs)), "шрифтов встроено")]
 
     body = [
-        '<section id="overview"><header>',
-        f'<h1>{_esc(source.get("name") or "UI Kit")}</h1>',
-        f'<p class="lead">Источник: {_esc(url) or "—"} · ревизия {_esc(source.get("revision"))} · '
-        f'{_esc((source.get("contentHash") or "")[:19])}{" · " + _esc(generated_at) if generated_at else ""}</p>',
-        "</header>",
-        '<div class="stats">',
-        f'<div class="stat"><b>{summary["catalogComponents"]}</b><span>компонентов</span></div>',
-        f'<div class="stat"><b>{summary["verifiedMasters"]}</b><span>прошли проверку</span></div>',
-        f'<div class="stat"><b>{summary["reviewMasters"]}</b><span>ждут ревью</span></div>',
-        f'<div class="stat"><b>{summary["catalogVariants"]}</b><span>вариантов</span></div>',
-        f'<div class="stat"><b>{summary["qualityScore"]}/100</b><span>качество</span></div>',
-        f'<div class="stat"><b>{len(font_specs)}</b><span>шрифтов встроено</span></div>',
-        "</div>",
-        '<p class="lead" style="margin-top:16px">Страница собрана из измеренной дизайн-системы: '
-        'компоненты — точные мастера с сайта, цифры точности — результат попиксельного сравнения с оригиналом. '
-        'Чтобы обновить — переимпортируйте Source и выгрузите страницу заново.</p>',
-        "</section>",
+        _style_html(source, url=url, generated_at=generated_at, stats=stats),
         _foundations_html(source),
-        '<section id="components"><header><h2>Компоненты</h2>'
-        '<p class="lead">От простого к составному: атомы → молекулы → организмы. '
-        'Каждый мастер отрисован движком редактора из точного захвата.</p></header>',
+        _components_html(cards, ir_index, viewport=viewport, include_fidelity=include_fidelity),
+        _rules_html(source),
+        _code_html(source),
     ]
-    for label, items in levels.items():
-        body.append(f"<h3>{_esc(label)}</h3>")
-        body.extend(_component_html(card, thresholds, ir_index) for card in items)
-    body.append("</section>")
-    body.append(_rules_html(source))
-    body.append(_code_html(source))
-    body.append(_method_html(source, report))
 
     payload = json.dumps({"irs": irs, "fontSpecs": font_specs, "viewport": viewport},
                          ensure_ascii=False).replace("</", "<\\/")
@@ -1008,8 +1284,8 @@ def render_styleguide(document: dict, *, include_proof: bool = True,
 
     toc = "".join(
         f'<a href="#{anchor}">{_esc(label)}</a>' for anchor, label in (
-            ("overview", "Обзор"), ("foundations", "Основы"), ("components", "Компоненты"),
-            ("rules", "Правила"), ("code", "Живой код"), ("method", "Методика")))
+            ("style", "Стиль сайта"), ("tokens", "Токены"), ("components", "Компоненты"),
+            ("rules", "Правила"), ("code", "Код")))
 
     html_text = (
         "<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\">"

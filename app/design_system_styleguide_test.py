@@ -1,12 +1,18 @@
 """Генератор живого UI kit: структура, самодостаточность, честность.
 
-Главные гарантии, которые здесь фиксируются:
+Страница — документ для встраивания компонентов в существующий сайт, а не
+отчёт о верификации. Главные гарантии, которые здесь фиксируются:
+* пять секций в нужном порядке: стиль сайта, токены, компоненты, правила, код;
+* верификационной обвязки по умолчанию нет — ни бейджей «нужна проверка», ни
+  кропа оригинала, ни таблиц точности, ни секции «Методика»;
+* мастера «на ревью» показаны как обычные готовые компоненты;
+* точность доступна только по запросу (include_fidelity) и только процентами;
 * страница не ссылается наружу — открывается двойным кликом без сети;
 * шрифты источника встроены как data:, а наш блок объявлен ПОСЛЕ синглтона
   рендерера (иначе он выиграет по порядку и до последнего компонента доедут
   чужие шрифты);
 * meta.fontFaces из встроенных IR снят — иначе рендерер затирает общий стиль;
-* состояния не выдумываются, а мастера на ревью не прячутся.
+* состояния не выдумываются.
 """
 from __future__ import annotations
 
@@ -77,10 +83,20 @@ def _page_only(html_text: str) -> str:
     return html_text[:start]
 
 
-def test_page_has_every_section(built):
+SECTIONS = ("style", "tokens", "components", "rules", "code")
+
+
+def test_page_is_five_sections_in_reading_order(built):
     _document, html_text, _report = built
-    for anchor in ("overview", "foundations", "components", "rules", "code", "method"):
+    positions = []
+    for anchor in SECTIONS:
         assert f'id="{anchor}"' in html_text, anchor
+        positions.append(html_text.index(f'id="{anchor}"'))
+    assert positions == sorted(positions), "секции идут не в порядке чтения"
+    # Верификационная секция ушла: страница отвечает «как сделать», а не
+    # «насколько точно мы скопировали».
+    assert 'id="method"' not in html_text
+    assert 'id="overview"' not in html_text
 
 
 def test_page_never_points_outside_itself(built):
@@ -128,12 +144,133 @@ def test_states_are_reported_as_unobserved_not_drawn(built):
     assert "DesignDNA не рисует то, чего не измерил" in html_text
 
 
-def test_fidelity_thresholds_come_from_the_shared_constant(built):
+def test_page_carries_no_verification_chrome(built):
+    """Кит для встраивания не обсуждает, насколько хорошо мы скопировали."""
     from design_system.document import MASTER_FIDELITY_THRESHOLDS as thresholds
 
     _document, html_text, _report = built
-    assert f'{thresholds["minPixelSimilarity"]}%' in html_text
-    assert f'{thresholds["maxBboxP95"]}px' in html_text
+    page = _page_only(html_text)
+    for forbidden in ("НУЖНА ПРОВЕРКА", "нужна проверка", "Needs review", "Оригинал сайта",
+                      "Мастер из источника", "Методика", "ЭКЗЕМПЛЯРЫ НА РЕВЬЮ",
+                      "Не прошёл проверку точности", "Порог публикации", "Точность",
+                      "bbox", "Покрытие краски", "pixelSimilarity",
+                      f'{thresholds["minPixelSimilarity"]}%'):
+        assert forbidden not in page, forbidden
+
+
+def _with_measured_fidelity(document: dict) -> dict:
+    import copy as _copy
+
+    clone = _copy.deepcopy(document)
+    for pool in ("components", "reviewComponents"):
+        for component in (clone.get(pool) or {}).values():
+            component["fidelity"] = {"status": "verified", "viewports": {
+                "desktop": {"pixelSimilarity": 93.375}}}
+    return clone
+
+
+def test_accuracy_is_a_debug_attribute_not_a_table(built):
+    from design_system import styleguide
+
+    document, _html, _report = built
+    html_text, _ = styleguide.render_styleguide(_with_measured_fidelity(document))
+    assert 'data-accuracy="desktop=93.38"' in html_text
+    assert "Точность" not in _page_only(html_text)
+    assert "<th>" not in _page_only(html_text), "таблиц точности на странице быть не должно"
+
+
+def test_fidelity_footnote_appears_only_when_asked(built):
+    from design_system import styleguide
+
+    document, _html, _report = built
+    measured = _with_measured_fidelity(document)
+    default_html, _ = styleguide.render_styleguide(measured)
+    assert "Точность:" not in default_html
+
+    with_fidelity, _ = styleguide.render_styleguide(measured, include_fidelity=True)
+    assert "Точность: desktop 93.4%" in with_fidelity
+    # Только проценты: ни порогов, ни вердиктов, ни причин отклонения.
+    assert "Порог публикации" not in with_fidelity
+    assert "нужна проверка" not in with_fidelity
+
+
+def test_review_masters_are_rendered_as_ordinary_components(built):
+    """Мастер «на ревью» — такой же точный захват сайта, а не второй сорт."""
+    document, html_text, report = built
+    review_keys = set(document.get("reviewComponents") or {})
+    assert review_keys, "фикстура должна давать хотя бы один мастер на ревью"
+    for key in review_keys:
+        assert f'id="c-{key}"' in html_text, key
+    page = _page_only(html_text)
+    assert 'class="comp review"' not in page
+    assert 'class="badge' not in page
+    assert report["componentCount"] == len(
+        set(document.get("components") or {}) | review_keys)
+
+
+def test_style_section_describes_the_site(built):
+    document, html_text, _report = built
+    style = html_text[html_text.index('id="style"'):html_text.index('id="tokens"')]
+    assert "Стиль сайта" in html_text
+    assert document["sourceRefs"][0]["url"] in style
+    one_line = document["identity"]["soul"]["oneLine"]["value"]
+    assert one_line[:40] in style
+    assert "Дизайн-язык" in style
+    # Голос копирайта показан цитатами, а не пересказом.
+    assert "Голос копирайта" in style or "Слова сайта" in style
+    assert "«" in style
+
+
+def test_optional_site_brief_is_rendered_and_merged_into_rules(built):
+    from design_system import styleguide
+
+    document, _html, _report = built
+    briefed = dict(document, siteBrief={
+        "summary": "Маркетплейс бытовой техники для домашних покупателей.",
+        "audience": "Розничные покупатели 25-45",
+        "tone": "Дружелюбный, без канцелярита",
+        "sections": ["Каталог", {"label": "Доставка", "summary": "условия и сроки"}],
+        "doRules": ["Кнопку действия держать одну на экран"],
+        "dontRules": ["Не вводить новые акцентные цвета"],
+    })
+    html_text, _ = styleguide.render_styleguide(briefed)
+    assert "Маркетплейс бытовой техники" in html_text
+    assert "Розничные покупатели 25-45" in html_text
+    assert "Доставка — условия и сроки" in html_text
+    rules = html_text[html_text.index('id="rules"'):html_text.index('id="code"')]
+    assert "Кнопку действия держать одну на экран" in rules
+    assert "Не вводить новые акцентные цвета" in rules
+
+
+def test_page_survives_a_document_without_brief_profile_or_identity(built):
+    """Все источники секции «Стиль сайта» опциональны."""
+    from design_system import styleguide
+
+    document, _html, _report = built
+    bare = dict(document)
+    bare.pop("identity", None)
+    bare.pop("referenceContent", None)
+    bare["styleGuide"] = {"tokens": (document.get("styleGuide") or {}).get("tokens") or {}}
+    html_text, report = styleguide.render_styleguide(bare)
+    assert 'id="style"' in html_text and report["componentCount"] >= 1
+
+
+def test_every_card_offers_a_copyable_master_reference(built):
+    document, html_text, _report = built
+    keys = set(document.get("components") or {}) | set(document.get("reviewComponents") or {})
+    for key in keys:
+        assert f'id="snip-{key}"' in html_text, key
+        assert f'data-target="snip-{key}"' in html_text, key
+    assert "componentRef" in html_text and "masterHash" in html_text
+    assert "× на сайте" in html_text
+
+
+def test_viewport_switcher_survives(built):
+    _document, html_text, _report = built
+    for name in ("desktop", "tablet", "mobile"):
+        assert f'data-vp="{name}"' in html_text, name
+    assert 'aria-pressed="true"' in html_text
+    assert "DDNA.setViewport" in html_text
 
 
 def test_live_code_blocks_are_usable(built):
