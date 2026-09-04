@@ -64,21 +64,37 @@ def wait_ready(page, base: str) -> None:
 
 
 def main() -> None:
-    tmp = tempfile.mkdtemp(prefix="ds-ui-")
-    port = free_port()
-    env = os.environ.copy()
-    env["DESIGNDNA_DATA_DIR"] = tmp
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"],
-        cwd=str(ROOT), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    base = f"http://127.0.0.1:{port}"
+    base = os.environ.get("DESIGNAI_UI_BASE", "").rstrip("/")
+    proc = None
+    if not base:
+        tmp = tempfile.mkdtemp(prefix="ds-ui-")
+        port = free_port()
+        env = os.environ.copy()
+        env["DESIGNDNA_DATA_DIR"] = tmp
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"],
+            cwd=str(ROOT), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        base = f"http://127.0.0.1:{port}"
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 1600, "height": 950})
             page.route("**/api/project/load", lambda route: route.fulfill(status=200, content_type="application/json", body='{"project":null}'))
             page.route("**/api/project/save", lambda route: route.fulfill(status=200, content_type="application/json", body='{"ok":true}'))
+            # The panel starts both AI reviews automatically. This lifecycle test
+            # covers deterministic UI actions, so keep those background calls
+            # local and immediate instead of invoking an account-backed LLM.
+            page.route("**/api/design-system/style-review", lambda route: route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":"disabled in deterministic UI lifecycle test"}',
+            ))
+            page.route("**/api/design-system/master-review", lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"reviewed":0,"approved":0,"results":[]}',
+            ))
             wait_ready(page, base)
             page.evaluate("localStorage.clear()")
             page.reload()
@@ -125,11 +141,32 @@ def main() -> None:
             check("publish has accessible label", "Опубликовать" in (pub_btn.get_attribute("aria-label") or ""))
             check("review-only draft cannot publish", pub_btn.is_disabled())
             check("default disabled until published", def_btn.is_disabled())
+            page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
 
-            # Source masters remain review-gated. Promote an explicit semantic
-            # suggestion, then reopen so it becomes the editor rollback baseline.
+            # Source masters remain review-gated. Seed an explicit semantic
+            # suggestion so this lifecycle test does not try to promote an exact
+            # Source master that correctly failed the fidelity gate.
+            page.evaluate("""async (id) => {
+              const state = window.__flowStore.getState();
+              const doc = structuredClone(window.GraphDev.node(id).data.document);
+              doc.suggestions ||= {};
+              doc.suggestions['semantic-promo'] = {
+                componentKey: 'semantic-promo', canonicalRole: 'content',
+                name: 'Semantic promo', category: 'content',
+                description: 'Explicit semantic test suggestion',
+                origin: 'suggested', status: 'draft', confidence: 0.8, confirmed: false,
+                templateIr: {
+                  version: '1.1', tokens: doc.styleGuide?.irTokens || {},
+                  tree: [{type:'card', children:[{type:'text', typeRole:'body', text:'Promo'}]}],
+                },
+                variants: {}, states: {}, dependencies: [], mockBindings: [],
+                provenance: {extraction: 'semantic-suggestion-test'},
+              };
+              await state.saveDesignSystemDocument(id, doc);
+            }""", ds_id)
             page.locator("[data-ds-editor] [data-ds-tab='suggestions']").click()
-            page.locator("[data-ds-editor] [data-ds-suggestion]").first.click()
+            page.locator("[data-ds-editor] [data-ds-suggestion='semantic-promo']").click()
+            page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
             promote_btn = page.locator("[data-ds-editor] [data-ds-action='promote']")
             check("semantic suggestion can be explicitly promoted", promote_btn.is_enabled())
             promote_btn.click()
@@ -341,6 +378,7 @@ def main() -> None:
 
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
+            page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
             page.locator("[data-ds-editor] [data-ds-action='default']").click()
             page.wait_for_function("id => window.GraphDev.node(id).data.defaultSet === true", arg=ds_id)
             page.locator("[data-ds-editor] [data-ds-action='close']").click()
@@ -485,6 +523,7 @@ def main() -> None:
 
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
+            page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
             reopened_meta = page.locator("[data-ds-editor] .ds-editor-meta").inner_text()
             check(
                 "reopen after cancel still shows published revision",
@@ -510,8 +549,27 @@ def main() -> None:
             open_btn2 = page.locator(f'.n-designsystem[data-id="{ds_id2}"] [data-ds-action="open"]')
             open_btn2.click()
             page.wait_for_selector("[data-ds-editor]")
+            page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id2)
+            page.evaluate("""async (id) => {
+              const state = window.__flowStore.getState();
+              const doc = structuredClone(window.GraphDev.node(id).data.document);
+              doc.suggestions ||= {};
+              doc.suggestions['semantic-promo'] = {
+                componentKey: 'semantic-promo', canonicalRole: 'content',
+                name: 'Semantic promo', category: 'content',
+                origin: 'suggested', status: 'draft', confidence: 0.8, confirmed: false,
+                templateIr: {
+                  version: '1.1', tokens: doc.styleGuide?.irTokens || {},
+                  tree: [{type:'card', children:[{type:'text', typeRole:'body', text:'Promo'}]}],
+                },
+                variants: {}, states: {}, dependencies: [], mockBindings: [],
+                provenance: {extraction: 'semantic-suggestion-test'},
+              };
+              await state.saveDesignSystemDocument(id, doc);
+            }""", ds_id2)
             page.locator("[data-ds-editor] [data-ds-tab='suggestions']").click()
-            page.locator("[data-ds-editor] [data-ds-suggestion]").first.click()
+            page.locator("[data-ds-editor] [data-ds-suggestion='semantic-promo']").click()
+            page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id2)
             page.locator("[data-ds-editor] [data-ds-action='promote']").click()
             page.wait_for_function("id => Object.keys(window.GraphDev.node(id)?.data?.document?.components || {}).length > 0", arg=ds_id2)
             page.locator("[data-ds-editor] [data-ds-action='publish']").click()
@@ -532,6 +590,7 @@ def main() -> None:
             # restore first as project default for the remaining picker/reload checks
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
+            page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
             page.locator("[data-ds-editor] [data-ds-action='default']").click()
             page.wait_for_function("id => window.GraphDev.node(id).data.defaultSet === true", arg=ds_id)
             page.locator("[data-ds-editor] [data-ds-action='close']").click()
@@ -561,15 +620,17 @@ def main() -> None:
 
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
+            page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
             busy_pub = page.locator("[data-ds-editor] [data-ds-action='publish']")
             check("publish button remains labeled after lifecycle", "Опубликовать" in (busy_pub.get_attribute("aria-label") or ""))
             browser.close()
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
 
     if FAILS:
         print("FAILURES:", len(FAILS), "-", ", ".join(FAILS))

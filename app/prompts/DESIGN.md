@@ -80,12 +80,19 @@ tokens still win over everything below.
 - Alternate section backgrounds (`background` vs `surface`) to build rhythm;
   keep text/muted roles consistent on each surface.
 
-## Typography
+## Текстовые стили
 
 - Display font carries the personality: large, tight-tracked headlines;
   body stays quiet and readable. Never more than the given families.
 - Headlines say something concrete (no "Welcome to our platform");
   body copy is realistic, specific, in the brief's language.
+- Every `heading` and `text` element declares a semantic `typeRole`: use
+  `display` for the hero thesis, `h1`/`h2`/`h3` for the matching hierarchy,
+  `lead` for an introductory paragraph, `body` for ordinary copy, `small` for
+  captions and metadata, and `eyebrow` for a short overline label.
+- When `typeRole` is present, never set `style.fontSize`, `style.lineHeight`,
+  `style.fontWeight`, or `style.letterSpacing` on that element. The role is the
+  single source of truth, so changing a text style updates every matching use.
 
 ## Imagery
 
