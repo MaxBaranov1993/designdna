@@ -201,7 +201,10 @@ def component_section(req: ComponentSectionRequest):
     if not isinstance(section, dict):
         return _err(422, "Не удалось собрать секцию из мастера")
     system_ref = {"systemId": document.get("id"), "revision": document.get("revision"), "contentHash": document.get("contentHash")}
-    handle = compiler.component_handle(comp, system_ref)
+    handle_component = comp
+    if isinstance(variant, dict) and variant.get("masterRef") != "self" and isinstance(variant.get("masterIr"), dict):
+        handle_component = {**comp, "masterIr": master}
+    handle = compiler.component_handle(handle_component, system_ref)
     target = section
     if section.get("type") == "source-block" and section.get("variant") == "component-master":
         kids = section.get("children") or []

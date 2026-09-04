@@ -537,6 +537,10 @@ def summary(document: dict) -> dict:
     origins = {"observed": 0, "suggested": len(suggestions), "generated": 0, "user": 0}
     for c in components:
         origins[str(c.get("origin") or "observed")] = origins.get(str(c.get("origin") or "observed"), 0) + 1
+        origins["user"] += sum(
+            1 for variant in (c.get("variants") or {}).values()
+            if isinstance(variant, dict) and variant.get("origin") == "user"
+        )
     identity = document.get("identity") or {}
     reconstruction = document.get("reconstruction") or {}
     return {

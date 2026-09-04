@@ -109,7 +109,7 @@
     <div class="fe-locks-card fe-comps-card" role="dialog" aria-modal="true" aria-labelledby="comps-title" data-components-panel>
       <div class="fe-locks-kicker">Дизайн-система · компоненты</div>
       <h2 id="comps-title">Вставить компонент в страницу</h2>
-      <p>Мастер добавится последней секцией с привязкой к дизайн-системе: strict-проверка примет его как точную копию, Quality Gate не тронет.</p>
+      <p>Мастер добавится после выделенной секции, а без выделения — в конец. Привязка к дизайн-системе позволит strict-проверке принять его как точную копию.</p>
       {#if systems.length}
         <label class="fe-comps-system">
           <span>Система</span>
