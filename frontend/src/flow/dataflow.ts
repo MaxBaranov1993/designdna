@@ -12,6 +12,7 @@ export const WIRE_COLORS: Record<PortKind, string> = {
   motion: "#E05FB0",
   timeline: "#FF5F56",
   video: "#4F7CFF",
+  ds: "#8B7CF6",
 };
 
 function localRenderArtifact(
@@ -105,6 +106,19 @@ export function outValue(n: FlowNode, port?: string): unknown {
     // foundations. Документ в ноде — кэш, при ссылке на ревизию порт пуст,
     // пока панель не подтянет документ.
     case "designsystem": {
+      // Порт «system»: ссылка на систему для Генератора. Статус едет вместе с
+      // ней, чтобы генератор мог честно сказать «опубликуйте ДС», а не молчать.
+      if (port === "system") {
+        if (!n.data.systemId) return null;
+        return {
+          systemId: n.data.systemId,
+          revision: n.data.revision,
+          contentHash: n.data.contentHash || "",
+          status: n.data.status,
+          name: n.data.name,
+          nodeId: Number(n.id),
+        };
+      }
       const document = n.data.document as Record<string, unknown> | null | undefined;
       if (!document || typeof document !== "object") return null;
       const styleGuide = document.styleGuide as Record<string, unknown> | undefined;

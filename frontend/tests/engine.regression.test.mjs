@@ -446,4 +446,24 @@ check("TimelineEngine.seek is deterministic and frame math matches fps", () => {
   assert.equal(tail["layer-hero"].opacity, 1);
 });
 
+
+/* ---------- text styles: typeRole = роль типографики вместо инлайнового кегля ---------- */
+
+check("typeRole renders as a text-style class and drops inline type overrides", () => {
+  const html = IRRendererTest.renderElement({
+    type: "heading", level: 2, typeRole: "display", text: "Hi",
+    style: { fontSize: 72, fontWeight: 800, lineHeight: 1.05, letterSpacing: -2, color: "#111111" },
+  }, 3, false, null);
+  assert.ok(html.includes('class="t-display"'), html);
+  assert.ok(html.includes('data-type-role="display"'), html);
+  assert.ok(!/font-size:|font-weight:|line-height:|letter-spacing:/.test(html), html);
+  assert.ok(html.includes("color:#111111"), html);
+  const p = IRRendererTest.renderElement({ type: "text", size: "sm", typeRole: "small", text: "x", style: { fontSize: 9 } }, 3, false, null);
+  assert.ok(p.includes('class="muted t-small"'), p);
+  const plain = IRRendererTest.renderElement({ type: "text", typeRole: "nope", text: "x", style: { fontSize: 14 } }, 3, false, null);
+  assert.ok(!plain.includes("t-nope") && plain.includes("font-size:14px"), plain);
+  const css = IRRendererTest.baseCss(3);
+  assert.ok(css.includes(".ir-3 .t-h1 {") && css.includes(".ir-3 .t-body {") && css.includes(".ir-3.ir-mobile .t-h1 {"), "role classes in base css");
+});
+
 console.log(`ALL ENGINE REGRESSION CHECKS PASSED (${passed})`);

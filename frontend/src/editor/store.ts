@@ -25,6 +25,9 @@ interface EditorUIState {
   responsiveProposal: ctl.ResponsiveAutopilotProposal | null;
   intentLocksOpen: boolean;
   semanticSelectOpen: boolean;
+  /* Панели «Правила» (правила генератора/судьи + правила проекта) и «Компоненты» (вставка мастера ДС) */
+  rulesOpen: boolean;
+  componentsOpen: boolean;
   aiBusy: boolean;
   aiError: string;
   aiPreview: AssistPreview | null;
@@ -49,6 +52,8 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
   responsiveProposal: null,
   intentLocksOpen: false,
   semanticSelectOpen: false,
+  rulesOpen: false,
+  componentsOpen: false,
   aiBusy: false,
   aiError: "",
   aiPreview: null,
@@ -112,7 +117,7 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
       { registry: sourceRegistry, nodeSources, layoutEvidence },
     );
     if (!ok) return false;
-    set({ isOpen: true, nodeId, tool: "select", smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null, aiProgress: null });
+    set({ isOpen: true, nodeId, tool: "select", smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, rulesOpen: false, componentsOpen: false, aiBusy: false, aiError: "", aiPreview: null, aiProgress: null });
     if (ctl.dom.overlay) ctl.dom.overlay.style.display = "flex";
     requestAnimationFrame(() => {
       if (ctl.dom.overlay && useEditorStore.getState().isOpen && ctl.isActive()) ctl.finishOpen();
@@ -128,7 +133,7 @@ ctl.bindUi({
   setSnapStep: (snapStep) => useEditorStore.setState({ snapStep }),
   setOpen: (v) => {
     if (ctl.dom.overlay) ctl.dom.overlay.style.display = v ? "flex" : "none";
-    useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, aiBusy: false, aiError: "", aiPreview: null, aiProgress: null, closeConfirmOpen: false }) });
+    useEditorStore.setState({ isOpen: v, ...(v ? {} : { nodeId: null, smartAxisProposal: null, qualityProposal: null, harmonizerProposal: null, responsiveProposal: null, intentLocksOpen: false, semanticSelectOpen: false, rulesOpen: false, componentsOpen: false, aiBusy: false, aiError: "", aiPreview: null, aiProgress: null, closeConfirmOpen: false }) });
   },
   setCloseConfirm: (closeConfirmOpen) => useEditorStore.setState({ closeConfirmOpen }),
   // queueMicrotask: setState синхронно внутри стека события geoedit (onSelect)
@@ -143,6 +148,8 @@ ctl.bindUi({
   setHarmonizerProposal: (harmonizerProposal) => useEditorStore.setState({ harmonizerProposal }),
   setResponsiveProposal: (responsiveProposal) => useEditorStore.setState({ responsiveProposal }),
   setIntentLocksOpen: (intentLocksOpen) => useEditorStore.setState({ intentLocksOpen }),
+  setRulesOpen: (rulesOpen) => useEditorStore.setState({ rulesOpen }),
+  setComponentsOpen: (componentsOpen) => useEditorStore.setState({ componentsOpen }),
   setSemanticSelectOpen: (semanticSelectOpen) => useEditorStore.setState({ semanticSelectOpen }),
   setAiBusy: (aiBusy) => useEditorStore.setState({ aiBusy }),
   setAiError: (aiError) => useEditorStore.setState({ aiError }),

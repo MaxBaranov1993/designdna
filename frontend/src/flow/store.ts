@@ -656,6 +656,8 @@ export interface FlowStoreState {
   replaceProjectFromDb: () => Promise<boolean>;
   refreshDesignSystems: () => Promise<void>;
   createDesignSystemFromSource: (sourceId: number, options?: { name?: string }) => Promise<number | null>;
+  /* «Загруженная» ДС: JSON-файл (документ DesignDNA / W3C-Tokens Studio / карта токенов) → черновик в этой ноде */
+  importDesignSystemDocument: (nodeId: number, payload: unknown, fileName: string) => Promise<boolean>;
   promoteVariantToDesignSystem: (generatorId: number) => Promise<number | null>;
   recordVariantTaste: (generatorId: number, kind: "accepted" | "rejected") => Promise<boolean>;
   setDesignSystemPicker: (patch: Partial<DesignSystemPickerConfig>) => void;
@@ -1451,11 +1453,38 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     // процента у синхронного POST нет — NodeShell показывает indeterminate.
     get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Готовлю промпт" });
     try {
-      const designSystemRef = pinnedDesignSystemRef(
-        data as unknown as Record<string, unknown>,
-        get().designSystems,
-        get().designSystemPicker,
-      );
+      // ДС по проводу приоритетнее глобального выбора проекта: граф говорит,
+      // от какой системы генерировать. Черновик не годится — strict-контекст
+      // компилируется из опубликованной ревизии.
+      const wiredDs = pullInput(st.nodes, st.edges, n, "designSystem") as
+        { systemId?: string; revision?: number; contentHash?: string; status?: string; name?: string } | null;
+      let designSystemRef: Record<string, unknown> | null;
+      if (wiredDs && wiredDs.systemId) {
+        if (wiredDs.status !== "published") {
+          get().setStatus(id, `ДС «${wiredDs.name || wiredDs.systemId}» не опубликована: откройте ноду ДС и опубликуйте её`, "err");
+          get().setBusy(id, false);
+          get().setProgress(id, null);
+          return;
+        }
+        const picker = get().designSystemPicker;
+        designSystemRef = {
+          systemId: wiredDs.systemId,
+          revision: wiredDs.revision,
+          contentHash: wiredDs.contentHash || "",
+          usageMode: String(data.designSystemUsageMode || picker?.usageMode || "strict"),
+          mockFixtureProfile: String((data as Record<string, unknown>).designSystemFixture || picker?.fixtureProfile || "typical"),
+        };
+      } else {
+        designSystemRef = pinnedDesignSystemRef(
+          data as unknown as Record<string, unknown>,
+          get().designSystems,
+          get().designSystemPicker,
+        );
+      }
+      const referenceRaw = pullInput(st.nodes, st.edges, n, "reference");
+      const referenceIrs = referenceRaw && typeof referenceRaw === "object" && Array.isArray((referenceRaw as IRObject).tree)
+        ? [referenceRaw as IRObject]
+        : undefined;
       const request = {
         brief,
         count,
@@ -1465,6 +1494,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         tokens,
         preset: data.preset || undefined,
         designSystem: designSystemRef,
+        referenceIrs,
         // T1 may expose the staged contract under either name while old
         // servers simply ignore these extra Pydantic fields.
         selectedDirection: String((data as Record<string, unknown>).selectedDirection || "all"),
@@ -1503,7 +1533,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       const directions = generatorDirections(directionResponse);
       const variantDirections = generatorVariantDirections(directionResponse, variants, directions);
       const directionPatch = directions.length ? { directions } : {};
-      get().setNodeData(id, { variants, active: 0, variantDirections, ...directionPatch } as unknown as Partial<GeneratorNodeData>);
+      const generationLog = (res as unknown as Record<string, unknown>).generationLog;
+      const logPatch = generationLog && typeof generationLog === "object" ? { generationLog: generationLog as Record<string, unknown> } : {};
+      get().setNodeData(id, { variants, active: 0, variantDirections, ...directionPatch, ...logPatch } as unknown as Partial<GeneratorNodeData>);
       // Quality Pass встроен: судья + починка каждого варианта тем же
       // провайдером. Провал судьи не теряет вариант — он остаётся как есть
       // с прочерком в статусе.
@@ -2711,6 +2743,41 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       return null;
     } finally {
       get().setBusy(dsId, false);
+    }
+  },
+
+  importDesignSystemDocument: async (nodeId, payload, fileName) => {
+    const node = get().nodes.find((n) => Number(n.id) === Number(nodeId));
+    if (!node || node.type !== "designsystem") return false;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      get().setStatus(nodeId, "Файл не JSON-объект: нужен документ DesignDNA, W3C/Tokens Studio JSON или карта токенов", "err");
+      return false;
+    }
+    get().setStatus(nodeId, `Загружаю дизайн-систему из ${fileName || "файла"}…`);
+    get().setBusy(nodeId, true);
+    try {
+      const resp = await fetch("/api/design-system/import", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payload, fileName, name: "" }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || result.error || !result.document) throw new Error(result.error || `HTTP ${resp.status}`);
+      get().setNodeData(nodeId, {
+        systemId: result.document.id, name: result.document.name, status: "draft",
+        revision: 0, summary: result.summary, sourceNodeId: null,
+        defaultSet: false, sourceUpdate: false, document: result.document, lastError: "",
+      } as unknown as Partial<DesignSystemNodeData>);
+      const count = Number(result.summary?.components || 0);
+      get().setStatus(nodeId, `ДС загружена (${result.format}): ${count} компонентов · опубликуйте, чтобы генератор её использовал`, "ok");
+      await get().refreshDesignSystems();
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      get().setNodeData(nodeId, { lastError: message });
+      get().setStatus(nodeId, "Ошибка импорта: " + message, "err");
+      return false;
+    } finally {
+      get().setBusy(nodeId, false);
     }
   },
 

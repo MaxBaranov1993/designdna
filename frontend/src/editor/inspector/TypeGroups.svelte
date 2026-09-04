@@ -95,6 +95,20 @@
           </select>
         </div></div>
       {/if}
+      <!-- Текстовый стиль: роль типографики tokens.v2 вместо кегля в каждом поле.
+           «Auto» — роль по тегу (h1–h4 / p). Правка роли в корне меняет все элементы. -->
+      <div class="fe-row" style="margin-top: 6px">
+        <div class="fe-field"><label>Стиль</label>
+          <select data-el-prop="typeRole" data-type-role-select value={node.typeRole || ""}>
+            <option value="">Auto (по тегу)</option>
+            {#each TYPE_ROLE_ORDER as role (role)}
+              <option value={role}>{TYPE_ROLE_LABELS[role]}</option>
+            {/each}
+          </select>
+        </div>
+        <button class="fe-btn" data-type-role-apply-all title="Назначить эту роль всем таким же элементам страницы"
+          disabled={!node.typeRole}>Всем таким</button>
+      </div>
     </div>
   {/if}
 

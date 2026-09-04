@@ -7,6 +7,7 @@ export function kindClass(kind: string): string {
   if (kind === "motion") return "port-motion";
   if (kind === "timeline") return "port-timeline";
   if (kind === "video") return "port-video";
+  if (kind === "ds") return "port-ds";
   return "";
 }
 
@@ -19,6 +20,7 @@ export const KIND_COLORS: Record<string, string> = {
   motion: "#E05FB0",
   timeline: "#FF5F56",
   video: "#4F7CFF",
+  ds: "#8B7CF6",
   text: "#8A8A93",
 };
 

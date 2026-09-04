@@ -48,6 +48,7 @@ FORBIDDEN_FIELDS = {"id", "type", "sourceKey", "children", "tree"}
 ALLOWED_GROUPS = {"frame", "style", "styleBindings", "props"}
 CONTENT_FIELDS = {"text", "title", "placeholder", "value", "label", "name", "alt", "ariaLabel"}
 COLOR_FIELDS = {"background", "backgroundColor", "color", "fill", "stroke", "borderColor", "lineColor"}
+TYPE_ROLES = ("display", "h1", "h2", "h3", "lead", "body", "small", "eyebrow")
 
 
 def _is_color_field(field: str) -> bool:
@@ -280,6 +281,18 @@ def _commands_to_ops(base: dict, commands: list, scope: AssistScope) -> list[dic
                     path = f"{group_path}/{key}"
                     op = {"op": "replace" if _exists(shadow, path) else "add", "path": path, "after": copy.deepcopy(value), "reason": reason}
                     _apply(shadow, op); ops.append(op)
+            elif group == "typeRole" and viewport == "shared":
+                # текстовый стиль: роль типографики вместо инлайнового кегля
+                if values is not None and values not in TYPE_ROLES:
+                    raise ValueError(f"typeRole принимает одну из ролей: {', '.join(TYPE_ROLES)}")
+                path = f"{target}/typeRole"
+                if values is None:
+                    if _exists(shadow, path):
+                        op = {"op": "remove", "path": path, "reason": reason}
+                        _apply(shadow, op); ops.append(op)
+                    continue
+                op = {"op": "replace" if _exists(shadow, path) else "add", "path": path, "after": values, "reason": reason}
+                _apply(shadow, op); ops.append(op)
             elif group in CONTENT_FIELDS and viewport == "shared":
                 if isinstance(values, (dict, list)):
                     raise ValueError("структурное изменение содержимого запрещено")
@@ -362,7 +375,7 @@ def _validate_apply(base: dict, ops: list[dict], req: AssistRequest) -> tuple[di
         if locked_reason:
             raise ValueError(f"слой заблокирован (editable:false): {locked_reason}")
         is_frame = "frame" in parts
-        is_style = any(part in {"style", "styleBindings"} for part in parts)
+        is_style = any(part in {"style", "styleBindings"} for part in parts) or parts[-1] == "typeRole"
         is_color = _is_color_field(parts[-1])
         is_content = parts[-1] in CONTENT_FIELDS or ("props" in parts and not is_frame and not is_style and not is_color)
         is_color_scaffold = op == "add" and raw.get("after") == {} and any(
@@ -519,7 +532,8 @@ def _messages(base: dict, req: AssistRequest) -> list[dict]:
     system = (
         "You are an AI visual editor. Return JSON only: {summary, commands}. Each command is "
         "{command:'update', targetSourceKey, viewport:'shared|tablet|mobile', changes, reason}. "
-        "changes may contain frame, style, styleBindings, props, text, title, placeholder, value, label, name, alt, ariaLabel. "
+        "changes may contain frame, style, styleBindings, props, text, title, placeholder, value, label, name, alt, ariaLabel, "
+        "typeRole (text style for heading/text: display|h1|h2|h3|lead|body|small|eyebrow — prefer it over style.fontSize/lineHeight/fontWeight; null removes it). "
         "Use only selected sourceKeys. Never change hierarchy, ids, types, sourceKeys, children, or array order. "
         "Sections and nodes marked __pruned are abbreviated context (type + first text only): never target them, use them just to keep page rhythm. "
         'Preserve the current design and make the smallest coherent change. Obey the supplied constraints exactly.\nDESIGN QUALITY RULES (how top studios edit, no AI slop):\n- Consistency beats novelty: reuse the palette, radii, shadows and type scale already present in the IR tokens and neighbouring sections. Never introduce a new font family or a color outside tokens.\n- Spacing rhythm: paddings and gaps snap to the 4/8 scale used nearby (8/16/24/32/48/64); align edges to the same rails as siblings.\n- Typography: one display size per level, tighter tracking on large headlines, body 15-17px line-height 1.4-1.6; do not add more than 2 distinct font sizes in one edit.\n- Copy like a real product: concrete, in the page language, no filler, no emoji as icons.\n- Banned: purple-blue gradients, glow blobs, glassmorphism, everything centered, everything in cards, icon-in-circle x3 filler rows, decorative 01/02/03 without a real sequence.\n- Whole-page scope: keep changes globally coherent, same section rhythm, same CTA styling, primary CTA uses the brand token.\n- Prefer restraint: fewer, well-grounded edits. Every command needs a human-plausible reason.'

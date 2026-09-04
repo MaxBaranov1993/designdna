@@ -639,3 +639,20 @@
 .fe-semantic-result.empty { background:#78350f55; color:#fde68a; }
 .fe-semantic-card > p { margin:12px 0 0; color:#8f94a3; font-size:10px; line-height:1.5; }
 .fe-semantic-actions { display:flex; justify-content:flex-end; margin-top:16px; }
+
+/* Панели «Правила» и «Компоненты» — та же модалка, что у Intent Locks */
+.fe-rules-card { width:min(760px,calc(100vw - 48px)); }
+.fe-rules-tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+.fe-rules-editor { width:100%; min-height:220px; resize:vertical; padding:10px; border:1px solid hsl(var(--border)); border-radius:8px; background:var(--fe-input); color:hsl(var(--foreground)); font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.fe-rules-view { max-height:50vh; overflow:auto; margin:0; padding:10px; border:1px solid hsl(var(--border)); border-radius:8px; background:var(--fe-input); color:hsl(var(--foreground)); font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; }
+.fe-rules-meta { margin:6px 0 0; color:hsl(var(--muted-foreground)); font-size:10px; }
+.fe-rules-empty { padding:16px; color:hsl(var(--muted-foreground)); font-size:11px; }
+.fe-rules-error { margin-top:8px; color:var(--fe-err); font-size:11px; }
+.fe-comps-card { width:min(640px,calc(100vw - 48px)); }
+.fe-comps-system { display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:11px; color:hsl(var(--muted-foreground)); }
+.fe-comps-system select, .fe-comps-variant { height:26px; border:1px solid hsl(var(--border)); border-radius:6px; background:var(--fe-input); color:hsl(var(--foreground)); font-size:11px; }
+.fe-comps-list { display:grid; gap:6px; max-height:50vh; overflow:auto; }
+.fe-comps-row { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid hsl(var(--border)); border-radius:8px; background:var(--fe-input); }
+.fe-comps-name { flex:1; min-width:0; display:flex; flex-direction:column; }
+.fe-comps-name b { font-size:11px; color:hsl(var(--foreground)); }
+.fe-comps-name small { color:hsl(var(--muted-foreground)); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

@@ -9,6 +9,7 @@ export const EDITOR_ACTION_GROUPS = {
   inspector: [
     "semantic-select", "smart-axis", "quality-gate", "harmonize",
     "responsive-autopilot", "intent-locks", "style-dna",
+    "components", "rules",
     "undo", "redo", "forward", "backward",
   ],
   geometry: [

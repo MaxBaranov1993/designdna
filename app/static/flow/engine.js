@@ -391,6 +391,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     return "https://fonts.googleapis.com/css2?" + [...fams].map((f) => "family=" + f).join("&") + "&display=swap";
   }
   const TYPE_ROLES = ["display", "h1", "h2", "h3", "lead", "body", "small", "eyebrow"];
+  function typeRoleOf(el) {
+    const role = el && typeof el.typeRole === "string" ? el.typeRole : "";
+    return TYPE_ROLES.includes(role) ? role : "";
+  }
+  function styleWithoutTypeOverrides(style) {
+    if (!style || typeof style !== "object") return style;
+    const { fontSize, fontWeight, lineHeight, letterSpacing, ...rest } = style;
+    return rest;
+  }
   const MOBILE_TYPE_FACTOR = { display: 0.7, h1: 0.74, h2: 0.87, h3: 0.92 };
   function safeCssValue(v, max) {
     const s = String(v == null ? "" : v).trim();
@@ -525,6 +534,24 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         font-weight:var(--t-small-weight,var(--fw-body)); }
       .ir-${uid} .t-eyebrow { font-size:var(--t-eyebrow-size, calc(12px * var(--fs))); line-height:var(--t-eyebrow-lh,1.2);
         letter-spacing:var(--t-eyebrow-tracking,.12em); font-weight:var(--t-eyebrow-weight,600); text-transform:uppercase; }
+      /* Текстовые стили (typeRole) на любом теге: роль важнее тега, поэтому
+         селекторы идут после h1–h4 и перебивают их по порядку каскада. */
+      .ir-${uid} .t-h1 { font-family:var(--font-display); font-size:var(--t-h1-size, calc(46px * var(--fs))); line-height:var(--t-h1-lh,1.15);
+        letter-spacing:var(--t-h1-tracking,-.02em); font-weight:var(--t-h1-weight,var(--fw-display)); }
+      .ir-${uid} .t-h2 { font-family:var(--font-display); font-size:var(--t-h2-size, calc(30px * var(--fs))); line-height:var(--t-h2-lh,1.15);
+        letter-spacing:var(--t-h2-tracking,-.01em); font-weight:var(--t-h2-weight,var(--fw-display)); }
+      .ir-${uid} .t-h3 { font-family:var(--font-display); font-size:var(--t-h3-size, calc(20px * var(--fs))); line-height:var(--t-h3-lh,1.15);
+        letter-spacing:var(--t-h3-tracking,normal); font-weight:var(--t-h3-weight,var(--fw-display)); }
+      .ir-${uid} .t-body { font-family:var(--font-body); font-size:var(--t-body-size, calc(15px * var(--fs))); line-height:var(--t-body-lh,1.6);
+        letter-spacing:var(--t-body-tracking,normal); font-weight:var(--t-body-weight,var(--fw-body)); text-transform:none; }
+      .ir-${uid} h1.t-display, .ir-${uid} h2.t-display, .ir-${uid} h3.t-display, .ir-${uid} h4.t-display { font-size:var(--t-display-size, calc(60px * var(--fs)));
+        line-height:var(--t-display-lh,1.02); letter-spacing:var(--t-display-tracking,-.03em); font-weight:var(--t-display-weight,var(--fw-display)); }
+      .ir-${uid} h1.t-lead, .ir-${uid} h2.t-lead, .ir-${uid} h3.t-lead, .ir-${uid} h4.t-lead { font-family:var(--font-body); font-size:var(--t-lead-size, calc(19px * var(--fs)));
+        line-height:var(--t-lead-lh,1.5); letter-spacing:var(--t-lead-tracking,normal); font-weight:var(--t-lead-weight,var(--fw-body)); }
+      .ir-${uid} h1.t-small, .ir-${uid} h2.t-small, .ir-${uid} h3.t-small, .ir-${uid} h4.t-small { font-family:var(--font-body); font-size:var(--t-small-size, calc(13px * var(--fs)));
+        line-height:var(--t-small-lh,1.5); font-weight:var(--t-small-weight,var(--fw-body)); }
+      .ir-${uid} h1.t-eyebrow, .ir-${uid} h2.t-eyebrow, .ir-${uid} h3.t-eyebrow, .ir-${uid} h4.t-eyebrow { font-family:var(--font-body); font-size:var(--t-eyebrow-size, calc(12px * var(--fs)));
+        line-height:var(--t-eyebrow-lh,1.2); letter-spacing:var(--t-eyebrow-tracking,.12em); font-weight:var(--t-eyebrow-weight,600); text-transform:uppercase; }
       .ir-${uid} .sec, .ir-${uid} .sec-free { padding:var(--sec-py) 32px; position:relative; }
       .ir-${uid} .sec-source { padding:0; position:relative; margin:0; }
       /* Источник объявляет лишние веса поверх одного файла (JetBrains Mono 400/500/600
@@ -578,6 +605,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       .ir-${uid}.ir-mobile h2 { font-size:var(--t-h2-size-m, calc(26px * var(--fs))); line-height:1.12; }
       .ir-${uid}.ir-mobile h3 { font-size:var(--t-h3-size-m, calc(20px * var(--fs))); }
       .ir-${uid}.ir-mobile .t-display { font-size:var(--t-display-size-m, calc(42px * var(--fs))); }
+      .ir-${uid}.ir-mobile .t-h1 { font-size:var(--t-h1-size-m, calc(34px * var(--fs))); }
+      .ir-${uid}.ir-mobile .t-h2 { font-size:var(--t-h2-size-m, calc(26px * var(--fs))); }
+      .ir-${uid}.ir-mobile .t-h3 { font-size:var(--t-h3-size-m, calc(20px * var(--fs))); }
       .ir-${uid}.ir-mobile .sec:not(.sec-source), .ir-${uid}.ir-mobile .sec-free { padding-left:16px; padding-right:16px; }
       .ir-${uid}.ir-mobile .sec-free { display:flex !important; flex-direction:column; gap:20px; height:auto !important; }
       .ir-${uid}.ir-mobile .sec-free > [data-ir-path]:not([data-ir-transform]) { position:relative !important; inset:auto !important; transform:none !important; }
@@ -679,20 +709,29 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         const a = safeAlign(el.align);
         const alignCss = a ? `text-align:${a}` : "";
         const placed = accentChildren(el);
-        const css = [visualCss(el.style), alignCss, placed ? "position:relative" : ""].filter(Boolean).join(";");
+        const role = typeRoleOf(el);
+        const style = role ? styleWithoutTypeOverrides(el.style) : el.style;
+        const css = [visualCss(style), alignCss, placed ? "position:relative" : ""].filter(Boolean).join(";");
         const sa = css ? ` style="${css}"` : "";
+        const rc = role ? ` class="t-${role}" data-type-role="${role}"` : "";
         const childText = Array.isArray(el.children) ? el.children.map((c) => c && (c.text || c.title || "")).filter(Boolean).join(" ") : "";
         const own = esc(el.text || el.title || (placed ? "" : childText) || "");
-        return `<h${lvl}${sa}>${own}${placed || ""}</h${lvl}>`;
+        return `<h${lvl}${rc}${sa}>${own}${placed || ""}</h${lvl}>`;
       }
       case "text": {
         const a = safeAlign(el.align);
         const alignCss = a ? `text-align:${a}` : "";
         const placed = accentChildren(el);
-        const css = [visualCss(el.style), alignCss, placed ? "position:relative" : ""].filter(Boolean).join(";");
+        const role = typeRoleOf(el);
+        const style = role ? styleWithoutTypeOverrides(el.style) : el.style;
+        const css = [visualCss(style), alignCss, placed ? "position:relative" : ""].filter(Boolean).join(";");
         const sa = css ? ` style="${css}"` : "";
-        const cls = el.size === "sm" || el.size === "xs" ? ' class="muted"' : "";
-        return `<p${cls}${sa}>${esc(el.text || "")}${placed || ""}</p>`;
+        const classes = [];
+        if (el.size === "sm" || el.size === "xs") classes.push("muted");
+        if (role) classes.push(`t-${role}`);
+        const cls = classes.length ? ` class="${classes.join(" ")}"` : "";
+        const rd = role ? ` data-type-role="${role}"` : "";
+        return `<p${cls}${rd}${sa}>${esc(el.text || "")}${placed || ""}</p>`;
       }
       case "button": {
         const free = el.frame && el.frame.layout === "free";

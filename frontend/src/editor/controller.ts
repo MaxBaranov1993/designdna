@@ -148,7 +148,7 @@ let aiAssistFormState: AssistRequest = {
 };
 
 /* UI-хуки подключает store (чтобы не было циклического импорта) */
-let ui: { setTool: (t: string) => void; setSnap: (v: boolean) => void; setSnapStep: (v: SnapStep) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void; setAiBusy: (busy: boolean) => void; setAiError: (error: string) => void; setAiPreview: (preview: AssistPreview | null) => void; setAiProgress: (progress: import("./aiTypes").AssistProgress | null) => void; setCloseConfirm: (open: boolean) => void } = {
+let ui: { setTool: (t: string) => void; setSnap: (v: boolean) => void; setSnapStep: (v: SnapStep) => void; setOpen: (v: boolean) => void; bumpInspector: () => void; bumpSources: () => void; setSmartAxisProposal: (proposal: SmartAxisProposal | null) => void; setQualityProposal: (proposal: EditorQualityProposal | null) => void; setHarmonizerProposal: (proposal: HarmonizerProposal | null) => void; setResponsiveProposal: (proposal: ResponsiveAutopilotProposal | null) => void; setIntentLocksOpen: (open: boolean) => void; setSemanticSelectOpen: (open: boolean) => void; setAiBusy: (busy: boolean) => void; setAiError: (error: string) => void; setAiPreview: (preview: AssistPreview | null) => void; setAiProgress: (progress: import("./aiTypes").AssistProgress | null) => void; setCloseConfirm: (open: boolean) => void; setRulesOpen: (open: boolean) => void; setComponentsOpen: (open: boolean) => void } = {
   setTool: () => {},
   setSnap: () => {},
   setSnapStep: () => {},
@@ -166,6 +166,8 @@ let ui: { setTool: (t: string) => void; setSnap: (v: boolean) => void; setSnapSt
   setAiPreview: () => {},
   setAiProgress: () => {},
   setCloseConfirm: () => {},
+  setRulesOpen: () => {},
+  setComponentsOpen: () => {},
 };
 export function bindUi(hooks: typeof ui) {
   ui = hooks;
@@ -593,6 +595,10 @@ export function handleAct(act: string) {
   else if (act === "responsive-autopilot") void planResponsiveAutopilot();
   else if (act === "intent-locks") ui.setIntentLocksOpen(true);
   else if (act === "semantic-select") ui.setSemanticSelectOpen(true);
+  else if (act === "rules") ui.setRulesOpen(true);
+  else if (act === "close-rules") ui.setRulesOpen(false);
+  else if (act === "components") ui.setComponentsOpen(true);
+  else if (act === "close-components") ui.setComponentsOpen(false);
   else if (act === "close-style-dna") closeStyleDnaInspector();
   else if (act === "reset-style-dna") resetStyleDnaInspector();
   else if (act === "apply-style-dna") void applyStyleDnaFromInspector();
@@ -2768,6 +2774,42 @@ let inspScrubbing = false;
 
 export function setInspScrubbing(v: boolean) {
   inspScrubbing = v;
+}
+
+/** Снимок текущего IR (с черновыми правками) — для «Сохранить как вариант ДС». */
+export function currentIrSnapshot(): any | null {
+  return state ? deepClone(state.ir) : null;
+}
+
+/** Вставить секцию-мастер ДС последней секцией страницы: один шаг undo,
+ * черновик сохраняется, шрифты мастера доезжают через meta.fontFaces. */
+export function insertDesignSystemSection(section: any, meta?: any): boolean {
+  if (!state || !section || typeof section !== "object") return false;
+  pushHistory();
+  if (!Array.isArray(state.ir.tree)) state.ir.tree = [];
+  const copy = deepClone(section);
+  const ids = new Set(state.ir.tree.map((s: any) => s && s.id));
+  const base = String(copy.id || "ds-section");
+  let id = base;
+  let n = 2;
+  while (ids.has(id)) id = `${base}-${n++}`;
+  copy.id = id;
+  state.ir.tree.push(copy);
+  const faces = meta && Array.isArray(meta.fontFaces) ? meta.fontFaces : [];
+  if (faces.length) {
+    if (!state.ir.meta || typeof state.ir.meta !== "object") state.ir.meta = {};
+    const have = new Set((state.ir.meta.fontFaces || []).map((f: any) => JSON.stringify(f)));
+    state.ir.meta.fontFaces = [
+      ...(state.ir.meta.fontFaces || []),
+      ...faces.filter((f: any) => !have.has(JSON.stringify(f))),
+    ];
+  }
+  persistDraft();
+  renderLayers();
+  rerenderEditorCanvas();
+  updateUndoBtn();
+  ui.bumpInspector();
+  return true;
 }
 
 export function getSession(): Session | null {

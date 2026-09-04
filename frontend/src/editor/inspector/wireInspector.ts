@@ -236,7 +236,41 @@ function wireTypeGroups(root: HTMLElement) {
       const key = inp.dataset.elProp!;
       let val: any = inp.value;
       if (key === "level") val = Number(val);
-      node[key] = val;
+      // typeRole "" = Auto: поле снимается, роль снова берётся по тегу
+      if (key === "typeRole" && !val) delete node[key];
+      else node[key] = val;
+      ctl.commitActiveIrEdits();
+      ctl.rerenderEditorCanvas();
+    });
+  });
+  // текстовый стиль «всем таким»: та же роль всем heading того же уровня / всем text
+  root.querySelectorAll<HTMLButtonElement>("[data-type-role-apply-all]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const s = sess();
+      if (!s || !s.sel.length) return;
+      const node = s.sel[0].node;
+      const role = node && typeof node.typeRole === "string" ? node.typeRole : "";
+      if (!role) return;
+      const same = (el: any) => el && el.type === node.type
+        && (node.type !== "heading" || (el.level || 2) === (node.level || 2))
+        && !isLockedNode(el) && !(el.sourceMeta && el.sourceMeta.componentRef);
+      let touched = 0;
+      const walk = (children: any) => {
+        if (!Array.isArray(children)) return;
+        for (const el of children) {
+          if (!el || typeof el !== "object") continue;
+          if (el.sourceMeta && el.sourceMeta.componentRef) continue; // пиннутый мастер ДС
+          if (same(el) && el.typeRole !== role) { el.typeRole = role; touched++; }
+          walk(el.children);
+        }
+      };
+      const tree = Array.isArray(s.ir.tree) ? s.ir.tree : [];
+      ctl.pushHistory();
+      for (const sec of tree) {
+        if (!sec || sec.type === "source-block") continue;
+        walk(sec.children);
+      }
+      if (!touched) { s.history.cancelLast(); return; }
       ctl.commitActiveIrEdits();
       ctl.rerenderEditorCanvas();
     });

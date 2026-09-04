@@ -1636,6 +1636,10 @@
   --port-color: #35b8a0;
   border-color: #35b8a0;
 }
+.port-dot.port-ds.svelte-flow__handle {
+  --port-color: #8b7cf6;
+  border-color: #8b7cf6;
+}
 .port-dot.port-interaction.svelte-flow__handle {
   --port-color: #2fbf9f;
   border-color: #2fbf9f;

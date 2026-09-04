@@ -38,6 +38,11 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
       { name: "prompt", label: "промт", kind: "text" },
       { name: "style", label: "стиль", kind: "text" },
       { name: "tokens", label: "style DNA", kind: "tokens" },
+      // ДС проводом: генерация работает от загруженной или собранной из Source
+      // системы этой ноды, а не только от глобального выбора проекта.
+      { name: "designSystem", label: "дизайн-система", kind: "ds" },
+      // Существующие экраны: «рядом положил экраны — сделай так же».
+      { name: "reference", label: "экраны-референс", kind: "ir" },
     ],
     out: [{ name: "ir", label: "варианты", kind: "ir" }],
   },
@@ -54,7 +59,10 @@ export const PORTS: Record<NodeType, { in: PortDecl[]; out: PortDecl[] }> = {
   // DesignSystemPicker сохраняется — выход не заменяет их, а дополняет.
   designsystem: {
     in: [{ name: "artifact", label: "Source Artifact", kind: "artifact" }],
-    out: [{ name: "tokens", label: "style DNA", kind: "tokens" }],
+    out: [
+      { name: "tokens", label: "style DNA", kind: "tokens" },
+      { name: "system", label: "ДС → генератор", kind: "ds" },
+    ],
   },
   sourceimport: { in: [], out: [
     { name: "artifact", label: "Source Artifact", kind: "artifact" },

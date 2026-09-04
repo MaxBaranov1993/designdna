@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from . import builder, document as dsdoc, mock, resolver, store
+from . import builder, compiler, document as dsdoc, importer, mock, resolver, store
 
 router = APIRouter()
 
@@ -98,6 +98,30 @@ class ReconstructionRequest(BaseModel):
     proof: str = "source"
 
 
+class ImportRequest(BaseModel):
+    """Загрузка ДС файлом: документ DesignDNA, W3C/Tokens Studio JSON, карта токенов."""
+    payload: dict
+    name: str = ""
+    fileName: str = ""
+
+
+class ComponentSectionRequest(BaseModel):
+    """Секция с пиннутым мастером ДС для вставки в текущую страницу редактора."""
+    systemId: str
+    revision: int = 0
+    componentKey: str
+    variantKey: str = "default"
+
+
+class VariantSaveRequest(BaseModel):
+    """Сохранить IR из редактора как вариант существующего компонента ДС (не новый компонент)."""
+    systemId: str
+    componentKey: str
+    variantKey: str = ""
+    label: str = ""
+    ir: dict
+
+
 def _err(status: int, message: str):
     return JSONResponse({"error": message, "status": status}, status_code=status)
 
@@ -119,6 +143,122 @@ def build_design_system(req: BuildRequest):
     saved = store.save_draft(document)
     from .document import summary
     return {"document": saved.get("document") or document, "summary": summary(saved.get("document") or document)}
+
+
+@router.post("/api/design-system/import")
+def import_design_system(req: ImportRequest):
+    """Файл → draft: та же форма документа, что у ДС из Source, генератор лочит её так же."""
+    try:
+        document = importer.import_design_system(req.payload, name=req.name, file_name=req.fileName)
+    except ValueError as exc:
+        return _err(422, str(exc))
+    errors = dsdoc.validate_document(document)
+    # Кит из одних токенов — легитимная ДС (режим style-only / extend): отсутствие
+    # мастеров не ошибка импорта, а свойство файла.
+    hard = [e for e in errors if isinstance(e, dict) and e.get("code") != "no-components"]
+    if hard:
+        return _err(422, "Документ не прошёл проверку: " + "; ".join(str(e.get("message") or e.get("code")) for e in hard[:4]))
+    saved = store.save_draft(document)
+    from .document import summary
+    document = saved.get("document") or document
+    return {"document": document, "summary": summary(document),
+            "format": (document.get("provenance") or {}).get("imported", {}).get("format")}
+
+
+def _master_root(ir: dict) -> dict | None:
+    """Корень мастера из IR ноды Edit: обёртка component-master → её ребёнок, иначе первая секция."""
+    tree = ir.get("tree") if isinstance(ir, dict) and isinstance(ir.get("tree"), list) else []
+    if not tree or not isinstance(tree[0], dict):
+        return None
+    root = tree[0]
+    if root.get("type") == "source-block" and root.get("variant") == "component-master":
+        kids = root.get("children") or []
+        return kids[0] if kids and isinstance(kids[0], dict) else None
+    return root
+
+
+@router.post("/api/design-system/component-section")
+def component_section(req: ComponentSectionRequest):
+    """Мастер ДС как секция страницы с sourceMeta.componentRef — strict принимает её как копию."""
+    document = store.get_revision(req.systemId, req.revision) if req.revision else None
+    if not document:
+        # черновик (revision 0) или последняя опубликованная
+        document = store.get_revision(req.systemId, 0)
+    if not document:
+        return _err(404, f"Дизайн-система {req.systemId} не найдена")
+    comp = (document.get("components") or {}).get(req.componentKey) or (document.get("reviewComponents") or {}).get(req.componentKey)
+    if not isinstance(comp, dict):
+        return _err(404, f"Компонент {req.componentKey} не найден")
+    master = comp.get("masterIr") if isinstance(comp.get("masterIr"), dict) else comp.get("templateIr")
+    variants = comp.get("variants") if isinstance(comp.get("variants"), dict) else {}
+    variant = variants.get(req.variantKey) if req.variantKey else None
+    if isinstance(variant, dict) and variant.get("masterRef") != "self" and isinstance(variant.get("masterIr"), dict):
+        master = variant["masterIr"]
+    if not isinstance(master, dict):
+        return _err(422, "У компонента нет masterIr")
+    preview = dsdoc.preview_ir_for_master(master)
+    section = (preview.get("tree") or [None])[0]
+    if not isinstance(section, dict):
+        return _err(422, "Не удалось собрать секцию из мастера")
+    system_ref = {"systemId": document.get("id"), "revision": document.get("revision"), "contentHash": document.get("contentHash")}
+    handle = compiler.component_handle(comp, system_ref)
+    target = section
+    if section.get("type") == "source-block" and section.get("variant") == "component-master":
+        kids = section.get("children") or []
+        if kids and isinstance(kids[0], dict):
+            target = kids[0]
+    meta = target.get("sourceMeta") if isinstance(target.get("sourceMeta"), dict) else {}
+    target["sourceMeta"] = {**meta, "kind": meta.get("kind") or "dom", "componentRef": handle}
+    section["id"] = f"ds-{req.componentKey}"
+    return {"section": section, "tokens": preview.get("tokens") or {}, "meta": preview.get("meta") or {},
+            "componentRef": handle, "name": comp.get("name") or req.componentKey}
+
+
+@router.post("/api/design-system/variant/save")
+def save_variant(req: VariantSaveRequest):
+    """Вариант компонента вместо нового компонента: реестр не раздувается.
+
+    Пишется в черновик (revision 0); в опубликованную ревизию вариант попадёт
+    после Publish. Наблюдённые варианты Source не трогаем — добавляется
+    пользовательский (origin: user)."""
+    document = store.get_revision(req.systemId, 0)
+    if not document:
+        return _err(404, f"Черновик дизайн-системы {req.systemId} не найден — откройте ноду ДС")
+    comp = (document.get("components") or {}).get(req.componentKey)
+    if not isinstance(comp, dict):
+        return _err(404, f"Компонент {req.componentKey} не найден в реестре")
+    root = _master_root(req.ir)
+    if not isinstance(root, dict):
+        return _err(422, "В IR нет корня компонента")
+    variants = comp.setdefault("variants", {})
+    if not isinstance(variants, dict):
+        variants = comp["variants"] = {}
+    key = (req.variantKey or "").strip() or None
+    if not key:
+        base = "user"
+        index = 1
+        while f"{base}-{index}" in variants:
+            index += 1
+        key = f"{base}-{index}"
+    key = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in key)[:48] or "user-1"
+    master_ir = {"version": req.ir.get("version") or "1.1", "tokens": req.ir.get("tokens") or {},
+                 **({"meta": req.ir["meta"]} if isinstance(req.ir.get("meta"), dict) else {}),
+                 "tree": [root]}
+    variants[key] = {
+        "label": (req.label or "").strip() or key.replace("-", " ").title(),
+        "semanticKey": key,
+        "origin": "user",
+        "confirmed": True,
+        "masterRef": key,
+        "masterIr": master_ir,
+        "masterHash": dsdoc.content_hash(master_ir),
+        "diff": {},
+    }
+    saved = store.save_draft(document)
+    from .document import summary
+    document = saved.get("document") or document
+    return {"document": document, "summary": summary(document), "variantKey": key,
+            "variants": list(((document.get("components") or {}).get(req.componentKey) or {}).get("variants") or {})}
 
 
 @router.post("/api/design-system/save-draft")

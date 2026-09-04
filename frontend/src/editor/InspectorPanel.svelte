@@ -68,6 +68,8 @@
     <button class="fe-abtn" data-act="responsive-autopilot" title="AI подготовит tablet/mobile constraints и проверит их до применения" aria-label="Адаптировать" disabled={busy} onclick={() => ctl.handleAct("responsive-autopilot")}>▣ Адаптировать</button>
     <button class="fe-abtn" data-act="intent-locks" title="Защитить выбранные блоки от изменений AI" aria-label="Не менять" disabled={busy} onclick={() => ctl.handleAct("intent-locks")}>🔒 Не менять</button>
     <button class="fe-abtn" data-act="style-dna" title="Style DNA" aria-label="Style DNA" disabled={busy} onclick={() => ctl.handleAct("style-dna")}>🧬 Style DNA</button>
+    <button class="fe-abtn" data-act="components" title="Вставить компонент дизайн-системы в страницу — с привязкой, которую принимает strict-режим" aria-label="Компоненты ДС" disabled={busy} onclick={() => ctl.handleAct("components")}>◈ Компоненты</button>
+    <button class="fe-abtn" data-act="rules" title="Правила, по которым работают генератор и судья; правила проекта редактируются здесь" aria-label="Правила" disabled={busy} onclick={() => ctl.handleAct("rules")}>📜 Правила</button>
     <span class="fe-abtn-sep"></span>
     <button class="fe-abtn" data-act="undo" bind:this={undoBtn} title="Отменить (Ctrl+Z)" aria-label="Отменить" aria-keyshortcuts="Control+Z" onclick={() => ctl.handleAct("undo")}>↩ Отменить</button>
     <button class="fe-abtn" data-act="redo" bind:this={redoBtn} title="Повторить (Ctrl+Shift+Z)" aria-label="Вернуть" aria-keyshortcuts="Control+Shift+Z" onclick={() => ctl.handleAct("redo")}>↪ Вернуть</button>

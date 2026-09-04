@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import copy
 import math
+import re
 
-from colorutils import hex_to_srgb, srgb_to_hex, srgb_to_oklch, oklch_to_srgb
+from colorutils import hex_to_srgb, srgb_to_hex, srgb_to_oklab, srgb_to_oklch, oklch_to_srgb
 
 # лимиты v1 (по схеме design-ir.schema.json и ТЗ)
 WCAG_AA = 4.5
@@ -577,6 +578,323 @@ def _check_free_overlap(ir) -> list:
     return out
 
 
+
+# ---------- DS-lint: дисциплина токенов (цвет, шрифт, роли типографики) ----------
+#
+# Ровно тот дрейф, что виден у AI-редакторов при росте числа экранов:
+# «почти такой же» цвет вне палитры, третий шрифт, line-height 1.30 у одного
+# абзаца и 1.35 у соседнего. Правила читают токены самого документа
+# (tokens.color / v2.color / primitives, tokens.font / v2.type.families,
+# v2.type.roles), поэтому работают и без документа ДС: генератор лочит токены
+# ДС в IR, а редактор правит их в инспекторе.
+#
+# Пропускаются точные копии: секции source-block (измеренный источник),
+# поддеревья с sourceMeta.componentRef (пиннутые мастера ДС — их менять нельзя,
+# иначе strict-валидация отбросит «mutated-exact-master») и editable:false.
+
+SEVERITY_WARNING = "warning"
+TYPE_ROLES = ("display", "h1", "h2", "h3", "lead", "body", "small", "eyebrow")
+HEADING_LEVEL_ROLE = {1: "h1", 2: "h2", 3: "h3", 4: "lead"}
+# ΔE в oklab, до которого цвет считается «дрейфом токена» и снапится автоматически;
+# дальше — только находка (дизайнер решает сам). strict_tokens=True снапит всё.
+AUTO_SNAP_DISTANCE = 0.12
+_COLOR_STYLE_KEYS = ("color", "background", "borderColor")
+_ROLE_STYLE_KEYS = ("fontSize", "lineHeight", "fontWeight", "letterSpacing")
+
+
+def _norm_hex(value):
+    """'#abc' / '#aabbcc' / '#aabbccdd' -> ('#aabbcc', 'dd' | ''); иначе None."""
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v.startswith("#"):
+        return None
+    body = v[1:]
+    if not re.fullmatch(r"[0-9a-fA-F]{3,8}", body) or len(body) in (5, 7):
+        return None
+    if len(body) in (3, 4):
+        body = "".join(ch * 2 for ch in body)
+    return "#" + body[:6].lower(), body[6:].lower()
+
+
+def _document_palette(ir) -> dict:
+    """{hex: имя токена} из tokens.color, v2.color, primitives, semantic."""
+    tokens = ir.get("tokens")
+    if not isinstance(tokens, dict):
+        return {}
+    palette = {}
+
+    def take(container, prefix):
+        if not isinstance(container, dict):
+            return
+        for _key, path, value in _iter_walk_leaves(container, prefix):
+            norm = _norm_hex(value)
+            if norm and norm[0] not in palette:
+                palette[norm[0]] = path
+
+    take(tokens.get("color"), "tokens.color")
+    v2 = tokens.get("v2")
+    if isinstance(v2, dict):
+        take(v2.get("color"), "tokens.v2.color")
+    take(tokens.get("primitives"), "tokens.primitives")
+    take(tokens.get("semantic"), "tokens.semantic")
+    return palette
+
+
+def _family_name(value) -> str:
+    """Первое семейство стека без кавычек, в нижнем регистре."""
+    if not isinstance(value, str):
+        return ""
+    first = value.split(",")[0].strip().strip("'\"").strip()
+    return first.lower()
+
+
+def _document_families(ir) -> set:
+    tokens = ir.get("tokens")
+    out = set()
+    if isinstance(tokens, dict):
+        font = tokens.get("font")
+        if isinstance(font, dict):
+            for face in font.values():
+                if isinstance(face, dict):
+                    name = _family_name(face.get("family"))
+                    if name:
+                        out.add(name)
+        v2 = tokens.get("v2")
+        typ = v2.get("type") if isinstance(v2, dict) else None
+        fams = typ.get("families") if isinstance(typ, dict) else None
+        if isinstance(fams, dict):
+            for face in fams.values():
+                if isinstance(face, dict):
+                    name = _family_name(face.get("family"))
+                    if name:
+                        out.add(name)
+    meta = ir.get("meta")
+    faces = meta.get("fontFaces") if isinstance(meta, dict) else None
+    if isinstance(faces, list):
+        for face in faces:
+            if isinstance(face, dict):
+                name = _family_name(face.get("family"))
+                if name:
+                    out.add(name)
+    return out
+
+
+def _type_roles(ir) -> dict:
+    tokens = ir.get("tokens")
+    v2 = tokens.get("v2") if isinstance(tokens, dict) else None
+    typ = v2.get("type") if isinstance(v2, dict) else None
+    roles = typ.get("roles") if isinstance(typ, dict) else None
+    return roles if isinstance(roles, dict) else {}
+
+
+def _is_exact_copy(node) -> bool:
+    if not isinstance(node, dict):
+        return False
+    if node.get("editable") is False:
+        return True
+    meta = node.get("sourceMeta")
+    return isinstance(meta, dict) and isinstance(meta.get("componentRef"), dict)
+
+
+def _iter_lintable_elements(ir):
+    """(path, element) вне точных копий: source-block, componentRef, editable:false."""
+
+    def walk(children, path):
+        if not isinstance(children, list):
+            return
+        for j, el in enumerate(children):
+            if not isinstance(el, dict) or _is_exact_copy(el):
+                continue
+            p = f"{path}.{j}"
+            yield p, el
+            yield from walk(el.get("children"), f"{p}.children")
+
+    for i, base, sec in _iter_sections(ir):
+        if sec.get("type") == "source-block" or _is_exact_copy(sec):
+            continue
+        yield from walk(sec.get("children"), f"{base}.children")
+
+
+def _oklab(hex6):
+    try:
+        return srgb_to_oklab(hex_to_srgb(hex6))
+    except (ValueError, TypeError):
+        return None
+
+
+def _nearest_token(hex6, palette):
+    """(hex токена, путь, расстояние ΔE oklab) или None."""
+    lab = _oklab(hex6)
+    if lab is None:
+        return None
+    best = None
+    for token_hex, path in palette.items():
+        tl = _oklab(token_hex)
+        if tl is None:
+            continue
+        d = math.sqrt(sum((a - b) ** 2 for a, b in zip(lab, tl)))
+        if best is None or d < best[2]:
+            best = (token_hex, path, d)
+    return best
+
+
+def _iter_color_slots(ir):
+    """(path, контейнер, ключ, hex6, alpha) цветов элементов вне точных копий."""
+    for path, el in _iter_lintable_elements(ir):
+        style = el.get("style")
+        if isinstance(style, dict):
+            for key in _COLOR_STYLE_KEYS:
+                norm = _norm_hex(style.get(key))
+                if norm:
+                    yield f"{path}.style.{key}", style, key, norm[0], norm[1]
+        if el.get("type") == "rect":
+            norm = _norm_hex(el.get("fill"))
+            if norm:
+                yield f"{path}.fill", el, "fill", norm[0], norm[1]
+
+
+def _check_token_color(ir) -> list:
+    palette = _document_palette(ir)
+    if not palette:
+        return []
+    out = []
+    for path, _c, _k, hex6, _alpha in _iter_color_slots(ir):
+        if hex6 in palette:
+            continue
+        near = _nearest_token(hex6, palette)
+        hint = f"; ближайший токен {near[1]} ({near[0]}, ΔE {near[2]:.2f})" if near else ""
+        out.append({"path": path, "message": f"цвет {hex6} не из токенов документа{hint}"})
+    return out
+
+
+def _fix_token_color(ir, strict_tokens=False) -> list:
+    palette = _document_palette(ir)
+    if not palette:
+        return []
+    journal = []
+    for path, container, key, hex6, alpha in _iter_color_slots(ir):
+        if hex6 in palette:
+            continue
+        near = _nearest_token(hex6, palette)
+        if near is None or (not strict_tokens and near[2] > AUTO_SNAP_DISTANCE):
+            continue
+        new = near[0] + alpha
+        old = container[key]
+        container[key] = new
+        journal.append(f"rule token-color починило {path}: {old} -> {new} ({near[1]})")
+    return journal
+
+
+def _check_token_font(ir) -> list:
+    families = _document_families(ir)
+    if not families:
+        return []
+    out = []
+    for path, el in _iter_lintable_elements(ir):
+        style = el.get("style")
+        if not isinstance(style, dict):
+            continue
+        name = _family_name(style.get("fontFamily"))
+        if name and name not in families:
+            out.append({"path": f"{path}.style.fontFamily",
+                        "message": f"шрифт «{name}» не из дизайн-системы "
+                                   f"(разрешены: {', '.join(sorted(families))})"})
+    return out
+
+
+def _fix_token_font(ir, strict_tokens=False) -> list:
+    """Снимает чужое семейство: тег/роль дальше наследуют display/body из токенов."""
+    families = _document_families(ir)
+    if not families:
+        return []
+    journal = []
+    for path, el in _iter_lintable_elements(ir):
+        style = el.get("style")
+        if not isinstance(style, dict):
+            continue
+        name = _family_name(style.get("fontFamily"))
+        if name and name not in families:
+            old = style.pop("fontFamily")
+            journal.append(f"rule token-font починило {path}.style.fontFamily: «{old}» снят, наследуется токен")
+    return journal
+
+
+def element_type_role(el) -> tuple:
+    """(роль, явная ли) для текстового элемента: typeRole либо уровень заголовка."""
+    if not isinstance(el, dict):
+        return None, False
+    role = el.get("typeRole")
+    if role in TYPE_ROLES:
+        return role, True
+    if el.get("type") == "heading":
+        return HEADING_LEVEL_ROLE.get(el.get("level") or 2), False
+    return None, False
+
+
+def _role_drift(style, role_spec) -> list:
+    """Список (ключ стиля, факт, ожидание) отклонений инлайна от роли."""
+    out = []
+    size = role_spec.get("size")
+    if _is_num(style.get("fontSize")) and _is_num(size) and abs(style["fontSize"] - size) > 0.5:
+        out.append(("fontSize", style["fontSize"], size))
+    lh = role_spec.get("lineHeight")
+    if _is_num(style.get("lineHeight")) and _is_num(lh) and abs(style["lineHeight"] - lh) > 0.011:
+        out.append(("lineHeight", style["lineHeight"], lh))
+    weight = role_spec.get("weight")
+    if _is_num(style.get("fontWeight")) and _is_num(weight) and int(style["fontWeight"]) != int(weight):
+        out.append(("fontWeight", style["fontWeight"], weight))
+    tracking = role_spec.get("tracking")
+    if _is_num(style.get("letterSpacing")) and _is_num(tracking) and _is_num(size):
+        expected_px = round(tracking * size, 2)
+        if abs(style["letterSpacing"] - expected_px) > 0.5:
+            out.append(("letterSpacing", style["letterSpacing"], expected_px))
+    return out
+
+
+def _check_type_role_drift(ir) -> list:
+    roles = _type_roles(ir)
+    if not roles:
+        return []
+    out = []
+    for path, el in _iter_lintable_elements(ir):
+        if el.get("type") not in ("heading", "text"):
+            continue
+        role, explicit = element_type_role(el)
+        spec = roles.get(role) if role else None
+        style = el.get("style")
+        if not isinstance(spec, dict) or not isinstance(style, dict):
+            continue
+        for key, actual, expected in _role_drift(style, spec):
+            why = "роль" if explicit else f"уровень h{el.get('level') or 2} → роль"
+            out.append({"path": f"{path}.style.{key}",
+                        "message": f"{key} {actual} расходится с {why} {role} ({expected})"})
+    return out
+
+
+def _fix_type_role_drift(ir, strict_tokens=False) -> list:
+    """Явная typeRole — источник правды: инлайновые кегль/интерлиньяж/вес/разрядка
+    снимаются, рендер берёт роль. Заголовки без typeRole только репортятся."""
+    roles = _type_roles(ir)
+    if not roles:
+        return []
+    journal = []
+    for path, el in _iter_lintable_elements(ir):
+        if el.get("type") not in ("heading", "text"):
+            continue
+        role, explicit = element_type_role(el)
+        if not explicit:
+            continue
+        spec = roles.get(role)
+        style = el.get("style")
+        if not isinstance(spec, dict) or not isinstance(style, dict):
+            continue
+        for key, actual, expected in _role_drift(style, spec):
+            style.pop(key, None)
+            journal.append(f"rule type-role-drift починило {path}.style.{key}: {actual} снят, роль {role} даёт {expected}")
+    return journal
+
+
 RULES = [
     {"id": "single-h1", "severity": SEVERITY_ERROR,
      "description": "ровно один h1 среди heading-элементов",
@@ -612,6 +930,16 @@ RULES = [
     {"id": "free-overlap", "severity": SEVERITY_ERROR,
      "description": "во free-раскладке дети не перекрываются и не выходят за границы родителя",
      "check": _check_free_overlap},
+    # DS-lint: дисциплина токенов (предупреждения — они не роняют gate, но чинятся)
+    {"id": "token-color", "severity": SEVERITY_WARNING,
+     "description": "цвета элементов только из токенов документа (color / v2.color / primitives)",
+     "check": _check_token_color, "fix": _fix_token_color, "strict_aware": True},
+    {"id": "token-font", "severity": SEVERITY_WARNING,
+     "description": "семейства шрифтов только из токенов документа (display / body / fontFaces)",
+     "check": _check_token_font, "fix": _fix_token_font, "strict_aware": True},
+    {"id": "type-role-drift", "severity": SEVERITY_WARNING,
+     "description": "кегль/интерлиньяж/вес/разрядка текста совпадают с ролью типографики (typeRole или уровень заголовка)",
+     "check": _check_type_role_drift, "fix": _fix_type_role_drift, "strict_aware": True},
 ]
 RULES_BY_ID = {r["id"]: r for r in RULES}
 
@@ -627,17 +955,29 @@ def check(ir, rules=None) -> list:
     return out
 
 
-def autofix(ir) -> tuple:
-    """Solver без LLM: вернуть (исправленный IR, журнал правок). Вход не мутируется."""
+def autofix(ir, strict_tokens: bool = False) -> tuple:
+    """Solver без LLM: вернуть (исправленный IR, журнал правок). Вход не мутируется.
+
+    strict_tokens=True (ДС в режиме strict): цвета вне палитры снапятся к ближайшему
+    токену всегда, а не только при малом ΔE."""
     if not isinstance(ir, dict):
         raise ValueError("IR должен быть объектом")
     fixed = copy.deepcopy(ir)
     journal = []
     for rule in RULES:
         fix = rule.get("fix")
-        if fix:
+        if not fix:
+            continue
+        if rule.get("strict_aware"):
+            journal.extend(fix(fixed, strict_tokens=strict_tokens))
+        else:
             journal.extend(fix(fixed))
     return fixed, journal
+
+
+def passed(violations) -> bool:
+    """Gate пройден, если нет нарушений уровня error (warning — находки DS-lint)."""
+    return not any(v.get("severity", SEVERITY_ERROR) == SEVERITY_ERROR for v in violations)
 
 
 # ---------- Constraints: декларативные инварианты ----------

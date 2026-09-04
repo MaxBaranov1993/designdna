@@ -54,6 +54,7 @@ import cli_llm
 import blockparse
 import mergeback
 import qualitygate
+import rules as project_rules
 from ir_render import render_png
 import project_store
 import typography
@@ -258,6 +259,9 @@ class GenerateReq(BaseModel):
     rawOutputs: list[str] | None = None
     # ТЗ §19: закреплённая ревизия дизайн-системы {systemId, revision, contentHash, usageMode}
     designSystem: dict | None = None
+    # Существующие экраны проекта (порт reference): агент видит их паттерны и
+    # мастера, а не «забывает, с чего начинали» на пятом экране.
+    referenceIrs: list[dict] | None = None
     # Клиентский id запуска для стадий/отмены (run_registry); старые клиенты не шлют
     runId: str | None = None
 
@@ -315,6 +319,7 @@ class ReskinReq(BaseModel):
 class QualityGateReq(BaseModel):
     ir: dict
     fix: bool = True  # авто-доводка solver'ом (без LLM) того, что чинится
+    strictTokens: bool = False  # ДС strict: цвета вне палитры снапятся всегда
 
 
 class QualityPassReq(BaseModel):
@@ -468,6 +473,102 @@ def generate(req: GenerateReq):
         _finish_run(run_id, resp)
 
 
+def _walk_ir_elements(node):
+    """Рекурсивно по children секции/элемента."""
+    if not isinstance(node, dict):
+        return
+    for child in node.get("children") or []:
+        if isinstance(child, dict):
+            yield child
+            yield from _walk_ir_elements(child)
+
+
+def _reference_screens_block(irs) -> str:
+    """Компактный дайджест существующих экранов: секции, мастера ДС, роли текста.
+
+    Полные IR в промпт не кладём (бюджет), но агент видит, из чего собраны
+    соседние экраны, и повторяет те же паттерны — то, чего не умеют
+    «креативные» AI-редакторы при росте числа экранов."""
+    if not isinstance(irs, list):
+        return ""
+    lines = []
+    for i, ir in enumerate([x for x in irs if isinstance(x, dict)][:3], 1):
+        tree = ir.get("tree") if isinstance(ir.get("tree"), list) else []
+        sections, masters, roles = [], set(), set()
+        for sec in tree:
+            if not isinstance(sec, dict):
+                continue
+            label = str(sec.get("type") or "section")
+            if sec.get("variant"):
+                label += f"/{sec.get('variant')}"
+            props = sec.get("props") if isinstance(sec.get("props"), dict) else {}
+            head = props.get("heading") or props.get("title") or ""
+            if head:
+                label += f" «{str(head)[:60]}»"
+            sections.append(label)
+            for el in [sec, *list(_walk_ir_elements(sec))]:
+                meta = el.get("sourceMeta") if isinstance(el.get("sourceMeta"), dict) else {}
+                ref = meta.get("componentRef") if isinstance(meta.get("componentRef"), dict) else None
+                if ref and ref.get("componentKey"):
+                    masters.add(str(ref["componentKey"]))
+                if isinstance(el.get("typeRole"), str):
+                    roles.add(el["typeRole"])
+        tokens = ir.get("tokens") if isinstance(ir.get("tokens"), dict) else {}
+        mode = tokens.get("mode") or ""
+        lines.append(
+            f"Экран {i}{' (' + str(mode) + ')' if mode else ''}: секции — {', '.join(sections) or 'нет'}; "
+            f"мастера ДС — {', '.join(sorted(masters)) or 'нет'}; роли текста — {', '.join(sorted(roles)) or 'нет'}."
+        )
+    if not lines:
+        return ""
+    return (
+        "## Существующие экраны проекта (референс)\n" + "\n".join(lines)
+        + "\nСделай так же: те же мастера ДС для тех же ролей (кнопки, карточки, шаги, поля), "
+          "та же плотность и ритм секций, те же роли текста и та же тема. Не изобретай новый "
+          "компонент там, где на референсе уже используется мастер."
+    )
+
+
+_TYPE_ROLE_RULE = (
+    "\n\nТекстовые стили: у heading/text задавай поле typeRole "
+    "(display/h1/h2/h3/lead/body/small/eyebrow) вместо инлайновых style.fontSize/"
+    "lineHeight/fontWeight/letterSpacing — кегль, интерлиньяж, вес и разрядку даёт роль "
+    "из tokens.v2.type.roles, поэтому все абзацы и заголовки одной роли одинаковы. "
+    "В style у текста оставляй только цвет."
+)
+
+
+def _embed_mode_block(usage_mode: str) -> str:
+    """Режим встраивания зависит от usageMode ДС, а не один текст на все режимы."""
+    common = (
+        "Результат вставят в существующий сайт из описания выше. "
+        "Если бриф просит компонент или секцию — верни ровно её (одна секция в tree), "
+        "без навигации, hero и футера; если просит страницу — повтори порядок секций "
+        "сайта. Копирайт — в голосе сайта, на его языке, без плейсхолдеров «Lorem»."
+    )
+    if usage_mode == "extend":
+        return (
+            "\n\n## Режим встраивания: EXTEND\n"
+            "Собирай из зарегистрированных мастеров и их вариантов там, где они подходят; "
+            "недостающее строй из примитивов строго в токенах ДС, наследуя геометрию, "
+            "радиусы, рамки и типографику мастеров. Новый элемент допустим только если "
+            "ни один мастер не закрывает роль. " + common
+        )
+    if usage_mode == "style-only":
+        return (
+            "\n\n## Режим встраивания: STYLE ONLY\n"
+            "Мастера — стилевой ориентир (характер углов, плотность, рамки, тени), "
+            "копировать их не обязательно; токены ДС (цвета, шрифты, радиусы) обязательны, "
+            "сырые значения вне токенов — провал. " + common
+        )
+    return (
+        "\n\n## Режим встраивания: STRICT\n"
+        "Собирай результат из зарегистрированных мастеров и их вариантов как из "
+        "строительных блоков; новые элементы наследуют их геометрию, радиусы, рамки и "
+        "типографику. " + common
+    )
+
+
 def _generate(req: GenerateReq, run_id: str | None):
     # Browser mode may explicitly select a direct API account. Codex is a
     # desktop-only transport, so unknown/desktop values fall back to ROUTING.
@@ -486,6 +587,8 @@ def _generate(req: GenerateReq, run_id: str | None):
     memory_hint = project_store.build_prompt_memory_hint()
     memory = f"\n\n{memory_hint}" if memory_hint else ""
     mode = "edit" if has_style else "generate"
+    rules_block = project_rules.prompt_block("generation")
+    reference_block = _reference_screens_block(req.referenceIrs)
     dna, complete_dna = _locked_generation_dna(req.tokens)
     preset = typography.PRESETS.get(req.preset or "")
     ptype, pinfo = designkb.detect_product(brief)
@@ -497,6 +600,7 @@ def _generate(req: GenerateReq, run_id: str | None):
             set(preset["moods"]) if preset else typography.brief_moods(brief),
             prefer=(preset.get("font") if preset else None) or pinfo["fonts"][0])
     scale = typography.type_scale()
+    ds_doc = None
 
     # Design System: закрепляем ревизию на момент старта (§16.2) и строим
     # компактный контекст один раз; в промпт уходит prompt-block, не весь документ
@@ -530,15 +634,7 @@ def _generate(req: GenerateReq, run_id: str | None):
             dna, complete_dna = _locked_generation_dna(
                 ds_style_review.ir_tokens(ds_doc.get("foundations") or {}))
         ds_prompt_block += "\n\n" + ds_style_review.profile_prompt(ds_doc)
-        ds_prompt_block += (
-            "\n\n## Режим встраивания\n"
-            "Результат вставят в существующий сайт из описания выше. Собирай его из "
-            "зарегистрированных мастеров и их вариантов как из строительных блоков; "
-            "новые элементы наследуют их геометрию, радиусы, рамки и типографику. "
-            "Если бриф просит компонент или секцию — верни ровно её (одна секция в tree), "
-            "без навигации, hero и футера; если просит страницу — повтори порядок секций "
-            "сайта. Копирайт — в голосе сайта, на его языке, без плейсхолдеров «Lorem»."
-        )
+        ds_prompt_block += _embed_mode_block(ds_usage_mode)
 
 
     def gen_one(n: int):
@@ -619,8 +715,14 @@ def _generate(req: GenerateReq, run_id: str | None):
                          + "\n".join("- " + r for r in pinfo["rules"])
                          + "\n\nАнти-паттерны — НИКОГДА так не делай:\n"
                          + "\n".join("- " + a for a in designkb.ANTI_AI))
+        if mode == "generate":
+            user += _TYPE_ROLE_RULE
+        if reference_block:
+            user += "\n\n" + reference_block
         if ds_prompt_block:
             user += "\n\n" + ds_prompt_block
+        if rules_block:
+            user += "\n\n" + rules_block
         if req.prepareOnly:
             return user, None, None
         if run_registry.is_cancelled(run_id):
@@ -654,15 +756,20 @@ def _generate(req: GenerateReq, run_id: str | None):
                 "desktop": {"width": 1440, "height": 900},
                 "tablet": {"width": 768, "height": 1024},
                 "mobile": {"width": 390, "height": 844}}})
-            # авто quality-gate: детерминированный autofix (контраст/сетка/overflow)
-            ir, fixlog = qualitygate.autofix(ir)
+            # авто quality-gate: детерминированный autofix (контраст/сетка/overflow,
+            # DS-lint: цвета/шрифты/роли — в strict ДС цвета снапятся к токенам всегда)
+            ir, fixlog = qualitygate.autofix(ir, strict_tokens=(ds_usage_mode == "strict"))
             if dna:
                 # Deterministically update model-provided inline styles. Without
                 # this, a black button from the LLM overrides primary in renderer.
                 ir = bind_ir_element_styles(ir, complete_dna or dna)
                 ir = apply_ir_tokens(ir, complete_dna or dna)
+            lint = qualitygate.check(ir)
             qa = {"index": n, "fixed": len(fixlog),
-                  "violations": [v["rule"] for v in qualitygate.check(ir)]}
+                  "violations": [v["rule"] for v in lint],
+                  "lint": [{"rule": v["rule"], "severity": v.get("severity"), "path": v.get("path"),
+                            "message": v.get("message")} for v in lint][:24],
+                  "journal": fixlog[:24]}
             ir = ensure_current_ir(ir, source="generate")
             schema_errors = validate_ir(ir)
             if schema_errors:
@@ -774,9 +881,56 @@ def _generate(req: GenerateReq, run_id: str | None):
                 if not variants:
                     first = design_system_report["errors"][0]["message"] if design_system_report["errors"] else "strict validation failed"
                     return err(422, f"Design System Strict отклонил все варианты: {first}")
+    # Журнал решений: что агент получил и что проверил — вместо чёрного ящика.
+    generation_log = {
+        "product": pinfo["label"],
+        "mode": mode,
+        "tokensLocked": bool(dna),
+        "projectRules": bool(rules_block),
+        "referenceScreens": len([x for x in (req.referenceIrs or []) if isinstance(x, dict)]),
+        "designSystem": ({
+            "name": (ds_doc or {}).get("name") or "",
+            "systemId": (ds_context.get("systemRef") or {}).get("systemId"),
+            "revision": (ds_context.get("systemRef") or {}).get("revision"),
+            "usageMode": ds_usage_mode,
+            "componentsAvailable": len(ds_context.get("components") or []),
+            "mastersInContext": list((ds_compiled or {}).get("includedMasterKeys") or []),
+            "strictReady": (ds_compiled or {}).get("strictReady"),
+            "errors": len((design_system_report or {}).get("errors") or []),
+            "warnings": len((design_system_report or {}).get("warnings") or []),
+            "recovered": (design_system_report or {}).get("recovered"),
+        } if ds_context is not None else None),
+        "variants": [{
+            "index": q.get("index"),
+            "autofixes": q.get("fixed", 0),
+            "journal": q.get("journal") or [],
+            "lint": q.get("lint") or [],
+            "recovery": q.get("recovery"),
+        } for q in qa],
+    }
     return {"variants": variants, "errors": errors, "qa": qa,
             "design": {"type": ptype, "label": pinfo["label"]},
+            "generationLog": generation_log,
             **({"designSystem": design_system_report} if design_system_report else {})}
+
+
+class ProjectRulesReq(BaseModel):
+    text: str = ""
+
+
+@app.get("/api/rules")
+def get_rules():
+    """Правила, по которым работают генератор и судья: встроенные + правила проекта."""
+    return project_rules.payload()
+
+
+@app.post("/api/rules/project")
+def save_rules(req: ProjectRulesReq):
+    try:
+        project_rules.save_project_rules(req.text)
+    except ValueError as e:
+        return err(422, str(e))
+    return project_rules.payload()
 
 
 @app.post("/api/mix")
@@ -1376,10 +1530,10 @@ def quality_gate(req: QualityGateReq):
     """
     violations = qualitygate.check(req.ir)
     if req.fix:
-        fixed_ir, journal = qualitygate.autofix(req.ir)
+        fixed_ir, journal = qualitygate.autofix(req.ir, strict_tokens=req.strictTokens)
     else:
         fixed_ir, journal = copy.deepcopy(req.ir), []
-    return {"passed": not violations, "violations": violations,
+    return {"passed": qualitygate.passed(violations), "violations": violations,
             "fixed_ir": fixed_ir, "journal": journal}
 
 
@@ -1521,6 +1675,9 @@ def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None) -> dict:
     screenshot = render_png(ir, width=1440, webfonts=True)
     image_data_url = _judge_images(screenshot)
     rubric = (APP_ROOT / "prompts" / "RUBRIC.md").read_text(encoding="utf-8")
+    rules_block = project_rules.prompt_block("judge")
+    if rules_block:
+        rubric += "\n\n" + rules_block
     prompt = (
         rubric
         + "\n\n## Изображения\nПервое — первый экран 1440×900 в масштабе 1:1 (десктоп); "
@@ -1603,7 +1760,7 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
                     repair["error"] = f"rejudge недоступен: {e}"
     deterministic_after = qualitygate.check(output_ir)
     passed = (final["score"] >= min_score and final["verdict"] == "pass"
-              and not deterministic_after)
+              and qualitygate.passed(deterministic_after))
     return {
         "ir": output_ir,
         "passed": passed,
@@ -1693,7 +1850,7 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
         return err(422, "Quality Pass: rejudge без применённого repair — неконсистентное состояние Codex")
     deterministic_after = qualitygate.check(output_ir)
     passed = (final["score"] >= min_score and final["verdict"] == "pass"
-              and not deterministic_after)
+              and qualitygate.passed(deterministic_after))
     return {
         "ir": output_ir,
         "passed": passed,

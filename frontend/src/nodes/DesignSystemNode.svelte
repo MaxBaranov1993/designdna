@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
-  import { flowNodes } from "../flow/state";
+  import { flow, flowBusy, flowNodes } from "../flow/state";
   import type { DesignSystemFlowNode, SourceArtifact } from "../flow/types";
   import InPorts from "./InPorts.svelte";
   import OutPorts from "./OutPorts.svelte";
@@ -28,6 +28,26 @@
   let acceptedMasters = $derived(Number(summary.components || 0));
   let acceptedVariants = $derived(Number(summary.variants || 0));
   let canOpen = $derived(!!data.systemId);
+  let busy = $derived(!!$flowBusy[Number(id)]);
+  let fileInput: HTMLInputElement | null = $state(null);
+
+  /* Загруженная ДС: файл → /api/design-system/import → черновик в этой ноде.
+   * Документ DesignDNA переносится целиком (кит), токены Figma/Tokens Studio и
+   * shadcn-карта становятся foundations + irTokens — то, что лочит генератор. */
+  async function onFile(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await file.text());
+    } catch {
+      $flow.setNodeData(Number(id), { lastError: `«${file.name}» не разбирается как JSON` });
+      return;
+    }
+    await $flow.importDesignSystemDocument(Number(id), payload, file.name);
+  }
 
   const openEditor = () => {
     if (!canOpen) return;
@@ -70,7 +90,7 @@
       <span>Quality {Math.round(Number(summary.qualityScore || 0))}/100</span>
     </div>
   {:else}
-    <div class="ds-empty">Create this UI Kit from a completed Source import.</div>
+    <div class="ds-empty">Соберите кит из Source Import или загрузите JSON: документ DesignDNA, токены Figma / Tokens Studio, карту shadcn.</div>
   {/if}
 
   {#if data.sourceUpdate}
@@ -85,6 +105,10 @@
   <div class="ds-actions">
     <button type="button" class="btn-node primary small nodrag" data-ds-action="open"
       aria-label="Открыть редактор Design System и Source UI" disabled={!canOpen} onclick={openEditor}>Открыть</button>
+    <input class="ds-file" type="file" accept=".json,application/json" hidden bind:this={fileInput} onchange={onFile} />
+    <button type="button" class="btn-node small nodrag" data-ds-action="import"
+      aria-label="Загрузить дизайн-систему из JSON-файла" title="Документ DesignDNA, W3C / Tokens Studio JSON или карта shadcn"
+      disabled={busy} onclick={() => fileInput?.click()}>Загрузить JSON</button>
   </div>
   <NodeStatus {id} />
   <OutPorts type="designsystem" />

@@ -4,7 +4,8 @@ import type { Edge, Node } from "@xyflow/svelte";
  * Runtime-поля legacy (el/geo/history) в React Flow state не переносятся. */
 
 /* kind tokens: design-токены из Source Import/Style DNA в Reskin/Derive. */
-export type PortKind = "text" | "ir" | "tokens" | "artifact" | "interaction" | "motion" | "timeline" | "video";
+/* ds — ссылка на опубликованную дизайн-систему (systemId@revision), чтобы ДС шла в Генератор проводом, а не «из воздуха» */
+export type PortKind = "text" | "ir" | "tokens" | "artifact" | "interaction" | "motion" | "timeline" | "video" | "ds";
 
 export type NodeType =
   | "prompt"
@@ -92,6 +93,10 @@ export type GeneratorNodeData = {
   active: number;
   /** Оценки встроенного Quality Pass по вариантам (null — судья не ответил). */
   qualityScores?: (number | null)[];
+  /** Режим использования ДС для этой ноды: strict | extend | style-only (иначе — из пикера проекта). */
+  designSystemUsageMode?: string;
+  /** Журнал решений последней генерации: ДС, мастера в контексте, линт, автофиксы. */
+  generationLog?: Record<string, unknown> | null;
 };
 export type SourceRecordView = {
   id: string;

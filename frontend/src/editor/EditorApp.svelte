@@ -17,6 +17,8 @@
   import HarmonizerPanel from "./HarmonizerPanel.svelte";
   import ResponsiveAutopilotPanel from "./ResponsiveAutopilotPanel.svelte";
   import IntentLocksPanel from "./IntentLocksPanel.svelte";
+  import RulesPanel from "./RulesPanel.svelte";
+  import ComponentsPanel from "./ComponentsPanel.svelte";
   import SemanticSelectPanel from "./SemanticSelectPanel.svelte";
   import CloseConfirmPanel from "./CloseConfirmPanel.svelte";
 
@@ -56,6 +58,8 @@
   <HarmonizerPanel />
   <ResponsiveAutopilotPanel />
   <IntentLocksPanel />
+  <RulesPanel />
+  <ComponentsPanel />
   <SemanticSelectPanel />
   <CloseConfirmPanel />
 </div>

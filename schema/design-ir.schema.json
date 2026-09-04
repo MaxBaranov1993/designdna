@@ -1675,6 +1675,19 @@
           "minimum": 1,
           "maximum": 4
         },
+        "typeRole": {
+          "enum": [
+            "display",
+            "h1",
+            "h2",
+            "h3",
+            "lead",
+            "body",
+            "small",
+            "eyebrow"
+          ],
+          "description": "Текстовый стиль: роль типографики tokens.v2.type.roles. Рендер берёт кегль/интерлиньяж/вес/разрядку роли, инлайновые fontSize/lineHeight/fontWeight/letterSpacing игнорируются; правка роли меняет все элементы с ней."
+        },
         "size": {
           "enum": [
             "xs",
