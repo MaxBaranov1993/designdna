@@ -59,6 +59,7 @@
       <label><span>Prompt planner</span><select value={data.planner} onchange={(event) => changePlanner(event.currentTarget.value as MotionDesignPlanner)}>
         <option value="direct">Direct</option>
         <option value="openai">GPT-5.6 Sol</option>
+        <option value="astra">GPT-6 Astra</option>
         <option value="claude">Claude Code</option>
       </select></label>
       {#if data.planner !== "direct"}

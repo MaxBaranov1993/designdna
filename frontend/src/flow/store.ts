@@ -72,12 +72,13 @@ function friendlyProviderError(error: unknown) {
 /* Провайдер ноды: поддерживаемый выбор проходит как есть, ретро-значения из
  * старых проектов мигрируют на Sol (тот же контракт, что в serialize.ts и
  * desktop/services/provider-router.mjs). */
-const NODE_PROVIDERS = new Set<NodeProvider>(["openai", "codex", "claude"]);
+const NODE_PROVIDERS = new Set<NodeProvider>(["openai", "astra", "codex", "claude"]);
 function nodeProvider(value: unknown): NodeProvider {
   return NODE_PROVIDERS.has(value as NodeProvider) ? (value as NodeProvider) : "openai";
 }
 const PROVIDER_LABELS: Record<NodeProvider, string> = {
   openai: "GPT-5.6 Sol",
+  astra: "GPT-6 Astra",
   codex: "Codex",
   claude: "Claude Opus",
 };
@@ -90,7 +91,7 @@ function chatRoute(provider: NodeProvider, effort: unknown) {
   if (provider === "codex") return { provider, model: null };
   const reasoning = { effort: nodeEffort(effort) };
   if (provider === "claude") return { provider, model: "opus", reasoning };
-  return { provider, model: "gpt-5.6-sol", reasoning };
+  return { provider, model: provider === "astra" ? "gpt-6-astra" : "gpt-5.6-sol", reasoning };
 }
 
 /* Quality Pass — судья + починка + пересуд одного IR. Встроен в прогон
@@ -105,7 +106,7 @@ async function qualityPassCycle(
   onStage: (stage: string) => void,
   { minScore = 80, repair = true, signal, runId }: { minScore?: number; repair?: boolean; signal?: AbortSignal; runId?: string } = {},
 ): Promise<QualityPassResp> {
-  const request = { ir, brief, min_score: minScore, repair, rejudge: repair };
+  const request = { ir, brief, provider, effort, min_score: minScore, repair, rejudge: repair };
   const desktop = window.designDNA;
   if (!desktop) return api<QualityPassResp>("/api/quality-pass", { ...request, runId }, { signal, runId });
   const outputs: Partial<Record<"judge" | "repair" | "rejudge", string>> = {};
@@ -123,9 +124,6 @@ async function qualityPassCycle(
       // Усилие судьи наследует ноду: на CLI-провайдерах high — это минуты
       // thinking на каждый вариант, выбор скорости/строгости за пользователем.
       ...chatRoute(provider, effort),
-      // Судья/починка — механическая оценка по жёсткому контракту: на Claude
-      // быстрый sonnet вместо opus сокращает цикл в разы без потери смысла.
-      ...(provider === "claude" ? { model: "sonnet" } : {}),
       profile: pending.profile,
       messages: pending.messages,
     });
@@ -337,6 +335,7 @@ async function refineSourceWithAi(
   provider: NodeProvider,
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
   id: number,
+  effort: NodeEffort = "high",
 ): Promise<BlockParseResp | null> {
   const desktop = window.designDNA;
   if (!desktop) return null;
@@ -352,7 +351,7 @@ async function refineSourceWithAi(
     "Не добавляй пояснений. Не выдумывай блоки и sourceKey, которых нет во входных данных.",
   ].join(" ");
   const answer = await desktop.providers.chatRequest({
-    ...chatRoute(provider, "medium"),
+    ...chatRoute(provider, effort),
     messages: [
       { role: "system", content: instruction },
       {
@@ -401,6 +400,7 @@ async function segmentScreenshotWithAi(
   provider: NodeProvider,
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
   id: number,
+  effort: NodeEffort = "high",
 ): Promise<SegmentResp | null> {
   const desktop = window.designDNA;
   if (!desktop) return null;
@@ -414,7 +414,7 @@ async function segmentScreenshotWithAi(
   for (const [index, task] of tasks.entries()) {
     setStatus(id, `Разметка компонентов: тайл ${index + 1}/${tasks.length}…`);
     const answer = await desktop.providers.chatRequest({
-      ...chatRoute(provider, "high"),
+      ...chatRoute(provider, effort),
       messages: task.messages,
     });
     rawOutputs.push({ tileIndex: task.tileIndex, content: answer.content });
@@ -453,6 +453,7 @@ async function repairSourceWithAi(
   viewport: string,
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
   id: number,
+  effort: NodeEffort = "high",
 ): Promise<BlockParseResp | null> {
   const desktop = window.designDNA;
   if (!desktop) return null;
@@ -478,7 +479,7 @@ async function repairSourceWithAi(
       setStatus(id, `AI-починка ${round}/${REPAIR_MAX_ROUNDS}: диагностика ${index + 1}/${tasks.length}…`);
       try {
         const answer = await desktop.providers.chatRequest({
-          ...chatRoute(provider, "high"),
+          ...chatRoute(provider, effort),
           messages: task.messages,
         });
         rawOutputs.push({ blockIndex: task.blockIndex, content: answer.content });
@@ -1765,7 +1766,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         if (window.designDNA) {
           try {
             segmented = await segmentScreenshotWithAi(
-              data.image, nodeProvider(data.aiProvider), get().setStatus, id);
+              data.image, nodeProvider(data.aiProvider), get().setStatus, id, nodeEffort(data.aiEffort || "high"));
           } catch (error) {
             get().setStatus(id, `Сегментация пропущена: ${friendlyProviderError(error)}`);
           }
@@ -1786,7 +1787,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         const res = await api<ReproduceResp>("/api/reproduce", {
           image: data.image,
           url: "",
-          provider: "auto",
+          provider: nodeProvider(data.aiProvider),
         });
         const ir = res.ir || null;
         const dna = extractStyleDna(ir, null);
@@ -1873,7 +1874,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         if (data.aiRefine && res.ambiguities?.length && window.designDNA) {
           try {
             const refined = await refineSourceWithAi(
-              res, nodeProvider(data.aiProvider), get().setStatus, id,
+              res, nodeProvider(data.aiProvider), get().setStatus, id, nodeEffort(data.aiEffort || "high"),
             );
             if (refined) res = refined;
           } catch (error) {
@@ -1889,7 +1890,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           try {
             const repaired = await repairSourceWithAi(
               res, nodeProvider(data.aiProvider), data.activeViewport || "desktop",
-              get().setStatus, id,
+              get().setStatus, id, nodeEffort(data.aiEffort || "high"),
             );
             if (repaired) res = repaired;
           } catch (error) {
@@ -1943,6 +1944,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const n = st.nodes.find((x) => Number(x.id) === id);
     if (!n || n.type !== "derive" || st.busy[id]) return;
     const data = n.data as DeriveNodeData;
+    const provider = nodeProvider(data.provider);
+    const effort = nodeEffort(data.effort);
     const prompt = String(pullInput(st.nodes, st.edges, n, "prompt") || data.prompt || "").trim();
     const reference = pullInput(st.nodes, st.edges, n, "reference");
     const tokens = pullInput(st.nodes, st.edges, n, "tokens");
@@ -1960,7 +1963,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       const request = {
         brief: prompt,
         count: data.count,
-        provider: "auto",
+        provider,
+        effort,
         styleHint: styleHint || undefined,
         tokens: tokens && typeof tokens === "object" ? tokens : undefined,
         designSystem: pinnedDesignSystemRef(
@@ -1981,10 +1985,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         const rawOutputs: string[] = [];
         for (const p of prepared.prompts) {
           const answer = await desktop.providers.chatRequest({
-            provider: "openai",
-            model: "gpt-5.6-sol",
+            ...chatRoute(provider, effort),
             messages: p.messages,
-            reasoning: { effort: "medium" },
           });
           rawOutputs.push(answer.content);
         }

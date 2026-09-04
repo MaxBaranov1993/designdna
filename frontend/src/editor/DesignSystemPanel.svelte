@@ -44,6 +44,7 @@
   let applying = $state(false);
   let saving = $state(false);
   let organizing = $state(false);
+  let organizerProvider = $state<"openai" | "astra" | "claude">("openai");
   let organizerEffort = $state<"medium" | "high" | "max">("high");
   /* AI-ревью стиля: провайдер выбирается пользователем (Sol/Codex/Claude);
    * в desktop промпт готовит сервер, отвечает выбранный аккаунт, применяет
@@ -58,7 +59,7 @@
   let kitReport = $state<{ filename: string; bytes: number; components: number; warnings: number } | null>(null);
   let savingKit = $state(false);
   let kitBytes: Uint8Array | null = null;
-  let reviewProvider = $state<"openai" | "codex" | "claude">("openai");
+  let reviewProvider = $state<"openai" | "astra" | "codex" | "claude">("openai");
   let reviewEffort = $state<"medium" | "high" | "max">("high");
   let actionError = $state("");
   let validationResult = $state<{ errors: Array<{ message: string }> } | null>(null);
@@ -596,7 +597,7 @@
     try {
       const resp = await fetch("/api/design-system/organize", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document: doc, reasoningEffort: organizerEffort }),
+        body: JSON.stringify({ document: doc, provider: organizerProvider, reasoningEffort: organizerEffort }),
       });
       const result = await resp.json();
       if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
@@ -638,7 +639,7 @@
     try {
       const resp = await fetch("/api/design-system/master-review", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document: doc, provider: reviewProvider === "openai" ? "auto" : reviewProvider, viewport }),
+        body: JSON.stringify({ document: doc, provider: reviewProvider, viewport }),
       });
       const result = await resp.json();
       if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
@@ -667,7 +668,7 @@
     try {
       const desktop = window.designDNA;
       let payload: Record<string, unknown>;
-      if (desktop && reviewProvider !== "openai") {
+      if (desktop) {
         // Desktop: сервер готовит промпт, выбранный аккаунт (Codex/Claude)
         // отвечает, сервер валидирует и применяет ответ.
         const prepResp = await fetch("/api/design-system/style-review", {
@@ -680,11 +681,11 @@
         if (!messages?.length) throw new Error("Не удалось подготовить промпт ревью");
         const route = reviewProvider === "codex"
           ? { provider: "codex" as const, model: null }
-          : { provider: "claude" as const, model: "opus", reasoning: { effort: reviewEffort } };
+          : { provider: reviewProvider, model: reviewProvider === "claude" ? "opus" : reviewProvider === "astra" ? "gpt-6-astra" : "gpt-5.6-sol", reasoning: { effort: reviewEffort } };
         const answer = await desktop.providers.chatRequest({ ...route, messages });
         payload = { document: doc, rawOutput: answer.content, provider: reviewProvider };
       } else {
-        payload = { document: doc, reasoningEffort: reviewEffort };
+        payload = { document: doc, provider: reviewProvider, reasoningEffort: reviewEffort };
       }
       const resp = await fetch("/api/design-system/style-review", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1097,7 +1098,15 @@
             <small>Группирует шапку, контролы, варианты кнопок и карточки. Точные мастера не меняются.</small>
           </div>
           <label>
-            <span>Усилие Sol</span>
+            <span>Модель</span>
+            <select bind:value={organizerProvider} disabled={busy}>
+              <option value="openai">GPT-5.6 Sol</option>
+              <option value="astra">GPT-6 Astra</option>
+              <option value="claude">Claude Opus</option>
+            </select>
+          </label>
+          <label>
+            <span>Усилие</span>
             <select bind:value={organizerEffort} disabled={busy}>
               <option value="medium">medium</option>
               <option value="high">high</option>
@@ -1105,10 +1114,10 @@
             </select>
           </label>
           <button type="button" data-ds-action="organize" onclick={() => void organizeCatalog()} disabled={busy || !catalogEntries.length}>
-            {organizing ? "Раскладываю…" : "Разложить с Sol"}
+            {organizing ? "Раскладываю…" : "Разложить с AI"}
           </button>
           <span class="ds-organizer-state" data-kind={catalog.organizer?.kind || "deterministic"}>
-            {catalog.organizer?.kind === "ai" ? `gpt-5.6-sol · ${catalog.organizer.reasoningEffort}` : "детерминированная база"}
+            {catalog.organizer?.kind === "ai" ? `${catalog.organizer.model || "gpt-5.6-sol"} · ${catalog.organizer.reasoningEffort}` : "детерминированная база"}
           </span>
         </section>
         <label class="ds-library-search">
@@ -1155,6 +1164,7 @@
               <span>Провайдер</span>
               <select bind:value={reviewProvider} disabled={busy}>
                 <option value="openai">GPT-5.6 Sol</option>
+        <option value="astra">GPT-6 Astra</option>
                 <option value="codex">Codex</option>
                 <option value="claude">Claude Opus</option>
               </select>

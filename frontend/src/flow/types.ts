@@ -81,9 +81,9 @@ export type ReferenceNodeData = {
   // IR, полученный по проводу через propagate (runtime-поле legacy, nodes.js:957-963)
   ir?: IRObject | null;
 };
-/** Провайдер, выбираемый в ноде. Sol — по API-ключу, Codex и Claude — по
+/** Маршрут AI, выбираемый в ноде. Sol и Astra — по одному OpenAI API-ключу, Codex и Claude — по
  *  подписке через локальный CLI (OAuth живёт внутри самого CLI). */
-export type NodeProvider = "openai" | "codex" | "claude";
+export type NodeProvider = "openai" | "astra" | "codex" | "claude";
 export type GeneratorNodeData = {
   provider: NodeProvider;
   effort: "medium" | "high" | "max";
@@ -280,6 +280,7 @@ export type SourceImportNodeData = {
   /** Опциональный AI-проход: уточняет имена компонентов и роли блоков. */
   aiRefine?: boolean;
   aiProvider?: NodeProvider;
+  aiEffort?: "medium" | "high" | "max";
   lastRun?: {
     cached: boolean;
     pipelineVersion?: string;
@@ -292,6 +293,8 @@ export type DesignUiNodeData = {
   selectedComponent: number;
 };
 export type DeriveNodeData = {
+  provider?: NodeProvider;
+  effort?: "medium" | "high" | "max";
   prompt: string;
   count: number;
   variants: IRObject[];
@@ -471,7 +474,7 @@ export type VideoArtifact = {
   parameters?: Record<string, unknown>;
 };
 
-export type MotionDesignPlanner = "direct" | "openai" | "claude";
+export type MotionDesignPlanner = "direct" | "openai" | "astra" | "claude";
 export type SeedanceVideoJob = {
   id: string;
   status: "pending" | "queued" | "processing" | "running" | "completed" | "failed" | "cancelled" | "expired";

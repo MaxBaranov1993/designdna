@@ -3,7 +3,7 @@
 
   /* Выбор провайдера и усилия для AI-ноды.
    *
-   * Sol работает по API-ключу, Codex и Claude — по подписке через локальный
+   * Sol и Astra работают по одному OpenAI API-ключу, Codex и Claude — по подписке через локальный
    * CLI (OAuth живёт внутри самого CLI, приложение секрета не видит).
    * Codex — text-only контракт без reasoning, поэтому усилие для него скрыто. */
   let {
@@ -18,6 +18,7 @@
 
   const PROVIDERS: { value: NodeProvider; label: string }[] = [
     { value: "openai", label: "GPT-5.6 Sol" },
+    { value: "astra", label: "GPT-6 Astra" },
     { value: "codex", label: "Codex" },
     { value: "claude", label: "Claude Opus" },
   ];

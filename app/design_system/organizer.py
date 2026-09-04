@@ -295,7 +295,7 @@ def _validate_ai_plan(raw_plan: Any, document: dict, baseline: dict, effort: str
     return result
 
 
-def organize_with_ai(document: dict, *, reasoning_effort: str = "high", llm_module=None) -> dict:
+def organize_with_ai(document: dict, *, provider: str = "openai", reasoning_effort: str = "high", llm_module=None) -> dict:
     if reasoning_effort not in ("medium", "high", "max"):
         raise ValueError("reasoningEffort must be medium, high or max")
     if llm_module is None:
@@ -322,8 +322,10 @@ def organize_with_ai(document: dict, *, reasoning_effort: str = "high", llm_modu
                                      "confidence": 0.0, "rationale": "short reason"}]},
         "components": descriptors,
     }
+    provider = provider if provider in ("astra", "claude") else "openai"
+    model = "opus" if provider == "claude" else "gpt-6-astra" if provider == "astra" else "gpt-5.6-sol"
     raw = llm_module.chat(
-        "openai",
+        provider,
         [
             {"role": "system", "content": (
                 "You are a design-system information architect. Return JSON only. "
@@ -334,11 +336,13 @@ def organize_with_ai(document: dict, *, reasoning_effort: str = "high", llm_modu
         0.0,
         timeout=180,
         role="mechanics",
-        model="gpt-5.6-sol",
+        model=model,
         reasoning_effort=reasoning_effort,
     )
     parsed = json.loads(llm_module.extract_json(raw))
-    return _validate_ai_plan(parsed, document, baseline, reasoning_effort)
+    catalog = _validate_ai_plan(parsed, document, baseline, reasoning_effort)
+    catalog["organizer"]["model"] = model
+    return catalog
 
 
 def apply_catalog(document: dict, catalog: dict) -> dict:

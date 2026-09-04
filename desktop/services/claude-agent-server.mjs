@@ -136,6 +136,7 @@ export function claudeCredentialsValid(environment = process.env, readFile = rea
 }
 
 const PROFILE_INSTRUCTIONS = {
+  chat: "You are a design assistant. Answer the user in their language.",
   generator: "Generate the requested Design IR. The SYSTEM section below is the complete, authoritative design specification — follow it exactly, including the design craft rules and any locked Style DNA tokens: token colors (primary for CTAs and key accents, alternating background/surface sections) are mandatory, a plain white-and-grey wireframe is a failure.",
   quality_judge: "Evaluate the supplied Design IR exactly as requested.",
   quality_repair: "Repair the supplied Design IR exactly as requested.",
@@ -236,7 +237,7 @@ export class ClaudeAgentServer {
       ? "Use the Read tool ONLY to view the image files listed in the messages. Do not run commands or use any other tool."
       : "Do not inspect files, run commands, or call tools.";
     const prompt = [
-      `${PROFILE_INSTRUCTIONS[profile]} ${toolRule} Return only the JSON object.`,
+      `${PROFILE_INSTRUCTIONS[profile]} ${toolRule}${profile === "chat" ? "" : " Return only the JSON object."}`,
       ...lines,
     ].join("\n\n");
 

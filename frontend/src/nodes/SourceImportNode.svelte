@@ -139,8 +139,8 @@
            один — чей аккаунт отвечает. -->
       <ProviderPicker
         provider={data.aiProvider || "openai"}
-        effort="medium"
-        onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider })}
+        effort={data.aiEffort || "high"}
+        onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider, aiEffort: next.effort as "medium" | "high" | "max" })}
       />
     {/if}
     <div class="nrow">
@@ -170,8 +170,8 @@
            выбранный здесь аккаунт, судит их пиксельная проверка сервера. -->
       <ProviderPicker
         provider={data.aiProvider || "openai"}
-        effort="medium"
-        onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider })}
+        effort={data.aiEffort || "high"}
+        onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider, aiEffort: next.effort as "medium" | "high" | "max" })}
       />
     {/if}
   {/if}

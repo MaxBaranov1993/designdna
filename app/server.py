@@ -325,6 +325,8 @@ class QualityGateReq(BaseModel):
 
 class QualityPassReq(BaseModel):
     ir: dict
+    provider: str = "auto"
+    effort: str = "medium"
     brief: str = ""
     min_score: int = 80
     repair: bool = True
@@ -740,7 +742,7 @@ def _generate(req: GenerateReq, run_id: str | None):
     # desktop-only transport, so unknown/desktop values fall back to ROUTING.
     # codex/claude — консольные аккаунты (cli_llm); всё остальное — Sol по ключу
     # или первый доступный CLI, если ключа нет (см. llm_client.chat_envelope).
-    provider = req.provider if getattr(req, "provider", None) in ("codex", "claude") else "openai"
+    provider = req.provider if getattr(req, "provider", None) in ("astra", "codex", "claude") else "openai"
     effort = req.effort if req.effort in ("medium", "high", "max") else "medium"
     brief = req.brief.strip()
     if not brief:
@@ -1827,7 +1829,7 @@ def reskin(req: ReskinReq):
 
     # codex/claude — консольные аккаунты (cli_llm); всё остальное — Sol по ключу
     # или первый доступный CLI, если ключа нет (см. llm_client.chat_envelope).
-    provider = req.provider if getattr(req, "provider", None) in ("codex", "claude") else "openai"
+    provider = req.provider if getattr(req, "provider", None) in ("astra", "codex", "claude") else "openai"
     effort = req.effort if req.effort in ("medium", "high", "max") else "medium"
     reskin_messages = [
         {"role": "system", "content": llm.build_system_prompt("edit")},
@@ -2073,7 +2075,7 @@ def _judge_images(screenshot: bytes) -> list[str]:
         return [data_url(screenshot)]
 
 
-def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None) -> dict:
+def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None, *, provider: str = "auto", effort: str = "medium") -> dict:
     """Render IR and ask the standalone server's vision model for a scorecard."""
     run_registry.stage(run_id, "render", "Рендерю IR для визуальной проверки")
     screenshot = render_png(ir, width=1440, webfonts=True)
@@ -2096,21 +2098,21 @@ def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None) -> dict:
     )
     run_registry.stage(run_id, "judge", "Vision-судья оценивает скриншот")
     raw = llm.chat_vision(
-        "auto", image_data_url, prompt, QUALITY_JUDGE_SYSTEM, 0.2,
-        role="quality_judge",
+        provider, image_data_url, prompt, QUALITY_JUDGE_SYSTEM, 0.2,
+        role="quality_judge", reasoning_effort=effort,
     )
     scorecard = _parse_quality_scorecard(raw, "LLM vision / quality_judge")
     scorecard["mode"] = "component" if component_mode else "page"
     return scorecard
 
 
-def _quality_repair(ir: dict, scorecard: dict, brief: str) -> tuple[dict | None, str | None]:
+def _quality_repair(ir: dict, scorecard: dict, brief: str, *, provider: str = "auto", effort: str = "medium") -> tuple[dict | None, str | None]:
     """Серверный LLM-путь standalone веб-сервера (Sol по ключу или Codex/Claude CLI)."""
     messages, error = _quality_repair_messages(ir, scorecard, brief)
     if messages is None:
         return None, error
     try:
-        raw = llm.chat("auto", messages, 0.25, role="quality_repair")
+        raw = llm.chat(provider, messages, 0.25, role="quality_repair", reasoning_effort=effort)
     except Exception as e:
         return None, str(e)
     return _parse_quality_repair(raw)
@@ -2139,7 +2141,7 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
         return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
     deterministic_before = _quality_violations(req.ir)
     try:
-        initial = _quality_scorecard(req.ir, req.brief, run_id)
+        initial = _quality_scorecard(req.ir, req.brief, run_id, provider=req.provider, effort=req.effort)
     except Exception as e:
         return err(502, f"Quality Pass judge недоступен: {e}")
     if run_registry.is_cancelled(run_id):
@@ -2153,7 +2155,7 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
     if req.repair and needs_repair:
         repair["attempted"] = True
         run_registry.stage(run_id, "repair", "Починка по замечаниям судьи")
-        repaired, repair_error = _quality_repair(req.ir, initial, req.brief)
+        repaired, repair_error = _quality_repair(req.ir, initial, req.brief, provider=req.provider, effort=req.effort)
         if repaired is None:
             repair["error"] = repair_error
         else:
@@ -2164,7 +2166,7 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
                     return err(CANCELLED_STATUS, "Quality Pass отменён")
                 run_registry.stage(run_id, "rejudge", "Повторная оценка")
                 try:
-                    final = _quality_scorecard(output_ir, req.brief, run_id)
+                    final = _quality_scorecard(output_ir, req.brief, run_id, provider=req.provider, effort=req.effort)
                 except Exception as e:
                     repair["error"] = f"rejudge недоступен: {e}"
     deterministic_after = _quality_violations(output_ir)
@@ -2348,6 +2350,7 @@ def reproduce(req: ReproduceReq):
     Работает с любым провайдером для VLM-анализа. Все измерения — из пикселей.
     Повторный запрос того же скриншота/сайта — из кэша, без траты токенов.
     """
+    provider = req.provider if req.provider in ("openai", "astra", "claude", "codex") else "auto"
     url = req.url.strip()
     image = req.image
     url_key = None
@@ -2357,6 +2360,8 @@ def reproduce(req: ReproduceReq):
         except ValueError as e:
             return err(422, str(e))
         url_key = cache_store.key_url(url)
+        if provider != "auto":
+            url_key = f"{url_key}:{provider}"
         hit = cache_store.get("reproduce_url", url_key)
         if hit:
             return {**_with_reproduce_parser_contract(hit, url, "url"), "cached": True}
@@ -2373,13 +2378,13 @@ def reproduce(req: ReproduceReq):
 
     # кэш по хэшу изображения: тот же скриншот от любого пользователя — бесплатно
     img_key = cache_store.key_image(image)
+    if provider != "auto":
+        img_key = f"{img_key}:{provider}"
     hit = cache_store.get("reproduce_img", img_key)
     if hit:
         source_ref = url or f"image-sha256:{img_key}"
         source_kind = "url" if url else "image"
         return {**_with_reproduce_parser_contract(hit, source_ref, source_kind), "cached": True}
-
-    provider = "auto"  # вся цепочка ROUTING подключённых аккаунтов
 
     regions = None
     if req.regions:

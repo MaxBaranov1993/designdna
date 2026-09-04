@@ -10,9 +10,9 @@ import { SerialRequestQueue } from "./lib/serial-request-queue.mjs";
 import { CredentialStore } from "./services/credential-store.mjs";
 import { SettingsStore } from "./services/settings-store.mjs";
 import { getProviderStatus } from "./services/provider-status.mjs";
-import { chatWithProvider, resolveProvider } from "./services/provider-router.mjs";
+import { chatWithProvider, prepareProviderRequest } from "./services/provider-router.mjs";
 import { ClaudeAgentServer } from "./services/claude-agent-server.mjs";
-import { createEnvelope, EnvelopeValidationError, redactForLog, UnsupportedCapabilityError } from "./services/provider-envelope.mjs";
+import { EnvelopeValidationError, redactForLog, UnsupportedCapabilityError } from "./services/provider-envelope.mjs";
 import { CodexAppServer } from "./services/codex-app-server.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
 import { canonicalMcpSpec, createMcpActivationApprover } from "./services/mcp-activation-approval.mjs";
@@ -880,27 +880,16 @@ function registerIpc() {
   };
   const runProviderChat = async (payload) => {
     const request = payload?.request && typeof payload.request === "object" ? payload.request : payload;
-    const requestedEffort = typeof request?.reasoning === "string"
-      ? request.reasoning
-      : request?.reasoning?.effort;
-    // Провайдер выбирается пользователем в ноде; ретро-значения мигрируют
-    // на дефолт внутри resolveProvider. Envelope остаётся Sol-типизированным:
-    // Codex и Claude — текстовые CLI-транспорты и читают из него messages.
-    const provider = resolveProvider(request?.provider);
-    const envelope = createEnvelope({
-      ...request,
-      provider: "openai",
-      model: "gpt-5.6-sol",
-      reasoning: { effort: new Set(["medium", "high", "max"]).has(requestedEffort) ? requestedEffort : "medium" },
-      id: request?.id || `chat-${++approvalSequence}-${Date.now().toString(36)}`,
-    });
+    const { provider, envelope } = prepareProviderRequest(
+      request, `chat-${++approvalSequence}-${Date.now().toString(36)}`,
+    );
     const abort = new AbortController();
     providerChats.set(envelope.id, abort);
     try {
       const result = await chatWithProvider({
         provider,
         envelope: { ...envelope, provider },
-        profile: payload?.profile,
+        profile: request?.profile || payload?.profile,
         signal: abort.signal,
         codex,
         claude,

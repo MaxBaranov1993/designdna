@@ -55,12 +55,12 @@ test("router fails clearly when OpenAI is disconnected", async () => {
   );
 });
 
-test("selectable providers are exactly Sol, Codex and Claude", () => {
-  assert.deepEqual([...SELECTABLE_PROVIDERS], ["openai", "codex", "claude"]);
+test("selectable providers are Sol, Astra, Codex and Claude", () => {
+  assert.deepEqual([...SELECTABLE_PROVIDERS], ["openai", "astra", "codex", "claude"]);
 });
 
 test("resolveProvider keeps supported values and migrates the rest", () => {
-  for (const provider of ["openai", "codex", "claude"]) {
+  for (const provider of ["openai", "astra", "codex", "claude"]) {
     assert.equal(resolveProvider(provider), provider);
   }
   for (const retired of ["kimi", "glm", "zai", "grok", "zcode", "auto", "", null, undefined]) {

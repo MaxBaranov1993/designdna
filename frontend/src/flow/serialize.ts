@@ -538,11 +538,11 @@ export function parseLegacyPayload(input: unknown): LegacyGraphPayload {
     // Поддерживаемый выбор провайдера (Sol / Codex / Claude) сохраняется;
     // ретро-провайдеры (kimi/glm/zai/grok/zcode/auto) мигрируют на Sol.
     // Усилие переживает загрузку только если входит в продуктовый контракт.
-    if (r.type === "generator" || r.type === "reskin") {
+    if (r.type === "generator" || r.type === "reskin" || r.type === "derive") {
       const savedEffort = String((data as { effort?: unknown }).effort || "");
       const effort = new Set(["medium", "high", "max"]).has(savedEffort) ? savedEffort : "medium";
       const savedProvider = String((data as { provider?: unknown }).provider || "");
-      const provider = new Set(["openai", "codex", "claude"]).has(savedProvider) ? savedProvider : "openai";
+      const provider = new Set(["openai", "astra", "codex", "claude"]).has(savedProvider) ? savedProvider : "openai";
       data = { ...data, provider, effort } as AnyNodeData;
     }
     data = dataForRuntime(r.type as NodeType, data);
