@@ -99,3 +99,67 @@ def test_candidate_with_new_defect_rolls_back(monkeypatch):
     result = polish.polish_component(component)
     assert not result["changed"] and component["masterIr"] == original
     assert {"new-defect", "escape"} <= set(component["fidelity"]["polish"]["rejected"])
+
+
+def test_two_pixel_text_measurement_noise_is_not_a_defect():
+    master = _master()
+    price = master["tree"][0]["children"][0]
+    price["text"] = "$"
+    price["frame"]["width"] = polish._text_width(price) - 2
+
+    assert not any(d["path"] == "price" and d["kind"] in {"overflow", "clip"}
+                   for d in polish.static_lint(master))
+
+
+def test_fifteen_pixel_clip_is_detected_and_repaired():
+    master = _master()
+    root = master["tree"][0]
+    root["children"] = [root["children"][0]]
+    price = root["children"][0]
+    price["style"]["fontSize"] = 25
+    price["frame"]["width"] = 28
+    component = {"masterIr": master, "fidelity": {"gate": {"passed": True}}}
+
+    before = polish.static_lint(master)
+    result = polish.polish_component(component)
+
+    assert any(d["path"] == "price" and d["kind"] == "clip" and d["px"] >= 15
+               for d in before)
+    assert result["changed"]
+    assert component["masterIr"]["tree"][0]["children"][0]["frame"]["width"] > 43
+    assert result["defectsAfter"] == []
+    assert component["fidelity"]["polish"]["status"] == "ready"
+    assert "rejected" not in component["fidelity"]["polish"]
+
+
+def _nested_escape(px: float, *, clips_content: bool = False) -> dict:
+    master = _master()
+    root = master["tree"][0]
+    root["children"] = [{
+        "type": "frame", "sourceKey": "price-row",
+        "frame": {"x": 20, "y": 20, "width": 100, "height": 30, "layout": "free"},
+        "clipsContent": clips_content,
+        "children": [{
+            "type": "text", "sourceKey": "price-glyph", "text": "$3K",
+            "frame": {"x": 10, "y": -px, "width": 50, "height": 30},
+            "style": {"fontSize": 18},
+        }],
+    }]
+    return master
+
+
+def test_two_pixel_glyph_escape_is_not_a_defect():
+    defects = polish.static_lint(_nested_escape(2))
+    assert not any(d["path"] == "price-glyph" and d["kind"] == "escape" for d in defects)
+
+
+def test_six_pixel_glyph_escape_is_a_defect():
+    defects = polish.static_lint(_nested_escape(6))
+    assert any(d["path"] == "price-glyph" and d["kind"] == "escape" and d["px"] == 6
+               for d in defects)
+
+
+def test_clipping_parent_makes_two_pixel_escape_actionable():
+    defects = polish.static_lint(_nested_escape(2, clips_content=True))
+    assert any(d["path"] == "price-glyph" and d["kind"] == "escape" and d["px"] == 2
+               for d in defects)
