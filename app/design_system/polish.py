@@ -14,7 +14,18 @@ VIEWPORTS = {"desktop": (1440, 900), "tablet": (768, 900), "mobile": (390, 844)}
 TEXT_TYPES = {"text", "heading", "button", "badge", "link"}
 BUFFER_PX = 2.0
 MAX_WIDTH_GROWTH = .30
+# A proven hidden/clip truncation may recover up to 2x its damaged width; the
+# existing parent-bound, sibling-displacement, defect, and fidelity gates still apply.
+MAX_CLIPPED_WIDTH_GROWTH = 1.0
 SIMILARITY_DROP_PCT = 1.5
+
+# Browser text metrics routinely drift by 1--3 px because glyph ink, integer
+# scroll metrics, and captured frame bounds use different rounding.  A normal
+# overflow must clear both the absolute and proportional thresholds.  Actual
+# clipping may skip the proportional threshold, but never the absolute one.
+TEXT_OVERFLOW_MIN_PX = 4.0
+TEXT_OVERFLOW_MIN_RATIO = .15
+NODE_ESCAPE_MIN_PX = 4.0
 
 
 def _walk(nodes: Any, prefix: str = "tree"):
@@ -107,19 +118,82 @@ def _text_width(node: dict) -> float:
     return max(0.0, len(text) * size * 0.58 + max(0, len(text) - 1) * spacing)
 
 
-def static_lint(master_ir: dict, viewport: str = "desktop") -> list[dict]:
+def _clips_content(node: dict, frame: dict) -> bool:
+    """Whether *node* really clips descendants/text in the effective frame."""
+    style = node.get("style") if isinstance(node.get("style"), dict) else {}
+    values = (node.get("clipsContent"), frame.get("clipsContent"), style.get("overflow"),
+              style.get("overflowX"), style.get("overflowY"), frame.get("overflow"))
+    return any(value is True or str(value).lower() in {"hidden", "clip"} for value in values)
+
+
+def _actionable_text_overflow(excess: float, width: float, actually_clipped: bool) -> bool:
+    """Filter sub-pixel/font-rounding noise while retaining genuine clipping."""
+    return (excess >= TEXT_OVERFLOW_MIN_PX
+            and (actually_clipped or excess / max(width, 1.0) >= TEXT_OVERFLOW_MIN_RATIO))
+
+
+def _captured_line_fragment(path: str) -> bool:
+    """Captured ``::text0l47`` layers are intentional per-line clip masks."""
+    tail = path.rsplit("::text", 1)[-1] if "::text" in path else ""
+    line = tail.rsplit("l", 1)
+    return len(line) == 2 and all(part.isdigit() for part in line)
+
+
+def _root_escape_defects(master_ir: dict, viewport: str) -> list[dict]:
+    """Find any visible descendant crossing its component-root boundary.
+
+    Root escape is always actionable, even below the normal parent-noise
+    threshold, because it can paint into the neighbouring component.
+    """
     defects: list[dict] = []
+    for root_index, root in enumerate((master_ir or {}).get("tree") or []):
+        if not isinstance(root, dict):
+            continue
+        root_path = str(root.get("sourceKey") or f"tree.{root_index}")
+        root_visible, root_frame = _viewport_node(root, viewport)
+        root_width, root_height = _num(root_frame.get("width")), _num(root_frame.get("height"))
+        if not root_visible or root_width is None or root_height is None:
+            continue
+
+        def visit(children: Any, offset_x: float, offset_y: float, prefix: str) -> None:
+            if not isinstance(children, list):
+                return
+            for index, child in enumerate(children):
+                if not isinstance(child, dict):
+                    continue
+                path = str(child.get("sourceKey") or f"{prefix}.{index}")
+                visible, child_frame = _viewport_node(child, viewport)
+                if not visible:
+                    continue
+                x, y = _num(child_frame.get("x")) or 0.0, _num(child_frame.get("y")) or 0.0
+                width, height = _num(child_frame.get("width")), _num(child_frame.get("height"))
+                absolute_x, absolute_y = offset_x + x, offset_y + y
+                if width is not None and height is not None:
+                    escape = max(0.0, -absolute_x, -absolute_y,
+                                 absolute_x + width - root_width,
+                                 absolute_y + height - root_height)
+                    if escape > .5:
+                        defects.append({"path": path, "kind": "escape", "px": round(escape, 2),
+                                        "viewport": viewport})
+                visit(child.get("children"), absolute_x, absolute_y, path + ".children")
+
+        visit(root.get("children"), 0.0, 0.0, root_path + ".children")
+    return defects
+
+
+def static_lint(master_ir: dict, viewport: str = "desktop") -> list[dict]:
+    defects: list[dict] = _root_escape_defects(master_ir, viewport)
     for path, node, frame, visible in _walk_viewport((master_ir or {}).get("tree") or [], viewport):
         if not visible:
             continue
         width = _num(frame.get("width"))
-        if str(node.get("text") or "") and width is not None:
+        if str(node.get("text") or "") and width is not None and not _captured_line_fragment(path):
             excess = _text_width(node) - width
-            if excess > .5:
+            clipped = _clips_content(node, frame)
+            if _actionable_text_overflow(excess, width, clipped):
                 defects.append({"path": path, "kind": "overflow", "px": round(excess, 2),
                                 "viewport": viewport})
-                style = node.get("style") if isinstance(node.get("style"), dict) else {}
-                if str(style.get("overflow") or frame.get("overflow") or "") in {"hidden", "clip"}:
+                if clipped:
                     defects.append({"path": path, "kind": "clip", "px": round(excess, 2),
                                     "viewport": viewport})
         expected_lines = _source_line_count(node)
@@ -137,6 +211,7 @@ def static_lint(master_ir: dict, viewport: str = "desktop") -> list[dict]:
         children = [c for c in (node.get("children") or []) if isinstance(c, dict)
                     and _viewport_node(c, viewport)[0]]
         parent_width, parent_height = _num(frame.get("width")), _num(frame.get("height"))
+        parent_clips = _clips_content(node, frame)
         for child in children:
             child_path = str(child.get("sourceKey") or "")
             _child_visible, child_frame = _viewport_node(child, viewport)
@@ -144,7 +219,7 @@ def static_lint(master_ir: dict, viewport: str = "desktop") -> list[dict]:
             if parent_width is not None and parent_height is not None and all(v is not None for v in rect):
                 x, y, w, h = rect  # type: ignore[misc]
                 escape = max(0.0, -x, -y, x + w - parent_width, y + h - parent_height)
-                if escape > .5:
+                if escape >= NODE_ESCAPE_MIN_PX or (parent_clips and escape > .5):
                     defects.append({"path": child_path, "kind": "escape", "px": round(escape, 2),
                                     "viewport": viewport})
         if frame.get("layout") == "free":
@@ -191,7 +266,12 @@ def lint_master(master_ir: dict, *, page: Any = None,
         line_counts = {path: count for path, node in _walk((master_ir or {}).get("tree") or [])
                        if (count := _source_line_count(node)) is not None}
         measured = fidelity_harness.measure_layout(page, preview, viewport, width, height,
-                                                   source_line_counts=line_counts)
+                                                   source_line_counts=line_counts,
+                                                   thresholds={
+                                                       "overflowMinPx": TEXT_OVERFLOW_MIN_PX,
+                                                       "overflowMinRatio": TEXT_OVERFLOW_MIN_RATIO,
+                                                       "escapeMinPx": NODE_ESCAPE_MIN_PX,
+                                                   })
         for defect in measured.get("defects") or []:
             defects.append({**defect, "viewport": viewport})
     return _dedupe(defects)
@@ -217,19 +297,23 @@ def autofix(master_ir: dict, defects: list[dict]) -> tuple[dict, list[dict]]:
     journal: list[dict] = []
     # Clip is normally the visible consequence of the same overflow. Collapse
     # both into one width change per concrete (base/responsive) frame.
-    width_jobs: dict[tuple[str, str], float] = {}
+    width_jobs: dict[tuple[str, str], tuple[float, bool]] = {}
     overlap_jobs: dict[tuple[str, str], float] = {}
     for defect in defects:
         path, viewport = str(defect.get("path") or ""), str(defect.get("viewport") or "desktop")
         if defect.get("kind") in {"overflow", "clip"}:
-            jobs = width_jobs
+            key = (path, viewport)
+            previous_px, was_clipped = width_jobs.get(key, (0.0, False))
+            width_jobs[key] = (max(previous_px, float(defect.get("px") or 0)),
+                               was_clipped or defect.get("kind") == "clip")
+            continue
         elif defect.get("kind") == "overlap":
             jobs = overlap_jobs
         else:
             continue
         jobs[(path, viewport)] = max(jobs.get((path, viewport), 0.0), float(defect.get("px") or 0))
     changed_frames: set[int] = set()
-    for (path, viewport), px in width_jobs.items():
+    for (path, viewport), (px, actually_clipped) in width_jobs.items():
         node, parent, index = _find(fixed, path)
         if node is None or px <= .5:
             continue
@@ -245,7 +329,8 @@ def autofix(master_ir: dict, defects: list[dict]) -> tuple[dict, list[dict]]:
         if old is None:
             continue
         desired = old + math.ceil(px + BUFFER_PX)
-        new_width = min(desired, old * (1 + MAX_WIDTH_GROWTH))
+        growth_cap = MAX_CLIPPED_WIDTH_GROWTH if actually_clipped else MAX_WIDTH_GROWTH
+        new_width = min(desired, old * (1 + growth_cap))
         delta = new_width - old
         if delta <= .5:
             continue
@@ -374,7 +459,7 @@ def polish_component(component: dict, *, page: Any = None,
     if not after_set.issubset(before_set): reasons.append("new-defect")
     if any(d.get("kind") == "escape" for d in after_defects): reasons.append("escape")
     if not gate_ok: reasons.append("fidelity")
-    if not journal: reasons.append("no-safe-fix")
+    if not journal and before_defects: reasons.append("no-safe-fix")
     accepted = bool(journal and gate_ok and after_set.issubset(before_set)
                     and not any(d.get("kind") == "escape" for d in after_defects))
     if accepted:
@@ -387,12 +472,14 @@ def polish_component(component: dict, *, page: Any = None,
             source_ref["masterHash"] = content_hash(candidate)
     fidelity = component.setdefault("fidelity", {})
     if isinstance(fidelity, dict):
+        remaining_defects = after_defects if accepted else before_defects
         fidelity["polish"] = {"defectsBefore": before_defects,
-                              "defectsAfter": after_defects if accepted else before_defects,
-                              "rounds": 1 if journal else 0, "accepted": accepted}
+                              "defectsAfter": remaining_defects,
+                              "rounds": 1 if journal else 0, "accepted": accepted,
+                              "status": "ready" if not remaining_defects else "needs-polish"}
         if isinstance(gate_result, dict):
             fidelity["polish"].update({k: v for k, v in gate_result.items() if k != "passed"})
-        if accepted:
+        if accepted or not remaining_defects:
             fidelity["polish"].pop("rejected", None)
         else:
             fidelity["polish"]["rejected"] = reasons

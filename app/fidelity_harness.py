@@ -404,7 +404,8 @@ def _render_block_png(page, ir: dict, viewport_name: str, width: int, height: in
 
 
 def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int,
-                   source_line_counts: dict[str, int] | None = None) -> dict:
+                   source_line_counts: dict[str, int] | None = None,
+                   thresholds: dict[str, float] | None = None) -> dict:
     """Render *ir* with source fonts and return deterministic text/layout defects.
 
     The measurement deliberately runs through :func:`_render_block_png`, so the
@@ -412,7 +413,10 @@ def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int,
     Paths are renderer ``data-ir-path`` values (sourceKey for captured masters).
     """
     png = _render_block_png(page, ir, viewport_name, width, height)
-    measured = page.evaluate("""(sourceLines) => {
+    limits = {"overflowMinPx": 4.0, "overflowMinRatio": .15, "escapeMinPx": 4.0,
+              **(thresholds or {})}
+    measured = page.evaluate("""(args) => {
+      const sourceLines = args.sourceLines || {}, limits = args.thresholds;
       const root = document.querySelector('#preview');
       const nodes = Array.from(root.querySelectorAll('[data-ir-path]'));
       const visible = el => {
@@ -448,10 +452,17 @@ def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int,
         const owner = el.parentElement && el.parentElement.closest('[data-ir-path]');
         const pr = owner ? owner.getBoundingClientRect() : root.getBoundingClientRect();
         const escape = Math.max(0, pr.left-r.left, r.right-pr.right, pr.top-r.top, r.bottom-pr.bottom);
+        const ownerStyle = owner ? getComputedStyle(owner) : null;
+        const parentClips = !!ownerStyle && (['hidden','clip'].includes(ownerStyle.overflowX)
+          || ['hidden','clip'].includes(ownerStyle.overflowY));
+        const componentRoot = el.closest('[data-ir-sec]') || visibleNodes[0];
+        const rr = componentRoot && componentRoot !== el ? componentRoot.getBoundingClientRect() : r;
+        const rootEscape = Math.max(0, rr.left-r.left, r.right-rr.right, rr.top-r.top, r.bottom-rr.bottom);
         return {index, path:el.dataset.irPath || `(dom:${index})`, text,
           left:r.left, top:r.top, right:r.right, bottom:r.bottom,
           width:r.width, height:r.height,
-          lineCount, escape, overflowX:Math.max(0, el.scrollWidth-el.clientWidth),
+          lineCount, escape, parentClips, rootEscape,
+          overflowX:Math.max(0, el.scrollWidth-el.clientWidth),
           overflowY:Math.max(0, el.scrollHeight-el.clientHeight), clipped,
           overflowHidden:['hidden','clip'].includes(cs.overflowX) || ['hidden','clip'].includes(cs.overflowY),
           fontFamily:family, fontLoaded:!text || !document.fonts || document.fonts.check(`${cs.fontSize} "${family}"`, text)};
@@ -460,10 +471,20 @@ def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int,
       for (const a of records) {
         if (!a.text) continue;
         const overflow = Math.max(a.overflowX, a.overflowY);
-        if (overflow > .5) defects.push({path:a.path, kind:'overflow', px:Math.round(overflow*100)/100});
-        if (a.clipped > .5 || (a.overflowHidden && overflow > .5))
-          defects.push({path:a.path, kind:'clip', px:Math.round(Math.max(a.clipped, overflow)*100)/100});
-        if (a.escape > .5) defects.push({path:a.path, kind:'escape', px:Math.round(a.escape*100)/100});
+        const capturedLineFragment = /::text\\d+l\\d+$/.test(a.path);
+        // A descendant crossing some clipped ancestor is handled by the
+        // escape rule below.  Text clipping itself is proven by this text
+        // frame's hidden/clip overflow plus scrollWidth-clientWidth.
+        const clipPx = a.overflowHidden ? overflow : 0;
+        const actuallyClipped = clipPx >= limits.overflowMinPx;
+        const actionableOverflow = !capturedLineFragment && overflow >= limits.overflowMinPx
+          && (actuallyClipped || overflow / Math.max(a.width, 1) >= limits.overflowMinRatio);
+        if (actionableOverflow)
+          defects.push({path:a.path, kind:'overflow', px:Math.round(overflow*100)/100});
+        if (!capturedLineFragment && clipPx >= limits.overflowMinPx)
+          defects.push({path:a.path, kind:'clip', px:Math.round(clipPx*100)/100});
+        if (a.escape >= limits.escapeMinPx || (a.parentClips && a.escape > .5) || a.rootEscape > .5)
+          defects.push({path:a.path, kind:'escape', px:Math.round(Math.max(a.escape,a.rootEscape)*100)/100});
         const expected = Number(sourceLines[a.path] || 0);
         if (expected > 0 && a.lineCount > expected)
           defects.push({path:a.path, kind:'wrap', px:a.lineCount-expected});
@@ -488,7 +509,7 @@ def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int,
       }
       return {defects:[...unique.values()], nodes:records.map(({index,left,top,right,bottom,...r}) => r),
         fontsLoaded:records.filter(r=>r.text).every(r=>r.fontLoaded)};
-    }""", source_line_counts or {})
+    }""", {"sourceLines": source_line_counts or {}, "thresholds": limits})
     measured["viewport"] = viewport_name
     measured["png"] = png
     return measured
