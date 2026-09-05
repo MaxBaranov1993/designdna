@@ -1262,6 +1262,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   }
   const cloneIr = (value) => JSON.parse(JSON.stringify(value));
   const confirmedFontSpecs = /* @__PURE__ */ new Set();
+  const registeredFontFaces = /* @__PURE__ */ new Map();
   let lastFontFacesCss = "";
   function materializeResponsiveIR(source, viewport) {
     if (!source || !source.responsive || !source.responsive.viewports) return source;
@@ -1334,7 +1335,11 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       ffEl.id = "ir-fontfaces";
       document.head.appendChild(ffEl);
     }
-    const fontFacesCss = customFaces.map((f) => {
+    for (const f of customFaces) {
+      const key = [f.family, f.style, f.weight, f.url, f.unicodeRange || ""].join("|");
+      if (!registeredFontFaces.has(key)) registeredFontFaces.set(key, f);
+    }
+    const fontFacesCss = Array.from(registeredFontFaces.values()).map((f) => {
       const rawUrl = String(f.url);
       const format = /\.woff2$/i.test(rawUrl) ? "woff2" : /\.woff$/i.test(rawUrl) ? "woff" : "truetype";
       const unicode = f.unicodeRange ? "unicode-range:" + String(f.unicodeRange) + ";" : "";
