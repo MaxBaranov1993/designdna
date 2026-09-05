@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import io
 import json
 import re
 from typing import Any, Callable
@@ -179,8 +180,17 @@ def validate_operations(parsed: Any, ir: dict) -> list[dict]:
     if not isinstance(raw_ops, list):
         raise ValueError("operations must be a list")
     allowed = repairable_props()
-    known_nodes = {str(node.get("sourceKey") or ""): node
-                   for node in _walk((ir or {}).get("tree") or []) if node.get("sourceKey")}
+    known_nodes: dict[str, dict] = {}
+    parents: dict[str, dict | None] = {}
+    def index_nodes(nodes: Any, parent: dict | None = None) -> None:
+        for node in nodes if isinstance(nodes, list) else []:
+            if not isinstance(node, dict):
+                continue
+            source_key = str(node.get("sourceKey") or "")
+            if source_key:
+                known_nodes[source_key] = node; parents[source_key] = parent
+            index_nodes(node.get("children"), node)
+    index_nodes((ir or {}).get("tree") or [])
     known = set(known_nodes)
     root = next(iter(_walk((ir or {}).get("tree") or [])), {})
     root_frame = root.get("frame") if isinstance(root, dict) and isinstance(root.get("frame"), dict) else {}
@@ -225,8 +235,13 @@ def validate_operations(parsed: Any, ir: dict) -> list[dict]:
                 candidate = dict(frame); candidate[prop] = clean_value
                 x, y = float(candidate.get("x") or 0), float(candidate.get("y") or 0)
                 width, height = float(candidate.get("width") or 0), float(candidate.get("height") or 0)
-                if ((root_w and x + width > root_w + .5)
-                        or (root_h and y + height > root_h + .5)):
+                parent = parents.get(source_key)
+                parent_frame = parent.get("frame") if isinstance(parent, dict) and isinstance(parent.get("frame"), dict) else {}
+                bound_w = float(parent_frame.get("width") or root_w)
+                bound_h = float(parent_frame.get("height") or root_h)
+                if (x < -.5 or y < -.5
+                        or (bound_w and x + width > bound_w + .5)
+                        or (bound_h and y + height > bound_h + .5)):
                     continue
             seen.add((source_key, prop))
             clean.append({"op": op, "sourceKey": source_key, "property": prop, "value": clean_value})
@@ -308,6 +323,40 @@ def annotate_review(comp: dict, result: dict) -> None:
         review.pop("repairAttempts", None)
     else:
         review["repairAttempts"] = int(result.get("rounds") or 0)
+        if result.get("rejected"):
+            review["rejected"] = list(result["rejected"])
+
+
+def _layout_acceptance(before: dict, candidate: dict, *, page: Any, viewport: str,
+                       original: str, before_png: bytes, candidate_png: bytes) -> tuple[bool, list[str]]:
+    """Objective guard shared with deterministic polish, independent of AI verdict."""
+    from . import polish
+    import fidelity_harness
+    from PIL import Image
+
+    before_defects = polish.lint_master(before, page=page, viewports=(viewport,))
+    after_defects = polish.lint_master(candidate, page=page, viewports=(viewport,))
+    before_set = {(str(d.get("path")), str(d.get("kind"))) for d in before_defects}
+    after_set = {(str(d.get("path")), str(d.get("kind"))) for d in after_defects}
+    reasons: list[str] = []
+    if not after_set.issubset(before_set): reasons.append("new-defect")
+    if any(d.get("kind") == "escape" for d in after_defects): reasons.append("escape")
+    reference = fidelity_harness._decode_data_url(original)
+    ref_image = Image.open(io.BytesIO(reference))
+    def normalize(png: bytes) -> bytes:
+        image = Image.open(io.BytesIO(png)).convert("RGB")
+        if image.size == ref_image.size:
+            return png
+        image = image.resize(ref_image.size); buffer = io.BytesIO()
+        image.save(buffer, format="PNG"); return buffer.getvalue()
+    before_similarity = fidelity_harness._image_metrics(reference, normalize(before_png)).get("pixel_similarity")
+    after_similarity = fidelity_harness._image_metrics(reference, normalize(candidate_png)).get("pixel_similarity")
+    threshold = float(fidelity_harness.GATE_THRESHOLDS["min_pixel_similarity"])
+    if before_similarity is None or after_similarity is None:
+        reasons.append("similarity-unavailable")
+    elif float(after_similarity) + 1e-6 < max(threshold, float(before_similarity) - 1.5):
+        reasons.append(f"similarity:{float(after_similarity):.2f}")
+    return not reasons, reasons
 
 
 def repair_master(document: dict, key: str, comp: dict | None, verdict: dict, *,
@@ -329,7 +378,8 @@ def repair_master(document: dict, key: str, comp: dict | None, verdict: dict, *,
 
     if comp is None:
         comp = (document.get("reviewComponents") or {}).get(key)
-    result: dict[str, Any] = {"repaired": False, "rounds": 0, "operations": [], "verdict": verdict}
+    result: dict[str, Any] = {"repaired": False, "rounds": 0, "operations": [], "verdict": verdict,
+                             "rejected": []}
     if not isinstance(comp, dict) or not isinstance(comp.get("masterIr"), dict):
         return result
     if original is None:
@@ -359,6 +409,12 @@ def repair_master(document: dict, key: str, comp: dict | None, verdict: dict, *,
         rounds += 1
         candidate_comp = _with_master(comp, candidate_master)
         candidate_png = render(page, candidate_comp, viewport)
+        safe, rejected = _layout_acceptance(current_master, candidate_master, page=page,
+                                            viewport=viewport, original=original,
+                                            before_png=current_png, candidate_png=candidate_png)
+        if not safe:
+            result["rejected"].extend(rejected)
+            continue
         new_verdict = master_review.parse_verdict(
             chat_vision([original, _data_url(candidate_png)],
                         master_review.build_prompt(candidate_comp, viewport)))

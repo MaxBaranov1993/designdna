@@ -403,7 +403,8 @@ def _render_block_png(page, ir: dict, viewport_name: str, width: int, height: in
     return page.locator("#preview").screenshot(type="png", timeout=15000)
 
 
-def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int) -> dict:
+def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int,
+                   source_line_counts: dict[str, int] | None = None) -> dict:
     """Render *ir* with source fonts and return deterministic text/layout defects.
 
     The measurement deliberately runs through :func:`_render_block_png`, so the
@@ -411,17 +412,22 @@ def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int) 
     Paths are renderer ``data-ir-path`` values (sourceKey for captured masters).
     """
     png = _render_block_png(page, ir, viewport_name, width, height)
-    measured = page.evaluate("""() => {
+    measured = page.evaluate("""(sourceLines) => {
       const root = document.querySelector('#preview');
       const nodes = Array.from(root.querySelectorAll('[data-ir-path]'));
       const visible = el => {
-        const cs = getComputedStyle(el), r = el.getBoundingClientRect();
-        return cs.display !== 'none' && cs.visibility !== 'hidden' &&
-          Number(cs.opacity || 1) > 0 && r.width > .25 && r.height > .25;
+        const r = el.getBoundingClientRect(); let cur = el;
+        while (cur && cur !== root.parentElement) {
+          const cs = getComputedStyle(cur);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity || 1) <= 0) return false;
+          cur = cur.parentElement;
+        }
+        return r.width > .25 && r.height > .25;
       };
       const directText = el => Array.from(el.childNodes || [])
         .filter(n => n.nodeType === Node.TEXT_NODE).map(n => n.textContent || '').join('').trim();
-      const records = nodes.filter(visible).map((el, index) => {
+      const visibleNodes = nodes.filter(visible);
+      const records = visibleNodes.map((el, index) => {
         const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
         const text = directText(el) || (!el.querySelector('[data-ir-path]') ? (el.textContent || '').trim() : '');
         let clipped = 0, parent = el.parentElement;
@@ -435,10 +441,17 @@ def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int) 
           parent = parent.parentElement;
         }
         const family = (cs.fontFamily || '').split(',')[0].replace(/["']/g, '').trim();
+        const range = document.createRange(); range.selectNodeContents(el);
+        const lineTops = [...range.getClientRects()].filter(x => x.width > .25 && x.height > .25)
+          .map(x => Math.round(x.top * 2) / 2);
+        const lineCount = new Set(lineTops).size;
+        const owner = el.parentElement && el.parentElement.closest('[data-ir-path]');
+        const pr = owner ? owner.getBoundingClientRect() : root.getBoundingClientRect();
+        const escape = Math.max(0, pr.left-r.left, r.right-pr.right, pr.top-r.top, r.bottom-pr.bottom);
         return {index, path:el.dataset.irPath || `(dom:${index})`, text,
           left:r.left, top:r.top, right:r.right, bottom:r.bottom,
           width:r.width, height:r.height,
-          overflowX:Math.max(0, el.scrollWidth-el.clientWidth),
+          lineCount, escape, overflowX:Math.max(0, el.scrollWidth-el.clientWidth),
           overflowY:Math.max(0, el.scrollHeight-el.clientHeight), clipped,
           overflowHidden:['hidden','clip'].includes(cs.overflowX) || ['hidden','clip'].includes(cs.overflowY),
           fontFamily:family, fontLoaded:!text || !document.fonts || document.fonts.check(`${cs.fontSize} "${family}"`, text)};
@@ -450,20 +463,32 @@ def measure_layout(page, ir: dict, viewport_name: str, width: int, height: int) 
         if (overflow > .5) defects.push({path:a.path, kind:'overflow', px:Math.round(overflow*100)/100});
         if (a.clipped > .5 || (a.overflowHidden && overflow > .5))
           defects.push({path:a.path, kind:'clip', px:Math.round(Math.max(a.clipped, overflow)*100)/100});
+        if (a.escape > .5) defects.push({path:a.path, kind:'escape', px:Math.round(a.escape*100)/100});
+        const expected = Number(sourceLines[a.path] || 0);
+        if (expected > 0 && a.lineCount > expected)
+          defects.push({path:a.path, kind:'wrap', px:a.lineCount-expected});
       }
       for (let i=0; i<records.length; i++) for (let j=i+1; j<records.length; j++) {
         const a=records[i], b=records[j];
         if (!a.text || !b.text) continue;
-        const ae=nodes[a.index], be=nodes[b.index];
+        const ae=visibleNodes[a.index], be=visibleNodes[b.index];
         if (ae.contains(be) || be.contains(ae) || ae.parentElement !== be.parentElement) continue;
+        // Captured ::text / ::pseudo fragments of one source element are
+        // layered intentionally and are not independent siblings.
+        if (a.path.split('::')[0] === b.path.split('::')[0]) continue;
         const ix=Math.max(0, Math.min(a.right,b.right)-Math.max(a.left,b.left));
         const iy=Math.max(0, Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
         if (ix > .5 && iy > .5) defects.push({path:b.path, kind:'overlap',
           px:Math.round(Math.min(ix,iy)*100)/100, otherPath:a.path});
       }
-      return {defects, nodes:records.map(({index,left,top,right,bottom,...r}) => r),
+      const unique = new Map();
+      for (const d of defects) {
+        const key = `${d.path}\u0000${d.kind}`, old = unique.get(key);
+        if (!old || d.px > old.px) unique.set(key, d);
+      }
+      return {defects:[...unique.values()], nodes:records.map(({index,left,top,right,bottom,...r}) => r),
         fontsLoaded:records.filter(r=>r.text).every(r=>r.fontLoaded)};
-    }""")
+    }""", source_line_counts or {})
     measured["viewport"] = viewport_name
     measured["png"] = png
     return measured
