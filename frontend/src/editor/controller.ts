@@ -181,14 +181,11 @@ export function getAiAssistFormState(): AssistRequest {
   return deepClone(aiAssistFormState);
 }
 
-/* Провайдеры инспектора. Claude идёт через локальный CLI, который живёт только
- * в desktop-мосте, поэтому в браузере выбор схлопывается на Sol: там запрос
- * исполняет сервер, а он умеет один провайдер. */
-export const ASSIST_PROVIDERS = ["openai", "claude", "codex"] as const;
+/* Both desktop and the Python server honor the selected AI account. */
+export const ASSIST_PROVIDERS = ["openai", "astra", "claude", "codex"] as const;
 
 export function assistProviderAvailable(provider: string): boolean {
-  if (provider === "openai") return true;
-  return Boolean(window.designDNA?.providers);
+  return (ASSIST_PROVIDERS as readonly string[]).includes(provider);
 }
 
 export function setAiAssistFormState(next: Partial<AssistRequest>) {
@@ -1781,6 +1778,8 @@ export async function requestAiAssist(request: AssistRequest) {
   const requestScopeKeys = selectedSourceKeys(request.scopeMode);
   const payload: Record<string, unknown> = {
     ir: sanitizeIrForPost(state.ir), prompt, action: request.action,
+    provider: assistProviderAvailable(String(request.provider)) ? request.provider : "openai",
+    effort: ["medium", "high", "max"].includes(String(request.effort)) ? request.effort : "medium",
     scope: { sourceKeys: requestScopeKeys, viewport: state.viewport },
     constraints: { allowStructure: false, ...request.constraints },
   };
@@ -1819,7 +1818,7 @@ export async function requestAiAssist(request: AssistRequest) {
         const provider = assistProviderAvailable(String(request.provider)) ? request.provider! : "openai";
         const route = provider === "codex"
           ? { provider, model: null }
-          : { provider, model: provider === "claude" ? "opus" : "gpt-5.6-sol", reasoning: { effort } };
+          : { provider, model: provider === "claude" ? "opus" : provider === "astra" ? "gpt-6-astra" : "gpt-5.6-sol", reasoning: { effort } };
         const answer = await window.designDNA.providers.chatRequest({
           ...route,
           // CLI-транспорты оборачивают сообщения профильной инструкцией;
@@ -2010,14 +2009,14 @@ function restoreSnapshot(snap: any) {
 }
 
 function undo() {
-  if (!state) return;
+  if (!state || aiAssistState || aiAssistAbort) return;
   const snap = state.history.undo(() => state!.ir);
   if (!snap) return;
   restoreSnapshot(snap);
 }
 
 function redo() {
-  if (!state) return;
+  if (!state || aiAssistState || aiAssistAbort) return;
   const snap = state.history.redo(() => state!.ir);
   if (!snap) return;
   restoreSnapshot(snap);

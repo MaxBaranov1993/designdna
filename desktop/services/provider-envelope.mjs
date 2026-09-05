@@ -227,7 +227,7 @@ export function createEnvelope(input) {
     issues.push(issue("provider", "provider must be a string"));
   }
   const provider = typeof raw.provider === "string" && raw.provider ? raw.provider : "auto";
-  if (!new Set(["auto", "codex", "openai", "kimi", "glm", "zai", "zcode", "grok"]).has(provider)) {
+  if (!new Set(["auto", "codex", "claude", "openai", "astra", "kimi", "glm", "zai", "zcode", "grok"]).has(provider)) {
     issues.push(issue("provider", `unknown provider "${provider}"`));
   }
 

@@ -155,7 +155,7 @@ def plan_from_prompt(timeline: dict, prompt: str) -> list[dict]:
     return steps
 
 
-def plan_from_llm(timeline: dict, prompt: str) -> list[dict]:
+def plan_from_llm(timeline: dict, prompt: str, provider: str | None = None, effort: str = "medium") -> list[dict]:
     """LLM-план (роль timeline_director). Бросает исключение при недоступности."""
     layers = timeline.get("layers") if isinstance(timeline.get("layers"), list) else []
     layer_names = [str(layer.get("name") or layer.get("id")) for layer in layers if isinstance(layer, dict)][:40]
@@ -165,10 +165,10 @@ def plan_from_llm(timeline: dict, prompt: str) -> list[dict]:
         f"## Таймлайн\nduration: {composition.get('duration')}ms, fps: {composition.get('fps')}\n"
         f"Слои: {json.dumps(layer_names, ensure_ascii=False)}\n"
     )
-    raw = llm.chat(None, [
+    raw = llm.chat(provider, [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user},
-    ], 0.4, timeout=60, role="timeline_director")
+    ], 0.4, timeout=60, role="timeline_director", reasoning_effort=effort)
     data = json.loads(llm.extract_json(raw))
     steps = data.get("steps") if isinstance(data, dict) else None
     if not isinstance(steps, list) or not steps:
@@ -176,7 +176,7 @@ def plan_from_llm(timeline: dict, prompt: str) -> list[dict]:
     return [step for step in steps[:6] if isinstance(step, dict)]
 
 
-def direct(timeline: dict, prompt: str, allow_llm: bool | None = None) -> tuple[dict, dict, dict]:
+def direct(timeline: dict, prompt: str, allow_llm: bool | None = None, *, provider: str | None = None, effort: str = "medium") -> tuple[dict, dict, dict]:
     """Промпт -> применённый таймлайн + change-set + мета (атомарно, обратимо).
 
     Мета возвращает ``planSource`` ("llm" | "deterministic") и ``warning`` —
@@ -196,7 +196,7 @@ def direct(timeline: dict, prompt: str, allow_llm: bool | None = None) -> tuple[
     warning: str | None = None
     if use_llm:
         try:
-            steps = plan_from_llm(timeline, text)
+            steps = plan_from_llm(timeline, text, provider=provider, effort=effort)
             plan_source = "llm"
         except Exception as exc:  # noqa: BLE001 — фолбэк не должен терять функцию
             steps = None  # деградация на детерминированный разбор без потери функции

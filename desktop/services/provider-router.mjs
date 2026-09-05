@@ -1,14 +1,14 @@
 import { claudeModel } from "./claude-agent-server.mjs";
 import { chatWithOpenAI } from "./provider-chat.mjs";
 import { createEnvelope } from "./provider-envelope.mjs";
+import { openaiModel } from "./openai-models.mjs";
 
 
-const SOL_MODEL = "gpt-5.6-sol";
 const SOL_EFFORTS = new Set(["medium", "high", "max"]);
 /* Провайдеры, выбираемые пользователем в нодах. openai (Sol по API-ключу)
  * остаётся дефолтом: сохранённые проекты и ретро-выборы мигрируют на него,
  * чтобы включение выбора не сломало уже работающую генерацию. */
-export const SELECTABLE_PROVIDERS = Object.freeze(["openai", "codex", "claude"]);
+export const SELECTABLE_PROVIDERS = Object.freeze(["openai", "astra", "codex", "claude"]);
 const SUPPORTED_PROVIDERS = new Set(SELECTABLE_PROVIDERS);
 const DEFAULT_PROVIDER = "openai";
 
@@ -21,6 +21,20 @@ function solEffort(value) {
 export function resolveProvider(requested) {
   const value = String(requested || "");
   return SUPPORTED_PROVIDERS.has(value) ? value : DEFAULT_PROVIDER;
+}
+
+/** Shared by IPC and tests: keep the user's model through normalization. */
+export function prepareProviderRequest(request, id) {
+  const provider = resolveProvider(request?.provider);
+  const envelope = createEnvelope({
+    ...request,
+    provider,
+    model: provider === "codex" || provider === "claude"
+      ? request?.model : openaiModel(provider, request?.model),
+    reasoning: { effort: solEffort(request?.reasoning) },
+    id: request?.id || id,
+  });
+  return { provider, envelope };
 }
 
 export async function chatWithProvider({
@@ -41,6 +55,7 @@ export async function chatWithProvider({
   const resolved = resolveProvider(requestedProvider);
   const fallback = resolved === requestedProvider ? null : resolved;
   const effort = solEffort(source.reasoning);
+  const model = openaiModel(resolved, source.model);
 
   if (resolved === "codex") {
     if (!codex) throw new Error("Codex не подключён. Откройте Agents → Connections.");
@@ -78,7 +93,7 @@ export async function chatWithProvider({
   const envelope = createEnvelope({
     ...source,
     provider: "openai",
-    model: SOL_MODEL,
+    model,
     reasoning: { effort },
   });
   const result = await openaiChat({ credentials, envelope, signal });
@@ -88,7 +103,7 @@ export async function chatWithProvider({
     transport: {
       ...result.transport,
       provider: "openai",
-      model: SOL_MODEL,
+      model,
       requestId: envelope.id,
       fallback,
     },

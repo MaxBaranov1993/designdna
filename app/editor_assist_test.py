@@ -333,7 +333,7 @@ def test_browser_assist_calls_the_supported_llm_interface(monkeypatch):
     target = _nodes(base)[2]
     seen = {}
 
-    def fake_chat(provider, messages, temperature, role):
+    def fake_chat(provider, messages, temperature, role, reasoning_effort=None):
         seen.update(provider=provider, messages=messages, temperature=temperature, role=role)
         return json.dumps({
             "summary": "Готово",
@@ -354,14 +354,14 @@ def test_browser_assist_calls_the_supported_llm_interface(monkeypatch):
     assert result["ops"][0]["after"] == 0.85
 
 
-def test_browser_assist_migrates_every_saved_provider_to_openai(monkeypatch):
+def test_browser_assist_preserves_supported_choices_and_migrates_retired_providers(monkeypatch):
     """zai/grok/zcode — явные серверные маршруты наряду с openai/kimi/glm;
     неизвестные/desktop-значения отображаются в auto."""
     base = _base()
     target = _nodes(base)[2]
     seen: list[str] = []
 
-    def fake_chat(provider, messages, temperature, role):
+    def fake_chat(provider, messages, temperature, role, reasoning_effort=None):
         seen.append(provider)
         return json.dumps({
             "summary": "Готово",
@@ -372,14 +372,14 @@ def test_browser_assist_migrates_every_saved_provider_to_openai(monkeypatch):
         })
 
     monkeypatch.setattr("editor_assist.llm.chat", fake_chat)
-    for requested in ("zai", "grok", "zcode", "glm", "codex", "mystery"):
+    for requested in ("zai", "grok", "zcode", "glm", "codex", "claude", "astra", "mystery"):
         result = editor_assist(AssistRequest(
             ir=base, prompt="Сделай немного прозрачнее", action="custom",
             scope={"sourceKeys": [target["sourceKey"]], "viewport": "desktop"}, constraints={},
             provider=requested,
         ))
         assert isinstance(result, dict), getattr(result, "body", result)
-        assert seen.pop() == "openai"
+        assert seen.pop() == (requested if requested in ("astra", "claude", "codex") else "openai")
 
 
 def test_locked_raster_layers_refuse_ai_mutations_but_stay_inspectable():

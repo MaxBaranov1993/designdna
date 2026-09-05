@@ -197,6 +197,21 @@ test("chat sends a headless JSON request and returns the result field", async ()
   assert.match(calls[0].stdin, /Return only the JSON object/);
 });
 
+test("workspace chat accepts prose without requesting Design IR or JSON", async () => {
+  const { spawnProcess, calls } = fakeSpawn({
+    stdout: JSON.stringify({ type: "result", is_error: false, result: "Предлагаю упростить навигацию." }),
+  });
+  const server = new ClaudeAgentServer({
+    cwd: "/repo", spawnProcess,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+  });
+  const output = await server.chat([{ role: "user", content: "Оцени идею" }], { profile: "chat", model: "opus" });
+  assert.equal(output, "Предлагаю упростить навигацию.");
+  assert.match(calls[0].stdin, /Answer the user in their language/);
+  assert.doesNotMatch(calls[0].stdin, /Return only the JSON object/);
+  assert.match(calls[0].stdin, /Do not inspect files, run commands, or call tools/);
+});
+
 test("chat passes a supported model through and falls back on unknown", async () => {
   for (const [requested, expected] of [["sonnet", "sonnet"], ["Opus", "opus"], ["gpt-5.6-sol", "opus"], [null, "opus"]]) {
     const { spawnProcess, calls } = fakeSpawn({ stdout: JSON.stringify({ result: "ok" }) });

@@ -13,7 +13,7 @@ test("store: long runs drive setProgress and clear it in finally", async () => {
 
   const si = source.slice(
     source.indexOf("runSourceImport: async (id) => {"),
-    source.indexOf("runStyleDna: async (id) => {"),
+    source.indexOf("runDerive: async (id) => {"),
   );
   assert.match(si, /setProgress\(id, \{ expectedMs: 90_000, label:/);
   assert.match(si, /setProgress\(id, null\)/);
@@ -28,7 +28,7 @@ test("store: long runs drive setProgress and clear it in finally", async () => {
     source.indexOf("runGenerator: async (id) => {"),
     source.indexOf("runMix: async (id) => {"),
   );
-  assert.match(gen, /setProgress\(id, \{ expectedMs: 90_000, label: `Генерация · \$\{providerLabel\}` \}\)/);
+  assert.match(gen, /setProgress\(id, \{ expectedMs: 90_000, label: progressLabel, stage:/);
   assert.match(gen, /setProgress\(id, null\)/);
   assert.match(gen, /Готово: вариантов \$\{variants\.length\}.*· \$\{\(\(Date\.now\(\) - startedAt\) \/ 1000\)\.toFixed\(0\)\}с/);
 });
@@ -46,11 +46,11 @@ test("NodeShell renders the thin progress bar with percent and clock", async () 
   assert.match(source, /flowProgresses/);
   assert.match(source, /role="progressbar"/);
   assert.match(source, /n-progress-track/);
-  assert.match(source, /n-progress-fill.*style="width: \{percent\}%"/);
-  assert.match(source, /progress\.percent \?\? Math\.min/);
-  assert.match(source, /\{Math\.round\(percent\)\}% · \{clock\}/);
-  // асимптотическая кривая: до конца операции 100% не показывается
-  assert.match(source, /Math\.min\(97, 100 \* \(1 - Math\.exp\(\(-1\.7 \* elapsedMs\) \/ progress\.expectedMs\)\)\)/);
+  assert.match(source, /Number\.isFinite\(progress\.percent\)/);
+  assert.match(source, /aria-valuenow=\{measured \? Math\.round\(percent\) : undefined\}/);
+  assert.match(source, /!measured && "indeterminate"/);
+  assert.doesNotMatch(source, /Math\.exp/);
+
 });
 
 test("state exposes the progresses slice", async () => {

@@ -29,6 +29,7 @@ class DocumentRequest(BaseModel):
 
 class OrganizeRequest(BaseModel):
     document: dict
+    provider: str = "openai"
     reasoningEffort: str = "high"
 
 
@@ -44,7 +45,7 @@ class StyleguideRequest(BaseModel):
 
 class StyleReviewRequest(BaseModel):
     """AI-ревью стилистики. prepareOnly → промпт; rawOutput → применить ответ
-    внешнего провайдера (desktop); без обоих — серверный вызов Sol."""
+    внешнего провайдера (desktop); без обоих — серверный вызов выбранной модели."""
     document: dict
     prepareOnly: bool = False
     rawOutput: str = ""
@@ -341,12 +342,12 @@ def save_design_system_draft(req: DocumentRequest):
 
 @router.post("/api/design-system/organize")
 def organize_design_system(req: OrganizeRequest):
-    """Use Sol to organize catalog metadata without touching exact masters."""
+    """Use the selected model to organize metadata without touching exact masters."""
     if not isinstance(req.document, dict) or not req.document.get("id"):
         return _err(422, "No Design System document")
     try:
         from .organizer import apply_catalog, organize_with_ai
-        catalog = organize_with_ai(req.document, reasoning_effort=req.reasoningEffort)
+        catalog = organize_with_ai(req.document, provider=req.provider, reasoning_effort=req.reasoningEffort)
         updated = apply_catalog(req.document, catalog)
         saved = store.save_draft(updated)
     except (ValueError, RuntimeError) as exc:
@@ -373,7 +374,7 @@ def style_review_design_system(req: StyleReviewRequest):
                 req.document, req.rawOutput, provider=req.provider)
         else:
             updated = style_review.review_with_ai(
-                req.document, reasoning_effort=req.reasoningEffort)
+                req.document, provider=req.provider, reasoning_effort=req.reasoningEffort)
         saved = store.save_draft(updated)
     except (ValueError, RuntimeError) as exc:
         return _err(422, str(exc))

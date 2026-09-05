@@ -9,6 +9,8 @@
     role: "user" | "assistant" | "tool";
     content: string;
     provider?: string;
+    model?: string;
+    effort?: string;
     toolCalls?: ToolCall[];
     toolCallId?: string;
     toolName?: string;
@@ -26,6 +28,8 @@
   /* Claude подключается своим CLI (`claude` → /login): приложение только
    * читает статус, секрет к нам не попадает. */
   let claudeStatus = $state<{ installed: boolean; loggedIn: boolean; hint: string | null } | null>(null);
+  let agentModel = $state("gpt-5.6-sol");
+  const modelLabel = (model: string) => model === "opus" ? "Claude Opus" : model === "gpt-6-astra" ? "GPT-6 Astra" : "GPT-5.6 Sol";
   let agentEffort = $state<"medium" | "high" | "max">("medium");
   let agentHistory = $state<AgentMessage[]>([]);
   let agentRunning = $state(false);
@@ -80,21 +84,23 @@
     const question = prompt.trim();
     prompt = "";
     const correlationId = generateId();
-    const selectedBackend = "openai" as const;
+    const selectedBackend = agentModel === "opus" ? "claude" as const : "openai" as const;
     const selectedEffort = agentEffort;
+    const selectedModel = agentModel;
     activeCorrelationId = correlationId;
     agentHistory.push({ role: "user", content: question });
     agentHistory = [...agentHistory];
     try {
-      const toolDefs = toolDefinitions();
+      const toolDefs = selectedBackend === "openai" ? toolDefinitions() : [];
       for (let round = 0; round < 8; round++) {
         if (activeCorrelationId !== correlationId) return; // cancelled before this round
         const envelope = {
           id: correlationId,
           provider: selectedBackend,
-          model: "gpt-5.6-sol",
+          model: selectedModel,
+          profile: "chat",
           reasoning: { effort: selectedEffort },
-          messages: agentHistory,
+          messages: agentHistory.map(({ model: _model, effort: _effort, provider: _provider, ...message }) => message),
           tools: toolDefs.length ? toolDefs : null,
         };
         let answer;
@@ -108,6 +114,8 @@
           role: "assistant",
           content: answer.content || "",
           provider: selectedBackend,
+          model: selectedModel,
+          effort: selectedEffort,
           toolCalls: calls.length ? calls : undefined,
         };
         agentHistory.push(assistantMessage);
@@ -227,7 +235,15 @@
 {:else}
   <section class="agent-shell">
     <aside class="agent-sidebar">
-      <div><span class="agent-eyebrow">GPT-5.6 Sol</span><h1>Агент + MCP</h1><p>Одна модель, три явных профиля рассуждения.</p></div>
+      <div><span class="agent-eyebrow">AI workspace</span><h1>Агент + MCP</h1><p>Sol, Astra и Claude · три уровня усилия.</p></div>
+      <label>Модель
+        <select bind:value={agentModel} disabled={busy || agentRunning} aria-label="Модель агента">
+          <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+          <option value="gpt-6-astra">GPT-6 Astra</option>
+          <option value="opus">Claude Opus</option>
+        </select>
+      </label>
+      {#if agentModel === "opus"}<p>Claude работает в режиме чата. Для вызова MCP-инструментов выберите GPT.</p>{/if}
       <div class="agent-backend">
         <button class:active={agentEffort === "medium"} onclick={() => (agentEffort = "medium")} disabled={busy || agentRunning}>Среднее</button>
         <button class:active={agentEffort === "high"} onclick={() => (agentEffort = "high")} disabled={busy || agentRunning}>Высокое</button>
@@ -282,12 +298,12 @@
         {/if}
         {#each agentHistory as message, index (index)}
           <article class="agent-message" class:agent-tool-message={message.role === "tool"}>
-            <span>{message.role === "user" ? "Вы" : message.role === "tool" ? `MCP · ${message.toolName || message.toolCallId || ""}` : `GPT-5.6 Sol · ${agentEffort}`}</span>
+            <span>{message.role === "user" ? "Вы" : message.role === "tool" ? `MCP · ${message.toolName || message.toolCallId || ""}` : `${modelLabel(message.model || "gpt-5.6-sol")} · ${message.effort || "medium"}`}</span>
             <div>{message.content}</div>
           </article>
         {/each}
         {#if agentRunning}
-          <article class="agent-message"><span>GPT-5.6 Sol · {agentEffort}</span><div>думаю… {tools.length ? `· MCP-инструментов: ${tools.length}` : ""}</div></article>
+          <article class="agent-message"><span>{modelLabel(agentModel)} · {agentEffort}</span><div>думаю… {agentModel !== "opus" && tools.length ? `· MCP-инструментов: ${tools.length}` : ""}</div></article>
         {/if}
       </div>
       <div class="agent-composer">

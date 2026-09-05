@@ -2,6 +2,7 @@
  * напрямую; для headless-рендера на стороне Python (scraper, motion_render,
  * pixel-тесты) vite.engine.config.ts собирает из этого entry IIFE-бандл
  * app/static/flow/engine.js, который восстанавливает window-глобалы. */
+import * as MotionComposition from "../nodes/motion-composition";
 import { IRRenderer } from "./renderer";
 import { GeoEdit } from "./geoedit";
 import { IRHistory } from "./irhistory";
@@ -10,6 +11,7 @@ import { TimelineEngine, Timeline } from "./timeline";
 
 declare global {
   interface Window {
+    MotionComposition: typeof MotionComposition;
     IRRenderer: typeof IRRenderer;
     GeoEdit: typeof GeoEdit;
     IRHistory: typeof IRHistory;
@@ -20,6 +22,7 @@ declare global {
 }
 
 if (typeof window !== "undefined") {
+  window.MotionComposition = MotionComposition;
   window.IRRenderer = IRRenderer;
   window.GeoEdit = GeoEdit;
   window.IRHistory = IRHistory;

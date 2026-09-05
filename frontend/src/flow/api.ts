@@ -19,7 +19,7 @@ export async function api<T>(path: string, body: unknown, init?: { signal?: Abor
   } catch {
     /* пустой/не-JSON ответ */
   }
-  if (!resp.ok) throw new Error(String(data.detail || "HTTP " + resp.status));
+  if (!resp.ok) throw new Error(String(data.detail || data.error || "HTTP " + resp.status));
   return data as T;
 }
 
@@ -31,7 +31,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   } catch {
     /* empty/non-JSON response */
   }
-  if (!resp.ok) throw new Error(String(data.detail || "HTTP " + resp.status));
+  if (!resp.ok) throw new Error(String(data.detail || data.error || "HTTP " + resp.status));
   return data as T;
 }
 

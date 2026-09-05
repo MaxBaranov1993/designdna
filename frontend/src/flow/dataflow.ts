@@ -95,7 +95,7 @@ export function outValue(n: FlowNode, port?: string): unknown {
       if (port === "artifact") return n.data.sourceArtifact || null;
       if (port === "tokens") return n.data.tokens || null;
       {
-        const block = n.data.blocks.find((b) => b.name === port && b.lit);
+        const block = n.data.blocks.find((b) => b.name === port && b.lit && !b.error);
         const preview = block?.previews?.[n.data.activeViewport] || block?.preview;
         return block ? withSourcePreview(block.ir || null, preview, n.data.activeViewport) : null;
       }

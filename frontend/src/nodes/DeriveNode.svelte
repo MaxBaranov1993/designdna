@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
+  import ProviderPicker from "../components/ProviderPicker.svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { flow, flowBusy } from "../flow/state";
   import type { DeriveFlowNode } from "../flow/types";
@@ -24,7 +25,7 @@ import NodeShell from "./NodeShell.svelte";
     oninput={(e) => $flow.setNodeData(Number(id), { prompt: e.currentTarget.value })}
   ></textarea>
   <div class="ctl-row">
-    <span class="f-provider">Auto · аккаунт</span>
+    <ProviderPicker provider={data.provider || "openai"} effort={data.effort || "medium"} onChange={(next) => $flow.setNodeData(Number(id), next)} />
     <select
       class="f-count nodrag"
       value={String(data.count)}

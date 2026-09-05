@@ -14,12 +14,26 @@ export type MotionScene = {
 };
 
 export function scenesOf(data: MotionNodeData): MotionScene[] {
-  return Array.isArray(data.motion?.scenes) ? (data.motion.scenes as MotionScene[]) : [];
+  const scenes = Array.isArray(data.motion?.scenes) ? data.motion.scenes as MotionScene[] : [];
+  let start = 0;
+  return scenes.map((scene) => {
+    const settings = data.sceneSettings?.[scene.interactionSceneId] || {};
+    const duration = Math.max(250, Math.min(30000, Number(settings.duration || scene.duration)));
+    const type = settings.transition || scene.transition.type;
+    const transition = {
+      type, easing: settings.easing || scene.transition.easing,
+      duration: type === "cut" ? 0 : Math.max(100, Math.min(duration, Number(settings.transitionDuration || scene.transition.duration || 300))),
+    };
+    const next = { ...scene, start, duration, transition };
+    start += duration;
+    return next;
+  });
 }
 
 export function durationOf(data: MotionNodeData): number {
-  const composition = data.motion?.composition as Record<string, unknown> | undefined;
-  return Number(composition?.duration || 0);
+  const scenes = scenesOf(data);
+  const last = scenes.at(-1);
+  return last ? last.start + last.duration : 0;
 }
 
 export function previewFor(data: MotionNodeData, scene: MotionScene | undefined) {

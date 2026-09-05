@@ -55,7 +55,7 @@ type EngineState = {
 };
 type ApiCancelResult = { cancelled: boolean; scope?: string; requestId?: string; mode?: "cooperative" | "abort" };
 
-type DesktopProvider = "openai" | "codex" | "claude";
+type DesktopProvider = "openai" | "astra" | "codex" | "claude";
 type SolEffort = "medium" | "high" | "max";
 
 type ChatRequestEnvelope = {

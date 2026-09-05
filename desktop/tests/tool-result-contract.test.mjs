@@ -58,10 +58,10 @@ test("AgentWorkspace sends qualifiedName and description verbatim (no replace/sl
   assert.ok(source.includes("String(tool.qualifiedName || tool.name || \"\")"), "qualifiedName must pass verbatim");
 });
 
-test("AgentWorkspace cancel cannot clear a newer request or switch Sol effort mid-round", async () => {
+test("AgentWorkspace cancel cannot clear a newer request or switch model or effort mid-round", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("../../frontend/src/desktop/AgentWorkspace.svelte", import.meta.url), "utf-8");
-  assert.ok(source.includes('const selectedBackend = "openai" as const;'), "each tool loop must stay on Sol");
+  assert.ok(source.includes('const selectedModel = agentModel;'), "each request must pin the selected model");
   assert.ok(source.includes("const selectedEffort = agentEffort;"), "each tool loop must pin its reasoning effort");
   assert.ok(source.includes("reasoning: { effort: selectedEffort }"), "every round must reuse the pinned effort");
   assert.ok(source.includes("if (activeCorrelationId === correlationId) activeCorrelationId = null;"), "an old finally block must not clear a newer request");

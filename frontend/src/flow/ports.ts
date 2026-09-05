@@ -196,7 +196,7 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "designui":
       return { artifact: null, selectedComponent: 0 };
     case "derive":
-      return { prompt: "", count: 2, variants: [], active: 0 };
+      return { provider: "openai", effort: "medium", prompt: "", count: 2, variants: [], active: 0 };
     case "reskin":
       return {
         prompt: "",

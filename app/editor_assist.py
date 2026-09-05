@@ -38,6 +38,7 @@ class AssistRequest(BaseModel):
     rawOutput: str | None = None
     # web-фолбэк: какой провайдер использовать в llm.chat (desktop гоняет чат сам)
     provider: str = "openai"
+    effort: str = "medium"
     # ТЗ §19: закреплённая дизайн-система {systemId, revision, contentHash, usageMode}
     designSystem: dict | None = None
 
@@ -589,7 +590,7 @@ def editor_assist(req: AssistRequest):
         else:
             messages = _messages(req.ir, req)
             if req.prepareOnly: return {"messages": messages}
-            raw = req.rawOutput if req.rawOutput is not None else llm.chat("openai", messages, 0.2, role="edit")
+            raw = req.rawOutput if req.rawOutput is not None else llm.chat(req.provider if req.provider in ("astra", "claude", "codex") else "openai", messages, 0.2, role="edit", reasoning_effort=req.effort)
             candidate, ops, summary = _parse_result(raw, req.ir, req)
         ops = [op for op in ops if not (op.get("op") == "add" and op.get("after") == {})]
         warnings = _design_lint(candidate)

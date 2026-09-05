@@ -681,15 +681,17 @@ def apply_style_review(document: dict, raw_output: str, *, provider: str = "open
     return updated
 
 
-def review_with_ai(document: dict, *, reasoning_effort: str = "high", llm_module=None) -> dict:
-    """Серверный путь (browser/dev): ревью через Sol, как organizer."""
+def review_with_ai(document: dict, *, provider: str = "openai", reasoning_effort: str = "high", llm_module=None) -> dict:
+    """Серверный путь (browser/dev): ревью через выбранную модель."""
     if reasoning_effort not in ("medium", "high", "max"):
         raise ValueError("reasoningEffort must be medium, high or max")
     if llm_module is None:
         import llm_client as llm_module
     messages = build_style_review_prompt(document)
+    provider = provider if provider in ("openai", "astra", "codex", "claude") else "openai"
+    model = "opus" if provider == "claude" else "gpt-6-astra" if provider == "astra" else "gpt-5.6-sol"
     raw = llm_module.chat(
-        "openai", messages, 0.0, timeout=180,
-        role="mechanics", model="gpt-5.6-sol", reasoning_effort=reasoning_effort,
+        provider, messages, 0.0, timeout=180,
+        role="mechanics", model=None if provider == "codex" else model, reasoning_effort=reasoning_effort,
     )
-    return apply_style_review(document, raw, provider="openai")
+    return apply_style_review(document, raw, provider=provider)

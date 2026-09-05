@@ -132,8 +132,8 @@ import ColorPicker from "./ColorPicker.svelte";
   let effort = $state<"medium" | "high" | "max">(["medium", "high", "max"].includes(String(savedAiForm.effort)) ? savedAiForm.effort as "medium" | "high" | "max" : "medium");
   /* Модель и усилие — один селект: пара значений «провайдер:усилие». Claude
    * доступен только там, где есть desktop-мост (запрос исполняет локальный
-   * CLI); в браузере остаётся Sol, потому что там отвечает сервер. */
-  const MODEL_LABELS: Record<string, string> = { openai: "GPT-5.6 Sol", claude: "Claude Opus", codex: "Codex" };
+   * CLI); в браузере выбранный аккаунт использует Python-сервер. */
+  const MODEL_LABELS: Record<string, string> = { openai: "GPT-5.6 Sol", astra: "GPT-6 Astra", claude: "Claude Opus", codex: "Codex" };
   const modelOptions = ctl.ASSIST_PROVIDERS
     .filter((item) => ctl.assistProviderAvailable(item))
     .flatMap((item) => (item === "codex"
@@ -143,8 +143,8 @@ import ColorPicker from "./ColorPicker.svelte";
           value: `${item}:${level}`,
           label: `${MODEL_LABELS[item]} · ${level[0].toUpperCase()}${level.slice(1)}`,
         }))));
-  let provider = $state<"openai" | "claude" | "codex">(
-    ctl.assistProviderAvailable(String(savedAiForm.provider)) ? savedAiForm.provider as "openai" | "claude" | "codex" : "openai",
+  let provider = $state<"openai" | "astra" | "claude" | "codex">(
+    ctl.assistProviderAvailable(String(savedAiForm.provider)) ? savedAiForm.provider as "openai" | "astra" | "claude" | "codex" : "openai",
   );
   // bind:value, а не value={...}: атрибут выставляется до монтирования <option>,
   // и селект оставался визуально пустым, хотя значение в состоянии было.
@@ -154,7 +154,7 @@ import ColorPicker from "./ColorPicker.svelte";
   );
   function applyModelChoice() {
     const [nextProvider, nextEffort] = modelChoice.split(":");
-    provider = nextProvider as "openai" | "claude" | "codex";
+    provider = nextProvider as "openai" | "astra" | "claude" | "codex";
     effort = nextEffort as "medium" | "high" | "max";
     ctl.setAiAssistFormState({ provider, effort });
   }

@@ -17,7 +17,7 @@ test("addVideoChainPage builds the parallel rsale.net to video chain", async () 
 
   for (const wiring of [
     /edge\(Number\(prompt\.id\), "out", Number\(generator\.id\), "prompt"\)/,
-    /edge\(Number\(source\.id\), "tokens", Number\(generator\.id\), "tokens"\)/,
+    /edge\(Number\(source\.id\), "tokens", Number\(generator\.id\), "designSystem"\)/,
     /edge\(Number\(generator\.id\), "ir", Number\(recorder\.id\), "ir"\)/,
     /edge\(Number\(generator\.id\), "ir", Number\(motion\.id\), "ir"\)/,
     /edge\(Number\(recorder\.id\), "interaction", Number\(motion\.id\), "interaction"\)/,

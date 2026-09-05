@@ -4,9 +4,9 @@ import {
   canonicalToolArguments,
   createEnvelope,
 } from "./provider-envelope.mjs";
+import { SOL_MODEL, openaiModel } from "./openai-models.mjs";
 
 const OPENAI_URL = "https://api.openai.com/v1/responses";
-const SOL_MODEL = "gpt-5.6-sol";
 const SOL_EFFORTS = new Set(["medium", "high", "max"]);
 const DEFAULT_TIMEOUT_MS = 180_000;
 
@@ -68,7 +68,18 @@ function responsesInput(envelope) {
       input.push({ type: "function_call_output", call_id: message.toolCallId, output: text });
       continue;
     }
-    if (text) input.push({ role: message.role, content: text });
+    const parts = (message.content || []).map((part) => {
+      if (part.type === "text") return {
+        type: message.role === "assistant" ? "output_text" : "input_text", text: part.text,
+      };
+      if (part.type === "image_url" && message.role === "user") return {
+        type: "input_image", image_url: part.image_url.url,
+        ...(part.image_url.detail ? { detail: part.image_url.detail } : {}),
+      };
+      throw new Error(`OpenAI: unsupported ${part.type} part for ${message.role}`);
+    });
+    if (parts.length) input.push({ role: message.role,
+      content: parts.every((part) => part.type !== "input_image") ? text : parts });
     for (const call of message.toolCalls || []) {
       input.push({
         type: "function_call",
@@ -91,12 +102,12 @@ function responsesTools(tools) {
   }));
 }
 
-function prepareSolResponsesPayload(envelope) {
+function prepareResponsesPayload(envelope) {
   assertEnvelopeSupported(envelope, "openai");
   const { envelope: adapted, dropped } = adaptEnvelopeForProvider(envelope, "openai");
   const effort = SOL_EFFORTS.has(adapted.reasoning?.effort) ? adapted.reasoning.effort : "medium";
   const payload = {
-    model: SOL_MODEL,
+    model: openaiModel("openai", adapted.model),
     input: responsesInput(adapted),
     reasoning: { effort },
     store: false,
@@ -111,18 +122,26 @@ function prepareSolResponsesPayload(envelope) {
   }
   if (adapted.parallelToolCalls != null) payload.parallel_tool_calls = adapted.parallelToolCalls;
   if (adapted.metadata) payload.metadata = adapted.metadata;
+  if (adapted.responseFormat) {
+    payload.text = { format: adapted.responseFormat.type === "json_schema"
+      ? { type: "json_schema", ...adapted.responseFormat.jsonSchema }
+      : { type: adapted.responseFormat.type } };
+  }
 
   const explicitDrops = [...dropped];
-  if (adapted.model && adapted.model !== SOL_MODEL) {
-    explicitDrops.push({ field: "model", reason: `DesignDNA agents are fixed to ${SOL_MODEL}` });
+  if (adapted.model && adapted.model.replace(/^openai\//, "") !== payload.model) {
+    explicitDrops.push({ field: "model", reason: `Unsupported model replaced by ${payload.model}` });
   }
   if (adapted.temperature != null) {
-    explicitDrops.push({ field: "temperature", reason: "Sol reasoning is controlled by effort" });
+    explicitDrops.push({ field: "temperature", reason: "OpenAI reasoning is controlled by effort" });
   }
   return { adapted, payload, dropped: explicitDrops };
 }
 
 function extractResponsesContent(data) {
+  if (data.status && data.status !== "completed") {
+    throw providerError("PROVIDER_INCOMPLETE", data.error?.message || data.incomplete_details?.reason || data.status);
+  }
   const content = [];
   const toolCalls = [];
   for (const item of data.output || []) {
@@ -159,7 +178,7 @@ export async function chatWithOpenAI({
   const key = credentials.get("openai");
   if (!key) throw new Error("OpenAI is not connected. Add an API key in Agents -> Connections.");
   const request = envelope || envelopeFromCall({ messages, temperature, tools });
-  const { adapted, payload, dropped } = prepareSolResponsesPayload(request);
+  const { adapted, payload, dropped } = prepareResponsesPayload(request);
   let response;
   try {
     response = await postJson(environment.DESIGNDNA_OPENAI_URL || OPENAI_URL, payload, {
@@ -177,6 +196,6 @@ export async function chatWithOpenAI({
   return {
     content,
     toolCalls,
-    transport: { provider: "openai", model: SOL_MODEL, dropped },
+    transport: { provider: "openai", model: payload.model, dropped },
   };
 }

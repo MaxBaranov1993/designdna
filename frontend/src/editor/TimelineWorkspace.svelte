@@ -11,11 +11,13 @@
    * более новые правки; при закрытии несинхронизированный остаток сбрасывается
    * немедленно). ИИ-правки приходят через timeline-change-set как ПРЕВЬЮ:
    * канонический таймлайн ноды не меняется до явного «Применить». */
+  import ProviderPicker from "../components/ProviderPicker.svelte";
   import { TimelineEngine, Timeline } from "../engine/timeline";
   import { IRRenderer } from "../engine/renderer";
   import { flow } from "../flow/state";
   import { api, apiGet } from "../flow/api";
   import { toast } from "../flow/toast";
+  import { resizeTimeline, moveTimelineKey, setTimelineKeyValue } from "./timeline-edits";
   import { bodyPortal } from "../lib/bodyPortal";
   import type { TimelineNodeData } from "../flow/types";
 
@@ -27,11 +29,15 @@
    * Инициализация в $effect.pre — намеренно разовый захват начального значения. */
   let doc = $state<AnyDoc | null>(null);
   let docInitialized = false;
+  let canonical: AnyDoc | null = null;
+  let sourceRevision = -1;
   $effect.pre(() => {
     if (docInitialized) return;
     docInitialized = true;
     // JSON-клон безопасен и для plain-объектов, и для реактивных прокси
     doc = data.timeline ? JSON.parse(JSON.stringify(data.timeline)) : null;
+    canonical = data.timeline ? JSON.parse(JSON.stringify(data.timeline)) : null;
+    sourceRevision = $flow.getNodeIrRevision(nodeId);
   });
 
   let selectedLayerId = $state<string | null>(null);
@@ -44,12 +50,20 @@
   let aiBusy = $state(false);
   let message = $state("");
   let renderState = $state<AnyDoc | null>(null);
+  let renderStateInitialized = false;
+  $effect.pre(() => {
+    if (renderStateInitialized) return;
+    renderStateInitialized = true;
+    if (data.renderJob?.status === "complete") renderState = { ...data.renderJob, status: "done" };
+  });
   let renderId = $state<string | null>(null);
   let historyDepth = $state(0);
 
   // снапшот-история ручных правок (snapshot ПЕРЕД мутацией, лимит 25)
   const HISTORY_LIMIT = 25;
   const history: AnyDoc[] = [];
+  const future: AnyDoc[] = [];
+  let futureDepth = $state(0);
   let lastChangeSet = $state<AnyDoc | null>(null);
 
   // Превью ИИ-монтажа: канонический документ не трогается до «Применить».
@@ -162,46 +176,66 @@
 
   function snapshot() {
     if (!doc) return;
+    future.length = 0;
+    futureDepth = 0;
     history.push(cloneDoc(doc));
     if (history.length > HISTORY_LIMIT) history.shift();
     historyDepth = history.length;
   }
 
   function mutate(fn: (d: AnyDoc) => void) {
-    if (!doc) return;
+    if (!doc || busy || aiBusy) return;
     if (preview) { say("Сначала примените или отмените превью ИИ"); return; }
+    const next = JSON.parse(JSON.stringify(doc)) as AnyDoc;
+    fn(next);
+    if (JSON.stringify(next) === JSON.stringify(doc)) return;
     if (coalescing) {
       if (dragNeedsSnapshot) { snapshot(); dragNeedsSnapshot = false; }
     } else {
       snapshot();
     }
-    fn(doc);
-    doc = { ...doc };
+    doc = next;
+    renderState = null;
     docSeq++;
     scheduleSync();
   }
 
   function undo() {
+    if (!doc || busy || aiBusy) return;
     if (preview) { say("Сначала примените или отмените превью ИИ"); return; }
     const prev = history.pop();
     historyDepth = history.length;
     if (!prev) { say("История пуста"); return; }
     if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+    future.push(cloneDoc(doc));
+    futureDepth = future.length;
     doc = prev;
+    renderState = null;
     docSeq++;
-    // восстановленный документ уже проходил валидацию раньше — канонически
-    // сохраняем сразу; устаревшие ответы синхронизации отбрасываются ревизией
-    lastValidSeq = docSeq;
-    $flow.setNodeData(nodeId, { timeline: cloneDoc(doc) });
+    void syncNow();
     say("Отменено");
+  }
+
+  function redo() {
+    if (!doc || busy || aiBusy || preview) return;
+    const next = future.pop();
+    if (!next) return;
+    history.push(cloneDoc(doc));
+    historyDepth = history.length;
+    futureDepth = future.length;
+    doc = next;
+    renderState = null;
+    docSeq++;
+    void syncNow();
+    say("Повторено");
   }
 
   /* ---------- синхронизация локальных правок с контрактом ---------- */
 
   const SYNC_DEBOUNCE_MS = 400;
   let syncTimer: ReturnType<typeof setTimeout> | null = null;
-  let docSeq = 0;        // ревизия локального документа
-  let lastValidSeq = 0;  // последняя ревизия, подтверждённая валидацией
+  let docSeq = $state(0);        // ревизия локального документа
+  let lastValidSeq = $state(0);  // последняя ревизия, подтверждённая валидацией
 
   function scheduleSync() {
     if (syncTimer) clearTimeout(syncTimer);
@@ -209,24 +243,31 @@
   }
 
   async function syncNow() {
-    if (!doc) return;
+    if (!doc) return false;
     const seq = docSeq;
-    if (seq === lastValidSeq) return;
+    if (seq === lastValidSeq) return true;
     const payload = cloneDoc(doc);
     try {
       const resp = await api<{ errors?: string[] }>("/api/timeline/validate", { timeline: payload });
-      if (seq !== docSeq) return; // устаревший ответ: документ изменился, не затираем
+      if (seq !== docSeq) return false; // устаревший ответ
+      if (seq === lastValidSeq) return true;
       const errors = resp.errors || [];
       if (errors.length) {
         say("Правки не прошли валидацию: " + errors[0]);
-        return; // канонический таймлайн остаётся на последнем валидном состоянии
+        return false; // keep the last valid canonical document
       }
+      if (!$flow.commitTimeline(nodeId, canonical, sourceRevision, payload)) {
+        say("Вход или таймлайн изменился вне редактора. Скопируйте черновик перед повторным открытием.");
+        return false;
+      }
+      canonical = payload;
       lastValidSeq = seq;
-      $flow.setNodeData(nodeId, { timeline: payload });
       say("");
+      return true;
     } catch (error) {
-      if (seq !== docSeq) return;
+      if (seq !== docSeq) return false;
       say(error instanceof Error ? error.message : String(error));
+      return false;
     }
   }
 
@@ -245,9 +286,28 @@
     };
   });
 
-  function closeWorkspace() {
-    flushPendingSync();
+  function discardAndClose() {
+    if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+    docSeq++;
+    lastValidSeq = docSeq;
     onClose();
+  }
+
+  async function closeWorkspace() {
+    if (busy || aiBusy) { say("Дождитесь операции или отмените рендер"); return; }
+    if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+    if (await syncNow()) onClose();
+  }
+
+  function workspaceKey(event: KeyboardEvent) {
+    const target = event.target as HTMLElement;
+    if (target.closest("input, textarea, select, [contenteditable=true]")) return;
+    if ((event.ctrlKey || event.metaKey) && ["z", "y"].includes(event.key.toLowerCase())) {
+      event.preventDefault(); event.stopPropagation();
+      if (event.key.toLowerCase() === "y" || event.shiftKey) redo(); else undo();
+    } else if (event.code === "Space" && target.tagName !== "BUTTON") {
+      event.preventDefault(); event.stopPropagation(); togglePlay();
+    }
   }
 
   /* ---------- операции таймлайна ---------- */
@@ -255,6 +315,7 @@
   function selectLayer(id: string) { selectedLayerId = id; }
 
   function setLayerTiming(layerId: string, key: "in" | "out", value: number) {
+    if (!Number.isFinite(value)) return;
     mutate((d) => {
       const layer = d.layers.find((l: AnyDoc) => l.id === layerId);
       if (!layer) return;
@@ -300,15 +361,11 @@
   }
 
   function setKeyframeT(layerId: string, prop: string, oldT: number, newT: number) {
+    let moved = oldT;
     mutate((d) => {
-      const layer = d.layers.find((l: AnyDoc) => l.id === layerId);
-      const track = layer?.transform?.properties?.[prop];
-      if (!track) return;
-      const kf = track.keyframes.find((k: AnyDoc) => k.t === oldT);
-      if (!kf) return;
-      kf.t = Math.max(0, Math.min(duration, Math.round(newT)));
-      track.keyframes.sort((a: AnyDoc, b: AnyDoc) => a.t - b.t);
+      moved = moveTimelineKey(d, layerId, prop, oldT, newT);
     });
+    return moved;
   }
 
   function setKeyframeEasing(layerId: string, prop: string, t: number, easing: string) {
@@ -329,7 +386,7 @@
     try {
       const resp = await api<{
         timeline?: AnyDoc; changeSet?: AnyDoc; planSource?: string; warning?: string | null; error?: string;
-      }>("/api/timeline/assist", { timeline: doc, prompt });
+      }>("/api/timeline/assist", { timeline: doc, prompt, provider: data.provider || "openai", effort: data.effort || "medium" });
       if (resp.error || !resp.timeline || !resp.changeSet) throw new Error(resp.error || "пустой ответ");
       preview = {
         timeline: resp.timeline,
@@ -360,6 +417,7 @@
       if (resp.error || !resp.timeline) throw new Error(resp.error || "пустой ответ");
       snapshot();
       doc = resp.timeline;
+      renderState = null;
       docSeq++;
       lastChangeSet = applied.changeSet;
       preview = null;
@@ -394,12 +452,28 @@
         say("ИИ-патч откатан");
         scheduleSync();
       }
+    } catch (error) {
+      say("Откат: " + (error instanceof Error ? error.message : String(error)));
     } finally {
       busy = false;
     }
   }
 
   /* ---------- рендер ролика и экспорт веб-анимации ---------- */
+
+  async function downloadVideo() {
+    const url = renderState?.downloadUrl;
+    const files = window.designDNA?.files;
+    if (!url || !files) return;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+      await files.save(renderState?.filename || "timeline.mp4", btoa(binary));
+    } catch (error) { say("Скачивание: " + (error instanceof Error ? error.message : String(error))); }
+  }
 
   function downloadText(filename: string, text: string, mime: string) {
     const blob = new Blob([text], { type: mime });
@@ -429,6 +503,9 @@
   }
 
   function publishRenderJob(id: string, state: AnyDoc, format: string) {
+    const current = $flow.nodes.find((node) => Number(node.id) === nodeId);
+    if (!current || $flow.getNodeIrRevision(nodeId) !== sourceRevision
+      || JSON.stringify((current.data as TimelineNodeData).timeline) !== JSON.stringify(canonical)) return;
     const mapped = state.status === "done" ? "complete"
       : state.status === "running" ? "rendering"
         : state.status === "cancelled" ? "error"
@@ -450,8 +527,9 @@
   }
 
   async function renderVideo(format: string) {
-    if (!doc || busy) return;
+    if (!doc || busy || aiBusy || preview) return;
     if (!designIr) { say("Нет входного Design IR для рендера"); return; }
+    if (!await syncNow()) return;
     busy = true;
     renderState = { status: "starting" };
     renderId = null;
@@ -506,14 +584,17 @@
   function addDragListeners() {
     window.addEventListener("pointermove", onDragMove);
     window.addEventListener("pointerup", onDragEnd);
+    window.addEventListener("pointercancel", onDragEnd);
   }
 
   function removeDragListeners() {
     window.removeEventListener("pointermove", onDragMove);
     window.removeEventListener("pointerup", onDragEnd);
+    window.removeEventListener("pointercancel", onDragEnd);
   }
 
   function beginDrag(state: DragState, mutatesDoc: boolean) {
+    if (mutatesDoc && (busy || aiBusy)) return;
     if (preview) { say("Сначала примените или отмените превью ИИ"); return; }
     // скраб (mutatesDoc=false) не трогает документ — снапшот не нужен;
     // драг кейфрейма/клипа даёт один снапшот на весь жест
@@ -569,8 +650,7 @@
       const frameMs = 1000 / fps;
       const newT = Math.round((drag.origin + dms) / frameMs) * frameMs;
       if (Math.abs(newT - drag.t) >= frameMs / 2) {
-        setKeyframeT(drag.layerId, drag.prop, drag.t, newT);
-        drag.t = newT;
+        drag.t = setKeyframeT(drag.layerId, drag.prop, drag.t, newT);
       }
     } else if ((drag.kind === "trim-in" || drag.kind === "trim-out") && drag.layerId) {
       setLayerTiming(drag.layerId, drag.kind === "trim-in" ? "in" : "out", drag.origin + dms);
@@ -634,13 +714,8 @@
   }
 
   function setDuration(value: number) {
-    mutate((d) => {
-      d.composition.duration = Math.max(250, Math.min(600000, Math.round(value)));
-      for (const layer of d.layers) {
-        if (layer.out > d.composition.duration) layer.out = d.composition.duration;
-        if (layer.in >= layer.out) layer.in = Math.max(0, layer.out - 250);
-      }
-    });
+    mutate((d) => resizeTimeline(d, value));
+    playhead = Math.min(playhead, doc?.composition.duration || 0);
   }
 
   function timeLabel(ms: number) {
@@ -650,7 +725,7 @@
 </script>
 
 <div class="tlw-root" role="dialog" aria-modal="true" aria-label="Video Editor"
-  aria-busy={busy || aiBusy} use:bodyPortal>
+  aria-busy={busy || aiBusy} onkeydown={workspaceKey} tabindex="-1" use:bodyPortal>
   <div class="tlw-top">
     <button class="tlw-btn" data-act="close" aria-label="Закрыть редактор и вернуться к графу"
       onclick={closeWorkspace}>← Граф</button>
@@ -674,8 +749,15 @@
         onchange={(e) => setDuration(Number(e.currentTarget.value) * 1000)} />
     </label>
     <span class="tlw-spacer"></span>
-    <button class="tlw-btn" data-act="undo" disabled={busy || Boolean(preview) || !doc || historyDepth === 0}
-      onclick={undo}>Undo</button>
+    <button class="tlw-btn" data-act="undo" disabled={busy || aiBusy || Boolean(preview) || !doc || historyDepth === 0}
+      onclick={undo}>Отменить</button>
+    <button class="tlw-btn" data-act="redo" disabled={busy || aiBusy || Boolean(preview) || futureDepth === 0}
+      onclick={redo}>Повторить</button>
+    <button class="tlw-btn" data-act="save-draft" disabled={!doc}
+      onclick={() => doc && downloadText("timeline-draft.json", JSON.stringify(cloneDoc(doc), null, 2), "application/json")}>Скачать черновик</button>
+    {#if message && docSeq !== lastValidSeq}
+      <button class="tlw-btn" disabled={busy || aiBusy} onclick={discardAndClose}>Закрыть без последних правок</button>
+    {/if}
     {#if lastChangeSet}
       <button class="tlw-btn" data-act="ai-revert" disabled={busy || Boolean(preview)} onclick={() => void undoAi()}>Откатить ИИ-патч</button>
     {/if}
@@ -686,6 +768,10 @@
   </div>
 
   <div class="tlw-ai">
+    <div inert={aiBusy || busy || Boolean(preview)}>
+      <ProviderPicker provider={data.provider || "openai"} effort={data.effort || "medium"}
+        onChange={(choice) => $flow.setNodeData(nodeId, choice)} />
+    </div>
     <input class="tlw-ai-input" data-act="ai-prompt"
       aria-label="Промпт ИИ-режиссёра"
       placeholder="ИИ-режиссёр: «интро снизу, наезд на hero, пульс на кнопке в конце»"
@@ -757,7 +843,7 @@
               onclick={() => (selectedProp = prop)}>{prop}</button>
           {/each}
         </div>
-        <button class="tlw-btn primary wide" data-act="add-keyframe" disabled={Boolean(preview)}
+        <button class="tlw-btn primary wide" data-act="add-keyframe" disabled={busy || aiBusy || Boolean(preview)}
           onclick={() => addKeyframe(selectedLayer.id, selectedProp)}>
           ◆ Кейфрейм {selectedProp} @ {timeLabel(playhead)}
         </button>
@@ -765,7 +851,14 @@
           {#each (selectedLayer.transform?.properties?.[selectedProp]?.keyframes || []) as kf (kf.t)}
             <div class="tlw-kf-row">
               <span style="color:{PROP_COLORS[selectedProp]}">◆</span>
-              <span>{timeLabel(kf.t)} → {Number(kf.value).toFixed(2)}</span>
+              <span>{timeLabel(kf.t)}</span>
+              <input class="tlw-input" data-act="keyframe-value" type="number"
+                aria-label="Значение {selectedProp} в {timeLabel(kf.t)}" value={kf.value}
+                step={selectedProp === "opacity" || selectedProp === "scale" ? 0.05 : 1}
+                min={selectedProp === "opacity" || selectedProp === "scale" ? 0 : undefined}
+                max={selectedProp === "opacity" ? 1 : undefined}
+                disabled={busy || aiBusy || Boolean(preview)}
+                onchange={(e) => mutate((d) => setTimelineKeyValue(d, selectedLayer.id, selectedProp, kf.t, Number(e.currentTarget.value)))} />
               <select class="tlw-select small" aria-label="Изинг кейфрейма {timeLabel(kf.t)}" value={kf.easing || "linear"}
                 onchange={(e) => setKeyframeEasing(selectedLayer.id, selectedProp, kf.t, (e.currentTarget as HTMLSelectElement).value)}>
                 {#each ["linear", "ease", "ease-in", "ease-out", "ease-in-out"] as ez (ez)}<option value={ez}>{ez}</option>{/each}
@@ -837,7 +930,11 @@
         {/if}
       {/if}
       {#if renderState?.status === "done" && renderState?.downloadUrl}
-        <a class="tlw-download" data-act="render-download" href={renderState.downloadUrl} download>Скачать ролик</a>
+        {#if window.designDNA?.files}
+          <button class="tlw-btn" data-act="render-download" onclick={() => void downloadVideo()}>Скачать ролик</button>
+        {:else}
+          <a class="tlw-download" data-act="render-download" href={renderState.downloadUrl} download>Скачать ролик</a>
+        {/if}
       {/if}
       <span class="tlw-hint">клик по линейке — скраб (←/→ — кадр) · ◆ — кейфрейм (тянуть, ←/→ — сдвиг, Del — удалить)</span>
     </div>

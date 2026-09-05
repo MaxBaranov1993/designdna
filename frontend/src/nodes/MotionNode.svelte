@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
+  import { toast } from "../flow/toast";
   import { flow, flowBusy } from "../flow/state";
   import type { MotionFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
@@ -20,8 +21,18 @@
   let preview = $derived(previewFor(data, scene));
 
   const openWorkspace = async () => {
-    open = true;
-    if (!MotionWorkspace) MotionWorkspace = (await import("./MotionWorkspace.svelte")).default;
+    try {
+      if (!Array.isArray(data.layers) && !data.sceneIrs.length) {
+        await $flow.runMotion(nodeId);
+        const current = $flow.nodes.find((node) => Number(node.id) === nodeId);
+        if (current?.type !== "motion" || !current.data.sceneIrs.length) return;
+      }
+      open = true;
+      if (!MotionWorkspace) MotionWorkspace = (await import("./MotionWorkspace.svelte")).default;
+    } catch (error) {
+      open = false;
+      toast(`Не удалось открыть редактор: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
   };
 </script>
 

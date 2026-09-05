@@ -1,7 +1,7 @@
-"""Sol-only LLM transport for DesignDNA.
+"""OpenAI Responses transport for DesignDNA (Sol and Astra).
 
 The desktop and Python fallback paths share one contract: OpenAI Responses,
-fixed ``gpt-5.6-sol``, and explicit ``medium|high|max`` reasoning effort.
+``gpt-5.6-sol`` or ``gpt-6-astra``, and ``medium|high|max`` reasoning effort.
 Legacy provider/model selections are migrated and surfaced in ``dropped``.
 """
 from __future__ import annotations
@@ -24,6 +24,8 @@ import cancel_token
 ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT_S", "120"))
 SOL_MODEL = "gpt-5.6-sol"
+ASTRA_MODEL = "gpt-6-astra"
+OPENAI_MODELS = (SOL_MODEL, ASTRA_MODEL)
 SOL_EFFORTS = ("medium", "high", "max")
 OPENAI_URL = "https://api.openai.com/v1/responses"
 PROVIDERS = {"openai": {"url": OPENAI_URL, "env": "OPENAI_API_KEY"}}
@@ -62,8 +64,16 @@ load_dotenv()
 
 
 def routing_models(role: str) -> list[str]:
-    """Return the immutable Sol route; env overrides cannot restore providers."""
+    """Return the default route for calls without an explicit model selection."""
     return list(ROUTING.get(role, ROUTING["mechanics"]))
+
+
+def openai_model(provider: str | None, model: str | None = None) -> str:
+    """Resolve a UI choice without creating another credential or endpoint."""
+    if provider == "astra":
+        return ASTRA_MODEL
+    bare = str(model or "").removeprefix("openai/")
+    return bare if bare in OPENAI_MODELS else SOL_MODEL
 
 
 def _text(value) -> str:
@@ -204,7 +214,7 @@ class ChatRequest:
             instructions = f"{self.system}\n\n{instructions}".strip()
         effort = self.reasoning_effort or "medium"
         payload = {
-            "model": SOL_MODEL,
+            "model": openai_model(self.provider, self.model),
             "input": items,
             "reasoning": {"effort": effort},
             "store": False,
@@ -230,17 +240,17 @@ class ChatRequest:
             payload["text"] = {"format": {"type": "json_schema", **self.response_json_schema}}
 
         dropped = []
-        if self.provider not in (None, "", "auto", "openai"):
+        if self.provider not in (None, "", "auto", "openai", "astra"):
             dropped.append({"field": "provider", "reason": f"{self.provider} migrated to openai"})
-        if self.model not in (None, "", SOL_MODEL, f"openai/{SOL_MODEL}"):
-            dropped.append({"field": "model", "reason": f"{self.model} replaced by {SOL_MODEL}"})
+        if self.model and str(self.model).removeprefix("openai/") != payload["model"]:
+            dropped.append({"field": "model", "reason": f"{self.model} replaced by {payload['model']}"})
         for field, value in (
             ("temperature", self.temperature), ("topP", self.top_p),
             ("reasoning.budgetTokens", self.reasoning_budget_tokens),
             ("stop", self.stop), ("seed", self.seed),
         ):
             if value is not None:
-                dropped.append({"field": field, "reason": "not part of the fixed Sol Responses contract"})
+                dropped.append({"field": field, "reason": "not part of the OpenAI Responses contract"})
         return payload, dropped
 
     def to_openai_payload(self, provider: str = "openai", model: str = SOL_MODEL, json_mode: bool = False):
@@ -327,6 +337,9 @@ def _post_stream(
 
 
 def _extract_response(data: dict) -> tuple[str, list[dict] | None]:
+    if data.get("status") and data["status"] != "completed":
+        reason = (data.get("error") or {}).get("message") or (data.get("incomplete_details") or {}).get("reason") or data["status"]
+        raise RuntimeError(f"OpenAI response is not completed: {reason}")
     texts = []
     tool_calls = []
     for item in data.get("output") or []:
@@ -355,7 +368,7 @@ def chat_envelope(
     role: str = "mechanics",
     on_delta: Callable[[str], None] | None = None,
 ) -> dict:
-    """Execute one fixed Sol Responses request and return transport diagnostics."""
+    """Execute the selected AI route and return transport diagnostics."""
     # Кооперативная отмена (cancel_token): отменённый запрос не начинает
     # следующий LLM-вызов — покрывает генератор, quality-pass и импорт разом.
     cancel_token.check()
@@ -365,7 +378,7 @@ def chat_envelope(
     # явный provider codex|claude — всегда через CLI; без ключа OpenAI — через
     # первый доступный CLI. Стриминга у CLI нет: on_delta получит ответ целиком.
     cli_provider = request.provider if request.provider in ("codex", "claude") else None
-    if not cli_provider and not key:
+    if not cli_provider and not key and request.provider not in ("openai", "astra") and not request.model:
         cli_provider = cli_llm.default_provider()
     if cli_provider:
         messages = list(request.messages or [])
@@ -373,7 +386,7 @@ def chat_envelope(
             messages = [{"role": "system", "content": request.system}, *messages]
         content = cli_llm.chat(
             cli_provider, messages,
-            model=request.model if request.provider in ("codex", "claude") else None,
+            model=(request.model or ("opus" if request.provider == "claude" else None)) if request.provider in ("codex", "claude") else None,
             effort=request.reasoning_effort,
             # HTTP-таймаут (120 с) для CLI слишком короток: берём больший из двух
             timeout=max(request.timeout_s or TIMEOUT, cli_llm.DEFAULT_TIMEOUT),
@@ -385,10 +398,12 @@ def chat_envelope(
             "tool_calls": None,
             "transport": {
                 "provider": cli_provider, "model": request.model or "cli-default",
-                "request_id": request.request_id, "dropped": dropped, "streamed": False,
+                "request_id": request.request_id, "dropped": [item for item in dropped if item["field"] not in ("provider", "model")], "streamed": False,
             },
         }
     if not key:
+        if request.provider in ("openai", "astra") or request.model:
+            raise RuntimeError(f"{payload['model']}: добавьте OpenAI API key в Agents → Connections (OPENAI_API_KEY).")
         raise RuntimeError("Нет подключённого AI-аккаунта: установите Codex CLI или Claude Code и войдите, либо задайте OPENAI_API_KEY")
     streamed = bool(request.stream or on_delta)
     post = _post_stream if streamed else _post_json
@@ -408,7 +423,7 @@ def chat_envelope(
         "tool_calls": tool_calls,
         "transport": {
             "provider": "openai",
-            "model": SOL_MODEL,
+            "model": payload["model"],
             "request_id": request.request_id,
             "dropped": dropped,
             "streamed": streamed,
@@ -434,7 +449,8 @@ def chat(provider: str | None, messages: list, temperature: float, timeout: int 
 
 def chat_vision(provider: str | None, image_data_url: str | list[str], text_prompt: str,
                 system_prompt: str = "", temperature: float = 0.2,
-                timeout: int | None = None, role: str = "vision") -> str:
+                timeout: int | None = None, role: str = "vision",
+                reasoning_effort: str | None = None) -> str:
     # Несколько изображений (первый экран 1:1 + страница по частям): одна
     # высокая картинка при даунскейле у vision-модели превращается в «мобильный
     # макет с нечитаемым кеглем».
@@ -448,6 +464,7 @@ def chat_vision(provider: str | None, image_data_url: str | list[str], text_prom
         ]}],
         temperature=temperature,
         timeout_s=timeout,
+        reasoning_effort=reasoning_effort,
     )
     return chat_envelope(request, role=role)["content"]
 

@@ -91,3 +91,24 @@ def test_timeline_commit_rejects_unknown_layer() -> None:
             }],
         })
         assert resp.status_code == 422
+
+
+def test_completed_download_survives_render_worker_restart(tmp_path, monkeypatch):
+    import timeline_api
+    from timeline_render import JOBS
+    render_id = "e" * 32
+    monkeypatch.setattr(timeline_api, "TIMELINE_RENDER_DIR", tmp_path)
+    assert render_id not in JOBS
+    output = tmp_path / f"{render_id}.mp4"
+    output.write_bytes(b"saved-video-artifact")
+    with TestClient(app) as client:
+        status = client.get(f"/api/timeline/render/{render_id}")
+        assert status.status_code == 200
+        assert status.json()["status"] == "done"
+        download = client.get(status.json()["downloadUrl"])
+        assert download.status_code == 200
+        assert download.content == b"saved-video-artifact"
+        assert client.get("/api/timeline/render/invalid-id").status_code == 404
+    output.unlink()
+    with TestClient(app) as client:
+        assert client.get(f"/api/timeline/render/{render_id}/download").status_code == 404

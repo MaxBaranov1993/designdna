@@ -24,7 +24,7 @@ def test_quality_scorecard_sends_rendered_png_and_rubric_to_vision(monkeypatch):
     monkeypatch.setattr(server, "render_png", lambda ir, width=1440, **_kw: b"\x89PNG\r\n")
 
     def fake_vision(provider, image_data_url, text_prompt, system_prompt="", temperature=0.2,
-                    timeout=None, role="vision"):
+                    timeout=None, role="vision", reasoning_effort=None):
         calls.append({
             "provider": provider, "image": image_data_url, "prompt": text_prompt,
             "system": system_prompt, "temperature": temperature, "role": role,
