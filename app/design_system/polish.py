@@ -13,6 +13,8 @@ from typing import Any, Callable
 VIEWPORTS = {"desktop": (1440, 900), "tablet": (768, 900), "mobile": (390, 844)}
 TEXT_TYPES = {"text", "heading", "button", "badge", "link"}
 BUFFER_PX = 2.0
+MAX_WIDTH_GROWTH = .30
+SIMILARITY_DROP_PCT = 1.5
 
 
 def _walk(nodes: Any, prefix: str = "tree"):
@@ -36,6 +38,65 @@ def _rect(node: dict) -> tuple[float, float, float, float] | None:
     return values if all(v is not None for v in values) else None  # type: ignore[return-value]
 
 
+def _viewport_node(node: dict, viewport: str) -> tuple[bool, dict]:
+    """Return visibility and effective frame for a viewport."""
+    override = ((node.get("responsive") or {}).get(viewport) or {})
+    visible = node.get("visible") is not False
+    if isinstance(override, dict) and override.get("visible") is False:
+        visible = False
+    base = node.get("frame") if isinstance(node.get("frame"), dict) else {}
+    extra = override.get("frame") if isinstance(override, dict) and isinstance(override.get("frame"), dict) else {}
+    return visible, {**base, **extra}
+
+
+def _walk_viewport(nodes: Any, viewport: str, prefix: str = "tree", ancestor_visible: bool = True):
+    if not isinstance(nodes, list):
+        return
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+        path = str(node.get("sourceKey") or f"{prefix}.{index}")
+        own_visible, frame = _viewport_node(node, viewport)
+        visible = ancestor_visible and own_visible
+        yield path, node, frame, visible
+        yield from _walk_viewport(node.get("children"), viewport, path + ".children", visible)
+
+
+def _source_line_count(node: dict) -> int | None:
+    meta = node.get("sourceMeta") if isinstance(node.get("sourceMeta"), dict) else {}
+    for owner in (node, meta):
+        for key in ("sourceLineCount", "measuredLineCount", "textLineCount", "lineCount"):
+            value = owner.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 1:
+                return int(value)
+    return None
+
+
+def _minimum_source_gap(node: dict, current: float) -> float:
+    meta = node.get("sourceMeta") if isinstance(node.get("sourceMeta"), dict) else {}
+    for key in ("sourceMinGap", "measuredMinGap", "minimumGap", "minGap"):
+        value = _num(meta.get(key))
+        if value is not None:
+            return max(0.0, min(current, value))
+    gaps = meta.get("measuredGaps")
+    if isinstance(gaps, list):
+        values = [_num(value) for value in gaps]
+        if any(value is not None for value in values):
+            return max(0.0, min(current, min(value for value in values if value is not None)))
+    return current
+
+
+def _dedupe(defects: list[dict]) -> list[dict]:
+    """One actionable defect per captured node and kind (viewport clones collapse)."""
+    found: dict[tuple[str, str], dict] = {}
+    for defect in defects:
+        key = (str(defect.get("path") or ""), str(defect.get("kind") or ""))
+        current = found.get(key)
+        if current is None or float(defect.get("px") or 0) > float(current.get("px") or 0):
+            found[key] = defect
+    return list(found.values())
+
+
 def _text_width(node: dict) -> float:
     text = str(node.get("text") or "")
     style = node.get("style") if isinstance(node.get("style"), dict) else {}
@@ -48,8 +109,9 @@ def _text_width(node: dict) -> float:
 
 def static_lint(master_ir: dict, viewport: str = "desktop") -> list[dict]:
     defects: list[dict] = []
-    for path, node in _walk((master_ir or {}).get("tree") or []):
-        frame = node.get("frame") if isinstance(node.get("frame"), dict) else {}
+    for path, node, frame, visible in _walk_viewport((master_ir or {}).get("tree") or [], viewport):
+        if not visible:
+            continue
         width = _num(frame.get("width"))
         if str(node.get("text") or "") and width is not None:
             excess = _text_width(node) - width
@@ -60,16 +122,46 @@ def static_lint(master_ir: dict, viewport: str = "desktop") -> list[dict]:
                 if str(style.get("overflow") or frame.get("overflow") or "") in {"hidden", "clip"}:
                     defects.append({"path": path, "kind": "clip", "px": round(excess, 2),
                                     "viewport": viewport})
-        children = [c for c in (node.get("children") or []) if isinstance(c, dict)]
+        expected_lines = _source_line_count(node)
+        height = _num(frame.get("height"))
+        style = node.get("style") if isinstance(node.get("style"), dict) else {}
+        font_size = _num(style.get("fontSize")) or 16
+        line_height = _num(style.get("lineHeight")) or font_size * 1.2
+        if line_height <= 4:  # captured CSS unitless line-height multiplier
+            line_height *= font_size
+        if str(node.get("text") or "") and expected_lines is not None and height is not None:
+            actual_lines = max(1, int(round(height / max(1.0, line_height))))
+            if actual_lines > expected_lines:
+                defects.append({"path": path, "kind": "wrap", "px": actual_lines - expected_lines,
+                                "viewport": viewport})
+        children = [c for c in (node.get("children") or []) if isinstance(c, dict)
+                    and _viewport_node(c, viewport)[0]]
+        parent_width, parent_height = _num(frame.get("width")), _num(frame.get("height"))
+        for child in children:
+            child_path = str(child.get("sourceKey") or "")
+            _child_visible, child_frame = _viewport_node(child, viewport)
+            rect = tuple(_num(child_frame.get(k)) for k in ("x", "y", "width", "height"))
+            if parent_width is not None and parent_height is not None and all(v is not None for v in rect):
+                x, y, w, h = rect  # type: ignore[misc]
+                escape = max(0.0, -x, -y, x + w - parent_width, y + h - parent_height)
+                if escape > .5:
+                    defects.append({"path": child_path, "kind": "escape", "px": round(escape, 2),
+                                    "viewport": viewport})
         if frame.get("layout") == "free":
-            rects = [(str(child.get("sourceKey") or f"{path}.children.{i}"), _rect(child))
+            rects = [(str(child.get("sourceKey") or f"{path}.children.{i}"),
+                      tuple(_num(_viewport_node(child, viewport)[1].get(k))
+                            for k in ("x", "y", "width", "height")))
                      for i, child in enumerate(children)]
             for i, (a_path, a) in enumerate(rects):
                 if a is None:
                     continue
+                if not all(v is not None for v in a):
+                    continue
                 ax, ay, aw, ah = a
                 for b_path, b in rects[i + 1:]:
-                    if b is None:
+                    if b is None or not all(v is not None for v in b):
+                        continue
+                    if a_path.split("::", 1)[0] == b_path.split("::", 1)[0]:
                         continue
                     bx, by, bw, bh = b
                     ix = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
@@ -78,14 +170,14 @@ def static_lint(master_ir: dict, viewport: str = "desktop") -> list[dict]:
                         defects.append({"path": b_path, "kind": "overlap",
                                         "px": round(min(ix, iy), 2), "otherPath": a_path,
                                         "viewport": viewport})
-    return defects
+    return _dedupe(defects)
 
 
 def lint_master(master_ir: dict, *, page: Any = None,
                 viewports: tuple[str, ...] = ("desktop", "tablet", "mobile")) -> list[dict]:
     """Return ``{path, kind, px, viewport}`` defects on three viewports."""
     if page is None:
-        return [d for viewport in viewports for d in static_lint(master_ir, viewport)]
+        return _dedupe([d for viewport in viewports for d in static_lint(master_ir, viewport)])
     import fidelity_harness
     from .document import preview_ir_for_master
     preview = preview_ir_for_master(master_ir)
@@ -96,10 +188,13 @@ def lint_master(master_ir: dict, *, page: Any = None,
         frame = root.get("frame") if isinstance(root, dict) and isinstance(root.get("frame"), dict) else {}
         width = max(240, int(_num(frame.get("width")) or width))
         height = max(320, int(_num(frame.get("height")) or height))
-        measured = fidelity_harness.measure_layout(page, preview, viewport, width, height)
+        line_counts = {path: count for path, node in _walk((master_ir or {}).get("tree") or [])
+                       if (count := _source_line_count(node)) is not None}
+        measured = fidelity_harness.measure_layout(page, preview, viewport, width, height,
+                                                   source_line_counts=line_counts)
         for defect in measured.get("defects") or []:
             defects.append({**defect, "viewport": viewport})
-    return defects
+    return _dedupe(defects)
 
 
 def _find(master_ir: dict, path: str) -> tuple[dict | None, dict | None, int]:
@@ -126,7 +221,12 @@ def autofix(master_ir: dict, defects: list[dict]) -> tuple[dict, list[dict]]:
     overlap_jobs: dict[tuple[str, str], float] = {}
     for defect in defects:
         path, viewport = str(defect.get("path") or ""), str(defect.get("viewport") or "desktop")
-        jobs = width_jobs if defect.get("kind") in {"overflow", "clip"} else overlap_jobs
+        if defect.get("kind") in {"overflow", "clip"}:
+            jobs = width_jobs
+        elif defect.get("kind") == "overlap":
+            jobs = overlap_jobs
+        else:
+            continue
         jobs[(path, viewport)] = max(jobs.get((path, viewport), 0.0), float(defect.get("px") or 0))
     changed_frames: set[int] = set()
     for (path, viewport), px in width_jobs.items():
@@ -141,29 +241,89 @@ def autofix(master_ir: dict, defects: list[dict]) -> tuple[dict, list[dict]]:
             continue
         if id(frame) in changed_frames:
             continue
-        changed_frames.add(id(frame))
         old = _num(frame.get("width"))
         if old is None:
             continue
-        delta = math.ceil(px + BUFFER_PX)
-        frame["width"] = old + delta
-        journal.append({"path": path, "viewport": viewport, "property": "width", "before": old,
-                        "after": frame["width"], "reason": "overflow"})
+        desired = old + math.ceil(px + BUFFER_PX)
+        new_width = min(desired, old * (1 + MAX_WIDTH_GROWTH))
+        delta = new_width - old
+        if delta <= .5:
+            continue
+        # A free-layout expansion is atomic: every displaced sibling and the
+        # expanded text must remain within the parent's local bounds.
+        siblings_to_shift: list[tuple[dict, dict, float]] = []
+        gap_change: tuple[dict, float, float] | None = None
         if parent is not None:
-            pframe = parent.get("frame") if isinstance(parent.get("frame"), dict) else {}
+            _pv, pframe = _viewport_node(parent, viewport)
+            parent_width = _num(pframe.get("width"))
             children = parent.get("children") or []
             if pframe.get("layout") == "free":
+                node_x = _num(frame.get("x")) or 0.0
+                if parent_width is not None and node_x + new_width > parent_width + .5:
+                    continue
+                safe = True
+                cursor = node_x + new_width
+                node_y, node_h = _num(frame.get("y")) or 0.0, _num(frame.get("height")) or 0.0
                 for sibling in children[index + 1:]:
-                    sf = sibling.get("frame") if isinstance(sibling, dict) and isinstance(sibling.get("frame"), dict) else None
-                    sibling_override = ((sibling.get("responsive") or {}).get(viewport)
-                                        if isinstance(sibling, dict) else None)
-                    if isinstance(sibling_override, dict) and isinstance(sibling_override.get("frame"), dict):
-                        sf = sibling_override["frame"]
-                    if sf is not None and _num(sf.get("x")) is not None:
-                        before = float(sf["x"]); sf["x"] = before + delta
-                        journal.append({"path": sibling.get("sourceKey") or "", "viewport": viewport,
-                                        "property": "x", "before": before, "after": sf["x"],
-                                        "reason": "make-room"})
+                    if not isinstance(sibling, dict) or not _viewport_node(sibling, viewport)[0]:
+                        continue
+                    _sv, sf = _viewport_node(sibling, viewport)
+                    sibling_override = ((sibling.get("responsive") or {}).get(viewport) or {})
+                    target = sibling_override.get("frame") if isinstance(sibling_override, dict) and isinstance(sibling_override.get("frame"), dict) else sibling.get("frame")
+                    sx, sw = _num(sf.get("x")), _num(sf.get("width"))
+                    sy, sh = _num(sf.get("y")) or 0.0, _num(sf.get("height")) or 0.0
+                    same_band = min(node_y + node_h, sy + sh) - max(node_y, sy) > .5
+                    shift = max(0.0, cursor - sx) if sx is not None and same_band else 0.0
+                    if sx is not None and sw is not None and parent_width is not None and sx + shift + sw > parent_width + .5:
+                        safe = False; break
+                    if isinstance(target, dict) and sx is not None and shift > .5:
+                        siblings_to_shift.append((sibling, target, shift))
+                    if sx is not None and sw is not None and same_band:
+                        cursor = sx + shift + sw
+                if not safe:
+                    continue
+            elif pframe.get("layout") == "row" and parent_width is not None:
+                visible_children = [child for child in children
+                                    if isinstance(child, dict) and _viewport_node(child, viewport)[0]]
+                widths = [_num(_viewport_node(child, viewport)[1].get("width"))
+                          for child in visible_children]
+                if any(value is None for value in widths):
+                    continue
+                padding = pframe.get("padding") if isinstance(pframe.get("padding"), list) else [0, 0, 0, 0]
+                horizontal_padding = float(padding[1] or 0) + float(padding[3] or 0) if len(padding) == 4 else 0.0
+                old_gap = _num(pframe.get("gap")) or 0.0
+                slots = max(0, len(widths) - 1)
+                occupied = sum(float(value) for value in widths if value is not None) + horizontal_padding + old_gap * slots
+                if occupied + delta > parent_width + .5:
+                    min_gap = _minimum_source_gap(parent, old_gap)
+                    new_gap = max(min_gap, old_gap - (occupied + delta - parent_width) / max(1, slots))
+                    if not slots or occupied + delta - (old_gap - new_gap) * slots > parent_width + .5:
+                        continue
+                    parent_override = ((parent.get("responsive") or {}).get(viewport) or {})
+                    gap_target = (parent_override.get("frame")
+                                  if isinstance(parent_override, dict) and isinstance(parent_override.get("frame"), dict)
+                                  else parent.get("frame"))
+                    if not isinstance(gap_target, dict):
+                        continue
+                    gap_change = (gap_target, old_gap, round(new_gap, 3))
+            elif parent_width is not None:
+                node_x = _num(frame.get("x")) or 0.0
+                if node_x + new_width > parent_width + .5:
+                    continue
+        frame["width"] = round(new_width, 3)
+        changed_frames.add(id(frame))
+        journal.append({"path": path, "viewport": viewport, "property": "width", "before": old,
+                        "after": frame["width"], "reason": "overflow"})
+        for sibling, sf, shift in siblings_to_shift:
+            before = float(sf["x"]); sf["x"] = round(before + shift, 3)
+            journal.append({"path": sibling.get("sourceKey") or "", "viewport": viewport,
+                            "property": "x", "before": before, "after": sf["x"],
+                            "reason": "make-room"})
+        if gap_change is not None:
+            target, before, after = gap_change; target["gap"] = after
+            journal.append({"path": parent.get("sourceKey") or "", "viewport": viewport,
+                            "property": "gap", "before": before, "after": after,
+                            "reason": "source-min-gap"})
     for (path, _viewport), px in overlap_jobs.items():
         node, parent, _index = _find(fixed, path)
         if node is not None and parent is not None and px > .5:
@@ -199,15 +359,24 @@ def _fidelity_passed(component: dict) -> bool:
 
 
 def polish_component(component: dict, *, page: Any = None,
-                     fidelity_check: Callable[[dict], bool] | None = None) -> dict:
+                     fidelity_check: Callable[[dict], bool | dict] | None = None) -> dict:
     master = component.get("masterIr") if isinstance(component.get("masterIr"), dict) else None
     if master is None:
         return {"changed": False, "defectsBefore": [], "defectsAfter": [], "rounds": 0}
     before_defects = lint_master(master, page=page)
     candidate, journal = autofix(master, before_defects)
     after_defects = lint_master(candidate, page=page) if journal else list(before_defects)
-    gate_ok = fidelity_check(candidate) if fidelity_check else _fidelity_passed(component)
-    accepted = bool(journal and gate_ok and len(after_defects) < len(before_defects))
+    gate_result = fidelity_check(candidate) if fidelity_check else _fidelity_passed(component)
+    gate_ok = bool(gate_result.get("passed")) if isinstance(gate_result, dict) else bool(gate_result)
+    before_set = {(str(d.get("path")), str(d.get("kind"))) for d in before_defects}
+    after_set = {(str(d.get("path")), str(d.get("kind"))) for d in after_defects}
+    reasons = []
+    if not after_set.issubset(before_set): reasons.append("new-defect")
+    if any(d.get("kind") == "escape" for d in after_defects): reasons.append("escape")
+    if not gate_ok: reasons.append("fidelity")
+    if not journal: reasons.append("no-safe-fix")
+    accepted = bool(journal and gate_ok and after_set.issubset(before_set)
+                    and not any(d.get("kind") == "escape" for d in after_defects))
     if accepted:
         component["polish"] = {"before": copy.deepcopy(master), "journal": journal}
         component["masterIr"] = candidate
@@ -221,6 +390,12 @@ def polish_component(component: dict, *, page: Any = None,
         fidelity["polish"] = {"defectsBefore": before_defects,
                               "defectsAfter": after_defects if accepted else before_defects,
                               "rounds": 1 if journal else 0, "accepted": accepted}
+        if isinstance(gate_result, dict):
+            fidelity["polish"].update({k: v for k, v in gate_result.items() if k != "passed"})
+        if accepted:
+            fidelity["polish"].pop("rejected", None)
+        else:
+            fidelity["polish"]["rejected"] = reasons
     return {"changed": accepted, "defectsBefore": before_defects,
             "defectsAfter": after_defects if accepted else before_defects,
             "rounds": 1 if journal else 0, "journal": journal if accepted else []}
@@ -256,39 +431,51 @@ def polish_document(document: dict, *, headless: bool = False) -> tuple[dict, li
         for pool in ("components", "reviewComponents"):
             for key, component in (updated.get(pool) or {}).items():
                 if isinstance(component, dict):
-                    measured_fidelity: dict[str, float] = {}
+                    measured_fidelity: dict[str, Any] = {}
                     fidelity_check = None
                     if page is not None:
-                        def check_candidate(candidate: dict, component=component) -> bool:
+                        def check_candidate(candidate: dict, component=component) -> dict:
                             import fidelity_harness
                             from . import master_review, styleguide
-                            source, _size, _note = styleguide.proof_crop(
-                                updated, component, "desktop", budget_left=4_000_000)
-                            if not source:
-                                return _fidelity_passed(component)
-                            render_comp = {**component, "masterIr": candidate}
-                            rendered = master_review.render_master_png(page, render_comp, "desktop")
-                            # Source crops may be stored at capture DPR/scale.
-                            # Compare like-sized rasters, matching the crop's
-                            # measured pixel grid instead of failing by shape.
                             import io
                             from PIL import Image
-                            reference = fidelity_harness._decode_data_url(source)
-                            ref_image = Image.open(io.BytesIO(reference))
-                            rendered_image = Image.open(io.BytesIO(rendered)).convert("RGB")
-                            if rendered_image.size != ref_image.size:
-                                rendered_image = rendered_image.resize(ref_image.size)
-                                buffer = io.BytesIO()
-                                rendered_image.save(buffer, format="PNG")
-                                rendered = buffer.getvalue()
-                            metrics = fidelity_harness._image_metrics(
-                                reference, rendered)
-                            similarity = metrics.get("pixel_similarity")
-                            if similarity is None:
-                                return False
-                            measured_fidelity["pixelSimilarityAfter"] = float(similarity)
                             threshold = float(fidelity_harness.GATE_THRESHOLDS["min_pixel_similarity"])
-                            return float(similarity) >= threshold
+                            fidelity = component.get("fidelity") if isinstance(component.get("fidelity"), dict) else {}
+                            stored = fidelity.get("viewports") if isinstance(fidelity.get("viewports"), dict) else {}
+                            required = fidelity.get("requiredViewports") if isinstance(fidelity.get("requiredViewports"), list) else []
+                            viewports = list(dict.fromkeys([*required, *stored.keys()])) or ["desktop"]
+                            similarities: dict[str, dict[str, float]] = {}
+                            rejected: list[str] = []
+                            for candidate_viewport in viewports:
+                                source, _size, note = styleguide.proof_crop(
+                                    updated, component, candidate_viewport, budget_left=4_000_000)
+                                if not source:
+                                    rejected.append(f"{candidate_viewport}: no-source-proof ({note or 'missing'})")
+                                    continue
+                                render_comp = {**component, "masterIr": candidate}
+                                rendered = master_review.render_master_png(page, render_comp, candidate_viewport)
+                                reference = fidelity_harness._decode_data_url(source)
+                                ref_image = Image.open(io.BytesIO(reference))
+                                rendered_image = Image.open(io.BytesIO(rendered)).convert("RGB")
+                                if rendered_image.size != ref_image.size:
+                                    rendered_image = rendered_image.resize(ref_image.size)
+                                    buffer = io.BytesIO(); rendered_image.save(buffer, format="PNG")
+                                    rendered = buffer.getvalue()
+                                similarity = fidelity_harness._image_metrics(reference, rendered).get("pixel_similarity")
+                                if similarity is None:
+                                    rejected.append(f"{candidate_viewport}: similarity-unavailable")
+                                    continue
+                                after = float(similarity)
+                                before_raw = (stored.get(candidate_viewport) or {}).get("pixelSimilarity")
+                                before = float(before_raw) if isinstance(before_raw, (int, float)) else after
+                                similarities[candidate_viewport] = {"before": before, "after": after}
+                                floor = max(threshold, before - SIMILARITY_DROP_PCT)
+                                if after + 1e-6 < floor:
+                                    rejected.append(f"{candidate_viewport}: {after:.2f} < {floor:.2f}")
+                            measured_fidelity["pixelSimilarity"] = similarities
+                            return {"passed": not rejected and bool(similarities),
+                                    "pixelSimilarity": similarities,
+                                    "fidelityRejected": rejected}
                         fidelity_check = check_candidate
                     results.append({"componentKey": key, "pool": pool,
                                     **polish_component(component, page=page,
