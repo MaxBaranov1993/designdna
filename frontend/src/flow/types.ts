@@ -466,6 +466,7 @@ export type MotionNodeData = {
   sceneSettings: Record<string, Partial<MotionSceneSettings>>;
 };
 
+export type VideoEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 /* Persistent video revisions include the source needed to verify restoration. */
 export type VideoRevision = {
   id: string;
@@ -475,13 +476,14 @@ export type VideoRevision = {
   label: string;
   prompt?: string;
   provider?: NodeProvider;
-  effort?: "medium" | "high" | "max";
+  effort?: VideoEffort;
+  model?: string;
   restoredFrom?: string;
   sourceIr: IRObject | null;
   timeline: IRObject;
 };
 export type VideoRevisionChange = Pick<VideoRevision, "kind" | "label"> &
-  Partial<Pick<VideoRevision, "prompt" | "provider" | "effort" | "restoredFrom">>;
+  Partial<Pick<VideoRevision, "prompt" | "provider" | "effort" | "model" | "restoredFrom">>;
 export type VideoChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -499,7 +501,8 @@ export type TimelineNodeData = {
   revisions?: VideoRevision[];
   activeRevisionId?: string | null;
   provider?: NodeProvider;
-  effort?: "medium" | "high" | "max";
+  effort?: VideoEffort;
+  model?: string;
   ir: IRObject | null;
   timeline: IRObject | null;
   settings: { width: number; height: number; fps: number; duration: number };

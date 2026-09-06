@@ -130,3 +130,16 @@ test('multiple page inputs survive persistence and later page changes reject sta
   assert.deepEqual(data().inputs,['ir']);
   assert.equal(state().edges.some(e => e.target === String(id) && e.targetHandle === 'page2'),false);
 });
+test('generated page states and selected model survive a history restore', () => {
+  setup();
+  state().setNodeData(id, {sourcePages:[{id:'ir', name:'Source', ir}], model:'gpt-6-astra', effort:'xhigh'});
+  const doc=timeline(10);
+  doc.story={initialPageId:'ir',pages:[{id:'ir',name:'Source',ir},{id:'menu',name:'Menu',generatedFrom:'ir',ir:structuredClone(ir)}],actions:[]};
+  assert.equal(commit(doc,{kind:'prompt',label:'Menu',model:'gpt-6-astra',effort:'xhigh'}),true);
+  const version=data().revisions.at(-1);
+  assert.equal(commit(timeline(20)),true);
+  assert.equal(commit(version.timeline,{kind:'restore',label:'Restore',restoredFrom:version.id,model:version.model,effort:version.effort}),true);
+  assert.equal(data().revisions.at(-1).model,'gpt-6-astra');
+  assert.equal(data().revisions.at(-1).effort,'xhigh');
+  assert.deepEqual(data().timeline,doc);
+});

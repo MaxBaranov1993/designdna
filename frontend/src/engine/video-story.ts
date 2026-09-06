@@ -37,13 +37,32 @@ export function storyTargets(ir: Record<string, any>, overlays: StoryOverlay[] =
 }
 
 export function storyTarget(root: HTMLElement, target: string): HTMLElement | null {
-  if (target.startsWith("overlay.")) return Array.from(root.querySelectorAll<HTMLElement>("[data-story-target]")).find(el => el.dataset.storyTarget === target) || null;
+  const bound = Array.from(root.querySelectorAll<HTMLElement>("[data-story-target]")).find(el => el.dataset.storyTarget === target);
+  if (bound || target.startsWith("overlay.")) return bound || null;
   const match = /^s(\d+)(?:\.(.+))?$/.exec(target);
   if (!match) return null;
   const section = root.querySelector<HTMLElement>(`[data-ir-sec="${Number(match[1])}"]`);
   if (!section || !match[2]) return section;
   return Array.from(section.querySelectorAll<HTMLElement>("[data-ir-path]"))
     .find((el) => el.dataset.irPath === match[2]) || null;
+}
+
+/** Imported DOM uses stable sourceKey identities; the director uses tree paths. */
+function bindStoryTargets(root: HTMLElement, ir: any) {
+  (ir.tree || []).forEach((section: any, index: number) => {
+    const host = root.querySelector<HTMLElement>(`[data-ir-sec="${index}"]`);
+    if (!host) return;
+    const imported = section.type === "source-block" || section.variant === "dom-capture";
+    const elements = Array.from(host.querySelectorAll<HTMLElement>("[data-ir-path]"));
+    const walk = (children: any[], treePath: string, renderPath: string) => (children || []).forEach((child, i) => {
+      const canonical = `${treePath}.children.${i}`;
+      const actual = (imported && child.sourceKey) || `${renderPath ? renderPath + "." : ""}children.${i}`;
+      const element = elements.find(el => el.dataset.irPath === actual);
+      if (element) element.dataset.storyTarget = canonical;
+      walk(child.children, canonical, actual);
+    });
+    walk(section.children, `s${index}`, "");
+  });
 }
 
 /** Prefer the control itself over a larger layout wrapper for cursor placement. */
@@ -76,6 +95,7 @@ export class VideoStoryPlayer {
       const inner = window.document.createElement("div");
       outer.append(inner); host.append(outer);
       IRRenderer.renderIR(inner, page.ir as any, { viewport: "desktop", fit: false, offline });
+      bindStoryTargets(inner, page.ir);
       const artWidth = Number(inner.querySelector<HTMLElement>("[data-design-width]")?.dataset.designWidth) || Number(page.ir.frame?.width) || 1440;
       const scale = document.composition.width / artWidth;
       Object.assign(inner.style, { width: artWidth + "px", transformOrigin: "top left" });

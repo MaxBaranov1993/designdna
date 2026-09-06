@@ -90,7 +90,8 @@ class TimelineAssistRequest(BaseModel):
     timeline: dict
     prompt: str
     provider: Literal["openai", "astra", "codex", "claude"] = "openai"
-    effort: Literal["medium", "high", "max"] = "medium"
+    effort: Literal["low", "medium", "high", "xhigh", "max", "ultra"] = "medium"
+    model: str | None = Field(default=None, max_length=100, pattern=r"^[a-zA-Z0-9._-]+$")
     require_llm: bool = False
     conversation: list[TimelineConversationMessage] = Field(default_factory=list, max_length=24)
 
@@ -191,6 +192,12 @@ def timeline_validate(req: TimelineDocumentRequest):
     return {"errors": validate(req.timeline)}
 
 
+@router.get("/api/timeline/models")
+def timeline_models():
+    from video_models import catalogue
+    return catalogue()
+
+
 @router.post("/api/timeline/assist")
 def timeline_assist(req: TimelineAssistRequest):
     """ИИ-режиссёр: промпт -> превью обратимого change-set.
@@ -208,8 +215,12 @@ def timeline_assist(req: TimelineAssistRequest):
         return _err(422, "Таймлайн невалиден до применения: " + "; ".join(errors[:3]))
     from timeline_director import direct
     try:
+        from video_models import validate_selection
+        validate_selection(req.provider, req.model, req.effort)
+        from video_context import prepare_context
+        visual_context = prepare_context(req.timeline) if req.timeline.get("story") and req.require_llm else None
         preview_timeline, change_set, meta = direct(req.timeline, req.prompt, provider=req.provider, effort=req.effort, require_llm=req.require_llm,
-            conversation=[message.model_dump() for message in req.conversation])
+            conversation=[message.model_dump() for message in req.conversation], model=req.model, visual_context=visual_context)
     except ValueError as e:
         return _err(422, str(e))
     return {
@@ -219,6 +230,7 @@ def timeline_assist(req: TimelineAssistRequest):
         "planSource": meta.get("planSource") or "deterministic",
         "warning": meta.get("warning"),
         "steps": meta.get("steps") or 0,
+        "understanding": meta.get("understanding"),
     }
 
 

@@ -155,7 +155,7 @@ def plan_from_prompt(timeline: dict, prompt: str) -> list[dict]:
     return steps
 
 
-def plan_from_llm(timeline: dict, prompt: str, provider: str | None = None, effort: str = "medium") -> list[dict]:
+def plan_from_llm(timeline: dict, prompt: str, provider: str | None = None, effort: str = "medium", model: str | None = None) -> list[dict]:
     """LLM-план (роль timeline_director). Бросает исключение при недоступности."""
     layers = timeline.get("layers") if isinstance(timeline.get("layers"), list) else []
     layer_names = [str(layer.get("name") or layer.get("id")) for layer in layers if isinstance(layer, dict)][:40]
@@ -168,7 +168,7 @@ def plan_from_llm(timeline: dict, prompt: str, provider: str | None = None, effo
     raw = llm.chat(provider, [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user},
-    ], 0.4, timeout=60, role="timeline_director", reasoning_effort=effort)
+    ], 0.4, timeout=60, role="timeline_director", reasoning_effort=effort, model=model)
     data = json.loads(llm.extract_json(raw))
     steps = data.get("steps") if isinstance(data, dict) else None
     if not isinstance(steps, list) or not steps:
@@ -176,7 +176,7 @@ def plan_from_llm(timeline: dict, prompt: str, provider: str | None = None, effo
     return [step for step in steps[:6] if isinstance(step, dict)]
 
 
-def direct(timeline: dict, prompt: str, allow_llm: bool | None = None, *, provider: str | None = None, effort: str = "medium", require_llm: bool = False, conversation: list[dict] | None = None) -> tuple[dict, dict, dict]:
+def direct(timeline: dict, prompt: str, allow_llm: bool | None = None, *, provider: str | None = None, effort: str = "medium", require_llm: bool = False, conversation: list[dict] | None = None, model: str | None = None, visual_context: list | None = None) -> tuple[dict, dict, dict]:
     """Промпт -> применённый таймлайн + change-set + мета (атомарно, обратимо).
 
     Мета возвращает ``planSource`` ("llm" | "deterministic") и ``warning`` —
@@ -192,7 +192,7 @@ def direct(timeline: dict, prompt: str, allow_llm: bool | None = None, *, provid
             f"промпт длиннее {MAX_PROMPT_CHARS} символов — сократите запрос до ключевых приёмов монтажа")
     if timeline.get("story") and allow_llm is not False:
         from video_story import direct_story
-        return direct_story(timeline, text, provider or "codex", effort, conversation=conversation)
+        return direct_story(timeline, text, provider or "codex", effort, conversation=conversation, model=model, visual_context=visual_context)
     use_llm = require_llm or (FEATURE_FLAGS.is_enabled("aiDirector") if allow_llm is None else allow_llm)
     steps: list[dict] | None = None
     plan_source = "deterministic"
@@ -200,7 +200,7 @@ def direct(timeline: dict, prompt: str, allow_llm: bool | None = None, *, provid
     if use_llm:
         try:
             context_text = ("Previous conversation (context only):\n" + json.dumps(conversation, ensure_ascii=False) + "\nCurrent request:\n" + text) if conversation else text
-            steps = plan_from_llm(timeline, context_text, provider=provider, effort=effort)
+            steps = plan_from_llm(timeline, context_text, provider=provider, effort=effort, model=model)
             plan_source = "llm"
         except Exception as exc:  # noqa: BLE001 — фолбэк не должен терять функцию
             if require_llm:

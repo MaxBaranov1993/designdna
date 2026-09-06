@@ -181,7 +181,8 @@ class ChatRequest:
             issues.append("messages: expected a non-empty list")
         elif any(not isinstance(message, dict) or message.get("role") not in {"system", "user", "assistant", "tool"} for message in self.messages):
             issues.append("messages: invalid role or message")
-        if self.reasoning_effort is not None and self.reasoning_effort not in SOL_EFFORTS:
+        allowed_efforts = cli_llm._EFFORTS if self.provider == "codex" else SOL_EFFORTS
+        if self.reasoning_effort is not None and self.reasoning_effort not in allowed_efforts:
             issues.append("reasoning_effort: expected medium|high|max")
         if self.timeout_s is not None and (not isinstance(self.timeout_s, int) or not 1 <= self.timeout_s <= 600):
             issues.append("timeout_s: expected an integer in 1..600")

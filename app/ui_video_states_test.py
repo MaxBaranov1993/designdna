@@ -17,6 +17,7 @@ def main():
     saved = None
     errors = []
     source = pages_fixture()
+    source[0]["ir"]["tree"][0]["type"] = "source-block"
     baseline = build_pages(source, {"width": 960, "height": 640, "duration": 8000})
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
@@ -28,6 +29,7 @@ def main():
             route.fulfill(json={"ok": True, "revision": "states-test"})
         def assist(route):
             body = route.request.post_data_json
+            assert body["model"] == "gpt-6-astra" and body["effort"] == "high"
             with patch("video_story.llm.chat", return_value=json.dumps(state_plan())):
                 timeline, changes, meta = direct_story(body["timeline"], body["prompt"], "codex", "medium")
             route.fulfill(json={"timeline": timeline, "changeSet": changes, **meta})
@@ -41,6 +43,8 @@ def main():
             {"ir": source[0]["ir"], "sourcePages": source, "timeline": baseline, "provider": "codex"})
         node = page.locator(f'.svelte-flow__node[data-id="{node_id}"]')
         node.get_by_role("button", name="Открыть редактор", exact=True).click()
+        page.get_by_label("Модель видео").last.select_option("gpt-6-astra")
+        page.get_by_label("Уровень рассуждения").last.select_option("high")
         page.get_by_role("textbox", name="Промпт ИИ-режиссёра").fill("Создай меню и русский перевод")
         page.get_by_role("button", name="Отправить сообщение").click()
         expect(page.locator('[data-act="ai-preview"]')).to_be_visible()
@@ -72,6 +76,8 @@ def main():
         page.reload()
         page.wait_for_function("id=>window.GraphDev?.node(id)?.data?.timeline?.story?.pages?.length===4", arg=node_id)
         assert page.evaluate("id=>GraphDev.node(id).data.timeline", node_id) == current
+        assert page.evaluate("id=>GraphDev.node(id).data.model", node_id) == "gpt-6-astra"
+        assert page.evaluate("id=>GraphDev.node(id).data.effort", node_id) == "high"
         assert not errors, errors
         browser.close()
     print("PASS: generated menu/translation preview, apply, manual menu text, undo/redo, source preservation and reload")

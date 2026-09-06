@@ -25,7 +25,7 @@ export function videoHistoryPatch(
   if (change.restoredFrom) {
     const target = revisions.find((item) => item.id === change.restoredFrom);
     const sourcePages = (data.sourcePages || []).map(({ id, ir }) => ({ id, ir }));
-    const targetPages = ((target?.timeline as any)?.story?.pages || []).map(({ id, ir }: any) => ({ id, ir }));
+    const targetPages = ((target?.timeline as any)?.story?.pages || []).filter((page: any) => !page.generatedFrom).map(({ id, ir }: any) => ({ id, ir }));
     if (!target || !same(target.sourceIr, data.ir) || !same(target.timeline, next) || (targetPages.length > 0 && !same(targetPages, sourcePages))) {
       throw new Error("Версия относится к другой исходной странице. Подключите прежнюю страницу перед восстановлением.");
     }

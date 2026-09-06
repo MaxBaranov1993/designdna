@@ -21,7 +21,7 @@ def test_followup_carries_question_and_preserves_timeline():
                     {"role": "assistant", "content": "Какое название указать?"}]
     plan = {"summary": "Название: Диван", "edits": [{"op": "insert", "afterId": None,
         "actions": [{"id": "name", "pageId": "ir", "type": "type", "target": "s0.children.3", "text": "Диван"}]}]}
-    with TestClient(app) as client, patch("video_story.llm.chat", return_value=json.dumps(plan)) as chat:
+    with TestClient(app) as client, patch("video_context.prepare_context", return_value=[]), patch("video_story.llm.chat", return_value=json.dumps(plan)) as chat:
         response = client.post("/api/timeline/assist", json={"timeline": timeline, "prompt": "Диван",
             "provider": "codex", "require_llm": True, "conversation": conversation})
     assert response.status_code == 200, response.text

@@ -12,7 +12,7 @@
    * немедленно). ИИ-правки приходят через timeline-change-set как ПРЕВЬЮ:
    * канонический таймлайн ноды не меняется до явного «Применить». */
   import { onMount, tick } from "svelte";
-  import ProviderPicker from "../components/ProviderPicker.svelte";
+  import VideoModelPicker from "./VideoModelPicker.svelte";
   import { TimelineEngine, Timeline } from "../engine/timeline";
   import { IRRenderer } from "../engine/renderer";
   import { VideoStoryPlayer, storySchedule, actionLabel } from "../engine/video-story";
@@ -24,7 +24,7 @@
   import { toast } from "../flow/toast";
   import { resizeTimeline, moveTimelineKey, setTimelineKeyValue } from "./timeline-edits";
   import { bodyPortal } from "../lib/bodyPortal";
-  import type { TimelineNodeData, VideoRevision, VideoRevisionChange, VideoChatMessage } from "../flow/types";
+  import type { TimelineNodeData, VideoRevision, VideoRevisionChange, VideoChatMessage, VideoEffort } from "../flow/types";
 
   let { nodeId, data, onClose, startWithPrompt = false }: { nodeId: number; data: TimelineNodeData; onClose: () => void; startWithPrompt?: boolean } = $props();
 
@@ -122,7 +122,8 @@
     chatMessageId: string;
     prompt: string;
     provider: "codex" | "claude";
-    effort: "medium" | "high" | "max";
+    effort: VideoEffort;
+    model: string;
     timeline: AnyDoc;
     changeSet: AnyDoc;
     intent: string;
@@ -134,6 +135,7 @@
 
   let irHost: HTMLDivElement | null = $state(null);
   let storyPlayer = $state<VideoStoryPlayer | null>(null);
+  let playerError = $state("");
   let rulerTrack: HTMLDivElement | null = $state(null);
   let boxW = $state(800);
   let boxH = $state(450);
@@ -172,12 +174,13 @@
     const ir = designIr;
     const current = activeDoc;
     if (!host || !ir || !current) return;
+    playerError = "";
     if (current.story) {
       try {
         const player = new VideoStoryPlayer(host, current);
         storyPlayer = player;
         return () => { player.destroy(); storyPlayer = null; };
-      } catch (error) { say(error instanceof Error ? error.message : String(error)); return; }
+      } catch (error) { playerError = error instanceof Error ? error.message : String(error); host.replaceChildren(); storyPlayer = null; say(playerError); return; }
     }
     IRRenderer.renderIR(host, ir as any, { viewport: "desktop" });
     // секции рендерера помечены data-ir-sec="<i>"; связываем со слоями по ref
@@ -458,22 +461,23 @@
       .map(entry => ({ role: entry.role, content: entry.content.slice(0, 15800) + (entry.kind === "preview" ? "\n[Предложение не применено]" : entry.kind === "applied" ? "\n[Применено]" : entry.kind === "cancelled" ? "\n[Отменено]" : "") }));
     const provider = accountProvider;
     const effort = data.effort || "medium";
+    const model = data.model || (provider === "claude" ? "opus" : "gpt-5.6-sol");
     appendChat("user", prompt);
     aiPrompt = "";
     $flow.setNodeData(nodeId, { prompt: "", provider });
-    say("ИИ-режиссёр готовит монтаж...");
+    say("Изучаю визуал, структуру и содержимое страницы, затем готовлю монтаж…");
     try {
       if (!await syncNow()) throw new Error("Сначала сохраните текущие правки");
       if (disposed || requestSequence !== aiRequestSequence) return;
       const resp = await api<{
-        timeline?: AnyDoc; changeSet?: AnyDoc; planSource?: string; warning?: string | null; error?: string;
-      }>("/api/timeline/assist", { timeline: doc, prompt, provider, effort, require_llm: true, conversation }, { signal: aiController.signal, runId });
+        timeline?: AnyDoc; changeSet?: AnyDoc; planSource?: string; warning?: string | null; error?: string; understanding?: string;
+      }>("/api/timeline/assist", { timeline: doc, prompt, provider, effort, model, require_llm: true, conversation }, { signal: aiController.signal, runId });
       if (disposed || requestSequence !== aiRequestSequence) return;
       if ($flow.getNodeIrRevision(nodeId) !== sourceRevision) throw new Error("Исходная страница изменилась во время запроса. Откройте редактор заново и повторите сообщение.");
       if (resp.error || !resp.timeline || !resp.changeSet) throw new Error(resp.error || "пустой ответ");
       preview = {
-        chatMessageId: appendChat("assistant", String(resp.changeSet.intent || "Подготовил изменения монтажа.") + (resp.warning ? "\n\n" + resp.warning : ""), "preview", provider),
-        prompt, provider, effort,
+        chatMessageId: appendChat("assistant", (resp.understanding ? "Понял страницу: " + resp.understanding + "\n\n" : "") + String(resp.changeSet.intent || "Подготовил изменения монтажа.") + (resp.warning ? "\n\n" + resp.warning : ""), "preview", provider),
+        prompt, provider, effort, model,
         timeline: resp.timeline,
         changeSet: resp.changeSet,
         intent: String(resp.changeSet.intent || prompt),
@@ -506,7 +510,7 @@
       doc = resp.timeline;
       renderState = null;
       docSeq++;
-      pendingRevision = { kind: "prompt", label: applied.intent, prompt: applied.prompt, provider: applied.provider, effort: applied.effort };
+      pendingRevision = { kind: "prompt", label: applied.intent, prompt: applied.prompt, provider: applied.provider, effort: applied.effort, model: applied.model };
       lastChangeSet = applied.changeSet;
       markChat(applied.chatMessageId, "applied");
       preview = null;
@@ -543,7 +547,7 @@
       const next = JSON.parse(JSON.stringify(version.timeline));
       if (!$flow.commitTimeline(nodeId, canonical, sourceRevision, next, {
         kind: "restore", label: "Возврат: " + version.label, restoredFrom: version.id,
-        prompt: version.prompt, provider: version.provider, effort: version.effort,
+        prompt: version.prompt, provider: version.provider, effort: version.effort, model: version.model,
       })) throw new Error("Страница или монтаж изменились вне редактора. Откройте редактор заново.");
       snapshot();
       doc = next;
@@ -967,6 +971,7 @@
     </div>
 
     <div class="tlw-stage" bind:clientWidth={boxW} bind:clientHeight={boxH}>
+      {#if playerError}<div class="tlw-player-error" role="alert">Не удалось показать монтаж: {playerError}</div>{/if}
       <div class="tlw-artboard" style="width:{width}px; height:{height}px; transform:scale({fitScale}); background:{composition.background || '#111116'}">
         <div class="tlw-irhost" bind:this={irHost}></div>
       </div>
@@ -1104,7 +1109,7 @@
       <span class="video-chat-presence" class:working={aiBusy}>{aiBusy ? "Думает" : "На связи"}</span>
     </header>
     <div class="video-chat-model" inert={aiBusy || busy || Boolean(preview)}>
-      <ProviderPicker accountsOnly provider={accountProvider} effort={data.effort || "medium"}
+      <VideoModelPicker provider={accountProvider} model={data.model} effort={data.effort || "medium"}
         onChange={(choice) => $flow.setNodeData(nodeId, choice)} />
     </div>
     <div class="video-chat-log" role="log" aria-label="Переписка о видео" aria-live="polite" aria-relevant="additions text"
@@ -1128,10 +1133,10 @@
           <div class="video-chat-text">{entry.content}</div>
           {#if preview?.chatMessageId === entry.id}
             <div class="tlw-preview" role="region" aria-label="Превью ИИ-монтажа" data-act="ai-preview">
-              <span>Монтаж показан в плеере. Проверьте результат перед применением.</span>
+              <span>{playerError ? `Монтаж не воспроизводится: ${playerError}` : "Монтаж показан в плеере. Проверьте результат перед применением."}</span>
               <div class="video-chat-actions">
-                <button class="tlw-btn" onclick={() => { playhead = 0; playing = true; }}>▶ Смотреть</button>
-                <button class="tlw-btn primary" data-act="ai-apply" disabled={busy || aiBusy} onclick={() => void applyPreview()}>{busy ? "Применяю…" : "Применить"}</button>
+                <button class="tlw-btn" disabled={Boolean(playerError)} onclick={() => { playhead = 0; playing = true; }}>▶ Смотреть</button>
+                <button class="tlw-btn primary" data-act="ai-apply" disabled={busy || aiBusy || Boolean(playerError)} onclick={() => void applyPreview()}>{busy ? "Применяю…" : "Применить"}</button>
                 <button class="tlw-btn" data-act="ai-cancel" disabled={busy || aiBusy} onclick={cancelPreview}>Отменить</button>
               </div>
             </div>
@@ -1277,6 +1282,7 @@
   .tlw-layer[aria-pressed="true"] { background: var(--tlw-accent-soft); color: var(--dna-text); }
   .tlw-layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tlw-layer-time { color: var(--dna-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .tlw-player-error { position: absolute; z-index: 10; max-width: 80%; padding: 16px; border: 1px solid var(--dna-border-strong); border-radius: 8px; background: var(--dna-panel); color: var(--dna-text); font-size: 13px; }
   .tlw-stage { display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--dna-bg); }
   .tlw-artboard { position: relative; transform-origin: center center; box-shadow: 0 0 0 1px var(--dna-border-strong); flex: none; }
   .tlw-irhost { position: absolute; inset: 0; overflow: hidden; }

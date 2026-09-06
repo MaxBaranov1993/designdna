@@ -72,7 +72,7 @@ def test_build_api_supports_multiple_pages_and_assist_preserves_selected_account
     with TestClient(app) as client:
         built = client.post("/api/timeline/build", json={"ir": pages_fixture()[0]["ir"], "pages": pages_fixture(), "settings": {"duration": 8000}})
         assert built.status_code == 200, built.text
-        with patch("video_story.llm.chat", return_value=json.dumps(plan_fixture())) as chat:
+        with patch("video_context.prepare_context", return_value=[{"pageId": "ir", "name": "Форма", "images": []}]), patch("video_story.llm.chat", side_effect=[json.dumps({"summary": "Форма объявления", "targets": []}), json.dumps(plan_fixture())]) as chat:
             result = client.post("/api/timeline/assist", json={"timeline": built.json()["timeline"], "prompt": PROMPT, "provider": "claude", "require_llm": True})
         assert result.status_code == 200, result.text
         assert chat.call_args.args[0] == "claude"

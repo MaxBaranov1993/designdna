@@ -4877,12 +4877,29 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     });
   }
   function storyTarget(root, target) {
-    if (target.startsWith("overlay.")) return Array.from(root.querySelectorAll("[data-story-target]")).find((el) => el.dataset.storyTarget === target) || null;
+    const bound = Array.from(root.querySelectorAll("[data-story-target]")).find((el) => el.dataset.storyTarget === target);
+    if (bound || target.startsWith("overlay.")) return bound || null;
     const match = /^s(\d+)(?:\.(.+))?$/.exec(target);
     if (!match) return null;
     const section = root.querySelector(`[data-ir-sec="${Number(match[1])}"]`);
     if (!section || !match[2]) return section;
     return Array.from(section.querySelectorAll("[data-ir-path]")).find((el) => el.dataset.irPath === match[2]) || null;
+  }
+  function bindStoryTargets(root, ir) {
+    (ir.tree || []).forEach((section, index) => {
+      const host = root.querySelector(`[data-ir-sec="${index}"]`);
+      if (!host) return;
+      const imported = section.type === "source-block" || section.variant === "dom-capture";
+      const elements = Array.from(host.querySelectorAll("[data-ir-path]"));
+      const walk = (children, treePath, renderPath) => (children || []).forEach((child, i) => {
+        const canonical = `${treePath}.children.${i}`;
+        const actual = imported && child.sourceKey || `${renderPath ? renderPath + "." : ""}children.${i}`;
+        const element = elements.find((el) => el.dataset.irPath === actual);
+        if (element) element.dataset.storyTarget = canonical;
+        walk(child.children, canonical, actual);
+      });
+      walk(section.children, `s${index}`, "");
+    });
   }
   function actionTarget(root, id) {
     const target = storyTarget(root, id);
@@ -4913,6 +4930,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         outer.append(inner);
         host.append(outer);
         IRRenderer.renderIR(inner, page.ir, { viewport: "desktop", fit: false, offline });
+        bindStoryTargets(inner, page.ir);
         const artWidth = Number((_a = inner.querySelector("[data-design-width]")) == null ? void 0 : _a.dataset.designWidth) || Number((_b = page.ir.frame) == null ? void 0 : _b.width) || 1440;
         const scale = document2.composition.width / artWidth;
         Object.assign(inner.style, { width: artWidth + "px", transformOrigin: "top left" });

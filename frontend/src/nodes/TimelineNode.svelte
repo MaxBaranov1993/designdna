@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import { toast } from "../flow/toast";
-  import ProviderPicker from "../components/ProviderPicker.svelte";
+  import VideoModelPicker from "../editor/VideoModelPicker.svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { flow } from "../flow/state";
   import { videoPages } from "../flow/video-inputs";
@@ -85,7 +85,7 @@
         oninput={(event) => $flow.setNodeData(nodeId, { prompt: event.currentTarget.value })}></textarea>
     </label>
     <div inert={busy || preparing}>
-      <ProviderPicker accountsOnly provider={data.provider === "claude" ? "claude" : "codex"} effort={data.effort || "medium"}
+      <VideoModelPicker model={data.model} provider={data.provider === "claude" ? "claude" : "codex"} effort={data.effort || "medium"}
         onChange={(choice) => $flow.setNodeData(nodeId, choice)} />
     </div>
     <div class="timeline-node-meta">
