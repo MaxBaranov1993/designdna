@@ -12,6 +12,6 @@ export const motionDurations: Record<StoryAction["type"], number> = { move: 900,
 export function softenStory(story: VideoStory): VideoStory {
   return { ...story, actions: story.actions.map((action) => ({ ...action, easing: "soft",
     duration: Math.max(action.duration, action.type === "type" ? Math.max(1400, Array.from(action.text || "").length * 120 + 700) : motionDurations[action.type]),
-    ...(action.type === "navigate" ? { transition: "motion" as const } : {}),
+    ...(action.type === "navigate" ? { transition: action.transition === "state" ? "state" as const : "motion" as const } : {}),
   })) };
 }

@@ -4809,6 +4809,65 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     if (easing === "ease-out") return 1 - (1 - p) ** 3;
     return p * p * p * (p * (p * 6 - 15) + 10);
   }
+  function renderStoryOverlays(root, ir, overlays, find) {
+    var _a;
+    root.style.position = "relative";
+    const panels = [];
+    for (const overlay of overlays) {
+      const anchor = find(root, overlay.anchorTarget);
+      if (!anchor) throw new Error(`Не найден элемент для окна: ${overlay.anchorTarget}`);
+      const style = getComputedStyle(anchor), color = ((_a = ir.tokens) == null ? void 0 : _a.color) || {};
+      const panel = document.createElement("div");
+      panel.dataset.storyTarget = `overlay.${overlay.id}`;
+      panel.dataset.storyOverlay = overlay.id;
+      Object.assign(panel.style, {
+        position: "absolute",
+        zIndex: "100",
+        boxSizing: "border-box",
+        width: `${overlay.width || 240}px`,
+        padding: "8px",
+        borderRadius: `${overlay.radius ?? 12}px`,
+        background: overlay.background || color.surface || "#ffffff",
+        color: overlay.color || color.text || "#171717",
+        boxShadow: "0 12px 36px #00000024, 0 2px 8px #00000012",
+        border: `1px solid ${color.border || "#dddddd"}`,
+        fontFamily: style.fontFamily,
+        fontSize: `${Math.max(13, Math.min(18, parseFloat(style.fontSize) || 14))}px`,
+        fontWeight: "400",
+        lineHeight: "1.5",
+        transformOrigin: "top right"
+      });
+      if (overlay.title) {
+        const title = document.createElement("div");
+        title.textContent = overlay.title;
+        Object.assign(title.style, { padding: "8px 12px", fontWeight: "600", opacity: ".65", fontSize: "12px" });
+        panel.append(title);
+      }
+      for (const item of overlay.items) {
+        const button = document.createElement("div");
+        button.dataset.storyTarget = `overlay.${overlay.id}.${item.id}`;
+        button.textContent = item.text;
+        Object.assign(button.style, {
+          padding: "10px 12px",
+          borderRadius: "7px",
+          margin: "2px 0",
+          whiteSpace: "pre-wrap",
+          background: item.selected ? overlay.accent || color.primary || "#7018e6" : "transparent",
+          color: item.selected ? "#ffffff" : "inherit"
+        });
+        panel.append(button);
+      }
+      root.append(panel);
+      const artWidth = root.offsetWidth, ratio = root.getBoundingClientRect().width / artWidth || 1;
+      const a = anchor.getBoundingClientRect(), origin = root.getBoundingClientRect();
+      const panelWidth = Math.min(overlay.width || 240, artWidth - 24);
+      panel.style.width = panelWidth + "px";
+      panel.style.left = Math.max(12, Math.min(artWidth - panelWidth - 12, (a.right - origin.left) / ratio - panelWidth)) + "px";
+      panel.style.top = (a.bottom - origin.top) / ratio + 10 + "px";
+      panels.push(panel);
+    }
+    return panels;
+  }
   function storySchedule(story) {
     let time = 0;
     return story.actions.map((action) => {
@@ -4818,6 +4877,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     });
   }
   function storyTarget(root, target) {
+    if (target.startsWith("overlay.")) return Array.from(root.querySelectorAll("[data-story-target]")).find((el) => el.dataset.storyTarget === target) || null;
     const match = /^s(\d+)(?:\.(.+))?$/.exec(target);
     if (!match) return null;
     const section = root.querySelector(`[data-ir-sec="${Number(match[1])}"]`);
@@ -4856,7 +4916,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         const artWidth = Number((_a = inner.querySelector("[data-design-width]")) == null ? void 0 : _a.dataset.designWidth) || Number((_b = page.ir.frame) == null ? void 0 : _b.width) || 1440;
         const scale = document2.composition.width / artWidth;
         Object.assign(inner.style, { width: artWidth + "px", transformOrigin: "top left" });
-        this.roots.set(page.id, { outer, inner, scale });
+        const panels = renderStoryOverlays(inner, page.ir, page.overlays || [], storyTarget);
+        this.roots.set(page.id, { outer, inner, scale, panels });
         for (const layer of document2.layers || []) {
           if (layer.type !== "component" || (layer.pageId || this.story.pages[0].id) !== page.id) continue;
           let target = layer.storyTarget;
@@ -4930,12 +4991,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const scrolls = {};
       const typed = {};
       let pageId = this.story.initialPageId;
-      let x = 32, y = 32, visible = false, pulse = 0, cursorOpacity = 0, cursorScale = 1;
+      let x = this.document.composition.width / 2, y = this.document.composition.height / 2, visible = false, pulse = 0, cursorOpacity = 0, cursorScale = 1;
       let fade = null;
       const applyScroll = () => {
         for (const [id, root] of this.roots) root.inner.style.transform = `scale(${root.scale}) translateY(${-(scrolls[id] || 0)}px)`;
       };
-      for (const root of this.roots.values()) root.outer.style.transform = "none";
+      for (const root of this.roots.values()) {
+        root.outer.style.transform = "none";
+        for (const panel of root.panels) panel.style.translate = "0px 0px";
+      }
       applyScroll();
       for (const action of storySchedule(this.story)) {
         if (t < action.start) break;
@@ -4943,8 +5007,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         const ease = (v) => motionEase(v, action.easing);
         if (action.type === "navigate") {
           const to = action.toPageId;
-          fade = action.transition !== "cut" && p < 1 ? { from: pageId, to, progress: ease(p), motion: action.transition === "motion" } : null;
-          cursorOpacity *= fade ? 1 - motionEase(Math.min(1, p * 2)) : 0;
+          const samePageState = action.transition === "state";
+          fade = action.transition !== "cut" && p < 1 ? { from: pageId, to, progress: ease(p), motion: action.transition === "motion", state: samePageState } : null;
+          if (samePageState) {
+            scrolls[to] = scrolls[pageId] || 0;
+            applyScroll();
+          } else cursorOpacity *= fade ? 1 - motionEase(Math.min(1, p * 2)) : 0;
           pageId = to;
           visible = visible && cursorOpacity > 0;
         } else if (action.type === "scroll") {
@@ -4997,6 +5065,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         root.outer.style.zIndex = fade ? id === fade.to ? "2" : id === fade.from ? "1" : "0" : "0";
         root.outer.style.opacity = String(opacity);
         root.outer.style.visibility = opacity > 0 ? "visible" : "hidden";
+        if ((fade == null ? void 0 : fade.state) && id === fade.to) for (const panel of root.panels) panel.style.translate = `0px ${-8 * (1 - fade.progress)}px`;
       }
       this.cursor.style.visibility = visible ? "visible" : "hidden";
       this.cursor.style.opacity = String(cursorOpacity);

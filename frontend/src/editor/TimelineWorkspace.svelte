@@ -18,6 +18,7 @@
   import { VideoStoryPlayer, storySchedule, actionLabel } from "../engine/video-story";
   import type { VideoStory } from "../engine/video-story";
   import VideoStoryPanel from "./VideoStoryPanel.svelte";
+  import VideoStatesPanel from "./VideoStatesPanel.svelte";
   import { flow } from "../flow/state";
   import { api, apiGet } from "../flow/api";
   import { toast } from "../flow/toast";
@@ -944,6 +945,8 @@
       {#if activeDoc?.story}
         <VideoStoryPanel story={activeDoc.story} disabled={busy || aiBusy || Boolean(preview)}
           onChange={(story) => void editStory(story)} onPolish={(story) => void editStory(story, true)} onSeek={(time) => { playing = false; playhead = time; }} />
+        <VideoStatesPanel story={activeDoc.story} disabled={busy || aiBusy || Boolean(preview)}
+          onChange={(story) => void editStory(story)} onSeek={(time) => { playing = false; playhead = time; }} />
       {/if}
       <div class="tlw-panel-title">Слои и группы</div>
       {#if !activeDoc}

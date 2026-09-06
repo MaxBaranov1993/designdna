@@ -231,7 +231,7 @@
         "storyTarget": {
           "type": "string",
           "maxLength": 500,
-          "pattern": "^s[0-9]+(\\.children\\.[0-9]+)*$"
+          "pattern": "^(s[0-9]+(\\.children\\.[0-9]+)*|overlay\\.[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)?)$"
         }
       }
     },
@@ -353,7 +353,7 @@
         "pages": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 8,
+          "maxItems": 24,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -373,6 +373,16 @@
               },
               "ir": {
                 "type": "object"
+              },
+              "generatedFrom": {
+                "$ref": "#/$defs/identifier"
+              },
+              "overlays": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "object"
+                }
               }
             }
           }
@@ -440,7 +450,8 @@
           "enum": [
             "cut",
             "fade",
-            "motion"
+            "motion",
+            "state"
           ]
         },
         "easing": {

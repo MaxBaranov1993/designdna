@@ -1,12 +1,13 @@
 import { IRRenderer } from "./renderer";
 import { TimelineEngine } from "./timeline";
 import { motionEase, type StoryEasing } from "./story-motion";
+import { overlayTargets, renderStoryOverlays, type StoryOverlay } from "./story-overlays";
 
-export type StoryPage = { id: string; name: string; ir: Record<string, any> };
+export type StoryPage = { id: string; name: string; ir: Record<string, any>; generatedFrom?: string; overlays?: StoryOverlay[] };
 export type StoryAction = {
   id: string; type: "move" | "click" | "type" | "wait" | "scroll" | "navigate";
   pageId: string; duration: number; target?: string; text?: string; y?: number;
-  toPageId?: string; transition?: "cut" | "fade" | "motion"; easing?: StoryEasing;
+  toPageId?: string; transition?: "cut" | "fade" | "motion" | "state"; easing?: StoryEasing;
 };
 export type VideoStory = { pages: StoryPage[]; initialPageId: string; actions: StoryAction[] };
 export const actionLabel: Record<StoryAction["type"], string> = {
@@ -16,7 +17,7 @@ export function storySchedule(story: VideoStory) {
   let time = 0;
   return story.actions.map((action) => { const start = time; time += action.duration; return { ...action, start, end: time }; });
 }
-export function storyTargets(ir: Record<string, any>) {
+export function storyTargets(ir: Record<string, any>, overlays: StoryOverlay[] = []) {
   const result: Array<{ id: string; label: string; kind: string }> = [];
   const add = (section: number, path: string, node: any, kind?: string) => {
     const label = [node.label, node.text, node.placeholder, node.name, node.title].find((v) => typeof v === "string" && v);
@@ -32,10 +33,11 @@ export function storyTargets(ir: Record<string, any>) {
     (props.fields || []).forEach((field: any, j: number) => add(i, `props.fields.${j}`, field, "input"));
     if (props.cta && typeof props.cta === "object") add(i, "props.cta", props.cta, "button");
   });
-  return result.slice(0, 512);
+  return [...result.slice(0, 512), ...overlayTargets(overlays)];
 }
 
 export function storyTarget(root: HTMLElement, target: string): HTMLElement | null {
+  if (target.startsWith("overlay.")) return Array.from(root.querySelectorAll<HTMLElement>("[data-story-target]")).find(el => el.dataset.storyTarget === target) || null;
   const match = /^s(\d+)(?:\.(.+))?$/.exec(target);
   if (!match) return null;
   const section = root.querySelector<HTMLElement>(`[data-ir-sec="${Number(match[1])}"]`);
@@ -54,7 +56,7 @@ function actionTarget(root: HTMLElement, id: string): HTMLElement {
 
 /** One deterministic DOM player for editor and frame export. Never dispatches events. */
 export class VideoStoryPlayer {
-  private roots = new Map<string, { outer: HTMLElement; inner: HTMLElement; scale: number }>();
+  private roots = new Map<string, { outer: HTMLElement; inner: HTMLElement; scale: number; panels: HTMLElement[] }>();
   private fields = new Map<string, { el: HTMLElement; initial: string; overlay?: HTMLElement }>();
   private mapped: Array<{el: HTMLElement; id: string; transform: string; opacity: number; visibility: string}> = [];
   private cursor: HTMLElement;
@@ -77,7 +79,8 @@ export class VideoStoryPlayer {
       const artWidth = Number(inner.querySelector<HTMLElement>("[data-design-width]")?.dataset.designWidth) || Number(page.ir.frame?.width) || 1440;
       const scale = document.composition.width / artWidth;
       Object.assign(inner.style, { width: artWidth + "px", transformOrigin: "top left" });
-      this.roots.set(page.id, { outer, inner, scale });
+      const panels = renderStoryOverlays(inner, page.ir, page.overlays || [], storyTarget);
+      this.roots.set(page.id, { outer, inner, scale, panels });
       for (const layer of document.layers || []) {
         if (layer.type !== "component" || (layer.pageId || this.story.pages[0].id) !== page.id) continue;
         let target = layer.storyTarget;
@@ -154,12 +157,12 @@ export class VideoStoryPlayer {
     const scrolls: Record<string, number> = {};
     const typed: Record<string, string> = {};
     let pageId = this.story.initialPageId;
-    let x = 32, y = 32, visible = false, pulse = 0, cursorOpacity = 0, cursorScale = 1;
-    let fade: { from: string; to: string; progress: number; motion: boolean } | null = null;
+    let x = this.document.composition.width / 2, y = this.document.composition.height / 2, visible = false, pulse = 0, cursorOpacity = 0, cursorScale = 1;
+    let fade: { from: string; to: string; progress: number; motion: boolean; state: boolean } | null = null;
     const applyScroll = () => {
       for (const [id, root] of this.roots) root.inner.style.transform = `scale(${root.scale}) translateY(${- (scrolls[id] || 0)}px)`;
     };
-    for (const root of this.roots.values()) root.outer.style.transform = "none";
+    for (const root of this.roots.values()) { root.outer.style.transform = "none"; for (const panel of root.panels) panel.style.translate = "0px 0px"; }
     applyScroll();
     for (const action of storySchedule(this.story)) {
       if (t < action.start) break;
@@ -167,8 +170,10 @@ export class VideoStoryPlayer {
       const ease = (v: number) => motionEase(v, action.easing);
       if (action.type === "navigate") {
         const to = action.toPageId!;
-        fade = action.transition !== "cut" && p < 1 ? { from: pageId, to, progress: ease(p), motion: action.transition === "motion" } : null;
-        cursorOpacity *= fade ? 1 - motionEase(Math.min(1, p * 2)) : 0;
+        const samePageState = action.transition === "state";
+        fade = action.transition !== "cut" && p < 1 ? { from: pageId, to, progress: ease(p), motion: action.transition === "motion", state: samePageState } : null;
+        if (samePageState) { scrolls[to] = scrolls[pageId] || 0; applyScroll(); }
+        else cursorOpacity *= fade ? 1 - motionEase(Math.min(1, p * 2)) : 0;
         pageId = to; visible = visible && cursorOpacity > 0;
       } else if (action.type === "scroll") {
         const root = this.roots.get(pageId)!;
@@ -221,6 +226,7 @@ export class VideoStoryPlayer {
       root.outer.style.zIndex = fade ? id === fade.to ? "2" : id === fade.from ? "1" : "0" : "0";
       root.outer.style.opacity = String(opacity);
       root.outer.style.visibility = opacity > 0 ? "visible" : "hidden";
+      if (fade?.state && id === fade.to) for (const panel of root.panels) panel.style.translate = `0px ${-8 * (1 - fade.progress)}px`;
     }
     this.cursor.style.visibility = visible ? "visible" : "hidden";
     this.cursor.style.opacity = String(cursorOpacity);

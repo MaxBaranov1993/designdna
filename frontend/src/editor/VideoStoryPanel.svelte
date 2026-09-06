@@ -8,9 +8,9 @@
   const rows = $derived(storySchedule(story));
   const action = $derived(story.actions.find((a) => a.id === selected));
   const page = $derived(story.pages.find((p) => p.id === action?.pageId));
-  const targets = $derived(page ? storyTargets(page.ir).filter((t) => action?.type !== "type" || t.kind === "input") : []);
+  const targets = $derived(page ? storyTargets(page.ir, page.overlays).filter((t) => action?.type !== "type" || t.kind === "input") : []);
   const pageName = (id: string) => story.pages.find((p) => p.id === id)?.name || id;
-  const targetName = (a: StoryAction) => storyTargets(story.pages.find((p) => p.id === a.pageId)?.ir || {}).find((t) => t.id === a.target)?.label || "";
+  const targetName = (a: StoryAction) => { const p = story.pages.find(p => p.id === a.pageId); return storyTargets(p?.ir || {}, p?.overlays).find(t => t.id === a.target)?.label || ""; };
   function change(patch: Partial<StoryAction>) {
     onChange({ ...story, actions: story.actions.map((a) => a.id === selected ? { ...a, ...patch } : a) });
   }
@@ -24,7 +24,7 @@
     const last = story.actions.at(-1);
     const pageId = last?.type === "navigate" ? last.toPageId! : last?.pageId || story.initialPageId;
     const page = story.pages.find((p) => p.id === pageId)!;
-    const target = storyTargets(page.ir).find((t) => kind === "type" ? t.kind === "input" : t.kind === "button") || storyTargets(page.ir)[0];
+    const target = storyTargets(page.ir, page.overlays).find((t) => kind === "type" ? t.kind === "input" : t.kind === "button") || storyTargets(page.ir, page.overlays)[0];
     const next: StoryAction = { id: "action-" + crypto.randomUUID(), type: kind, pageId, duration: motionDurations[kind], easing: "soft" };
     if (["move", "click", "type"].includes(kind)) next.target = target?.id;
     if (kind === "type") next.text = "";
@@ -58,7 +58,7 @@
       {#if action.type === "type"}<label>Текст<textarea aria-label="Текст для ввода" value={action.text || ""} onchange={(e) => change({ text: e.currentTarget.value })}></textarea></label>{/if}
       {#if action.type === "scroll"}<label>Прокрутить к<select aria-label="Цель прокрутки" value={action.target || ""} onchange={(e) => change({ target: e.currentTarget.value || undefined, y: action.y || 0 })}><option value="">Позиция в пикселях</option>{#each targets as t}<option value={t.id}>{t.label}</option>{/each}</select></label>{#if !action.target}<label>Прокрутить до, px<input aria-label="Позиция прокрутки" type="number" min="0" max="100000" value={action.y} onchange={(e) => change({ y: Number(e.currentTarget.value) })} /></label>{/if}{/if}
       {#if action.type === "navigate"}<label>Перейти на<select aria-label="Страница назначения" value={action.toPageId || ""} onchange={(e) => change({ toPageId: e.currentTarget.value })}>{#each story.pages.filter((p) => p.id !== action.pageId) as p}<option value={p.id}>{p.name}</option>{/each}</select></label>
-        <label>Переход<select aria-label="Эффект перехода" value={action.transition || "fade"} onchange={(e) => change({ transition: e.currentTarget.value as "cut" | "fade" | "motion" })}><option value="cut">Смена кадра</option><option value="fade">Растворение</option><option value="motion">Motion · плавное появление</option></select></label>{/if}
+        <label>Переход<select aria-label="Эффект перехода" value={action.transition || "fade"} onchange={(e) => change({ transition: e.currentTarget.value as "cut" | "fade" | "motion" | "state" })}><option value="state">Смена состояния</option><option value="cut">Смена кадра</option><option value="fade">Растворение</option><option value="motion">Motion · плавное появление</option></select></label>{/if}
       {#if action.type !== "wait"}<label>Плавность<select aria-label="Плавность движения" value={action.easing || "soft"} onchange={(e) => change({ easing: e.currentTarget.value as StoryEasing })}><option value="soft">Ease in-out · мягко</option><option value="ease-in">Ease in · разгон</option><option value="ease-out">Ease out · торможение</option><option value="linear">Равномерно</option></select></label>{/if}
       <label>Длительность, с<input aria-label="Длительность действия" type="number" step="0.1" min="0.1" max="60" value={action.duration / 1000} onchange={(e) => change({ duration: Math.round(Number(e.currentTarget.value) * 1000) })} /></label>
       <div class="story-order"><button title="Раньше" onclick={() => move(-1)}>↑</button><button title="Позже" onclick={() => move(1)}>↓</button><button onclick={() => onChange({ ...story, actions: story.actions.filter((a) => a.id !== selected) })}>Удалить</button></div>
