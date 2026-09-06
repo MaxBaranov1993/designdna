@@ -24,6 +24,7 @@ class _Recorder:
         self.returncode = returncode
 
     def __call__(self, args, **kwargs):
+        kwargs["input"] = kwargs.pop("stdin_text")
         self.calls.append({"args": args, **kwargs})
         # codex пишет финальное сообщение в файл из -o
         if "-o" in args:
@@ -44,7 +45,7 @@ def cli_env(monkeypatch, tmp_path):
 
 def test_codex_prompt_goes_through_stdin_with_model_effort_and_last_message(cli_env, monkeypatch):
     rec = _Recorder(last_message='{"ok": 1}')
-    monkeypatch.setattr(cli_llm.subprocess, "run", rec)
+    monkeypatch.setattr(cli_llm, "_run", rec)
     out = cli_llm.chat("codex", [{"role": "system", "content": "SYS"}, {"role": "user", "content": "USER"}],
                        model="gpt-5.6-sol", effort="medium", timeout=30)
     assert out == '{"ok": 1}'
@@ -60,7 +61,7 @@ def test_codex_prompt_goes_through_stdin_with_model_effort_and_last_message(cli_
 
 def test_codex_images_become_files_passed_with_i(cli_env, monkeypatch):
     rec = _Recorder(last_message="seen")
-    monkeypatch.setattr(cli_llm.subprocess, "run", rec)
+    monkeypatch.setattr(cli_llm, "_run", rec)
     messages = [{"role": "user", "content": [
         {"type": "text", "text": "оцени"},
         {"type": "image_url", "image_url": {"url": "data:image/png;base64," + PNG_1PX}},
@@ -75,14 +76,14 @@ def test_codex_images_become_files_passed_with_i(cli_env, monkeypatch):
 def test_codex_empty_answer_raises_with_stderr_tail(cli_env, monkeypatch):
     rec = _Recorder(last_message="", returncode=2)
     rec.stdout = ""
-    monkeypatch.setattr(cli_llm.subprocess, "run", rec)
+    monkeypatch.setattr(cli_llm, "_run", rec)
     with pytest.raises(RuntimeError, match="Codex CLI"):
         cli_llm.chat("codex", [{"role": "user", "content": "x"}])
 
 
 def test_claude_parses_json_envelope_and_flags(cli_env, monkeypatch):
     rec = _Recorder(stdout=json.dumps({"type": "result", "is_error": False, "result": " {\"a\":1} "}))
-    monkeypatch.setattr(cli_llm.subprocess, "run", rec)
+    monkeypatch.setattr(cli_llm, "_run", rec)
     messages = [{"role": "user", "content": [
         {"type": "text", "text": "смотри"},
         {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + PNG_1PX}},
@@ -98,7 +99,7 @@ def test_claude_parses_json_envelope_and_flags(cli_env, monkeypatch):
 
 def test_claude_error_envelope_raises(cli_env, monkeypatch):
     rec = _Recorder(stdout=json.dumps({"is_error": True, "result": "not logged in"}))
-    monkeypatch.setattr(cli_llm.subprocess, "run", rec)
+    monkeypatch.setattr(cli_llm, "_run", rec)
     with pytest.raises(RuntimeError, match="not logged in"):
         cli_llm.chat("claude", [{"role": "user", "content": "x"}])
 

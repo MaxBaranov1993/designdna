@@ -215,7 +215,7 @@ Allowed presets: fade-in, fade-in-up, zoom-in, zoom-spotlight, pan-down, cta-pul
 Do not remove or replace existing actions to achieve a local requested change. Do not redesign components.'''
 
 
-def direct_story(timeline: dict, prompt: str, provider: str, effort: str) -> tuple[dict, dict, dict]:
+def direct_story(timeline: dict, prompt: str, provider: str, effort: str, *, conversation: list[dict] | None = None) -> tuple[dict, dict, dict]:
     from ir.timeline import build_change_set, apply_change_set, preset_operations, validate
     story = timeline["story"]
     context = {"pages": [{"id": p["id"], "name": p["name"], "targets": targets(p["ir"])} for p in story["pages"]],
@@ -223,7 +223,8 @@ def direct_story(timeline: dict, prompt: str, provider: str, effort: str) -> tup
                "layers": [{"id": l["id"], "name": l["name"], "pageId": l.get("pageId")} for l in timeline["layers"]],
                "duration": timeline["composition"]["duration"]}
     try:
-        raw = llm.chat(provider, [{"role": "system", "content": SYSTEM},
+        raw = llm.chat(provider, [{"role": "system", "content": SYSTEM + "\nUse previous conversation to interpret follow-up answers. Current timeline is authoritative; unapplied proposals in the conversation are not existing actions."},
+            *(conversation or []),
             {"role": "user", "content": json.dumps(context, ensure_ascii=False) + "\nUSER REQUEST:\n" + prompt}],
             0.2, role="timeline_director", reasoning_effort=effort, timeout=120)
     except Exception as exc:

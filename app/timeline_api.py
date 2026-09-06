@@ -81,12 +81,18 @@ class TimelineDocumentRequest(BaseModel):
     timeline: dict
 
 
+class TimelineConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=16000)
+
+
 class TimelineAssistRequest(BaseModel):
     timeline: dict
     prompt: str
     provider: Literal["openai", "astra", "codex", "claude"] = "openai"
     effort: Literal["medium", "high", "max"] = "medium"
     require_llm: bool = False
+    conversation: list[TimelineConversationMessage] = Field(default_factory=list, max_length=24)
 
 
 class TimelineRenderRequest(BaseModel):
@@ -202,7 +208,8 @@ def timeline_assist(req: TimelineAssistRequest):
         return _err(422, "Таймлайн невалиден до применения: " + "; ".join(errors[:3]))
     from timeline_director import direct
     try:
-        preview_timeline, change_set, meta = direct(req.timeline, req.prompt, provider=req.provider, effort=req.effort, require_llm=req.require_llm)
+        preview_timeline, change_set, meta = direct(req.timeline, req.prompt, provider=req.provider, effort=req.effort, require_llm=req.require_llm,
+            conversation=[message.model_dump() for message in req.conversation])
     except ValueError as e:
         return _err(422, str(e))
     return {

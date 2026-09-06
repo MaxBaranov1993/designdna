@@ -482,7 +482,16 @@ export type VideoRevision = {
 };
 export type VideoRevisionChange = Pick<VideoRevision, "kind" | "label"> &
   Partial<Pick<VideoRevision, "prompt" | "provider" | "effort" | "restoredFrom">>;
+export type VideoChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+  provider?: "codex" | "claude";
+  kind?: "message" | "question" | "error" | "preview" | "applied" | "cancelled";
+};
 export type TimelineNodeData = {
+  chatMessages?: VideoChatMessage[];
   inputs?: string[];
   pageNames?: Record<string, string>;
   sourcePages?: Array<{ id: string; name: string; ir: IRObject }>;

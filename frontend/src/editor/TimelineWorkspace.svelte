@@ -11,7 +11,7 @@
    * более новые правки; при закрытии несинхронизированный остаток сбрасывается
    * немедленно). ИИ-правки приходят через timeline-change-set как ПРЕВЬЮ:
    * канонический таймлайн ноды не меняется до явного «Применить». */
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import ProviderPicker from "../components/ProviderPicker.svelte";
   import { TimelineEngine, Timeline } from "../engine/timeline";
   import { IRRenderer } from "../engine/renderer";
@@ -23,7 +23,7 @@
   import { toast } from "../flow/toast";
   import { resizeTimeline, moveTimelineKey, setTimelineKeyValue } from "./timeline-edits";
   import { bodyPortal } from "../lib/bodyPortal";
-  import type { TimelineNodeData, VideoRevision, VideoRevisionChange } from "../flow/types";
+  import type { TimelineNodeData, VideoRevision, VideoRevisionChange, VideoChatMessage } from "../flow/types";
 
   let { nodeId, data, onClose, startWithPrompt = false }: { nodeId: number; data: TimelineNodeData; onClose: () => void; startWithPrompt?: boolean } = $props();
 
@@ -50,6 +50,45 @@
   let playing = $state(false);
   let pxPerMs = $state(0.12);
   let aiPrompt = $state("");
+  const chatMessages = $derived(data.chatMessages || []);
+  let chatLog = $state<HTMLDivElement | null>(null);
+  let chatInput = $state<HTMLTextAreaElement | null>(null);
+  let followChat = $state(true);
+  let aiRequestSequence = 0;
+  let aiRunId: string | null = null;
+  let aiController: AbortController | null = null;
+  let aiStartedAt = $state(0);
+  let aiElapsed = $state(0);
+  $effect(() => {
+    if (!aiBusy) return;
+    const timer = setInterval(() => { aiElapsed = Math.floor((Date.now() - aiStartedAt) / 1000); }, 1000);
+    return () => clearInterval(timer);
+  });
+  $effect(() => {
+    chatMessages.length; aiBusy; preview;
+    if (followChat) void tick().then(() => { if (chatLog) chatLog.scrollTop = chatLog.scrollHeight; });
+  });
+  function appendChat(role: VideoChatMessage["role"], content: string, kind: VideoChatMessage["kind"] = "message", provider: "codex" | "claude" = accountProvider) {
+    const entry: VideoChatMessage = { id: crypto.randomUUID(), role, content: content.slice(0, 16000), createdAt: new Date().toISOString(), kind, provider };
+    $flow.setNodeData(nodeId, { chatMessages: [...(data.chatMessages || []), entry].slice(-100) });
+    followChat = true;
+    return entry.id;
+  }
+  function markChat(id: string, kind: VideoChatMessage["kind"]) {
+    $flow.setNodeData(nodeId, { chatMessages: (data.chatMessages || []).map(entry => entry.id === id ? { ...entry, kind } : entry) });
+  }
+  function stopAiDirector() {
+    aiRequestSequence++;
+    aiController?.abort();
+    if (aiRunId) {
+      void window.designDNA?.api?.cancel("long", aiRunId).catch(() => undefined);
+      void api(`/api/runs/${aiRunId}/cancel`, {}).catch(() => undefined);
+    }
+    aiRunId = null;
+    aiBusy = false;
+    appendChat("assistant", "Запрос остановлен. Можно изменить сообщение и отправить снова.", "cancelled");
+    void tick().then(() => chatInput?.focus());
+  }
   let showVersions = $state(false);
   let pendingRevision: VideoRevisionChange | undefined;
   const accountProvider = $derived(data.provider === "claude" ? "claude" : "codex");
@@ -79,6 +118,7 @@
 
   // Превью ИИ-монтажа: канонический документ не трогается до «Применить».
   type AiPreview = {
+    chatMessageId: string;
     prompt: string;
     provider: "codex" | "claude";
     effort: "medium" | "high" | "max";
@@ -305,6 +345,8 @@
   $effect(() => {
     return () => {
       disposed = true;
+      aiRequestSequence++;
+      aiController?.abort();
       removeDragListeners();
       flushPendingSync();
     };
@@ -320,7 +362,7 @@
   async function closeWorkspace() {
     if (busy || aiBusy) { say("Дождитесь операции или отмените рендер"); return; }
     if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
-    if (await syncNow()) onClose();
+    if (await syncNow()) { if (preview) cancelPreview(); onClose(); }
   }
 
   function workspaceKey(event: KeyboardEvent) {
@@ -406,18 +448,30 @@
     const prompt = aiPrompt.trim();
     if (!doc || !prompt || aiBusy || busy || preview) return;
     aiBusy = true;
+    const requestSequence = ++aiRequestSequence;
+    const runId = crypto.randomUUID();
+    aiRunId = runId;
+    aiController = new AbortController();
+    aiStartedAt = Date.now(); aiElapsed = 0;
+    const conversation = chatMessages.filter(entry => entry.kind !== "error").slice(-24)
+      .map(entry => ({ role: entry.role, content: entry.content.slice(0, 15800) + (entry.kind === "preview" ? "\n[Предложение не применено]" : entry.kind === "applied" ? "\n[Применено]" : entry.kind === "cancelled" ? "\n[Отменено]" : "") }));
     const provider = accountProvider;
     const effort = data.effort || "medium";
-    $flow.setNodeData(nodeId, { prompt, provider });
+    appendChat("user", prompt);
+    aiPrompt = "";
+    $flow.setNodeData(nodeId, { prompt: "", provider });
     say("ИИ-режиссёр готовит монтаж...");
     try {
       if (!await syncNow()) throw new Error("Сначала сохраните текущие правки");
+      if (disposed || requestSequence !== aiRequestSequence) return;
       const resp = await api<{
         timeline?: AnyDoc; changeSet?: AnyDoc; planSource?: string; warning?: string | null; error?: string;
-      }>("/api/timeline/assist", { timeline: doc, prompt, provider, effort, require_llm: true });
-      if (disposed || $flow.getNodeIrRevision(nodeId) !== sourceRevision) return;
+      }>("/api/timeline/assist", { timeline: doc, prompt, provider, effort, require_llm: true, conversation }, { signal: aiController.signal, runId });
+      if (disposed || requestSequence !== aiRequestSequence) return;
+      if ($flow.getNodeIrRevision(nodeId) !== sourceRevision) throw new Error("Исходная страница изменилась во время запроса. Откройте редактор заново и повторите сообщение.");
       if (resp.error || !resp.timeline || !resp.changeSet) throw new Error(resp.error || "пустой ответ");
       preview = {
+        chatMessageId: appendChat("assistant", String(resp.changeSet.intent || "Подготовил изменения монтажа.") + (resp.warning ? "\n\n" + resp.warning : ""), "preview", provider),
         prompt, provider, effort,
         timeline: resp.timeline,
         changeSet: resp.changeSet,
@@ -428,11 +482,13 @@
       };
       say("Превью готово — проверьте монтаж и примените или отмените");
     } catch (error) {
+      if (disposed || requestSequence !== aiRequestSequence) return;
       const msg = error instanceof Error ? error.message : String(error);
+      const question = msg.startsWith("Нужно уточнить:");
+      appendChat("assistant", question ? msg.replace(/^Нужно уточнить:\s*/, "") : msg, question ? "question" : "error", provider);
       say("ИИ-режиссёр: " + msg);
-      toast("ИИ-режиссёр: " + msg, "error");
     } finally {
-      aiBusy = false;
+      if (requestSequence === aiRequestSequence) { aiBusy = false; aiRunId = null; void tick().then(() => chatInput?.focus()); }
     }
   }
 
@@ -451,12 +507,14 @@
       docSeq++;
       pendingRevision = { kind: "prompt", label: applied.intent, prompt: applied.prompt, provider: applied.provider, effort: applied.effort };
       lastChangeSet = applied.changeSet;
+      markChat(applied.chatMessageId, "applied");
       preview = null;
       aiPrompt = "";
       say("Применено: " + applied.intent);
       await syncNow();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      appendChat("assistant", "Не удалось применить монтаж: " + msg, "error");
       say("Применение: " + msg);
       toast("ИИ-режиссёр: " + msg, "error");
     } finally {
@@ -465,6 +523,7 @@
   }
 
   function cancelPreview() {
+    if (preview) markChat(preview.chatMessageId, "cancelled");
     preview = null;
     say("Превью отменено — таймлайн не изменён");
   }
@@ -860,24 +919,8 @@
       onclick={() => void exportCss()}>Экспорт CSS</button>
   </div>
 
-  <div class="tlw-ai">
-    <div inert={aiBusy || busy || Boolean(preview)}>
-      <ProviderPicker accountsOnly provider={accountProvider} effort={data.effort || "medium"}
-        onChange={(choice) => $flow.setNodeData(nodeId, choice)} />
-    </div>
-    <input class="tlw-ai-input" data-act="ai-prompt"
-      aria-label="Промпт ИИ-режиссёра"
-      placeholder="Например: заполни форму, прокрути к кнопке и перейди на страницу «Готово»"
-      bind:value={aiPrompt} disabled={aiBusy || busy || !doc || Boolean(preview)}
-      oninput={(event) => $flow.setNodeData(nodeId, { prompt: event.currentTarget.value })}
-      onkeydown={(e) => { if (e.key === "Enter") void runAiDirector(); }} />
-    <button class="tlw-btn primary" data-act="ai-run"
-      disabled={aiBusy || busy || !doc || !aiPrompt.trim() || Boolean(preview)}
-      onclick={() => void runAiDirector()}>
-      {aiBusy ? "..." : "Составить монтаж"}
-    </button>
-  </div>
-
+  <div class="tlw-workspace">
+  <div class="tlw-editor">
   {#if showVersions}
     <section class="video-versions" aria-label="История монтажа">
       <div class="video-versions-title">Вернитесь к версии и продолжите новым промптом. Последующие версии сохранятся.</div>
@@ -896,21 +939,7 @@
     </section>
   {/if}
 
-  {#if preview}
-    <div class="tlw-preview" role="region" aria-label="Превью ИИ-монтажа" data-act="ai-preview">
-      <span class="tlw-preview-main">
-        Превью: {preview.intent} · операций: {preview.operations} ·
-        план: {preview.planSource === "llm" ? "LLM" : "детерминированный"}
-      </span>
-      {#if preview.warning}<span class="tlw-preview-warn" role="alert">{preview.warning}</span>{/if}
-      <span class="tlw-spacer"></span>
-      <button class="tlw-btn primary" data-act="ai-apply" disabled={busy || aiBusy}
-        onclick={() => void applyPreview()}>{busy ? "..." : "Применить"}</button>
-      <button class="tlw-btn" data-act="ai-cancel" disabled={busy || aiBusy} onclick={cancelPreview}>Отменить</button>
-    </div>
-  {/if}
-
-  <div class="tlw-body">
+  <div class="tlw-body" class:hasSelection={Boolean(selectedLayer)}>
     <div class="tlw-layers">
       {#if activeDoc?.story}
         <VideoStoryPanel story={activeDoc.story} disabled={busy || aiBusy || Boolean(preview)}
@@ -1065,9 +1094,131 @@
       <span class="tlw-hint">клик по линейке — скраб (←/→ — кадр) · ◆ — кейфрейм (тянуть, ←/→ — сдвиг, Del — удалить)</span>
     </div>
   </div>
+  </div>
+  <aside class="video-chat" aria-label="Чат с ИИ-режиссёром" data-act="video-chat">
+    <header class="video-chat-header">
+      <div><strong>Чат о видео</strong><span>Сценарий, правки и уточнения</span></div>
+      <span class="video-chat-presence" class:working={aiBusy}>{aiBusy ? "Думает" : "На связи"}</span>
+    </header>
+    <div class="video-chat-model" inert={aiBusy || busy || Boolean(preview)}>
+      <ProviderPicker accountsOnly provider={accountProvider} effort={data.effort || "medium"}
+        onChange={(choice) => $flow.setNodeData(nodeId, choice)} />
+    </div>
+    <div class="video-chat-log" role="log" aria-label="Переписка о видео" aria-live="polite" aria-relevant="additions text"
+      bind:this={chatLog} onscroll={() => { if (chatLog) followChat = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 60; }}>
+      {#if !chatMessages.length}
+        <div class="video-chat-welcome">
+          <span class="video-chat-symbol" aria-hidden="true">↗</span>
+          <h2>Давайте соберём историю</h2>
+          <p>Опишите, что должно происходить на странице. Здесь появятся ответ, вопросы и предложенный монтаж.</p>
+          <button type="button" onclick={() => { aiPrompt = "Плавно проведи курсор к основной кнопке, нажми её и задержись на результате."; chatInput?.focus(); }}>Курсор и нажатие <span aria-hidden="true">↗</span></button>
+          <button type="button" onclick={() => { aiPrompt = "Сделай движения мягче: плавный разгон и торможение, больше пауз между действиями."; chatInput?.focus(); }}>Смягчить анимацию <span aria-hidden="true">↗</span></button>
+        </div>
+      {/if}
+      {#each chatMessages as entry (entry.id)}
+        <article class="video-chat-message" class:user={entry.role === "user"} class:error={entry.kind === "error"} data-act="chat-message" data-role={entry.role}>
+          <div class="video-chat-author">{entry.role === "user" ? "Вы" : entry.provider === "claude" ? "Claude" : "GPT"}
+            <time datetime={entry.createdAt}>{new Date(entry.createdAt).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})}</time>
+          </div>
+          {#if entry.kind === "question"}<span class="video-chat-label">Уточнение</span>{/if}
+          {#if entry.kind === "error"}<span class="video-chat-label">Не удалось выполнить запрос</span>{/if}
+          <div class="video-chat-text">{entry.content}</div>
+          {#if preview?.chatMessageId === entry.id}
+            <div class="tlw-preview" role="region" aria-label="Превью ИИ-монтажа" data-act="ai-preview">
+              <span>Монтаж показан в плеере. Проверьте результат перед применением.</span>
+              <div class="video-chat-actions">
+                <button class="tlw-btn" onclick={() => { playhead = 0; playing = true; }}>▶ Смотреть</button>
+                <button class="tlw-btn primary" data-act="ai-apply" disabled={busy || aiBusy} onclick={() => void applyPreview()}>{busy ? "Применяю…" : "Применить"}</button>
+                <button class="tlw-btn" data-act="ai-cancel" disabled={busy || aiBusy} onclick={cancelPreview}>Отменить</button>
+              </div>
+            </div>
+          {:else if entry.kind === "applied"}<span class="video-chat-outcome">✓ Изменения применены</span>
+          {:else if entry.kind === "preview"}<span class="video-chat-outcome">Предложение не применено</span>
+          {:else if entry.kind === "cancelled"}<span class="video-chat-outcome">Отменено</span>{/if}
+          {#if entry.role === "user" && !aiBusy && !preview}
+            <button class="video-chat-reuse" aria-label="Редактировать сообщение" onclick={() => { aiPrompt = entry.content; chatInput?.focus(); }}>Повторить или изменить</button>
+          {/if}
+        </article>
+      {/each}
+      {#if aiBusy}
+        <div class="video-chat-thinking" role="status"><span class="video-chat-pulse"></span>{accountProvider === "claude" ? "Claude" : "GPT"} готовит ответ <span>{aiElapsed} с</span></div>
+      {/if}
+    </div>
+    <div class="video-chat-composer">
+      {#if !followChat && chatMessages.length}
+        <button class="video-chat-latest" onclick={() => { followChat = true; if (chatLog) chatLog.scrollTop = chatLog.scrollHeight; }}>К последнему ответу ↓</button>
+      {/if}
+      {#if preview}<p class="video-chat-compose-hint">Примените или отмените предложенный монтаж, чтобы продолжить.</p>{/if}
+      <div class="video-chat-input-box">
+        <textarea class="tlw-ai-input" data-act="ai-prompt" bind:this={chatInput} aria-label="Промпт ИИ-режиссёра" rows="3" maxlength="6000"
+          placeholder={chatMessages.length ? "Ответьте или опишите следующую правку…" : "Что должно происходить в ролике?"}
+          bind:value={aiPrompt} disabled={busy || !doc || Boolean(preview)}
+          oninput={(event) => $flow.setNodeData(nodeId, { prompt: event.currentTarget.value })}
+          onkeydown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); void runAiDirector(); } }}></textarea>
+        <div class="video-chat-send-row"><span>Enter — отправить · Shift+Enter — строка</span>
+          {#if aiBusy}<button class="tlw-btn" data-act="ai-stop" aria-label="Остановить ответ" onclick={stopAiDirector}>■ Стоп</button>
+          {:else}<button class="tlw-btn primary" data-act="ai-run" aria-label="Отправить сообщение" disabled={busy || !doc || !aiPrompt.trim() || Boolean(preview)} onclick={() => void runAiDirector()}>↑ Отправить</button>{/if}
+        </div>
+      </div>
+      <p class="video-chat-footnote">Переписка сохраняется в этой видеоноде.</p>
+    </div>
+  </aside>
+  </div>
 </div>
 
 <style>
+  .tlw-workspace { display: grid; grid-template-columns: minmax(0, 1fr) clamp(330px, 25vw, 420px); flex: 1; min-height: 0; }
+  .tlw-editor { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .video-chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-left: 1px solid var(--dna-border-strong); background: var(--dna-panel); }
+  .video-chat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 20px 20px 12px; }
+  .video-chat-header strong { display: block; color: var(--dna-text); font-size: 16px; font-weight: 650; letter-spacing: -.25px; }
+  .video-chat-header div > span { display: block; color: var(--dna-muted); font-size: 11px; margin-top: 5px; }
+  .video-chat-presence { font-size: 10px; color: var(--dna-muted); white-space: nowrap; }
+  .video-chat-presence.working { color: var(--dna-action); }
+  .video-chat-model { padding: 0 20px 14px; border-bottom: 1px solid var(--dna-border); }
+  .video-chat-model :global(select) { width: 100%; }
+  .video-chat-log { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px 18px; scrollbar-gutter: stable; }
+  .video-chat-welcome { padding: 20px 4px; }
+  .video-chat-symbol { display: grid; place-items: center; width: 36px; height: 36px; color: var(--dna-action); border: 1px solid var(--dna-border-strong); border-radius: 12px; font-size: 24px; }
+  .video-chat-welcome h2 { color: var(--dna-text); font-size: 20px; line-height: 1.35; margin: 18px 0 10px; letter-spacing: -.4px; }
+  .video-chat-welcome p { font-size: 13px; line-height: 1.65; color: var(--dna-muted); margin-bottom: 24px; }
+  .video-chat-welcome button { display: flex; width: 100%; justify-content: space-between; text-align: left; background: transparent; color: var(--dna-text-2); border: 1px solid var(--dna-border); border-radius: 10px; padding: 12px; margin-top: 8px; cursor: pointer; }
+  .video-chat-welcome button:hover { border-color: var(--dna-action); }
+  .video-chat-message { margin-bottom: 26px; overflow-wrap: anywhere; }
+  .video-chat-message.user { margin-left: 20px; background: var(--dna-elevated); border: 1px solid var(--dna-border); border-radius: 14px 14px 4px 14px; padding: 13px 14px; }
+  .video-chat-author { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; color: var(--dna-text); font-size: 12px; font-weight: 650; }
+  .video-chat-author time { color: var(--dna-faint); font-weight: 400; font-size: 10px; }
+  .video-chat-text { white-space: pre-wrap; line-height: 1.7; font-size: 13px; color: var(--dna-text-2); user-select: text; }
+  .video-chat-label { display: block; font-weight: 600; color: var(--dna-action); margin-bottom: 8px; font-size: 11px; }
+  .video-chat-message.error { border-left: 2px solid var(--dna-action); padding-left: 12px; }
+  .video-chat-reuse { display: block; padding: 0; margin-top: 12px; background: none; border: none; color: var(--dna-muted); font-size: 10px; cursor: pointer; }
+  .video-chat-reuse:hover { color: var(--dna-text); text-decoration: underline; }
+  .video-chat-outcome { display: block; color: var(--dna-muted); font-size: 11px; margin-top: 12px; }
+  .video-chat .tlw-preview { margin-top: 14px; border: 1px solid var(--dna-border-strong); border-radius: 10px; padding: 12px; font-size: 12px; line-height: 1.55; background: var(--dna-elevated); }
+  .video-chat-actions { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+  .video-chat-thinking { display: flex; align-items: center; gap: 8px; color: var(--dna-muted); font-size: 12px; min-height: 36px; }
+  .video-chat-thinking > span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 11px; }
+  .video-chat-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--dna-action); animation: chat-pulse 1.4s ease-in-out infinite; }
+  @keyframes chat-pulse { 50% { opacity: .3; } }
+  .video-chat-composer { padding: 12px 14px 10px; border-top: 1px solid var(--dna-border); }
+  .video-chat-latest { display: block; margin: -4px auto 10px; border: 1px solid var(--dna-border-strong); border-radius: 20px; padding: 5px 12px; background: var(--dna-elevated); color: var(--dna-text-2); cursor: pointer; font-size: 11px; }
+  .video-chat-input-box { border: 1px solid var(--dna-border-strong); border-radius: 14px; background: var(--dna-elevated); overflow: hidden; }
+  .video-chat-input-box:focus-within { border-color: var(--dna-action); }
+  .tlw-ai-input { display: block; box-sizing: border-box; width: 100%; min-height: 90px; max-height: 200px; resize: vertical; background: transparent; color: var(--dna-text); border: none; padding: 13px; font: inherit; font-size: 13px; line-height: 1.6; }
+  .tlw-ai-input:focus { outline: none; }
+  .tlw-ai-input::placeholder { color: var(--dna-faint); }
+  .video-chat-send-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 10px 10px; }
+  .video-chat-send-row > span { margin-right: auto; color: var(--dna-faint); font-size: 9px; max-width: 150px; }
+  .video-chat-compose-hint { color: var(--dna-muted); font-size: 11px; line-height: 1.5; margin: 0 0 10px; }
+  .video-chat-footnote { font-size: 10px; text-align: center; color: var(--dna-faint); margin: 9px 0 0; }
+  .video-chat button:focus-visible { outline: 2px solid var(--dna-action); outline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { .video-chat-pulse { animation: none; } }
+  @media (max-width: 900px) {
+    .tlw-workspace { grid-template-columns: minmax(0, 1fr) 310px; }
+    .video-chat-header { padding: 14px; }
+    .video-chat-log { padding: 14px 12px; }
+    .video-chat-model { padding-inline: 14px; }
+  }
   .story-strip { display: flex; gap: 0; padding: 5px 0 5px 148px; width: max-content; }
   .story-strip button { box-sizing: border-box; min-width: 0; flex-shrink: 0; border: 1px solid var(--dna-border); border-radius: 4px; background: var(--dna-elevated); color: var(--dna-text-2); padding: 5px 3px; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .story-strip button.active { border-color: var(--dna-action); color: var(--dna-action); }
@@ -1092,7 +1243,7 @@
     /* Цвета данных: свойства анимации различаются намеренно. */
     --tlw-prop-x: #5aa9ff; --tlw-prop-y: #67d98f; --tlw-prop-scale: #f2c14e;
     --tlw-prop-rotation: #c792ea; --tlw-prop-opacity: #ff8a80; }
-  .tlw-top, .tlw-ai, .tlw-preview { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  .tlw-top { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
     border-bottom: 1px solid var(--dna-border); flex-wrap: wrap; }
   .tlw-title { font-weight: 600; margin-right: 8px; }
   .tlw-time { font-variant-numeric: tabular-nums; color: var(--dna-muted); min-width: 120px; }
@@ -1110,11 +1261,9 @@
   .tlw-select.small { padding: 1px 4px; font-size: 11px; }
   .tlw-input { width: 72px; background: var(--dna-elevated); color: var(--dna-text-2); border: 1px solid var(--dna-border-strong); border-radius: 6px; padding: 4px 6px; }
   .tlw-inline { display: flex; align-items: center; gap: 6px; color: var(--dna-muted); }
-  .tlw-ai-input { flex: 1; background: var(--dna-sunken); color: var(--dna-text); border: 1px solid var(--dna-border-strong); border-radius: 8px; padding: 7px 10px; }
-  .tlw-preview { background: var(--tlw-preview-bg); }
-  .tlw-preview-main { color: var(--dna-violet-text); }
-  .tlw-preview-warn { color: var(--dna-amber); }
-  .tlw-body { flex: 1; display: grid; grid-template-columns: 230px 1fr 260px; min-height: 0; }
+  .tlw-body { flex: 1; display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 0; }
+  .tlw-body.hasSelection { grid-template-columns: 180px minmax(0, 1fr) 210px; }
+  .tlw-body:not(.hasSelection) .tlw-inspector { display: none; }
   .tlw-layers, .tlw-inspector { border-right: 1px solid var(--dna-border); overflow-y: auto; padding: 8px; }
   .tlw-inspector { border-right: none; border-left: 1px solid var(--dna-border); }
   .tlw-panel-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dna-faint); margin: 4px 0 8px; }

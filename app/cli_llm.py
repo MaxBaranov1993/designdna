@@ -18,6 +18,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
+import signal
 from pathlib import Path
 
 import cancel_token
@@ -85,10 +87,37 @@ def _materialize(messages: list, tmp: Path) -> tuple[str, list[Path]]:
 
 def _run(args: list[str], *, stdin_text: str, cwd: Path, timeout: int, env: dict | None = None) -> subprocess.CompletedProcess:
     cancel_token.check()
-    return subprocess.run(
-        args, input=stdin_text, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        cwd=str(cwd), timeout=timeout, env=env, check=False,
-    )
+    options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
+    process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace", cwd=str(cwd), env=env, **options)
+    deadline = time.monotonic() + timeout
+    pending_input = stdin_text
+    try:
+        while True:
+            cancel_token.check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(args, timeout)
+            try:
+                stdout, stderr = process.communicate(input=pending_input, timeout=min(0.25, remaining))
+                cancel_token.check()
+                return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                # communicate resumes buffered I/O; input may only be supplied once.
+                pending_input = None
+    finally:
+        if process.poll() is None:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW, timeout=5, check=False)
+            else:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process.poll() is None:
+                process.kill()
+        process.communicate()
 
 
 def _codex(messages: list, *, model: str | None, effort: str | None, timeout: int) -> str:
