@@ -1,33 +1,22 @@
-# Pixel Quality Rubric
+# Generator quality rubric
 
-Оценивай только то, что видно на скриншоте, сверяясь с брифом и картой Design IR. Итог — целое число 0–100. Не компенсируй красивым цветом плохую структуру и не ставь `pass`, если есть хотя бы одна `critical` или `major` проблема.
+Evaluate the supplied brief, Design IR and actual viewport images. A score is an aid to review, not a certificate of production readiness. Unknown interaction, keyboard, assistive technology and performance checks remain unknown.
 
-## Категории (100 баллов)
+## Weights (100 points)
 
-- Иерархия — 20: главный тезис, первичный CTA и порядок чтения очевидны без изучения мелкого текста.
-- Ритм — 15: секции чередуют масштаб, воздух и акценты; интервалы образуют систему, а не случайный шум.
-- Плотность — 15: экран не пустой и не перегруженный; контент сгруппирован, строки комфортной длины.
-- Типографика — 15: роли заголовков и текста различимы, веса осмысленны, переносы и длина строк аккуратны.
-- Цвет — 10: палитра связная, акцент редкий и функциональный, контраст текста и контролов достаточен.
-- Отсутствие slop-тропов — 15: нет шаблонной россыпи одинаковых карточек, бессмысленных градиентов, pill на каждом элементе, декоративных метрик без содержания и повторов.
-- Соответствие брифу — 10: аудитория, задача, тон, обещание, доказательства и CTA совпадают с заданием.
+- Task and information architecture: 25. The relevant user action, navigation, comparison and information order work for this surface.
+- Identity and design-system fidelity: 20. Preserve provided foundations, exact masters and approved variants. Without a DS, use a coherent visual language justified by the brief.
+- Typography and layout: 20. Readable hierarchy, intentional density, alignment, usable measure, responsive grouping and no accidental clipping or overlaps.
+- States and accessibility evidence: 15. Evaluate states visible or specified in the artifact. Check readable contrast and control affordances; do not infer keyboard or screen-reader success from pixels.
+- Content: 10. Specific useful labels, units, decision context and recovery copy; no invented ratings, customers, prices or guarantees presented as facts.
+- Justified visual decisions: 10. Composition, imagery, ornament and motion serve the task. Penalize unrelated decoration and repetitive template structure, not a particular font or color.
 
-## Заглушки изображений — контракт продукта, не дефект
+A pass requires the requested threshold and no critical or major issue. DS/schema failures cannot be compensated by a high visual score. Do not require heroes, testimonials, three sections or an unusual visual trick for every surface. Components are evaluated within their own boundary.
 
-Область изображения с подписью-арт-дирекцией (что снято, свет, палитра) — штатная заглушка: пользователь заменяет её своей картинкой в редакторе. Оценивай её **место, размер и пропорции в композиции**, а не отсутствие картинки. Не выставляй `critical`/`major` за то, что заглушка не показывает интерфейс или фото. Штрафуй только заглушку без описания или заглушку, занимающую площадь без композиционной роли. Не предлагай «нарисовать интерфейс из примитивов» вместо заглушки — такие починки ломают раскладку.
+## Placeholders
 
-## Наложения и обрезка
+An image with concrete imagePrompt is a supported editorial placeholder. Assess its composition and proportions. Do not replace it with a fake interface made of primitives. Its presence does not mean final imagery has been verified.
 
-Элементы, перекрывающие друг друга без замысла, обрезанный текст, контент за границей секции — всегда `critical` в категории «Иерархия» с точным путём: это ошибки раскладки, которые видны сразу.
+## Actionable findings
 
-## Как выставлять замечания
-
-Каждое замечание должно указывать категорию, серьёзность, максимально точный путь IR и конкретную правку. `critical` означает сломанную задачу или нечитаемый интерфейс; `major` — заметный композиционный дефект; `minor` — локальную полировку. Не проси «сделать красивее»: укажи что изменить, где и в каком направлении.
-
-## Плохо
-
-Hero, шесть одинаковых карточек, три одинаковых CTA и сплошной градиент получают 82 только за аккуратную палитру. Замечание: «Улучшить визуальную иерархию». Это завышенная оценка и неадресная правка.
-
-## Хорошо
-
-Макет с ясным hero, но монотонными секциями получает 74. Замечание: `tree.2` / `rhythm` / `major`: «Секция повторяет сетку `tree.1`; замени ряд из трёх равных карточек на асимметричную пару 2:1 и увеличь верхний отступ с одного до двух базовых шагов». Такая правка наблюдаема и проверяема повторным рендером.
+Each issue needs category, severity, exact IR path where possible, an observable problem and a bounded instruction. Critical means blocked task, unreadable text or broken layout; major means a substantial task or visual defect; minor means local polish. Problems inside locked masters are DS gaps, not permission to mutate instances. Prefer a minimal repair; preserve identity, content, tokens and component references. The result must be rendered and judged again.

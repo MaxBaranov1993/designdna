@@ -13,6 +13,9 @@ import type {
 import { NODE_DEFS, defaultData, portsOfNode } from "./ports";
 import { deepClone, outValue, pullInput, reachable } from "./dataflow";
 import { inputFingerprint } from "./fingerprint";
+import { videoHistoryPatch, videoSourceCheckpoint } from "./video-history";
+import { videoPages } from "./video-inputs";
+import type { VideoRevisionChange } from "./types";
 import { composeSourceInputs, sourceInputForPort } from "./sourceComposition";
 import type { SourceInputBlock } from "./sourceComposition";
 import {
@@ -46,6 +49,8 @@ import type {
   NodeType,
   ReskinNodeData,
   DesignSystemNodeData,
+  DesignSystemAiOperation,
+  AiPipelineStage,
   SourceImportNodeData,
   DeriveNodeData,
   EditNodeData,
@@ -83,6 +88,271 @@ const PROVIDER_LABELS: Record<NodeProvider, string> = {
   codex: "Codex",
   claude: "Claude Opus",
 };
+
+// Canvas-only selection/viewport changes do not change the captured kit.
+function sourceKitFingerprint(data: SourceImportNodeData): string {
+  return inputFingerprint({
+    url: data.importedUrl || data.url,
+    blocks: data.blocks.map(({ lit, cached, ...block }) => block),
+    tokens: data.tokens,
+    artifact: data.sourceArtifact,
+  });
+}
+
+function connectedDesignSystemSource(nodes: FlowNode[], edges: FlowEdge[], target: FlowNode) {
+  const edge = edges.find((e) => e.target === target.id && e.targetHandle === "artifact");
+  const source = nodes.find((n) => n.id === edge?.source);
+  return source?.type === "sourceimport" ? source : null;
+}
+
+export function resolveDesignSystemAiProvider(nodes: FlowNode[], edges: FlowEdge[], target: FlowNode): NodeProvider {
+  const selection = (target.data as DesignSystemNodeData).aiProvider;
+  if (selection && selection !== "inherit") return nodeProvider(selection);
+  return nodeProvider(connectedDesignSystemSource(nodes, edges, target)?.data.aiProvider);
+}
+
+type DesktopDsPreparation = {
+  prepareId: string;
+  documentHash: string;
+  operation: DesignSystemAiOperation;
+  provider: "codex" | "claude";
+  reasoningEffort: NodeEffort;
+  stage: string;
+  tasks: Array<{ id: string; status: "ready" | "unsupported"; reason?: string | null;
+    messages: Parameters<NonNullable<Window["designDNA"]>["providers"]["chatRequest"]>[0]["messages"] }>;
+};
+export type DesignSystemAiResult = {
+  document: Record<string, unknown>;
+  summary?: Record<string, unknown>;
+  results?: Array<Record<string, any>>;
+  reviewed?: number;
+  approved?: number;
+  complete?: boolean;
+  nextPreparation?: DesktopDsPreparation | null;
+  error?: string;
+};
+
+/** Shared panel/QA action. The provider, document and artifact wire are captured
+ * once. No delayed answer may apply to a replaced node, document or Source. */
+export async function runDesktopDesignSystemAi(
+  nodeId: number,
+  operation: DesignSystemAiOperation,
+  options: { viewport?: string; repair?: boolean; beforeCommit?: () => void } = {},
+): Promise<DesignSystemAiResult | null> {
+  const get = useFlowStore.getState;
+  const initial = get();
+  const node = initial.nodes.find((n) => Number(n.id) === nodeId);
+  if (!node || node.type !== "designsystem" || initial.busy[nodeId] || node.data.busyAction) return null;
+  if (!["organize", "style-review", "master-review"].includes(operation)) throw new Error("Unknown DS AI operation");
+  if (!node.data.document?.id && !node.data.systemId) return null;
+  const provider = resolveDesignSystemAiProvider(initial.nodes, initial.edges, node);
+  const effort = nodeEffort(node.data.aiEffort || "high");
+  const systemId = node.data.systemId;
+  const revision = node.data.revision;
+  let originalDocument = node.data.document || {};
+  const documentFingerprint = inputFingerprint(node.data.document ?? null);
+  const source = connectedDesignSystemSource(initial.nodes, initial.edges, node);
+  const sourceFingerprint = source ? sourceKitFingerprint(source.data) : null;
+  const pageId = initial.activePageId;
+  const signal = beginRunAbort(nodeId);
+  const runToken = newRunId();
+  const activeChatIds = new Set<string>();
+  let workingDocument = deepClone(originalDocument);
+  let acceptedSummary: DesignSystemAiResult["summary"];
+  let hasAcceptedStage = false;
+  const ownsRun = () => runAborts.get(nodeId)?.signal === signal && get().activePageId === pageId
+    && get().nodes.some((n) => Number(n.id) === nodeId && n.type === "designsystem" && n.data._dsAiRun === runToken);
+  const guard = (allowCancelled = false) => {
+    if ((!allowCancelled && signal.aborted) || !ownsRun()) throw new DOMException("DS AI run cancelled", "AbortError");
+    const current = get().nodes.find((n) => Number(n.id) === nodeId)!;
+    const currentSource = connectedDesignSystemSource(get().nodes, get().edges, current);
+    if (inputFingerprint((current.data as DesignSystemNodeData).document ?? null) !== documentFingerprint
+      || (current.data as DesignSystemNodeData).systemId !== systemId
+      || (current.data as DesignSystemNodeData).revision !== revision
+      || currentSource?.id !== source?.id
+      || (currentSource ? sourceKitFingerprint(currentSource.data) : null) !== sourceFingerprint) {
+      throw new DOMException("Source или документ изменился — повторите AI-операцию", "AbortError");
+    }
+  };
+  const stage = (status: AiPipelineStage["status"], message: string) => {
+    if (!ownsRun()) return;
+    const current = get().nodes.find((n) => Number(n.id) === nodeId)!.data as DesignSystemNodeData;
+    get().setNodeData(nodeId, { pipelineStatus: { ...current.pipelineStatus,
+      [operation]: { status, message, provider, updatedAt: new Date().toISOString() } } });
+    get().setStatus(nodeId, message, status === "success" ? "ok" : status === "running" ? undefined : "err");
+  };
+  const cancelChat = () => {
+    for (const chatId of activeChatIds) void window.designDNA?.providers.cancel?.(chatId).catch(() => undefined);
+  };
+  signal.addEventListener("abort", cancelChat);
+  get().setNodeData(nodeId, { _dsAiRun: runToken, busyAction: operation, lastError: "" });
+  get().setBusy(nodeId, true);
+  stage("running", `${PROVIDER_LABELS[provider]} · ${operation}: подготовка…`);
+  const request = async <T>(path: string, body: unknown): Promise<T> => {
+    const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body), signal });
+    const payload = await response.json();
+    if (!response.ok || payload.error) {
+      const detail = payload.detail || payload.error;
+      if (detail && typeof detail === "object") {
+        const first = Array.isArray(detail.errors) ? detail.errors[0] : null;
+        throw Object.assign(new Error([detail.message || detail.code || `HTTP ${response.status}`,
+          first?.message, first?.path, detail.errors?.length > 1 ? `Ошибок: ${detail.errors.length}` : ""].filter(Boolean).join(" · ")),
+          { httpStatus: response.status, detail });
+      }
+      throw new Error(String(detail || `HTTP ${response.status}`));
+    }
+    return payload as T;
+  };
+  try {
+    if (!originalDocument.id) {
+      guard();
+      const loaded = await request<{ document?: Record<string, unknown>; error?: string }>("/api/design-system/get", {
+        systemId: node.data.systemId, revision: Number(node.data.revision) || 0,
+      });
+      guard();
+      if (!loaded.document || loaded.document.id !== node.data.systemId) throw new Error(loaded.error || "Документ Design System недоступен");
+      originalDocument = loaded.document;
+      workingDocument = deepClone(loaded.document);
+    }
+    let result: DesignSystemAiResult;
+    const warnings: string[] = [];
+    const verdicts = new Map<string, Record<string, any>>();
+    const collectResults = (items: DesignSystemAiResult["results"]) => {
+      for (const item of items || []) {
+        if (item.key && (item.kind === "master-review" || item.kind === "master-verify" || item.approved !== undefined)) verdicts.set(String(item.key), item);
+        else if (item.error || item.rejected?.length) warnings.push(String(item.error || item.rejected.join("; ")));
+      }
+    };
+    if (provider === "codex" || provider === "claude") {
+      const desktop = window.designDNA;
+      if (!desktop?.providers?.chatRequest) throw new Error(`${PROVIDER_LABELS[provider]}: требуется подключённый desktop-аккаунт`);
+      guard();
+      let preparation = await request<DesktopDsPreparation>("/api/design-system/desktop-ai/prepare", {
+        document: workingDocument, operation, provider, reasoningEffort: effort, repair: options.repair ?? true,
+      });
+      const seen = new Set<string>();
+      for (;;) {
+        guard();
+        if (!preparation.prepareId || !preparation.documentHash || !Array.isArray(preparation.tasks)
+          || preparation.provider !== provider || preparation.operation !== operation
+          || seen.has(preparation.prepareId) || seen.size >= 4) throw new Error("Некорректный desktop AI contract");
+        seen.add(preparation.prepareId);
+        stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}…`);
+        const outputs = new Map<string, string>();
+        let completed = 0;
+        const parallel = preparation.stage === "master-review" || preparation.stage === "master-verify" ? 2 : 1;
+        const runTask = async (task: DesktopDsPreparation["tasks"][number], taskIndex: number, correction?: string) => {
+          guard();
+          stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: task ${taskIndex + 1}/${preparation.tasks.length} · ${correction ? "исправление формата 1/1" : `готово ${completed}`}…`);
+          if (task.status === "unsupported") { warnings.push(task.reason || "Нет evidence для проверки"); completed++; return; }
+          if (task.status !== "ready" || !task.messages?.length) throw new Error("Некорректная AI-задача");
+          const chatId = `${runToken}:${task.id}${correction ? ":format-correction" : ""}`;
+          activeChatIds.add(chatId);
+          const profile = preparation.stage === "master-repair" ? "quality_repair"
+            : preparation.stage === "master-review" || preparation.stage === "master-verify" ? "quality_judge" : "editor";
+          try {
+            const messages = correction ? [...task.messages,
+              { role: "assistant" as const, content: outputs.get(task.id)! },
+              { role: "user" as const, content: `The server rejected your previous response format: ${correction}\nReturn the complete corrected JSON object only, matching the original task schema. Preserve the intended answer. No markdown or explanation. This is the only format-correction attempt.` }] : task.messages;
+            const answer = await desktop.providers.chatRequest({ ...chatRoute(provider, effort), id: chatId, profile, messages });
+            guard();
+            if (answer.provider && answer.provider !== provider) throw new Error("AI ответил через другой провайдер");
+            outputs.set(task.id, answer.content);
+            if (!correction) completed++;
+            stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: готово ${completed}/${preparation.tasks.length}…`);
+          } finally { activeChatIds.delete(chatId); }
+        };
+        for (let offset = 0; offset < preparation.tasks.length; offset += parallel) {
+          guard();
+          try {
+            await Promise.all(preparation.tasks.slice(offset, offset + parallel).map((task, index) => runTask(task, offset + index)));
+          } catch (error) { cancelChat(); throw error; }
+        }
+        // Completion order can differ; the server always receives task order.
+        const responses = () => preparation.tasks.filter((task) => task.status === "ready")
+          .map((task) => ({ taskId: task.id, output: outputs.get(task.id)! }));
+        const apply = () => {
+          guard(); // In particular, cancel/stale answers must never reach /apply.
+          stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: серверная проверка ответа и fidelity…`);
+          return request<DesignSystemAiResult>("/api/design-system/desktop-ai/apply", {
+            prepareId: preparation.prepareId, documentHash: preparation.documentHash, document: workingDocument, responses: responses(),
+          });
+        };
+        const correctedTaskIds = new Set<string>();
+        for (;;) {
+          try { result = await apply(); break; }
+          catch (error) {
+            guard();
+            const failure = error as { httpStatus?: number; detail?: Record<string, unknown> };
+            const detail = failure.detail;
+            const taskIndex = preparation.tasks.findIndex((task) => task.id === detail?.taskId && task.status === "ready");
+            if (failure.httpStatus !== 422 || detail?.code !== "invalid-ai-output"
+              || detail.retryable !== true || detail.stage !== preparation.stage || taskIndex < 0
+              || correctedTaskIds.has(preparation.tasks[taskIndex].id)
+              || correctedTaskIds.size >= responses().length) throw error;
+            correctedTaskIds.add(preparation.tasks[taskIndex].id);
+            await runTask(preparation.tasks[taskIndex], taskIndex, String(detail.message || "Invalid JSON output"));
+            // Same preparation/hash, complete envelope. Each ready task gets at most one correction.
+          }
+        }
+        guard();
+        if (result.error || !result.document) throw new Error(result.error || "AI не вернул документ");
+        collectResults(result.results);
+        workingDocument = result.document;
+        acceptedSummary = result.summary;
+        hasAcceptedStage = true;
+        if (result.complete === true) break;
+        if (!result.nextPreparation) throw new Error("AI завершился без финальной проверки");
+        preparation = result.nextPreparation;
+      }
+    } else {
+      guard();
+      result = await request<DesignSystemAiResult>(`/api/design-system/${operation}`, {
+        document: workingDocument, provider, reasoningEffort: effort, viewport: options.viewport || "desktop",
+      });
+      guard();
+      if (result.error || !result.document) throw new Error(result.error || "AI не вернул документ");
+      collectResults(result.results);
+    }
+    if (operation === "master-review") {
+      const keys = new Set([...Object.keys(originalDocument.reviewComponents || {}), ...verdicts.keys()]);
+      for (const key of keys) {
+        const verdict = verdicts.get(key);
+        if (!verdict || verdict.approved !== true || verdict.supported === false || verdict.rejected?.length)
+          warnings.push(`${key}: ${verdict?.error || verdict?.rejected?.join("; ") || verdict?.summary || "мастер не одобрен"}`);
+      }
+      result.results = [...verdicts.values()];
+      result.reviewed = verdicts.size;
+      result.approved = [...verdicts.values()].filter((item) => item.approved === true && item.supported !== false).length;
+    }
+    guard();
+    options.beforeCommit?.();
+    guard(); // beforeCommit is external code; recheck before saving node state.
+    get().setNodeData(nodeId, { document: result.document, summary: result.summary, status: "draft", lastError: warnings.join("; ") });
+    stage(warnings.length ? "warning" : "success", warnings.length ? `${operation}: ${warnings.join("; ")}` : `${PROVIDER_LABELS[provider]} · ${operation}: завершено`);
+    get().propagate(nodeId);
+    return result;
+  } catch (error) {
+    let message = friendlyProviderError(error);
+    if (hasAcceptedStage) {
+      try {
+        // /apply persists each accepted stage. Reflect that server state after a
+        // later failure/cancel, but never replace an edited/reconnected/deleted node.
+        guard(true);
+        get().setNodeData(nodeId, { document: workingDocument, summary: acceptedSummary, status: "draft" });
+        message += " · Предыдущий принятый этап сохранён; текущий этап не завершён";
+      } catch { /* Stale identity/content must retain the newer local state. */ }
+    }
+    stage(error instanceof DOMException && error.name === "AbortError" ? "cancelled" : "failed", message);
+    if (ownsRun()) get().setNodeData(nodeId, { lastError: message });
+    return null;
+  } finally {
+    signal.removeEventListener("abort", cancelChat);
+    if (ownsRun()) { get().setNodeData(nodeId, { busyAction: "", _dsAiRun: null }); get().setBusy(nodeId, false); }
+    endRunAbort(nodeId, signal);
+  }
+}
 type NodeEffort = "medium" | "high" | "max";
 function nodeEffort(value: unknown): NodeEffort {
   return value === "high" || value === "max" ? value : "medium";
@@ -105,9 +375,12 @@ async function qualityPassCycle(
   provider: NodeProvider,
   effort: "medium" | "high" | "max",
   onStage: (stage: string) => void,
-  { minScore = 80, repair = true, signal, runId }: { minScore?: number; repair?: boolean; signal?: AbortSignal; runId?: string } = {},
+  { minScore = 80, repair = true, signal, runId, designSystem, surface = "auto", visualReview = false }: {
+    minScore?: number; repair?: boolean; signal?: AbortSignal; runId?: string;
+    designSystem?: Record<string, unknown> | null; surface?: string; visualReview?: boolean;
+  } = {},
 ): Promise<QualityPassResp> {
-  const request = { ir, brief, provider, effort, min_score: minScore, repair, rejudge: repair };
+  const request = { ir, brief, provider, effort, min_score: minScore, repair, rejudge: repair, designSystem, surface, visualReview };
   const desktop = window.designDNA;
   if (!desktop) return api<QualityPassResp>("/api/quality-pass", { ...request, runId }, { signal, runId });
   const outputs: Partial<Record<"judge" | "repair" | "rejudge", string>> = {};
@@ -337,6 +610,7 @@ async function refineSourceWithAi(
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
   id: number,
   effort: NodeEffort = "high",
+  guard: () => void = () => {},
 ): Promise<BlockParseResp | null> {
   const desktop = window.designDNA;
   if (!desktop) return null;
@@ -364,18 +638,22 @@ async function refineSourceWithAi(
       },
     ],
   });
+  guard();
   const match = String(answer.content || "").match(/\{[\s\S]*\}/);
-  if (!match) return null;
+  if (!match) throw new Error("AI-уточнение: ответ не содержит JSON");
   let operations: unknown;
   try {
     operations = (JSON.parse(match[0]) as { operations?: unknown }).operations;
   } catch {
-    return null;
+    throw new Error("AI-уточнение: некорректный JSON");
   }
   if (!Array.isArray(operations) || !operations.length) return null;
   const applied = await api<{ blocks: BlockParseResp["blocks"]; sourceArtifact: unknown; appliedCount: number }>(
-    "/api/block-parse/refine", { blocks: response.blocks, operations },
+    "/api/block-parse/refine", {
+      blocks: response.blocks, operations, source: response.sourceArtifact?.source,
+    },
   );
+  guard();
   if (!applied?.appliedCount) return null;
   setStatus(id, `AI-уточнение: ${applied.appliedCount} правок`);
   return { ...response, blocks: applied.blocks, sourceArtifact: applied.sourceArtifact as never };
@@ -402,6 +680,7 @@ async function segmentScreenshotWithAi(
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
   id: number,
   effort: NodeEffort = "high",
+  guard: () => void = () => {},
 ): Promise<SegmentResp | null> {
   const desktop = window.designDNA;
   if (!desktop) return null;
@@ -409,20 +688,24 @@ async function segmentScreenshotWithAi(
     image, prepareOnly: true,
   });
   const tasks = prepared?.tasks || [];
+  guard();
   if (!tasks.length) return null;
 
   const rawOutputs: Array<{ tileIndex: number; content: string }> = [];
   for (const [index, task] of tasks.entries()) {
+    guard();
     setStatus(id, `Разметка компонентов: тайл ${index + 1}/${tasks.length}…`);
     const answer = await desktop.providers.chatRequest({
       ...chatRoute(provider, effort),
       messages: task.messages,
     });
+    guard();
     rawOutputs.push({ tileIndex: task.tileIndex, content: answer.content });
   }
 
   setStatus(id, "Проверяю рамки по пикселям…");
   const applied = await api<SegmentResp>("/api/reproduce/segment", { image, rawOutputs });
+  guard();
   if (!applied?.block || !(applied.regions || []).length) return null;
   return applied;
 }
@@ -455,6 +738,8 @@ async function repairSourceWithAi(
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
   id: number,
   effort: NodeEffort = "high",
+  guard: () => void = () => {},
+  onWarning: (message: string) => void = () => {},
 ): Promise<BlockParseResp | null> {
   const desktop = window.designDNA;
   if (!desktop) return null;
@@ -467,30 +752,36 @@ async function repairSourceWithAi(
    * восстановили свечение, и худшим регионом становится уже другой. Цикл
    * идёт, пока гейт не пройден, правки принимаются и раунды не кончились. */
   for (let round = 1; round <= REPAIR_MAX_ROUNDS; round += 1) {
+    guard();
     if ((current.blocks || []).every(blockGatePassed)) break;
     const prepared = await api<{ tasks: RepairTask[] }>("/api/block-parse/repair", {
       blocks: current.blocks, viewport, prepareOnly: true,
     });
     const tasks = prepared?.tasks || [];
+    guard();
     if (!tasks.length) break;
 
     const rawOutputs: Array<{ blockIndex: number; content: string }> = [];
     let providerError: unknown = null;
     for (const [index, task] of tasks.entries()) {
+      guard();
       setStatus(id, `AI-починка ${round}/${REPAIR_MAX_ROUNDS}: диагностика ${index + 1}/${tasks.length}…`);
       try {
         const answer = await desktop.providers.chatRequest({
           ...chatRoute(provider, effort),
           messages: task.messages,
         });
+        guard();
         rawOutputs.push({ blockIndex: task.blockIndex, content: answer.content });
       } catch (error) {
+        guard();
         // Один неудачный диагноз не отменяет остальные. Но если не отвечает
         // сам аккаунт, дальше пойдут те же десятки отказов — выходим сразу.
         providerError = error;
         if (!rawOutputs.length) break;
       }
     }
+    if (providerError) onWarning(`AI-починка: ${friendlyProviderError(providerError)}`);
     if (!rawOutputs.length) {
       if (providerError) {
         setStatus(id, `AI-починка пропущена: ${friendlyProviderError(providerError)}`);
@@ -499,9 +790,11 @@ async function repairSourceWithAi(
     }
 
     setStatus(id, `AI-починка ${round}/${REPAIR_MAX_ROUNDS}: перепроверяю сходство…`);
+    guard();
     const applied = await api<RepairApplyResp>("/api/block-parse/repair", {
       blocks: current.blocks, viewport, rawOutputs,
     });
+    guard();
     const acceptedCount = (applied?.results || []).reduce((sum, r) => sum + (r.appliedCount || 0), 0);
     if (!acceptedCount) {
       // Замер отверг все гипотезы раунда — следующий даст то же самое.
@@ -607,7 +900,7 @@ export interface FlowStoreState {
   getNodeIrRevision: (id: number) => number;
   persistEditorDraft: (id: number, draft: PersistedEditorDraft) => void;
   clearEditorDraft: (id: number) => void;
-  commitTimeline: (id: number, expected: IRObject | null, irRevision: number, timeline: IRObject) => boolean;
+  commitTimeline: (id: number, expected: IRObject | null, irRevision: number, timeline: IRObject, change?: VideoRevisionChange) => boolean;
   commitEditorDraft: (id: number, expectedRevision: number, ir: IRObject) => boolean;
   setStatus: (id: number, text: string, kind?: "ok" | "err") => void;
   setBusy: (id: number, v: boolean) => void;
@@ -638,6 +931,8 @@ export interface FlowStoreState {
   runPageBridge: (id: number) => void;
   sendToNode: (id: number, targetType: "edit" | "reference") => void;
   addMixInput: (id: number) => void;
+  addVideoInput: (id: number) => void;
+  removeVideoInput: (id: number, name: string) => void;
   removeMixInput: (id: number, name: string) => void;
   addEditInput: (id: number) => void;
   removeEditInput: (id: number, name: string) => void;
@@ -669,6 +964,8 @@ export interface FlowStoreState {
   setDefaultDesignSystem: (nodeId: number) => Promise<boolean>;
   rebuildDesignSystemFromSource: (nodeId: number) => Promise<boolean>;
   saveDesignSystemDocument: (nodeId: number, document: Record<string, unknown>) => Promise<boolean>;
+  runDesktopDesignSystemAi: typeof runDesktopDesignSystemAi;
+  runDesignSystemAi: (nodeId: number, operation: DesignSystemAiOperation, viewport?: string) => Promise<DesignSystemAiResult | null>;
   restorePublishedDesignSystem: (nodeId: number, ref?: { systemId?: string; revision?: number }) => Promise<boolean>;
   applyDesignSystemToEditor: (nodeId: number, componentKey: string) => { editNodeId: number; previousIr: IRObject | null } | null;
   restoreDesignSystemEditorApply: (editNodeId: number, previousIr: IRObject | null) => void;
@@ -1220,12 +1517,13 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     }));
   },
 
-  commitTimeline: (id, expected, irRevision, timeline) => {
+  commitTimeline: (id, expected, irRevision, timeline, change) => {
     const node = get().nodes.find((item) => Number(item.id) === id);
     if (!node || node.type !== "timeline" || get().getNodeIrRevision(id) !== irRevision
       || JSON.stringify(node.data.timeline) !== JSON.stringify(expected)) return false;
     const composition = timeline.composition as TimelineNodeData["settings"];
-    get().setNodeData(id, { timeline: deepClone(timeline), settings: { ...node.data.settings, ...composition }, renderJob: null });
+    const history = videoHistoryPatch(node.data, timeline, change);
+    get().setNodeData(id, { timeline: deepClone(timeline), settings: { ...node.data.settings, ...composition }, renderJob: null, ...history });
     get().propagate(id);
     return true;
   },
@@ -1361,10 +1659,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         get().propagate(consId, visited);
       }
     } else if (cons.type === "designsystem") {
-      const artifact = pullInput(nodes, edges, cons, "artifact");
-      if (artifact && typeof artifact === "object") {
-        get().setNodeData(consId, { sourceUpdate: true });
-        get().setStatus(consId, "Source changed — review and Sync before publishing", "ok");
+      const source = connectedDesignSystemSource(nodes, edges, cons);
+      if (source) {
+        const changed = cons.data._sourceFingerprint !== sourceKitFingerprint(source.data);
+        get().setNodeData(consId, { sourceNodeId: Number(source.id), sourceUpdate: changed });
+        if (changed) get().setStatus(consId, cons.data.systemId
+          ? "Source changed — review and Sync before publishing"
+          : "Source подключён — соберите UI Kit");
+      } else {
+        get().setNodeData(consId, { sourceNodeId: null, sourceUpdate: false });
       }
     } else if (cons.type === "page" || cons.type === "generator" || cons.type === "reskin") {
       get().setStatus(consId, "Входы изменены — запустите ноду для обновления результата");
@@ -1420,11 +1723,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             : "Подключите видео/IR или введите отдельный prompt",
       );
     } else if (cons.type === "timeline") {
-      const designIr = pullInput(nodes, edges, cons, "ir") as IRObject | null;
-      if (JSON.stringify(cons.data.ir) === JSON.stringify(designIr)) return;
-      get().setNodeData(consId, { ir: designIr ? deepClone(designIr) : null, timeline: null, renderJob: null });
+      const sourcePages = videoPages(nodes, edges, cons);
+      const designIr = sourcePages.find((page) => page.id === "ir")?.ir || null;
+      if (JSON.stringify(cons.data.ir) === JSON.stringify(designIr) && JSON.stringify(cons.data.sourcePages || []) === JSON.stringify(sourcePages)) return;
+      get().setNodeData(consId, { ir: designIr ? deepClone(designIr) : null, sourcePages: deepClone(sourcePages), timeline: null, renderJob: null, ...videoSourceCheckpoint(cons.data) });
       get().propagate(consId, visited);
-      get().setStatus(consId, designIr ? "Design IR получен — соберите таймлайн" : "Подключите Design IR (страница/компонент)");
+      get().setStatus(consId, designIr ? `Подключено страниц: ${sourcePages.length}` : "Подключите начальную страницу");
     } else if (cons.type === "pagebridge") {
       get().runPageBridge(consId);
       get().propagate(consId, visited);
@@ -1550,6 +1854,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         count,
         provider,
         effort,
+        surface: data.surface || "auto",
+        designStyle: data.designStyle || "auto",
+        allowStrictFallback: false,
         styleHint,
         tokens,
         preset: data.preset || undefined,
@@ -1591,14 +1898,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             rawOutputs.push(answer.content);
           }
           get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Проверка схемы и автофиксы" });
-          res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs }, { signal });
+          res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId }, { signal });
         }
       }
       const directionResponse = res as GenerateDirectionResp;
       const variants = Array.isArray(res.variants) ? res.variants : [];
       const directions = generatorDirections(directionResponse);
       const variantDirections = generatorVariantDirections(directionResponse, variants, directions);
-      const directionPatch = directions.length ? { directions } : {};
+      const directionPatch = { directions };
       const generationLog = (res as unknown as Record<string, unknown>).generationLog;
       const logPatch = generationLog && typeof generationLog === "object" ? { generationLog: generationLog as Record<string, unknown> } : {};
       get().setNodeData(id, { variants, active: 0, variantDirections, ...directionPatch, ...logPatch } as unknown as Partial<GeneratorNodeData>);
@@ -1618,14 +1925,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           const qp = await qualityPassCycle(variants[i], brief, provider, effort, (stage) => {
             get().setStatus(id, `Quality Pass${label}: ${stage}…`);
             get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage });
-          }, { signal, runId: qpRunId });
+          }, { signal, runId: qpRunId, surface: res.designPolicy?.surface || data.surface || "auto", visualReview: true,
+            designSystem: designSystemRef ? { ...designSystemRef, ...((res.designSystem?.ref || {}) as Record<string, unknown>) } : null });
           if (qp.ir) variants[i] = qp.ir;
           const rawScore = qp.scorecard?.score;
           const score = rawScore == null || !Number.isFinite(Number(rawScore)) ? null : Number(rawScore);
           qualityScores.push(score);
           qualityReviews.push({
             score,
-            passed: typeof qp.passed === "boolean" ? qp.passed : (score == null ? null : score >= 80),
+            passed: qp.acceptance?.status === "unverified" ? null : typeof qp.passed === "boolean" ? qp.passed : null,
             reasons: (qp.scorecard?.issues || []).map((issue) => {
               const problem = String(issue.problem || "").trim();
               return problem || String((issue as Record<string, unknown>).instruction || "").trim();
@@ -1660,8 +1968,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         const reasons = needsRevision.flatMap(({ review }) => review.reasons).slice(0, 3);
         const reasonNote = reasons.length ? `: ${reasons.join("; ")}` : "";
         get().setStatus(id, `Нужна доработка${reasonNote}`, "err");
+      } else if (!variants.length || qualityReviews.some((review) => review.passed == null)) {
+        get().setStatus(id, "Предпросмотр создан · проверка не завершена", "err");
       } else {
-        get().setStatus(id, `Готово: вариантов ${variants.length}${errNote}${qaNote}${designNote}${qpNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
+        get().setStatus(id, `Предпросмотр проверен: вариантов ${variants.length}${errNote}${qaNote}${designNote}${qpNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
       }
       get().propagate(id);
     } catch (e) {
@@ -1756,7 +2066,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       get().setStatus(id, "Подключите хотя бы один компонент", "err");
       return;
     }
-    const result = composeSourceInputs(blocks, null, "desktop", blocks.length > 1);
+    const meta = blocks[0].ir.meta as Record<string, unknown> | undefined;
+    const viewport = meta?.activeViewport === "mobile" || meta?.activeViewport === "tablet" ? meta.activeViewport : "desktop";
+    const result = composeSourceInputs(blocks, null, viewport, blocks.length > 1);
     if (JSON.stringify(data.ir) !== JSON.stringify(result.ir)) get().setNodeData(id, { ...result, _inputFingerprint: fingerprint });
     else get().setNodeData(id, { _inputFingerprint: fingerprint });
     get().setStatus(id, `${blocks.length} компонент(а) · ${Object.keys(result.sourceRegistry).length} источн.`, "ok");
@@ -1786,6 +2098,35 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const n = st.nodes.find((x) => Number(x.id) === id);
     if (!n || n.type !== "sourceimport" || st.busy[id]) return;
     const data = n.data as SourceImportNodeData;
+    const provider = nodeProvider(data.aiProvider);
+    const effort = nodeEffort(data.aiEffort || "high");
+    const signal = beginRunAbort(id);
+    const sourceRun = newRunId();
+    const sourceInput = (value: SourceImportNodeData) => inputFingerprint({
+      mode: value.mode, url: value.url, image: value.image, mine: value.mine,
+      authenticatedSession: value.authenticatedSession, kit: sourceKitFingerprint(value),
+    });
+    let inputAtStart = sourceInput(data);
+    get().setNodeData(id, { _sourceRun: sourceRun });
+    const ownsRun = () => get().activePageId === st.activePageId && runAborts.get(id)?.signal === signal
+      && get().nodes.some((node) => Number(node.id) === id && node.type === "sourceimport"
+        && (node.data as unknown as Record<string, unknown>)._sourceRun === sourceRun);
+    const guard = () => {
+      const current = get().nodes.find((node) => Number(node.id) === id);
+      if (signal.aborted || !ownsRun() || !current || sourceInput(current.data as SourceImportNodeData) !== inputAtStart)
+        throw new DOMException("Source изменился или импорт отменён", "AbortError");
+    };
+    const stages: Record<string, AiPipelineStage> = {};
+    const recordStage = (name: string, status: AiPipelineStage["status"], message: string) => {
+      if (!ownsRun()) return;
+      stages[name] = { status, message, provider, updatedAt: new Date().toISOString() };
+      get().setNodeData(id, { pipelineStatus: { ...stages } });
+    };
+    const warnings = () => Object.values(stages).filter((stage) => ["failed", "warning", "cancelled"].includes(stage.status)).map((stage) => stage.message);
+    const finishStatus = (message: string, failed = false) => {
+      const notes = warnings();
+      get().setStatus(id, `${message}${notes.length ? ` · ${notes.join("; ")}` : ""}`, failed || notes.length ? "err" : "ok");
+    };
     get().setBusy(id, true);
     const startedAt = Date.now();
     get().setProgress(id, { expectedMs: 90_000, label: data.mode === "screenshot" ? "Скриншот → IR" : "Импорт Source" });
@@ -1800,15 +2141,21 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         // сегментация недоступна (web-режим, отказ провайдера, ноль рамок) —
         // прежний путь: единый pixel-capture слепок.
         let segmented: SegmentResp | null = null;
+        recordStage("import", "running", "Импорт скриншота…");
         if (window.designDNA) {
           try {
+            recordStage("segmentation", "running", "AI-сегментация…");
             segmented = await segmentScreenshotWithAi(
-              data.image, nodeProvider(data.aiProvider), get().setStatus, id, nodeEffort(data.aiEffort || "high"));
+              data.image, provider, get().setStatus, id, effort, guard);
+            guard();
+            recordStage("segmentation", segmented ? "success" : "warning", segmented ? "Компоненты размечены" : "AI-сегментация не вернула компоненты");
           } catch (error) {
-            get().setStatus(id, `Сегментация пропущена: ${friendlyProviderError(error)}`);
+            guard();
+            recordStage("segmentation", "failed", `Сегментация: ${friendlyProviderError(error)}`);
           }
         }
         if (segmented?.block) {
+          guard();
           const block = { ...segmented.block, lit: true };
           get().setNodeData(id, {
             blocks: [block],
@@ -1816,16 +2163,20 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             sourceArtifact: segmented.sourceArtifact || null,
           });
           const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
-          get().setStatus(id, `Готово: ${segmented.regions.length} компонент(ов) из скриншота · ${secs}с`, "ok");
+          recordStage("import", "success", "Скриншот импортирован");
+          finishStatus(`${segmented.regions.length} компонент(ов) из скриншота · ${secs}с`);
           get().propagate(id);
           return;
         }
         get().setStatus(id, "Скриншот → pixel capture через подключённый аккаунт…");
+        guard();
+        if (provider === "codex" || provider === "claude") throw new Error("AI-сегментация не завершена; API fallback для выбранного desktop-аккаунта отключён");
         const res = await api<ReproduceResp>("/api/reproduce", {
           image: data.image,
           url: "",
-          provider: nodeProvider(data.aiProvider),
+          provider,
         });
+        guard();
         const ir = res.ir || null;
         const dna = extractStyleDna(ir, null);
         const blocks = ir
@@ -1840,7 +2191,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           : [];
         get().setNodeData(id, { blocks, tokens: dna.tokens, sourceArtifact: null });
         const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
-        get().setStatus(id, ir ? `Готово: capture + Style DNA · ${secs}с` : "Не удалось получить IR из скриншота", ir ? "ok" : "err");
+        recordStage("import", ir ? "success" : "failed", ir ? "Скриншот импортирован" : "Не удалось получить IR из скриншота");
+        finishStatus(`capture + Style DNA · ${secs}с`, !ir);
       } else {
         const rawUrl = (data.url || "").trim();
         const url = rawUrl && !/^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl)
@@ -1855,10 +2207,13 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           return;
         }
         if (data.importedUrl === url && data.blocks.length > 0) {
-          get().setStatus(id, `Уже загружено локально · ${data.blocks.length} блоков`, "ok");
+          Object.assign(stages, data.pipelineStatus || {});
+          finishStatus(`Уже загружено локально · ${data.blocks.length} блоков`);
           return;
         }
         if (url !== data.url) get().setNodeData(id, { url });
+        inputAtStart = sourceInput(get().nodes.find((node) => Number(node.id) === id)!.data as SourceImportNodeData);
+        recordStage("import", "running", "Source Import…");
         get().setStatus(id, `Импортирую ${url.slice(0, 30)}…`);
         const desktop = window.designDNA;
         const initial = await api<BlockParseResp | BlockParseJobResp>("/api/block-parse", {
@@ -1872,12 +2227,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             { name: "mobile", width: 390, height: 844 },
           ],
         });
+        guard();
         let res: BlockParseResp;
         if ("jobId" in initial) {
           let job = initial;
           const started = Date.now();
           const deadline = started + 12 * 60_000;
           while (job.status === "queued" || job.status === "running") {
+            guard();
             get().setProgress(id, {
               expectedMs: 90_000,
               label: job.stageLabel || "Source Import",
@@ -1891,7 +2248,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             const elapsed = Date.now() - started;
             const delay = elapsed < 10_000 ? 400 : elapsed < 60_000 ? 1_000 : 2_000;
             await new Promise((resolve) => setTimeout(resolve, delay));
+            guard();
             job = await apiGet<BlockParseJobResp>(`/api/block-parse/job/${encodeURIComponent(job.jobId)}`);
+            guard();
           }
           if (job.status === "error") throw new Error(job.error || "Source Import завершился с ошибкой");
           if (!job.result) throw new Error("Source Import завершился без результата");
@@ -1905,36 +2264,61 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         // intentionally time-boxed and may otherwise reach these fields too
         // late, leaving Compare empty after a restart.
         await offloadSourceEvidenceInPlace(res.blocks || []);
+        guard();
+        recordStage("import", "success", "Source захвачен");
+        recordStage("refine", "skipped", "AI-уточнение не требуется или отключено");
         // AI-уточнение: детерминированный разбор перечислил, чего не смог
         // решить сам; модель переименовывает компоненты и уточняет роли блоков.
         // IR не меняется — fidelity-гейт этим путём обойти нельзя.
         if (data.aiRefine && res.ambiguities?.length && window.designDNA) {
           try {
+            recordStage("refine", "running", "AI-уточнение…");
             const refined = await refineSourceWithAi(
-              res, nodeProvider(data.aiProvider), get().setStatus, id, nodeEffort(data.aiEffort || "high"),
+              res, provider, get().setStatus, id, effort, guard,
             );
+            guard();
             if (refined) res = refined;
+            recordStage("refine", "success", refined ? "AI-уточнение применено" : "AI-уточнение: без изменений");
           } catch (error) {
+            guard();
             // Уточнение опционально: детерминированный результат остаётся в силе.
-            get().setStatus(id, `AI-уточнение пропущено: ${friendlyProviderError(error)}`);
+            recordStage("refine", "failed", `AI-уточнение: ${friendlyProviderError(error)}`);
           }
         }
         // AI-починка расхождений идёт всегда, без тумблера: пользователь должен
         // получить готовый кит, а не список «нужна проверка». Судья — тот же
         // fidelity-harness, правка принимается только при росте измеренного
         // сходства, поэтому автоматический прогон не может сделать хуже.
-        if (window.designDNA && (res.blocks || []).some((block) => !blockGatePassed(block))) {
+        const needsRepair = (res.blocks || []).some((block) => !blockGatePassed(block));
+        if (window.designDNA && needsRepair) {
           try {
+            recordStage("repair", "running", "AI-починка…");
             const repaired = await repairSourceWithAi(
-              res, nodeProvider(data.aiProvider), data.activeViewport || "desktop",
-              get().setStatus, id, nodeEffort(data.aiEffort || "high"),
+              res, provider, data.activeViewport || "desktop",
+              get().setStatus, id, effort, guard, (message) => recordStage("repair", "failed", message),
             );
+            guard();
             if (repaired) res = repaired;
+            if (stages.repair.status !== "failed") recordStage("repair", repaired ? "success" : "warning", repaired ? "AI-починка применена" : "AI-починка: улучшений не найдено");
           } catch (error) {
-            get().setStatus(id, `AI-починка пропущена: ${friendlyProviderError(error)}`);
+            guard();
+            recordStage("repair", "failed", `AI-починка: ${friendlyProviderError(error)}`);
           }
-        }
-        const litBefore = new Set(data.blocks.filter((b) => b.lit).map((b) => b.name));
+        } else recordStage("repair", "skipped", needsRepair
+          ? "AI-починка не запущена: desktop недоступен"
+          : "AI-починка не требуется: нет блоков с непройденной проверкой");
+        guard();
+        const fidelityFailures = (res.blocks || []).filter((block) => block.fidelityReport?.gate?.passed === false).length;
+        recordStage("fidelity", fidelityFailures ? "warning" : (res.blocks || []).every(blockGatePassed) ? "success" : "skipped",
+          fidelityFailures ? `Fidelity: ${fidelityFailures} блок(ов) требуют проверки` : (res.blocks || []).every(blockGatePassed) ? "Fidelity пройден" : "Fidelity не проверен");
+        const quality = (res.sourceArtifact?.components || []).map((component) => component.quality);
+        const qualityFailures = quality.filter((item) => item?.gate?.passed === false);
+        recordStage("quality", qualityFailures.length ? "warning" : quality.length && quality.every((item) => item?.gate?.passed === true) ? "success" : "skipped",
+          qualityFailures.length ? `Quality: ${qualityFailures.flatMap((item) => item.gate?.reasons || []).join("; ") || `${qualityFailures.length} компонент(ов) не прошли проверку`}`
+            : quality.length && quality.every((item) => item?.gate?.passed === true) ? "Quality пройден" : "Quality не проверен");
+        const currentSource = get().nodes.find((node) => Number(node.id) === id);
+        if (!currentSource || currentSource.type !== "sourceimport") return;
+        const litBefore = new Set(currentSource.data.blocks.filter((b) => b.lit).map((b) => b.name));
         const blocks = (res.blocks || []).map((b) => ({
           ...b,
           cached: !!res.cached || !!b.cached,
@@ -1955,24 +2339,31 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           },
         });
         const sid = String(id);
-        const alive = new Set<string>(["tokens", ...blocks.map((b) => b.name)]);
+        const alive = new Set<string>(["artifact", "tokens", ...blocks.filter((b) => b.lit && !b.error).map((b) => b.name)]);
+        const removedTargets = new Set(get().edges
+          .filter((e) => e.source === sid && !alive.has(e.sourceHandle ?? ""))
+          .map((e) => Number(e.target)));
         set((state) => ({
           edges: state.edges.filter((e) => e.source !== sid || alive.has(e.sourceHandle ?? "")),
         }));
+        for (const target of removedTargets) get().refreshInputs(target);
         const errCount = blocks.filter((b) => b.error).length;
         const authNote = res.authWarning ? ` · ${res.authWarning}` : "";
         const cacheNote = res.cached ? " · локальный кэш" : "";
         const secs = ((Number.isFinite(measuredTotalMs) ? measuredTotalMs : Date.now() - startedAt) / 1000).toFixed(1);
-        get().setStatus(id, `${blocks.length} блоков (${errCount} ошибок) · Source Import${cacheNote}${authNote} · ${secs}с`, errCount ? "err" : "ok");
+        recordStage("import", errCount ? "warning" : "success", errCount ? `Source Import: ошибок ${errCount}` : "Source импортирован");
+        finishStatus(`${blocks.length} блоков (${errCount} ошибок) · Source Import${cacheNote}${authNote} · ${secs}с`, !!errCount);
       }
       get().propagate(id);
     } catch (e) {
+      if (!ownsRun()) return;
       const msg = e instanceof Error ? e.message : String(e);
+      for (const [name, stage] of Object.entries(stages)) if (stage.status === "running") recordStage(name, signal.aborted || (e instanceof DOMException && e.name === "AbortError") ? "cancelled" : "failed", msg);
       get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Source Import: " + msg, "error");
     } finally {
-      get().setProgress(id, null);
-      get().setBusy(id, false);
+      if (ownsRun()) { get().setProgress(id, null); get().setBusy(id, false); get().setNodeData(id, { _sourceRun: null }); }
+      endRunAbort(id, signal);
     }
   },
 
@@ -2027,7 +2418,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           });
           rawOutputs.push(answer.content);
         }
-        res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs });
+        res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId });
       }
       const variants = Array.isArray(res.variants) ? res.variants : [];
       get().setNodeData(id, { variants, active: 0 });
@@ -2503,9 +2894,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const n = st.nodes.find((node) => Number(node.id) === id);
     if (!n || n.type !== "timeline" || st.busy[id]) return;
     const data = n.data as TimelineNodeData;
+    const sourcePages = videoPages(st.nodes, st.edges, n, true);
     const designIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
     if (!designIr) {
       get().setStatus(id, "Подключите Design IR (страница или компонент)", "err");
+      return;
+    }
+    if (sourcePages.length !== (data.inputs || ["ir"]).length) {
+      get().setStatus(id, "Подключите все страницы или удалите пустой вход", "err");
       return;
     }
     const sourceRevision = get().getNodeIrRevision(id);
@@ -2516,11 +2912,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       const response = await api<{ timeline?: IRObject }>("/api/timeline/build", {
         ir: designIr,
         settings: data.settings,
+        pages: sourcePages,
       });
       if (!stillCurrent()) return;
       const timeline = response.timeline || null;
       if (!timeline || !Array.isArray(timeline.layers) || !timeline.layers.length) throw new Error("Сервер вернул пустой таймлайн");
-      get().setNodeData(id, { ir: deepClone(designIr), timeline, renderJob: null });
+      get().setNodeData(id, { ir: deepClone(designIr), sourcePages: deepClone(sourcePages), timeline, renderJob: null });
       const layers = Array.isArray((timeline as { layers?: unknown[] } | null)?.layers)
         ? ((timeline as { layers: unknown[] }).layers).length : 0;
       const composition = (timeline as { composition?: { duration?: number } } | null)?.composition;
@@ -2591,6 +2988,23 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   /* «+ вход» у mix: максимум 4, имя — первое свободное из a..d, вес 50 (nodes.js:403-412) */
+  addVideoInput: (id) => {
+    const node = get().nodes.find((n) => Number(n.id) === id);
+    if (node?.type !== "timeline") return;
+    const inputs = node.data.inputs || ["ir"];
+    if (inputs.length >= 8) return;
+    const name = Array.from({ length: 7 }, (_, i) => `page${i + 2}`).find((n) => !inputs.includes(n))!;
+    recordGraphHistory();
+    get().setNodeData(id, { inputs: [...inputs, name] });
+  },
+  removeVideoInput: (id, name) => {
+    const node = get().nodes.find((n) => Number(n.id) === id);
+    if (node?.type !== "timeline" || name === "ir") return;
+    recordGraphHistory();
+    get().setNodeData(id, { inputs: (node.data.inputs || ["ir"]).filter((n) => n !== name) });
+    set((state) => ({ edges: state.edges.filter((e) => !(e.target === node.id && e.targetHandle === name)) }));
+    get().refreshInputs(id);
+  },
   addMixInput: (id) => {
     const sid = String(id);
     const n = get().nodes.find((x) => x.id === sid);
@@ -2826,7 +3240,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         systemId: result.document.id, name: result.document.name, status: "draft",
         revision: 0, summary: result.summary, sourceNodeId: sourceId,
         defaultSet: false, sourceUpdate: false,
-        document: result.document, autoPublish: true,
+        document: result.document, autoPublish: true, _sourceFingerprint: sourceKitFingerprint(data),
       } as unknown as Partial<DesignSystemNodeData>);
       const reviewMasters = Number(result.summary?.reviewMasters || 0);
       if (reviewMasters) get().setStatus(dsId, `Черновик: ${reviewMasters} мастеров ждут ревью`, "ok");
@@ -3002,6 +3416,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         revision: result.document.revision,
         summary: result.summary,
         contentHash: result.document.contentHash || "",
+        resolvedTokens: outValue({ ...n, data: { ...data, document: result.document } } as FlowNode, "tokens"),
         // опубликованная копия не хранится в ноде: ревизия живёт на сервере
         // (design_system_revisions), документ подтянется по ссылке
         // systemId@revision при следующем открытии редактора — автосейв
@@ -3010,6 +3425,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         lastError: "",
       });
       get().setStatus(nodeId, `Опубликовано v${result.document.revision}${result.duplicate ? " (без изменений)" : ""}`, "ok");
+      get().propagate(nodeId);
       await get().refreshDesignSystems();
       return true;
     } catch (e) {
@@ -3073,22 +3489,40 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   rebuildDesignSystemFromSource: async (nodeId) => {
     const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
-    if (!n || n.type !== "designsystem") return false;
+    if (!n || n.type !== "designsystem" || get().busy[nodeId]) return false;
     const data = n.data as DesignSystemNodeData;
-    const sourceNode = get().nodes.find((x) => Number(x.id) === Number(data.sourceNodeId));
+    const pageId = get().activePageId;
+    const signal = beginRunAbort(nodeId);
+    const ownsBuild = () => get().activePageId === pageId && runAborts.get(nodeId)?.signal === signal
+      && get().nodes.some((x) => Number(x.id) === Number(nodeId) && x.type === "designsystem");
+    const buildStage = (status: AiPipelineStage["status"], message: string, fresh = false) => {
+      if (!ownsBuild()) return;
+      const current = get().nodes.find((x) => Number(x.id) === Number(nodeId))!.data as DesignSystemNodeData;
+      const stages = { ...current.pipelineStatus };
+      const updatedAt = new Date().toISOString();
+      if (fresh) for (const operation of ["organize", "style-review", "master-review"]) {
+        stages[operation] = { status: "skipped", message: "Не запускалось для пересобранного документа; прежний результат устарел", updatedAt };
+      }
+      stages.build = { status, message, updatedAt };
+      get().setNodeData(nodeId, { pipelineStatus: stages });
+      get().setStatus(nodeId, message, status === "success" ? "ok" : status === "running" ? undefined : "err");
+    };
+    const sourceNode = connectedDesignSystemSource(get().nodes, get().edges, n);
     if (!sourceNode) {
-      get().setStatus(nodeId, "Source-нода не найдена", "err");
+      buildStage("failed", "Source-нода не найдена");
       get().setNodeData(nodeId, { lastError: "Source-нода не найдена" });
       return false;
     }
+    const fingerprint = sourceKitFingerprint(sourceNode.data);
     get().setBusy(nodeId, true);
     get().setNodeData(nodeId, { busyAction: "sync", lastError: "" });
-    get().setStatus(nodeId, "Синхронизация с Source…");
+    buildStage("running", "Синхронизация с Source…");
     try {
       const resp = await fetch("/api/design-system/build", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" }, signal,
         body: JSON.stringify({
-          sourceNodeId: data.sourceNodeId, sourceUrl: (sourceNode.data as SourceImportNodeData).url || "",
+          sourceNodeId: sourceNode.id, sourceUrl: sourceNode.data.importedUrl || sourceNode.data.url || "",
+          systemId: data.systemId || undefined,
           blocks: (sourceNode.data as SourceImportNodeData).blocks || [],
           tokens: (sourceNode.data as SourceImportNodeData).tokens || {},
           sourceArtifact: (sourceNode.data as SourceImportNodeData).sourceArtifact || null,
@@ -3097,43 +3531,89 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         }),
       });
       const result = await resp.json();
-      if (result.error) {
-        get().setStatus(nodeId, "Ошибка: " + result.error, "err");
-        get().setNodeData(nodeId, { lastError: result.error });
+      if (!ownsBuild()) return false;
+      if (signal.aborted) throw new DOMException("Сборка отменена", "AbortError");
+      if (!resp.ok || result.error || !result.document) {
+        const detail = result.detail || result.error;
+        const first = typeof detail === "object" && Array.isArray(detail?.errors) ? detail.errors[0] : null;
+        const message = detail && typeof detail === "object"
+          ? [detail.message || detail.code || `HTTP ${resp.status}`, first?.message, first?.path,
+            detail.errors?.length > 1 ? `Ошибок: ${detail.errors.length}` : ""].filter(Boolean).join(" · ")
+          : String(detail || `HTTP ${resp.status}`);
+        buildStage("failed", "Ошибка: " + message);
+        get().setNodeData(nodeId, { lastError: message });
+        return false;
+      }
+      const current = get().nodes.find((x) => Number(x.id) === Number(nodeId));
+      if (!current || current.type !== "designsystem") return false;
+      const currentSource = connectedDesignSystemSource(get().nodes, get().edges, current);
+      if (currentSource?.id !== sourceNode.id || sourceKitFingerprint(currentSource.data) !== fingerprint
+        || current.data.systemId !== data.systemId || current.data.revision !== data.revision
+        || inputFingerprint(current.data.document ?? null) !== inputFingerprint(data.document ?? null)) {
+        buildStage("cancelled", "Source или документ изменился во время сборки — повторите Sync");
+        get().setNodeData(nodeId, { sourceUpdate: true, lastError: "Source изменился во время сборки — повторите Sync" });
         return false;
       }
       get().setNodeData(nodeId, {
         systemId: result.document.id,
         name: result.document.name,
         status: "draft",
+        revision: 0,
+        contentHash: "",
+        defaultSet: false,
+        sourceNodeId: Number(sourceNode.id),
+        _sourceFingerprint: fingerprint,
         summary: result.summary,
         sourceUpdate: false,
         document: result.document,
         lastError: "",
       });
-      get().setStatus(nodeId, "Черновик пересобран из Source — проверьте и опубликуйте", "ok");
+      buildStage("success", "Черновик пересобран из Source — проверьте и опубликуйте", true);
+      get().propagate(nodeId);
       return true;
     } catch (e) {
+      if (!ownsBuild()) return false;
       const message = e instanceof Error ? e.message : String(e);
-      get().setStatus(nodeId, "Ошибка: " + message, "err");
+      buildStage(signal.aborted || (e instanceof Error && e.name === "AbortError") ? "cancelled" : "failed", message);
       get().setNodeData(nodeId, { lastError: message });
       return false;
     } finally {
-      get().setBusy(nodeId, false);
-      get().setNodeData(nodeId, { busyAction: "" });
+      if (ownsBuild()) {
+        get().setBusy(nodeId, false);
+        get().setNodeData(nodeId, { busyAction: "" });
+      }
     }
   },
 
+  runDesktopDesignSystemAi,
+  runDesignSystemAi: (nodeId, operation, viewport) => runDesktopDesignSystemAi(nodeId, operation, { viewport }),
+
   saveDesignSystemDocument: async (nodeId, document) => {
     const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
-    if (!n || n.type !== "designsystem") return false;
+    if (!n || n.type !== "designsystem" || get().busy[nodeId]) return false;
+    const pageId = get().activePageId;
+    const original = inputFingerprint(n.data.document ?? null);
+    const source = connectedDesignSystemSource(get().nodes, get().edges, n);
+    const sourceFingerprint = source ? sourceKitFingerprint(source.data) : null;
+    const saveToken = newRunId();
+    get().setNodeData(nodeId, { _dsSave: saveToken });
+    const currentSave = () => {
+      const current = get().nodes.find((x) => Number(x.id) === Number(nodeId));
+      if (!current || current.type !== "designsystem" || current.data._dsSave !== saveToken || get().activePageId !== pageId) return false;
+      const currentSource = connectedDesignSystemSource(get().nodes, get().edges, current);
+      return inputFingerprint(current.data.document ?? null) === original && currentSource?.id === source?.id
+        && (currentSource ? sourceKitFingerprint(currentSource.data) : null) === sourceFingerprint;
+    };
     try {
+      if (!currentSave()) return false;
       const resp = await fetch("/api/design-system/save-draft", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ document }),
       });
       const result = await resp.json();
-      if (result.error) {
+      if (!currentSave()) return false;
+      if (!resp.ok || result.error) {
+        result.error ||= result.detail || `HTTP ${resp.status}`;
         get().setNodeData(nodeId, { lastError: result.error });
         get().setStatus(nodeId, "Ошибка: " + result.error, "err");
         return false;
@@ -3146,6 +3626,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       });
       return true;
     } catch (e) {
+      if (!currentSave()) return false;
       const message = e instanceof Error ? e.message : String(e);
       get().setNodeData(nodeId, { lastError: message });
       get().setStatus(nodeId, "Ошибка: " + message, "err");
@@ -3176,12 +3657,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       }
       get().setNodeData(nodeId, {
         document: null,
+        resolvedTokens: outValue({ ...n, data: { ...data, document: result.document } } as FlowNode, "tokens"),
         contentHash: result.document.contentHash || "",
         summary: result.summary,
         status: "published",
         revision: result.document.revision,
         lastError: "",
       });
+      get().propagate(nodeId);
       await get().refreshDesignSystems();
       return true;
     } catch (e) {
@@ -3264,60 +3747,28 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     }));
   },
 
-  /* Параллельная видео-ветка — отдельной страницей, не трогая текущий граф:
-   * Source Import (url, по умолчанию rsale.net) → Generator → Interaction
-   * Recorder → Motion Editor (MP4). Модель и effort выбираются на Generator-ноде. */
+  /* Start an isolated video workspace from the selected assembled page.
+   * A snapshot preserves the original graph; no import, generation or paid job starts. */
   addVideoChainPage: (options) => {
-    const rawUrl = (options?.url || "rsale.net").trim() || "rsale.net";
-    const url = /^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl)
-      ? rawUrl
-      : rawUrl.startsWith("//") ? `https:${rawUrl}` : `https://${rawUrl}`;
-    const host = url.replace(/^https?:\/\//, "").replace(/\/.*$/, "") || "source";
-    const provider = "openai";
+    const assembled = get().nodes.filter((node) => node.type === "page" && node.data.ir);
+    const selected = assembled.filter((node) => node.selected);
+    const source = selected.length === 1 ? selected[0] : assembled.length === 1 ? assembled[0] : null;
+    const sourceIr = source?.type === "page" && source.data.ir ? deepClone(source.data.ir) : null;
+    const provider = options?.provider === "claude" ? "claude" : "codex";
     let nextId = 1;
     const mkNode = (type: NodeType, x: number, y: number, patch: Record<string, unknown> = {}) => ({
-      id: String(nextId++),
-      type,
-      position: { x: Math.round(x), y: Math.round(y) },
-      initialWidth: 260,
-      initialHeight: 120,
+      id: String(nextId++), type, position: { x, y },
+      initialWidth: NODE_DEFS[type].w, initialHeight: 120,
       data: { ...defaultData(type), ...patch },
     }) as FlowNode;
-    // один ряд слева-направо: ширины нод (360/260/300/420/390) + зазор 50px,
-    // перекрытий нет даже с длинным списком блоков Source Import
-    const source = mkNode("sourceimport", 40, 120, { mode: "url", url, mine: true });
-    const prompt = mkNode("prompt", 450, 120, {
-      text:
-        `Видео-версия главной страницы ${host} по Style DNA источника: сохрани цвета, ` +
-        "шрифты и ритм секций. Собери динамичный лендинг под 15-секундный ролик: " +
-        "hero с крупным заголовком и CTA, две-три короткие секции с ясной иерархией, " +
-        "финальный экран с призывом. Усиль контраст и крупность типографики — " +
-        "текст должен читаться в видео.",
-    });
-    const generator = mkNode("generator", 760, 120, { provider, count: 1 });
-    const recorder = mkNode("recorder", 1110, 120);
-    const motion = mkNode("motion", 1580, 120);
-    const motionDesign = mkNode("motiondesign", 1950, 120, {
-      prompt: "Продолжи готовый ролик, сохрани структуру интерфейса и добавь цельное кинематографичное движение камеры.",
-      inputMode: "auto",
-    });
-    const nodes = [source, prompt, generator, recorder, motion, motionDesign];
-    const edge = (fromNode: number, fromPort: string, toNode: number, toPort: string) =>
-      makeRfEdge(nodes, { node: fromNode, port: fromPort }, { node: toNode, port: toPort });
-    const edges = [
-      edge(Number(prompt.id), "out", Number(generator.id), "prompt"),
-      edge(Number(source.id), "tokens", Number(generator.id), "designSystem"),
-      edge(Number(generator.id), "ir", Number(recorder.id), "ir"),
-      edge(Number(generator.id), "ir", Number(motion.id), "ir"),
-      edge(Number(recorder.id), "interaction", Number(motion.id), "interaction"),
-      edge(Number(prompt.id), "out", Number(motionDesign.id), "prompt"),
-      edge(Number(motion.id), "motion", Number(motionDesign.id), "motion"),
-      edge(Number(motion.id), "video", Number(motionDesign.id), "video"),
-    ];
+    const sourcePage = mkNode("page", 40, 120, { ir: sourceIr });
+    const video = mkNode("timeline", 480, 120, { ir: sourceIr ? deepClone(sourceIr) : null, provider });
+    const nodes = [sourcePage, video];
+    const edges = [makeRfEdge(nodes, { node: Number(sourcePage.id), port: "ir" }, { node: Number(video.id), port: "ir" })];
     const id = pageId();
     const page: FlowPage = {
       id,
-      name: `${host} → видео`,
+      name: "Видео",
       nodes,
       edges,
       view: { ...DEFAULT_VIEW },
@@ -3446,17 +3897,49 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     if (!project) return false;
     const activePage = project.pages.find((page) => page.id === project.activePageId) || project.pages[0];
     if (!activePage) return false;
+    const current = get();
+    const preserved = new Set<number>();
+    const nodes = activePage.nodes.map((incoming) => {
+      if (current.activePageId !== activePage.id) return incoming;
+      const live = current.nodes.find((node) => node.id === incoming.id && node.type === incoming.type);
+      if (!live) return incoming;
+      if (live.type === "designsystem" && incoming.type === "designsystem") {
+        const a = live.data, b = incoming.data;
+        const liveSource = connectedDesignSystemSource(current.nodes, current.edges, live);
+        const nextSource = connectedDesignSystemSource(activePage.nodes, activePage.edges, incoming);
+        if (a.systemId !== b.systemId || a.revision !== b.revision
+          || (a.document?.contentHash || a.contentHash || "") !== (b.document?.contentHash || b.contentHash || "")
+          || liveSource?.id !== nextSource?.id
+          || (liveSource ? sourceKitFingerprint(liveSource.data) : null) !== (nextSource ? sourceKitFingerprint(nextSource.data) : null)
+          || (b.document != null && inputFingerprint(b.document) !== inputFingerprint(a.document ?? null))) return incoming;
+        // A persisted reference is not an instruction to evict the live cache.
+        // Preserve runtime ownership only for this exact DS revision and Source.
+        preserved.add(Number(incoming.id));
+        return { ...incoming, data: { ...b, document: a.document ?? b.document,
+          _dsAiRun: a._dsAiRun, _dsSave: a._dsSave, busyAction: a.busyAction,
+          pipelineStatus: a.pipelineStatus, lastError: a.lastError, sourceUpdate: a.sourceUpdate } } as FlowNode;
+      }
+      if (live.type === "sourceimport" && incoming.type === "sourceimport"
+        && sourceKitFingerprint(live.data) === sourceKitFingerprint(incoming.data)
+        && live.data.url === incoming.data.url && live.data.image === incoming.data.image && live.data.mode === incoming.data.mode) {
+        preserved.add(Number(incoming.id));
+        return { ...incoming, data: { ...incoming.data, _sourceRun: (live.data as unknown as Record<string, unknown>)._sourceRun,
+          pipelineStatus: live.data.pipelineStatus } } as FlowNode;
+      }
+      return incoming;
+    });
+    const keepRuntime = <T>(values: Record<number, T>) => Object.fromEntries(Object.entries(values).filter(([id]) => preserved.has(Number(id))));
     set({
-      pages: project.pages,
+      pages: project.pages.map((page) => page.id === activePage.id ? { ...page, nodes } : page),
       activePageId: activePage.id,
-      nodes: hydratePageBridgeNodes(activePage.nodes, project.channels),
+      nodes: hydratePageBridgeNodes(nodes, project.channels),
       edges: activePage.edges,
       view: activePage.view,
       nextId: activePage.nextId,
       channels: project.channels,
-      statuses: {},
-      busy: {},
-      progresses: {},
+      statuses: keepRuntime(current.statuses),
+      busy: keepRuntime(current.busy),
+      progresses: keepRuntime(current.progresses),
       graphHistory: EMPTY_GRAPH_HISTORY,
       projectHydrated: true,
     });

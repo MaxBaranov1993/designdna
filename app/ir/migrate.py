@@ -26,6 +26,7 @@ _GENERATED_META_KEYS = {
     "designSystemErrors", "designSystemWarnings", "designSystemRef", "compiledContextHash",
     "archetypeId", "identityScore", "identityReport", "strictRecovery", "requestedComponentKey",
     "sourceTokenLock", "sourceTokenNodeId", "exactServiceCardEmbedded", "direction",
+    "strictRecoveryReason", "contentRewrite",
 }
 _GENERATED_SIZE_ALIASES = {
     "h1": "display", "h2": "xl", "h3": "lg", "h4": "md",
@@ -363,26 +364,40 @@ def ensure_current(ir: dict | None, source: str | None = None) -> dict | None:
 
 
 def migrate_project_payload(payload: dict) -> dict:
-    """Walk a saved project payload and migrate every IR node to current version.
+    """Migrate editable project IR without traversing Source/DS snapshots.
 
-    IR documents live inside node data under keys such as `ir`, `variants`,
-    `blocks`, and inside `channels`. The payload structure itself (pages, graph,
-    nodes, edges) is left untouched.
+    Pinned masters and captured Source IR are owned by their ingress pipelines.
+    Adding project-load provenance or tokens there invalidates master hashes
+    and Source fingerprints even when the user has made no changes.
     """
     payload = copy.deepcopy(payload)
 
-    def _migrate_value(value):
+    def _migrate_value(value, slot=""):
         if isinstance(value, dict):
+            # Treat entire node/snapshot boundaries as opaque, including all
+            # variants, rollback history and nested sourceArtifact evidence.
+            if (value.get("type") in ("sourceimport", "designsystem")
+                    or str(value.get("schemaVersion") or "").startswith(("design-system/", "source-pack/"))
+                    or slot in ("masterIr", "templateIr", "sourceArtifact", "sourcePack", "polish", "blocks")):
+                return value
             if value.get("version") in ("1.0", "1.1") and "tree" in value and "tokens" in value:
+                if slot not in ("ir", "variants", "channels"):
+                    return value
+                # A current captured IR may also be exposed as a channel or
+                # derived page input outside its Source node. Preserve it too.
+                roots = value.get("tree")
+                if (value.get("version") == CURRENT_SCHEMA_VERSION and isinstance(roots, list)
+                        and any(isinstance(root, dict) and root.get("type") == "source-block" for root in roots)):
+                    return value
                 provenance = value.get("provenance") if isinstance(value.get("provenance"), dict) else {}
                 # Prefer the document's own stable creation time.  Legacy IR
                 # without one receives a deterministic sentinel instead of
                 # the wall clock, keeping repeated loads byte-identical.
                 recorded_at = provenance.get("createdAt") or _PROJECT_MIGRATION_TIME
                 return migrate_ir(value, source="project-load", recorded_at=str(recorded_at))
-            return {k: _migrate_value(v) for k, v in value.items()}
+            return {k: _migrate_value(v, k if slot != "channels" else "channels") for k, v in value.items()}
         if isinstance(value, list):
-            return [_migrate_value(v) for v in value]
+            return [_migrate_value(v, slot) for v in value]
         return value
 
     return _migrate_value(payload)

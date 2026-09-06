@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { claudeProcessSpec } from "./claude-agent-server.mjs";
 
 /* Рантаймы провайдеров. openai — HTTP по API-ключу (бинарника нет: «установлен»
  * = ключ сохранён); codex/claude — CLI, доступность проверяется реальным
@@ -15,10 +16,15 @@ export const PROBE_CACHE_MS = 60_000;
 export function providerCommand(definition, {
   platform = process.platform,
   environment = process.env,
+  fileExists,
 } = {}) {
   // Явный путь к бинарнику (как у codex/claude-серверов) — без шима cmd.exe
   if (definition.overrideEnv && environment[definition.overrideEnv]) {
     return { command: environment[definition.overrideEnv], args: definition.args };
+  }
+  if (definition.command === "claude") {
+    const spec = claudeProcessSpec({ environment, platform, args: definition.args, fileExists });
+    return { command: spec.command, args: spec.args };
   }
   if (platform !== "win32") return { command: definition.command, args: definition.args };
   // npm/global CLIs on Windows are commonly .cmd shims. execFile("codex")

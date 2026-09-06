@@ -2640,10 +2640,8 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         // Фон текстового слоя — самостоятельное редактируемое свойство: пользователь
         // ожидает, что «Заливка» работает и у heading/text. Рамка и тень по-прежнему
         // остаются свойствами контейнера, чтобы не ломать модель вложенности.
-        if (node.type === "text" || node.type === "heading") {
-          for (const k of ["borderColor", "borderWidth", "borderRadius", "boxShadow"]) delete style[k];
-          delete node.fill;
-        }
+        // Imported text can legitimately carry measured borders/shadows. Editing
+        // its background or color must not silently erase those other properties.
         if (node.type === "rect") {
           if (partial.background !== undefined) {
             if (partial.background === null || partial.background === "") delete node.fill;

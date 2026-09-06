@@ -90,7 +90,7 @@ def test_strict_accepts_valid_provider_variant_as_extend_when_no_master_matches(
     monkeypatch.setattr(store, "resolve_ref", lambda _ref: (deepcopy(document), None))
     monkeypatch.setattr(art_direction, "create_design_brief", lambda *_args, **_kwargs: [])
     response = server.generate(server.GenerateReq(
-        brief="unrelated canvas", count=1, rawOutputs=[json.dumps(master)],
+        brief="unrelated canvas", count=1, allowStrictFallback=True, rawOutputs=[json.dumps(master)],
         designSystem={"systemId": "ds-pricing", "revision": 1, "usageMode": "strict"},
     ))
     assert response["generationLog"]["strictFallback"] == "extend"

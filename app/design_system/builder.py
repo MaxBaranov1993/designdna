@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import re
 from collections import Counter
 from typing import Any, Callable
@@ -26,8 +27,23 @@ from .identity import extract_identity
 # версию, когда нода не передала свою. Расхождение (было "dom-v31" против
 # "dom-v39") помечало свежие захваты устаревшим парсером. Синхронность
 # проверяется тестом test_source_compiler_default_matches_pipeline.
-SOURCE_COMPILER_DEFAULT = "dom-v41"
+SOURCE_COMPILER_DEFAULT = "dom-v45"
 _GEN_STATES = ("hover", "loading", "error", "empty", "disabled")
+
+
+def normalize_new_master_numbers(value: Any) -> Any:
+    """Copy NEW master values into JS-stable numeric form before their pin.
+
+    Never use this to load/re-pin an existing master or alter historical hash
+    semantics. JSON.stringify writes an integral finite Number without '.0'.
+    """
+    if isinstance(value, dict):
+        return {key: normalize_new_master_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [normalize_new_master_numbers(item) for item in value]
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer() and abs(value) <= 2**53 - 1:
+        return int(value)
+    return copy.deepcopy(value)
 
 # ---------- Style DNA нормализация ----------
 
@@ -863,7 +879,8 @@ def _measured_foundation_values(blocks: list) -> dict:
 
 def build_source_pack(source_node_data: dict, *, source_node_id: Any = 0) -> dict:
     """Source Pack from a Source node, including exact IR and fidelity evidence."""
-    blocks = source_node_data.get("blocks") or []
+    from scraper import canonicalize_source_blocks
+    blocks = canonicalize_source_blocks(source_node_data.get("blocks") or [], stage="ds-build-assets")
     pack_blocks = []
     for block in blocks:
         if not isinstance(block, dict) or block.get("error") or not block.get("ir"):
@@ -1612,6 +1629,7 @@ def _components_from_blocks(blocks: list, source_revision_hash: str, dna: dict,
                     block_responsive = ir.get("responsive") if isinstance(ir.get("responsive"), dict) else {}
                     if isinstance(block_responsive.get("viewports"), dict) and block_responsive["viewports"]:
                         master["responsive"] = {"viewports": copy.deepcopy(block_responsive["viewports"])}
+                    master = normalize_new_master_numbers(master)
                     bounds_by_viewport = {
                         viewport_name: frame
                         for viewport_name in ("desktop", "tablet", "mobile")
@@ -1890,7 +1908,9 @@ def build_draft(pack: dict, *, name: str | None = None, locale: str = "ru",
                       "url": pack.get("source", {}).get("url"), "capturedAt": pack.get("source", {}).get("capturedAt")}],
     )
     tokens = pack.get("tokens") or {}
-    blocks = pack.get("_raw_blocks") or pack.get("blocks") or []
+    from scraper import canonicalize_source_blocks
+    blocks = canonicalize_source_blocks(
+        pack.get("_raw_blocks") or pack.get("blocks") or [], stage="ds-build-assets")
     doc["foundations"] = _foundations_from_tokens(tokens, pack.get("viewports") or [], blocks)
     dna = normalize_dna(tokens)
     content = harvest_reference_content(blocks)

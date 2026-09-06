@@ -8,6 +8,7 @@ import { GeoEdit } from "./geoedit";
 import { IRHistory } from "./irhistory";
 import { DesignAIFontCatalog } from "./fontCatalog";
 import { TimelineEngine, Timeline } from "./timeline";
+import { VideoStoryPlayer } from "./video-story";
 
 declare global {
   interface Window {
@@ -18,6 +19,7 @@ declare global {
     DesignAIFontCatalog: typeof DesignAIFontCatalog;
     TimelineEngine: typeof TimelineEngine;
     Timeline: typeof Timeline;
+    VideoStoryPlayer: typeof VideoStoryPlayer;
   }
 }
 
@@ -29,6 +31,7 @@ if (typeof window !== "undefined") {
   window.DesignAIFontCatalog = DesignAIFontCatalog;
   window.TimelineEngine = TimelineEngine;
   window.Timeline = Timeline;
+  window.VideoStoryPlayer = VideoStoryPlayer;
 }
 
 export { IRRenderer, GeoEdit, IRHistory, DesignAIFontCatalog, TimelineEngine, Timeline };

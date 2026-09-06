@@ -20,6 +20,7 @@ import traceback
 import uuid
 import webbrowser
 from pathlib import Path
+from typing import Literal
 
 # Windows: реестр может не знать MIME для .js/.css/woff — без корректного
 # content-type браузер отказывается выполнять module-скрипты сборки /flow
@@ -59,6 +60,7 @@ from ir_render import render_png
 import project_store
 import typography
 import designkb
+import generator_policy
 from editor_assist import router as editor_assist_router
 
 import ir
@@ -258,6 +260,10 @@ class GenerateReq(BaseModel):
     prepareOnly: bool = False
     rawOutputs: list[str] | None = None
     selectedDirection: str = "all"
+    surface: str = "auto"
+    designStyle: str = "auto"
+    preparedContextId: str | None = None
+    allowStrictFallback: bool = False
     # ТЗ §19: закреплённая ревизия дизайн-системы {systemId, revision, contentHash, usageMode}
     designSystem: dict | None = None
     # Существующие экраны проекта (порт reference): агент видит их паттерны и
@@ -292,6 +298,7 @@ class BlockParseRefineReq(BaseModel):
     """AI-уточнение разбора: только подписи и роли блоков, IR неприкосновенен."""
     blocks: list
     operations: list = []
+    source: dict | None = None
 
 
 class FidelityRepairReq(BaseModel):
@@ -331,6 +338,9 @@ class QualityPassReq(BaseModel):
     min_score: int = 80
     repair: bool = True
     rejudge: bool = True
+    designSystem: dict | None = None
+    surface: Literal["auto", "landing", "catalog", "detail", "checkout", "dashboard", "form", "editor", "ai-workspace", "article", "feed", "component"] = "auto"
+    visualReview: bool = False
     runId: str | None = None
 
 
@@ -471,7 +481,41 @@ def generate(req: GenerateReq):
     run_registry.stage(run_id, "prompt", "Собираю промпт")
     resp = None
     try:
-        resp = _generate(req, run_id)
+        try:
+            policy = generator_policy.context(req.brief, surface=req.surface, style=req.designStyle,
+                                              ds=req.designSystem, locked=bool(req.tokens), edit=bool(req.styleHint))
+        except ValueError as exc:
+            return err(422, str(exc))
+        prepared = None
+        request_key = generator_policy.digest(req.model_dump(exclude={"prepareOnly", "rawOutputs", "runId", "preparedContextId"}))
+        if req.preparedContextId:
+            prepared = cache_store.get("generator-prepared", req.preparedContextId)
+            if not prepared or prepared.get("requestKey") != request_key:
+                return err(409, "Контекст генератора изменился или истёк. Запустите генерацию заново.")
+        # Pin the same resolved revision in both phases, including refs that omitted a revision.
+        resolved = None
+        if req.designSystem:
+            from design_system import store as ds_store
+            resolved, ds_error = ds_store.resolve_ref(req.designSystem)
+            if ds_error:
+                return err(422, f"Design System: {ds_error}")
+        context_key = generator_policy.digest({"policy": policy, "ds": resolved,
+            "rules": project_rules.prompt_block("generation"),
+            "promptFiles": [llm._file_stamp(llm.ROOT / name) for name in llm._PROMPT_FILES]})
+        if prepared and prepared.get("contextKey") != context_key:
+            return err(409, "Дизайн-система или правила изменились после подготовки. Запустите генерацию заново.")
+        resp = _generate(req, run_id, prepared=prepared, resolved_document=resolved)
+        if isinstance(resp, dict):
+            records = resp.pop("_directionRecords", [])
+            fallback = (resp.get("generationLog") or {}).get("strictFallback")
+            policy["effectiveMode"] = fallback or policy["requestedMode"]
+            resp["designPolicy"] = policy
+            resp.setdefault("generationLog", {})["policy"] = policy
+            if req.prepareOnly:
+                receipt = uuid.uuid4().hex
+                cache_store.put("generator-prepared", receipt, {"requestKey": request_key,
+                    "contextKey": context_key, "directions": records})
+                resp["preparedContextId"] = receipt
         return resp
     finally:
         _finish_run(run_id, resp)
@@ -640,6 +684,7 @@ def _materialize_exact_master(primary: dict, ds_context: dict, ds_compiled: dict
         recovered_root = recovered_root["children"][0]
     recovered_root.setdefault("sourceMeta", {})["componentRef"] = ds_compiler.component_handle(
         primary, ds_context.get("systemRef") or {})
+    recovered_root["sourceMeta"].setdefault("kind", "component-instance")
     recovered.setdefault("meta", {}).update({
         "designSystemRef": ds_context.get("systemRef"),
         "compiledContextHash": (ds_compiled or {}).get("compiledContextHash"),
@@ -738,7 +783,8 @@ def _apply_content_answer(ir: dict, slots: list[dict], raw: str) -> tuple[dict, 
     return out, replaced, ""
 
 
-def _generate(req: GenerateReq, run_id: str | None):
+def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = None,
+              resolved_document: dict | None = None):
     # Browser mode may explicitly select a direct API account. Codex is a
     # desktop-only transport, so unknown/desktop values fall back to ROUTING.
     # codex/claude — консольные аккаунты (cli_llm); всё остальное — Sol по ключу
@@ -756,6 +802,10 @@ def _generate(req: GenerateReq, run_id: str | None):
     memory_hint = project_store.build_prompt_memory_hint()
     memory = f"\n\n{memory_hint}" if memory_hint else ""
     mode = "edit" if has_style else "generate"
+    policy_context = generator_policy.context(req.brief, surface=req.surface, style=req.designStyle,
+        ds=req.designSystem, locked=bool(req.tokens), edit=mode == "edit")
+    surface = policy_context["surface"]
+    policy_block = generator_policy.prompt(policy_context)
     if run_registry.is_cancelled(run_id):
         return err(CANCELLED_STATUS, "Генерация отменена")
     rules_block = project_rules.prompt_block("generation")
@@ -771,6 +821,8 @@ def _generate(req: GenerateReq, run_id: str | None):
             set(preset["moods"]) if preset else typography.brief_moods(brief),
             prefer=(preset.get("font") if preset else None) or pinfo["fonts"][0])
     scale = typography.type_scale()
+    if surface != "landing" and not dna:
+        pair = None
     ds_doc = None
 
     # Design System: закрепляем ревизию на момент старта (§16.2) и строим
@@ -783,13 +835,15 @@ def _generate(req: GenerateReq, run_id: str | None):
     ds_reference_instruction = ""
     if isinstance(req.designSystem, dict) and req.designSystem.get("systemId"):
         from design_system import resolver as ds_resolver, store as ds_store
-        ds_doc, ds_error = ds_store.resolve_ref(req.designSystem)
+        ds_doc, ds_error = (resolved_document, None) if resolved_document is not None else ds_store.resolve_ref(req.designSystem)
         if ds_error:
             return err(422, f"Design System: {ds_error}")
         ds_usage_mode = str(req.designSystem.get("usageMode") or "strict")
         pinned_master_keys = _reference_pinned_component_keys(req.referenceIrs, ds_doc)
         ds_context = ds_resolver.resolve_context(
             ds_doc, brief, usage_mode=ds_usage_mode, pinned_keys=pinned_master_keys)
+        if ds_usage_mode == "strict" and not ds_context.get("components"):
+            return err(422, "Design System Strict: нет опубликованных мастеров для этой задачи. Используйте Extend или добавьте мастер.")
         # Strict обязан вместить exact master целой секции — на 4000 токенов
         # он не помещался и генерация падала «не помещается в context budget».
         provider_budget = 24_000 if ds_usage_mode == "strict" else 1200
@@ -818,6 +872,10 @@ def _generate(req: GenerateReq, run_id: str | None):
             slots = _content_slots(recovered)
             content_prompts = [_content_rewrite_messages(slots, brief, ds_doc, n + 1, count, rules_block)
                                for n in range(count)] if slots else []
+            for messages in content_prompts:
+                messages[0]["content"] += ("\nGenerator policy generator-design/1.0: rewrite only allowed text slots. "
+                    "Do not invent ratings, customers, guarantees or prices. Preserve labels, units and the user's task. "
+                    "Keep the slots output contract; masters and foundations are immutable.")
             if req.prepareOnly:
                 return {
                     "variants": [recovered], "errors": [], "prompts": [{"messages": m} for m in content_prompts],
@@ -841,6 +899,13 @@ def _generate(req: GenerateReq, run_id: str | None):
                         errors_out.append({"index": n + 1, "error": f"контент: {exc}"})
                 variant, replaced, apply_error = _apply_content_answer(recovered, slots, raw)
                 variant = ensure_current_ir(variant, source="generate")
+                schema_errors = validate_ir(variant)
+                ds_check = ds_resolver.validate_generation(variant, ds_context)
+                if schema_errors or ds_check.get("errors"):
+                    variant, replaced = copy.deepcopy(recovered), 0
+                    apply_error = "Контент нарушил контракт мастера; сохранён исходник"
+                if apply_error:
+                    errors_out.append({"index": n + 1, "error": apply_error})
                 variant.setdefault("meta", {})["contentRewrite"] = {"slots": len(slots), "replaced": replaced,
                                                                     **({"error": apply_error} if apply_error else {})}
                 variants_out.append(variant)
@@ -851,7 +916,7 @@ def _generate(req: GenerateReq, run_id: str | None):
                 ])
             return {
                 "variants": variants_out, "errors": errors_out, "prompts": [],
-                "qa": [{"index": n + 1, "fixed": 0, "violations": [], "recovery": "exact-master-materialized"}
+                "qa": [{"index": n + 1, "fixed": 0, "violations": generator_policy.lint(variants_out[n], "component"), "recovery": "exact-master-materialized"}
                        for n in range(len(variants_out))],
                 "design": {"type": ptype, "label": pinfo["label"]},
                 "generationLog": {
@@ -885,11 +950,14 @@ def _generate(req: GenerateReq, run_id: str | None):
         # пришло что-то неполное (или ничего), лочим токены из foundations
         # документа и добавляем профиль стиля (тема, углы, плотность, голос копирайта).
         from design_system import style_review as ds_style_review
-        if not dna:
-            dna, complete_dna = _locked_generation_dna(
-                ds_style_review.ir_tokens(ds_doc.get("foundations") or {}))
+        ds_dna, ds_complete_dna = _locked_generation_dna(
+            ds_style_review.ir_tokens(ds_doc.get("foundations") or {}))
+        if ds_dna:
+            dna, complete_dna = ds_dna, ds_complete_dna
         ds_prompt_block += "\n\n" + ds_style_review.profile_prompt(ds_doc)
         ds_prompt_block += _embed_mode_block(ds_usage_mode)
+        if dna and dna.get("font"):
+            pair = None
         if ds_usage_mode == "strict" and pinned_master_keys:
             pinned = next((component for component in ds_context.get("components") or []
                            if str(component.get("componentKey") or "") == pinned_master_keys[0]), None)
@@ -904,14 +972,19 @@ def _generate(req: GenerateReq, run_id: str | None):
     directions: list[dict] = []
     art_direction_error = ""
     exemplars = ""
-    if mode == "generate":
+    if mode == "generate" and prepared is not None:
+        directions = prepared.get("directions") or []
+    elif mode == "generate" and (surface != "landing" or policy_context["foundationsLocked"]):
+        directions = generator_policy.directions(policy_context)
+    elif mode == "generate":
         run_registry.stage(run_id, "art-direction", "Формирую три арт-направления")
         try:
             import art_direction
             generated_directions = art_direction.create_design_brief(
                 brief,
                 ptype,
-                style_dna={"tokens": dna, "designSystem": req.designSystem},
+                style_dna={"tokens": dna, "designSystem": req.designSystem,
+                           "policyHash": policy_context["policyHash"], "surface": surface, "style": req.designStyle},
                 provider=provider,
                 count=3,
                 generate_if_missing=req.rawOutputs is None,
@@ -922,7 +995,8 @@ def _generate(req: GenerateReq, run_id: str | None):
             # Art direction raises the quality ceiling but is deliberately not
             # a dependency: provider/cache failures keep generation available.
             art_direction_error = str(exc)
-        exemplars = llm.load_exemplars(ptype, limit=3)
+    if mode == "generate" and surface == "landing" and not ds_context:
+        exemplars = llm.load_exemplars(ptype, limit=2)
 
     public_directions = [
         {key: item[key] for key in ("id", "label", "motivation", "tradeoff")}
@@ -956,8 +1030,9 @@ def _generate(req: GenerateReq, run_id: str | None):
             raw = llm.chat(provider, [
                 {"role": "system", "content": llm.build_system_prompt(
                     mode,
-                    design_brief=(direction or {}).get("designBrief") or "",
+                    design_brief=(direction or {}).get("designBrief") or (direction or {}).get("plan") or "",
                     exemplars=exemplars,
+                    policy=policy_block + "\n\n" + ds_prompt_block,
                 )},
                 {"role": "user", "content": user_content},
             ], 0.8 if mode == "generate" else 0.3,
@@ -972,6 +1047,10 @@ def _generate(req: GenerateReq, run_id: str | None):
 
     def gen_one(n: int):
         variant_direction = direction_for(n)
+        variant_pair = pair
+        if not dna and not ds_context:
+            pair_name = ((variant_direction or {}).get("designBrief") or {}).get("typePair")
+            variant_pair = typography.PAIRS_BY_NAME.get(pair_name, pair)
         if mode == "edit":
             user = (
                 f"## Reference context\n{req.styleHint.strip()}\n\n"
@@ -1005,59 +1084,16 @@ def _generate(req: GenerateReq, run_id: str | None):
         if memory:
             user += memory
         if dna:
-            user += ("\n\n## Style DNA — обязательные design-токены (залочены)\n"
-                     + json.dumps(dna, ensure_ascii=False)
-                     + "\nГотовый IR обязан использовать эти tokens в точности "
-                       "(mode/color/font/radius/spacing/shadow): вариативность — "
-                       "в композиции и контенте, не в токенах.\n"
-                       "Токены — это голос бренда, а не декорация: CTA и ключевые "
-                       "акценты — tokens.color.primary, фон секций чередуй "
-                       "background/surface, текст — text/textMuted. Страница, где "
-                       "всё бело-серое и primary нигде не виден, — провал (wireframe, "
-                       "а не дизайн). Изображения — только с imagePrompt и конкретным "
-                       "арт-дирекшном (объект, свет, палитра).")
-            dna_color = dna.get("color") if isinstance(dna.get("color"), dict) else {}
-            dna_mode = str(dna.get("mode") or "")
-            if not dna_mode:
-                bg_hex = str(dna_color.get("background") or "").lstrip("#")
-                try:
-                    lum = sum(int(bg_hex[i:i + 2], 16) * w for i, w in
-                              ((0, .2126), (2, .7152), (4, .0722))) / 255.0
-                    dna_mode = "dark" if lum < .45 else "light"
-                except (ValueError, IndexError):
-                    dna_mode = ""
-            if dna_mode == "dark":
-                user += ("\nТема исходника ТЁМНАЯ: фон каждой секции — "
-                         "tokens.color.background/surface, текст светлый "
-                         "(text/textMuted). Светлая страница или белые секции "
-                         "— провал соответствия стилю.")
-            elif dna_mode == "light":
-                user += ("\nТема исходника светлая: фон секций — "
-                         "background/surface, тёмный текст. Не уводи страницу "
-                         "в тёмную тему.")
-            user += ("\nГраницы — только tokens.color.border и тонкие (1px): "
-                     "яркие контрастные рамки вокруг карточек — провал.")
-            if dna_color and dna_color.get("background") == dna_color.get("surface"):
-                user += ("\nbackground и surface совпадают — это характер "
-                         "исходника: секции разделяй воздухом (spacing) и "
-                         "тонкими границами, НЕ выдумывай новые фоновые цвета.")
-            if preset:
-                user += (f"\n\nСтилевое направление «{preset['label']}»: "
-                         + preset["prompt"])
-        elif pair:
-            user += "\n\n" + typography.typography_guide(pair, scale, preset)
+            user += ("\n\n## Locked Style DNA\n" + json.dumps(dna, ensure_ascii=False)
+                     + "\nUse these foundations exactly. Preserve the supplied theme, typography, radii and spacing. "
+                       "Use semantic color roles according to their purpose. Component masters take precedence over "
+                       "generic token application. Do not force alternating backgrounds, border widths or an accent "
+                       "that the supplied system does not prescribe. Images need a concrete imagePrompt.")
+        elif variant_pair and not ds_context:
+            user += "\n\n" + typography.typography_guide(variant_pair, scale, preset)
         palette = None
-        if mode == "generate":
-            if not dna:
-                direction, palette = designkb.design_direction(ptype, pinfo, n)
-                user += "\n\n" + direction
-            else:
-                # С залоченной DNA палитра не нужна, но UX-правила типа продукта
-                # и анти-клише остаются — иначе выходит безликий каркас.
-                user += (f"\n\n## UX-правила для типа «{pinfo['label']}»:\n"
-                         + "\n".join("- " + r for r in pinfo["rules"])
-                         + "\n\nАнти-паттерны — НИКОГДА так не делай:\n"
-                         + "\n".join("- " + a for a in designkb.ANTI_AI))
+        # The surface recipe replaces unconditional landing/palette/anti-font defaults.
+        user += "\nApply the system's selected surface recipe and locked foundations."
         if mode == "generate":
             user += _TYPE_ROLE_RULE
         if reference_block:
@@ -1080,7 +1116,7 @@ def _generate(req: GenerateReq, run_id: str | None):
             if mode == "generate":
                 ir, error = call_context_llm(user, variant_direction)
             else:
-                ir, error = call_llm_ir(provider, user, 0.3, mode, effort, run_id=run_id)
+                ir, error = call_context_llm(user, variant_direction)
             run_registry.stage(run_id, "validate", "Проверка схемы и автофиксы")
         qa = None
         if ir is not None:
@@ -1097,8 +1133,8 @@ def _generate(req: GenerateReq, run_id: str | None):
                 ir["tokens"] = copy.deepcopy(complete_dna or dna)
             elif isinstance(ir.get("tokens"), dict):
                 # без DNA: шрифтовая пара и кураторская палитра из design KB — лок
-                if pair:
-                    ir["tokens"]["font"] = typography.font_tokens(pair)
+                if variant_pair:
+                    ir["tokens"]["font"] = typography.font_tokens(variant_pair)
                 if palette:
                     ir["tokens"]["color"] = dict(palette)
             # сгенерированный IR — responsive-документ: вьюпорты артборда, чтобы
@@ -1109,13 +1145,18 @@ def _generate(req: GenerateReq, run_id: str | None):
                 "mobile": {"width": 390, "height": 844}}})
             # авто quality-gate: детерминированный autofix (контраст/сетка/overflow,
             # DS-lint: цвета/шрифты/роли — в strict ДС цвета снапятся к токенам всегда)
-            ir, fixlog = qualitygate.autofix(ir, strict_tokens=(ds_usage_mode == "strict"))
-            if dna:
+            protected_masters = ds_usage_mode == "strict" or generator_policy.has_masters(ir)
+            if protected_masters:
+                fixlog = []  # Exact masters are validated, never snapped/reflowed by generic fixes.
+            else:
+                ir, fixlog = qualitygate.autofix(ir, rules=[r for r in qualitygate.RULES
+                    if r["id"] not in {"grid-8"} and not (surface == "component" and r["id"] in {"single-h1", "frame-overflow"})])
+            if dna and not protected_masters:
                 # Deterministically update model-provided inline styles. Without
                 # this, a black button from the LLM overrides primary in renderer.
                 ir = bind_ir_element_styles(ir, complete_dna or dna)
                 ir = apply_ir_tokens(ir, complete_dna or dna)
-            lint = qualitygate.check(ir)
+            lint = generator_policy.lint(ir, surface, locked=bool(dna))
             qa = {"index": n, "fixed": len(fixlog),
                   "violations": [v["rule"] for v in lint],
                   "lint": [{"rule": v["rule"], "severity": v.get("severity"), "path": v.get("path"),
@@ -1134,8 +1175,9 @@ def _generate(req: GenerateReq, run_id: str | None):
                 {"messages": [
                     {"role": "system", "content": llm.build_system_prompt(
                         mode,
-                        design_brief=(prepared_directions[i] or {}).get("designBrief") or "",
+                        design_brief=(prepared_directions[i] or {}).get("designBrief") or (prepared_directions[i] or {}).get("plan") or "",
                         exemplars=exemplars,
+                        policy=policy_block + "\n\n" + ds_prompt_block,
                     )},
                     {"role": "user", "content": gen_one(i + 1)[0]},
                 ]}
@@ -1147,6 +1189,7 @@ def _generate(req: GenerateReq, run_id: str | None):
             "designBrief": ((prepared_directions[0] or {}).get("designBrief")
                             if prepared_directions else None),
             "designBriefs": [(item or {}).get("designBrief") for item in prepared_directions],
+            "_directionRecords": directions,
             **({"designSystem": {"ref": ds_context.get("systemRef"), **ds_compiled}}
                if ds_context is not None and ds_compiled else {}),
         }
@@ -1229,7 +1272,7 @@ def _generate(req: GenerateReq, run_id: str | None):
                             "componentKey": primary.get("componentKey"),
                             "reason": "provider-output-failed-strict-exact-master-validation",
                         }
-                if not variants and strict_candidate_variants:
+                if not variants and strict_candidate_variants and req.allowStrictFallback:
                     strict_fallback = "extend"
                     fallback_warning = {
                         "code": "strict-fallback-extend",
@@ -1579,9 +1622,15 @@ def block_parse_refine(req: BlockParseRefineReq):
     """
     if not isinstance(req.blocks, list) or not req.blocks:
         return err(422, "Нет блоков для уточнения.")
+    import scraper
     try:
         blocks, applied = blockparse.apply_refinements(
             copy.deepcopy(req.blocks), req.operations)
+        blocks = scraper.canonicalize_source_blocks(
+            blocks, stage="source-refine-apply", include_evidence=True)
+    except scraper.CanonicalRasterAssetError as exc:
+        status = 503 if exc.detail["retryable"] else 422
+        return JSONResponse({"error": str(exc), "status": status, **exc.detail}, status_code=status)
     except Exception as e:
         traceback.print_exc()
         return err(502, f"Ошибка уточнения: {e}")
@@ -1591,7 +1640,16 @@ def block_parse_refine(req: BlockParseRefineReq):
             tokens = block["ir"].get("tokens")
             if tokens:
                 break
-    artifact = blockparse._build_source_artifact("", blocks, tokens, False)
+    source = req.source or {}
+    final_url = next((b.get("finalUrl") for b in blocks
+                      if isinstance(b, dict) and isinstance(b.get("finalUrl"), str)
+                      and b["finalUrl"]), "")
+    source_url = source.get("url") if isinstance(source.get("url"), str) else ""
+    artifact = blockparse._build_source_artifact(
+        source_url or final_url, blocks, tokens, source.get("authenticated") is True)
+    # Refinement changes labels, not capture provenance or compiler identity.
+    if isinstance(source.get("pipelineVersion"), str) and source["pipelineVersion"]:
+        artifact["source"]["pipelineVersion"] = source["pipelineVersion"]
     return {"ok": True, "blocks": blocks, "sourceArtifact": artifact,
             "applied": applied, "appliedCount": len(applied)}
 
@@ -1657,11 +1715,20 @@ def block_parse_repair(req: FidelityRepairReq):
     harness и оставляет только те, что реально улучшили картинку.
     """
     import fidelity_repair
+    import scraper
 
     blocks = [b for b in (req.blocks or [])
               if isinstance(b, dict) and isinstance(b.get("ir"), dict) and not b.get("error")]
     if not blocks:
         return err(422, "Нет разобранных блоков для починки.")
+    try:
+        # Repair requests may contain desktop-expanded assets. Canonical state
+        # must be restored before measurement and before returning to Source.
+        blocks = scraper.canonicalize_source_blocks(
+            blocks, stage="source-repair-input", include_evidence=not req.prepareOnly)
+    except scraper.CanonicalRasterAssetError as exc:
+        status = 503 if exc.detail["retryable"] else 422
+        return JSONResponse({"error": str(exc), "status": status, **exc.detail}, status_code=status)
     viewport = str(req.viewport or "desktop")
 
     def viewport_report(block: dict) -> dict:
@@ -1731,15 +1798,19 @@ def block_parse_repair(req: FidelityRepairReq):
                     if not answers:
                         continue
                     metrics = viewport_report(block)
-                    reference = block.get("previews", {}).get(viewport) or block.get("preview")
+                    render_block = scraper.source_block_render_copy(block)
+                    reference = render_block.get("previews", {}).get(viewport) or render_block.get("preview")
                     size = (block.get("sizes") or {}).get(viewport) or block.get("size") or {}
                     width = int(size.get("width") or 1440)
                     height = int(size.get("height") or 900)
                     if not isinstance(reference, str) or not reference.startswith("data:"):
                         continue
                     reference_png = fidelity_harness._decode_data_url(reference)
-                    measure = fidelity_repair.make_browser_measurer(
+                    render_measure = fidelity_repair.make_browser_measurer(
                         page, reference_png, viewport, width, height)
+                    def measure(candidate):
+                        return render_measure(scraper.source_block_render_copy(
+                            {"ir": candidate, "name": block.get("name")})["ir"])
                     pending = iter(answers)
                     outcome = fidelity_repair.repair_block(
                         block["ir"], block_name=str(block.get("name") or index),
@@ -1749,11 +1820,20 @@ def block_parse_repair(req: FidelityRepairReq):
                         max_regions=max(1, min(6, req.maxRegions)))
                     remeasured = False
                     if outcome.get("ir") and outcome.get("applied"):
-                        block["ir"] = outcome["ir"]
+                        block["ir"] = scraper.canonicalize_ir_raster_assets(
+                            outcome["ir"], stage="source-repair-apply",
+                            component=str(block.get("name") or index), path=f"blocks[{index}].ir")
                         # Статус обязан догнать IR: без перезамера правка живёт
                         # в дереве, а гейт продолжает судить по отчёту, снятому
                         # до починки, и компонент навсегда «нужна проверка».
-                        remeasured = _refresh_block_fidelity(block, page)
+                        # The harness itself resolves canonical IR; only its
+                        # screenshot evidence needs expansion here.
+                        evidence_block = scraper.source_block_render_copy(block)
+                        evidence_block["ir"] = block["ir"]
+                        remeasured = _refresh_block_fidelity(evidence_block, page)
+                        for field in ("fidelityReport", "fidelity", "paintCoverage", "p95LayoutError"):
+                            if field in evidence_block:
+                                block[field] = evidence_block[field]
                     results.append({
                         "blockIndex": index, "block": block.get("name"),
                         "baseline": outcome.get("baseline"), "similarity": outcome.get("similarity"),
@@ -1766,6 +1846,11 @@ def block_parse_repair(req: FidelityRepairReq):
                     })
             finally:
                 browser.close()
+        blocks = scraper.canonicalize_source_blocks(
+            blocks, stage="source-repair-apply", include_evidence=True)
+    except scraper.CanonicalRasterAssetError as exc:
+        status = 503 if exc.detail["retryable"] else 422
+        return JSONResponse({"error": str(exc), "status": status, **exc.detail}, status_code=status)
     except Exception as exc:
         traceback.print_exc()
         return err(502, f"Ошибка починки: {exc}")
@@ -1958,13 +2043,44 @@ def _quality_violations(ir: dict) -> list[dict]:
     return [item for item in violations if item.get("rule") not in page_rules]
 
 
-def _quality_judge_messages(ir: dict, brief: str) -> list[dict]:
+def _quality_judge_messages(ir: dict, brief: str, surface: str = "auto") -> list[dict]:
     mode = _component_quality_mode(ir)
     return [
-        {"role": "system", "content": QUALITY_JUDGE_SYSTEM + ("\n\n" + COMPONENT_RUBRIC if mode else "")},
+        {"role": "system", "content": QUALITY_JUDGE_SYSTEM + generator_policy.judge_rules(brief, ir, surface)
+         + ("\n\n" + COMPONENT_RUBRIC if mode else "")
+         + "\nEvidence: Design IR only. Visual, keyboard and performance checks are unknown."},
         {"role": "user", "content": "## Бриф\n" + (brief.strip() or "(не указан)")
          + "\n\n## Design IR\n" + json.dumps(ir, ensure_ascii=False)},
     ]
+
+
+def _quality_visual_key(ir: dict, brief: str) -> str:
+    engine = APP_ROOT / "static" / "flow" / "engine.js"
+    try:
+        engine_stamp = llm._file_stamp(engine)
+    except FileNotFoundError:
+        engine_stamp = None  # A concurrent build must not crash cache lookup; render reports missing engine.
+    return generator_policy.digest({"ir": ir, "brief": brief, "policy": generator_policy.fingerprint(),
+        "engine": engine_stamp, "renderer": llm._file_stamp(APP_ROOT / "ir_render.py")})
+
+
+def _quality_desktop_messages(ir: dict, brief: str, visual: bool, surface: str = "auto") -> list[dict]:
+    if not visual:
+        return _quality_judge_messages(ir, brief, surface)
+    key = _quality_visual_key(ir, brief)
+    evidence = cache_store.get("generator-visual", key)
+    if not evidence:
+        images = []
+        for width in (1440, 390):
+            images.extend(_judge_images(render_png(ir, width=width, webfonts=True, viewport="mobile" if width == 390 else "desktop")))
+        evidence = {"images": images, "widths": [1440, 390]}
+        cache_store.put("generator-visual", key, evidence)
+    text = (generator_policy.judge_rules(brief, ir, surface) + "\nFirst group: desktop 1440px. Second group: mobile 390px. "
+            "Only these viewports were rendered; keyboard and performance remain unknown.\nBrief: " + brief
+            + "\nIR: " + json.dumps(ir, ensure_ascii=False))
+    return [{"role": "system", "content": QUALITY_JUDGE_SYSTEM},
+            {"role": "user", "content": [{"type": "text", "text": text}]
+             + [{"type": "image_url", "image_url": {"url": url}} for url in evidence["images"]]}]
 
 
 def _parse_quality_scorecard(raw: str, model_route: str) -> dict:
@@ -2004,7 +2120,7 @@ def _parse_quality_scorecard(raw: str, model_route: str) -> dict:
     }
 
 
-def _quality_repair_messages(ir: dict, scorecard: dict, brief: str) -> tuple[list[dict] | None, str | None]:
+def _quality_repair_messages(ir: dict, scorecard: dict, brief: str, surface: str = "auto") -> tuple[list[dict] | None, str | None]:
     """Готовит адресную починку только по замечаниям judge."""
     instructions = scorecard.get("repair_instruction", "").strip()
     if not instructions:
@@ -2026,7 +2142,9 @@ def _quality_repair_messages(ir: dict, scorecard: dict, brief: str) -> tuple[lis
         f"## Входной Design IR\n{json.dumps(ir, ensure_ascii=False)}"
     )
     return [
-            {"role": "system", "content": llm.build_system_prompt("edit")},
+            {"role": "system", "content": llm.build_system_prompt("edit", policy=generator_policy.judge_rules(brief, ir, surface)
+             + "\nRepair must preserve all tokens, exact componentRefs, masters and their geometry/styles. "
+               "A problem in a locked master is a DS gap; do not change the instance.")},
             {"role": "user", "content": user},
         ], None
 
@@ -2068,23 +2186,26 @@ def _judge_images(screenshot: bytes) -> list[str]:
             tile_h = max(JUDGE_TILE_H, -(-height // JUDGE_MAX_TILES))  # не больше JUDGE_MAX_TILES плиток
             for top in range(0, height, tile_h):
                 tile = image.crop((0, top, width, min(height, top + tile_h)))
-                scale = 1024 / width
-                tile = tile.resize((1024, max(1, round(tile.height * scale))))
+                scale = min(1, 1024 / width)
+                tile = tile.resize((min(width, 1024), max(1, round(tile.height * scale))))
                 buf = io.BytesIO(); tile.save(buf, format="PNG", optimize=True); out.append(data_url(buf.getvalue()))
         return out
     except Exception:  # noqa: BLE001 — без PIL/на битом PNG отдаём как есть
         return [data_url(screenshot)]
 
 
-def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None, *, provider: str = "auto", effort: str = "medium") -> dict:
+def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None, *, provider: str = "auto", effort: str = "medium", surface: str = "auto") -> dict:
     """Render IR and ask the standalone server's vision model for a scorecard."""
     run_registry.stage(run_id, "render", "Рендерю IR для визуальной проверки")
     screenshot = render_png(ir, width=1440, webfonts=True)
     image_data_url = _judge_images(screenshot)
+    mobile_screenshot = render_png(ir, width=390, webfonts=True, viewport="mobile")
+    image_data_url.extend(_judge_images(mobile_screenshot))
     rubric = (APP_ROOT / "prompts" / "RUBRIC.md").read_text(encoding="utf-8")
     component_mode = _component_quality_mode(ir)
     if component_mode:
         rubric = COMPONENT_RUBRIC
+    rubric += generator_policy.judge_rules(brief, ir, surface)
     rules_block = project_rules.prompt_block("judge")
     if rules_block:
         rubric += "\n\n" + rules_block
@@ -2092,7 +2213,8 @@ def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None, *, provi
         rubric
         + "\n\n## Изображения\nПервое — первый экран 1440×900 в масштабе 1:1 (десктоп); "
           "следующие — вся страница по частям сверху вниз, уменьшены до 1024px по ширине. "
-          "Это десктопный макет, не мобильный: масштаб кегля оценивай по первому изображению."
+          "Последняя группа изображений — мобильный рендер шириной 390px. "
+          "Оцени отдельно desktop и mobile; остальные viewport и интерактивное поведение не проверены."
         + "\n\n## Бриф\n" + (brief.strip() or "(не указан)")
         + "\n\n## Карта Design IR для адресных правок\n"
         + json.dumps(ir, ensure_ascii=False)
@@ -2104,12 +2226,52 @@ def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None, *, provi
     )
     scorecard = _parse_quality_scorecard(raw, "LLM vision / quality_judge")
     scorecard["mode"] = "component" if component_mode else "page"
+    scorecard["evidence"] = {"visual": True, "widths": [1440, 390], "keyboard": "unknown", "performance": "unknown"}
     return scorecard
 
 
-def _quality_repair(ir: dict, scorecard: dict, brief: str, *, provider: str = "auto", effort: str = "medium") -> tuple[dict | None, str | None]:
+def _quality_finish(req, output_ir, initial, final, repair, *, visual=False):
+    """Shared acceptance for server and desktop, independent of the judge's claims."""
+    surface = generator_policy.surface_for(req.brief, req.surface, req.ir)
+    before = generator_policy.lint(req.ir, surface)
+    if repair["applied"]:
+        failure = generator_policy.repair_guard(req.ir, output_ir, surface, req.designSystem, brief=req.brief)
+        old_issues = {(i.get("category"), i.get("path"), i.get("problem")) for i in initial.get("issues", [])}
+        new_issues = [i for i in final.get("issues", [])
+                      if (i.get("category"), i.get("path"), i.get("problem")) not in old_issues]
+        if not req.rejudge or final is initial:
+            failure = failure or "Починка не прошла повторную оценку"
+        if final.get("score", 0) < initial.get("score", 0) or new_issues:
+            failure = failure or "Повторная оценка выявила регрессию; починка отменена"
+        if failure:
+            output_ir, final = copy.deepcopy(req.ir), initial
+            repair.update(applied=False, error=failure)
+    after = generator_policy.lint(output_ir, surface)
+    ds_check = None
+    if req.designSystem:
+        from design_system import resolver, store
+        document, error = store.resolve_ref(req.designSystem)
+        if error:
+            ds_check = {"errors": [{"message": str(error)}]}
+        else:
+            ds_check = resolver.validate_generation(output_ir, resolver.resolve_context(
+                document, req.brief, usage_mode=req.designSystem.get("usageMode") or "strict"))
+    important = any(i.get("severity") in {"critical", "major"} for i in final.get("issues", []))
+    min_score = max(0, min(int(req.min_score), 100))
+    passed = (final["score"] >= min_score and final["verdict"] == "pass" and not important
+              and qualitygate.passed(after) and not (ds_check or {}).get("errors")
+              and not repair.get("error"))
+    return {"ir": output_ir, "passed": bool(passed), "min_score": min_score,
+            "scorecard": final, "initial_scorecard": initial,
+            "deterministic": {"before": before, "after": after}, "repair": repair,
+            "designSystem": ds_check,
+            "acceptance": generator_policy.report(passed=bool(passed), visual=visual,
+                                                   surface=surface, ds_check=ds_check)}
+
+
+def _quality_repair(ir: dict, scorecard: dict, brief: str, *, provider: str = "auto", effort: str = "medium", surface: str = "auto") -> tuple[dict | None, str | None]:
     """Серверный LLM-путь standalone веб-сервера (Sol по ключу или Codex/Claude CLI)."""
-    messages, error = _quality_repair_messages(ir, scorecard, brief)
+    messages, error = _quality_repair_messages(ir, scorecard, brief, surface)
     if messages is None:
         return None, error
     try:
@@ -2140,9 +2302,9 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
     schema_errors = validate_ir(sanitize_font_face_weights(req.ir))
     if schema_errors:
         return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    deterministic_before = _quality_violations(req.ir)
+    deterministic_before = generator_policy.lint(req.ir, generator_policy.surface_for(req.brief, req.surface, req.ir))
     try:
-        initial = _quality_scorecard(req.ir, req.brief, run_id, provider=req.provider, effort=req.effort)
+        initial = _quality_scorecard(req.ir, req.brief, run_id, provider=req.provider, effort=req.effort, surface=req.surface)
     except Exception as e:
         return err(502, f"Quality Pass judge недоступен: {e}")
     if run_registry.is_cancelled(run_id):
@@ -2156,7 +2318,7 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
     if req.repair and needs_repair:
         repair["attempted"] = True
         run_registry.stage(run_id, "repair", "Починка по замечаниям судьи")
-        repaired, repair_error = _quality_repair(req.ir, initial, req.brief, provider=req.provider, effort=req.effort)
+        repaired, repair_error = _quality_repair(req.ir, initial, req.brief, provider=req.provider, effort=req.effort, surface=req.surface)
         if repaired is None:
             repair["error"] = repair_error
         else:
@@ -2167,21 +2329,10 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
                     return err(CANCELLED_STATUS, "Quality Pass отменён")
                 run_registry.stage(run_id, "rejudge", "Повторная оценка")
                 try:
-                    final = _quality_scorecard(output_ir, req.brief, run_id, provider=req.provider, effort=req.effort)
+                    final = _quality_scorecard(output_ir, req.brief, run_id, provider=req.provider, effort=req.effort, surface=req.surface)
                 except Exception as e:
                     repair["error"] = f"rejudge недоступен: {e}"
-    deterministic_after = _quality_violations(output_ir)
-    passed = (final["score"] >= min_score and final["verdict"] == "pass"
-              and qualitygate.passed(deterministic_after))
-    return {
-        "ir": output_ir,
-        "passed": passed,
-        "min_score": min_score,
-        "scorecard": final,
-        "initial_scorecard": initial,
-        "deterministic": {"before": deterministic_before, "after": deterministic_after},
-        "repair": repair,
-    }
+    return _quality_finish(req, output_ir, initial, final, repair, visual=True)
 
 
 @app.post("/api/quality-pass/codex-step")
@@ -2205,12 +2356,12 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
     if outputs.rejudge is not None and outputs.repair is None:
         return err(422, "Quality Pass: rejudge без repair — неконсистентное состояние Codex")
 
-    deterministic_before = _quality_violations(req.ir)
+    deterministic_before = generator_policy.lint(req.ir, generator_policy.surface_for(req.brief, req.surface, req.ir))
     if outputs.judge is None:
         return {"pending": {
             "stage": "judge",
             "profile": "quality_judge",
-            "messages": _quality_judge_messages(req.ir, req.brief),
+            "messages": _quality_desktop_messages(req.ir, req.brief, req.visualReview, req.surface),
         }}
     try:
         initial = _parse_quality_scorecard(outputs.judge, "Codex app-server / quality_judge")
@@ -2229,7 +2380,7 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
 
     if req.repair and needs_repair:
         repair["attempted"] = True
-        messages, message_error = _quality_repair_messages(req.ir, initial, req.brief)
+        messages, message_error = _quality_repair_messages(req.ir, initial, req.brief, req.surface)
         if messages is None:
             repair["error"] = message_error
         elif outputs.repair is None:
@@ -2250,7 +2401,7 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
                         return {"pending": {
                             "stage": "rejudge",
                             "profile": "quality_judge",
-                            "messages": _quality_judge_messages(output_ir, req.brief),
+                            "messages": _quality_desktop_messages(output_ir, req.brief, req.visualReview, req.surface),
                         }}
                     try:
                         final = _parse_quality_scorecard(
@@ -2262,18 +2413,8 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
 
     if outputs.rejudge is not None and not repair["applied"]:
         return err(422, "Quality Pass: rejudge без применённого repair — неконсистентное состояние Codex")
-    deterministic_after = _quality_violations(output_ir)
-    passed = (final["score"] >= min_score and final["verdict"] == "pass"
-              and qualitygate.passed(deterministic_after))
-    return {
-        "ir": output_ir,
-        "passed": passed,
-        "min_score": min_score,
-        "scorecard": final,
-        "initial_scorecard": initial,
-        "deterministic": {"before": deterministic_before, "after": deterministic_after},
-        "repair": repair,
-    }
+    visual = bool(req.visualReview and cache_store.get("generator-visual", _quality_visual_key(output_ir, req.brief)))
+    return _quality_finish(req, output_ir, initial, final, repair, visual=visual)
 
 
 @app.post("/api/constraints/check")

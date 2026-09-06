@@ -1,6 +1,8 @@
 import type { IRObject, ParserSourceEnvelope, SourceArtifact, SourceViewport } from "./types";
 
-export type ApiChatMessage = { role: "system" | "user" | "assistant" | "tool"; content: string };
+export type ApiChatMessage = { role: "system" | "user" | "assistant" | "tool"; content: string | Array<
+  { type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }
+> };
 
 /* Зеркало api() (nodes.js:61-71): JSON-вызов к бэкенду, Error с data.detail при !ok.
  * init.signal — отмена ожидания на клиенте (AbortError), сервер запрос не прерывает. */
@@ -37,6 +39,8 @@ export async function apiGet<T>(path: string): Promise<T> {
 
 /* Формы ответов бэкенда — по server.py и контрактам docs/NODES.md */
 export type GenerateResp = {
+  preparedContextId?: string;
+  designPolicy?: { version?: string; surface?: string; surfaceLabel?: string; requestedMode?: string; effectiveMode?: string };
   variants?: IRObject[];
   errors?: string[];
   qa?: { index: number; fixed: number; violations: string[] }[];
@@ -118,6 +122,7 @@ export type BlockParseJobResp = {
 };
 export type ReskinResp = { ir?: IRObject | null; log?: string[]; designSystem?: Record<string, unknown> };
 export type QualityPassResp = {
+  acceptance?: { status?: string; checks?: Record<string, string> };
   ir?: IRObject | null;
   passed?: boolean;
   min_score?: number;

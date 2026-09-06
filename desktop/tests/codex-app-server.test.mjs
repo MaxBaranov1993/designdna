@@ -18,7 +18,8 @@ test("generator chat collects the authoritative Codex agent message", async () =
   const server = new CodexAppServer({ cwd: "C:\\workspace" });
   let threadParams;
   server.start = async () => ({});
-  server.startThread = async (params) => { threadParams = params; return { thread: { id: "thread-generator" } }; };
+  server.account = async () => ({ account: { type: "chatgpt" } });
+  server.startThread = async (params) => { threadParams = params; return { model: "fixture-model", modelProvider: "openai", thread: { id: "thread-generator" } }; };
   server.startTurn = async () => {
     queueMicrotask(() => {
       server.emit("notification", {
@@ -42,7 +43,8 @@ test("quality judge uses a neutral read-only Codex profile", async () => {
   const server = new CodexAppServer({ cwd: "C:\\workspace" });
   let turnInput = "";
   server.start = async () => ({});
-  server.startThread = async () => ({ thread: { id: "thread-quality" } });
+  server.account = async () => ({ account: { type: "chatgpt" } });
+  server.startThread = async () => ({ model: "fixture-model", modelProvider: "openai", thread: { id: "thread-quality" } });
   server.startTurn = async ({ input }) => {
     turnInput = input[0].text;
     queueMicrotask(() => {
@@ -68,6 +70,7 @@ test("quality judge uses a neutral read-only Codex profile", async () => {
 test("Codex chat rejects unknown profiles before starting a thread", async () => {
   const server = new CodexAppServer({ cwd: "C:\\workspace" });
   server.start = async () => ({});
+  server.account = async () => ({ account: { type: "chatgpt" } });
   server.startThread = async () => { throw new Error("must not start"); };
   await assert.rejects(() => server.chat([], { profile: "unsafe" }), /Unsupported Codex chat profile/);
 });
@@ -76,7 +79,8 @@ test("quality repair uses the repair Codex profile", async () => {
   const server = new CodexAppServer({ cwd: "C:\workspace" });
   let turnInput = "";
   server.start = async () => ({});
-  server.startThread = async () => ({ thread: { id: "thread-repair" } });
+  server.account = async () => ({ account: { type: "chatgpt" } });
+  server.startThread = async () => ({ model: "fixture-model", modelProvider: "openai", thread: { id: "thread-repair" } });
   server.startTurn = async ({ input }) => {
     turnInput = input[0].text;
     queueMicrotask(() => {
@@ -103,7 +107,8 @@ test("envelope part-arrays flatten into prompt text (not [object Object])", asyn
   const server = new CodexAppServer({ cwd: "C:\workspace" });
   let sentPrompt = "";
   server.start = async () => ({});
-  server.startThread = async () => ({ thread: { id: "thread-parts" } });
+  server.account = async () => ({ account: { type: "chatgpt" } });
+  server.startThread = async () => ({ model: "fixture-model", modelProvider: "openai", thread: { id: "thread-parts" } });
   server.startTurn = async (params) => {
     sentPrompt = String(params.input?.[0]?.text ?? params.prompt ?? JSON.stringify(params));
     queueMicrotask(() => {
@@ -130,7 +135,8 @@ test("envelope part-arrays flatten into prompt text (not [object Object])", asyn
 test("Codex chat surfaces provider failure with a readable error", async () => {
   const server = new CodexAppServer({ cwd: "C:\workspace" });
   server.start = async () => ({});
-  server.startThread = async () => ({ thread: { id: "thread-fail" } });
+  server.account = async () => ({ account: { type: "chatgpt" } });
+  server.startThread = async () => ({ model: "fixture-model", modelProvider: "openai", thread: { id: "thread-fail" } });
   server.startTurn = async () => {
     queueMicrotask(() => {
       server.emit("notification", {

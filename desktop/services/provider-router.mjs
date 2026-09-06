@@ -59,26 +59,44 @@ export async function chatWithProvider({
 
   if (resolved === "codex") {
     if (!codex) throw new Error("Codex не подключён. Откройте Agents → Connections.");
-    // Codex — текстовый CLI-транспорт: image-части не доедут, а молча
-    // превратить их в "[object Object]" значит сорвать разметку без причины.
-    if ((source.messages || messages || []).some((item) => Array.isArray(item?.content)
-      && item.content.some((part) => part?.type === "image_url"))) {
-      throw new Error("Codex не передаёт изображения — для разметки скриншота выберите на ноде Claude или GPT.");
+    if (source.responseFormat != null && (source.responseFormat.type !== "json_schema"
+      || !source.responseFormat.jsonSchema?.schema)) {
+      throw new Error("Codex structured output requires responseFormat.jsonSchema.schema with type json_schema");
     }
-    const content = await codex.chat(source.messages || messages || [], { profile });
+    const codexMessages = source.system
+      ? [{ role: "system", content: source.system }, ...(source.messages || messages || [])]
+      : source.messages || messages || [];
+    let responseMetadata = null;
+    const content = await codex.chat(codexMessages, {
+      profile, signal, model: source.model, effort,
+      ...(source.responseFormat ? { outputSchema: source.responseFormat.jsonSchema.schema } : {}),
+      onResponseMetadata: (metadata) => { responseMetadata = metadata; },
+      ...(source.timeoutMs != null ? { timeoutMs: source.timeoutMs } : {}),
+    });
     return {
       content,
       toolCalls: [],
       provider: "codex",
-      transport: { provider: "codex", model: "codex", requestId: source.id || null, dropped: [], fallback },
+      transport: { provider: "codex", model: responseMetadata?.model || null,
+        modelProvider: responseMetadata?.modelProvider || null,
+        authType: responseMetadata?.authType || null,
+        threadId: responseMetadata?.threadId || null,
+        turnId: responseMetadata?.turnId || null,
+        modelSource: responseMetadata?.modelSource || null,
+        completion: responseMetadata?.completion || null,
+        requestId: source.id || null, dropped: [], fallback },
     };
   }
 
   if (resolved === "claude") {
     if (!claude) throw new Error("Claude не подключён. Откройте Agents → Connections.");
     const claudeResolvedModel = claudeModel(source.model);
-    const content = await claude.chat(source.messages || messages || [],
-      { profile, effort, signal, model: claudeResolvedModel });
+    const claudeMessages = source.system
+      ? [{ role: "system", content: source.system }, ...(source.messages || messages || [])]
+      : source.messages || messages || [];
+    const content = await claude.chat(claudeMessages,
+      { profile, effort, signal, model: claudeResolvedModel,
+        ...(source.timeoutMs != null ? { timeoutMs: source.timeoutMs } : {}) });
     return {
       content,
       toolCalls: [],

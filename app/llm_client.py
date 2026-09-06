@@ -472,7 +472,7 @@ def chat_vision(provider: str | None, image_data_url: str | list[str], text_prom
 # Кэш промпт-файлов и собранных системных промптов: сервер многопоточный,
 # файлы читаются на каждый LLM-вызов, поэтому ключ — (path, mtime_ns, size).
 _PROMPT_FILES = (
-    "spike/system-prompt.md", "schema/design-ir.schema.json",
+    "app/prompts/SYSTEM.md", "schema/design-ir.schema.json",
     "app/prompts/BLOCKS.md", "app/prompts/DESIGN.md",
 )
 _PROMPT_LOCK = threading.Lock()
@@ -616,6 +616,7 @@ def build_system_prompt(
     *,
     design_brief: dict | str = "",
     exemplars: str = "",
+    policy: str = "",
 ) -> str:
     """Собрать system-промпт генератора.
 
@@ -628,18 +629,19 @@ def build_system_prompt(
         design_brief = json.dumps(design_brief, ensure_ascii=False, indent=2)
     signature = tuple(_file_stamp(ROOT / name) for name in _PROMPT_FILES)
     key = (mode, signature)
-    cacheable = not design_brief and not exemplars
+    cacheable = not design_brief and not exemplars and not policy
     if cacheable:
         with _PROMPT_LOCK:
             cached = _PROMPT_CACHE.get(key)
         if cached is not None:
             return cached
-    template = load("spike/system-prompt.md").split("---", 1)[-1]
+    template = load("app/prompts/SYSTEM.md")
     prompt = (
         template.replace("{{SCHEMA}}", load("schema/design-ir.schema.json"))
         .replace("{{BLOCKS}}", load("app/prompts/BLOCKS.md"))
         .replace("{{DESIGN}}", load("app/prompts/DESIGN.md") if mode == "generate" else "")
         .replace("{{DESIGN_BRIEF}}", design_brief or "")
+        .replace("{{POLICY}}", policy)
         .replace("{{EXEMPLARS}}", exemplars or "")
         .replace("{{BRIEF}}", "")
         .replace("{{STYLE_HINT}}", "")

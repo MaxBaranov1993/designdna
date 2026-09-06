@@ -153,6 +153,9 @@ def validate(document: dict) -> list[str]:
                         formatted.append(f"{prefix}/transform/properties/scale/keyframes/{kf_index}: value must be >= 0")
     if total_keyframes > MAX_TOTAL_KEYFRAMES:
         formatted.append(f"keyframes: at most {MAX_TOTAL_KEYFRAMES} keyframes are allowed per timeline")
+    if not formatted and document.get("story"):
+        from video_story import validate_story
+        formatted.extend(validate_story(document["story"], duration))
     return formatted
 
 
@@ -424,6 +427,12 @@ def _apply_operation(document: dict, op: dict) -> None:
     kind = op.get("kind")
     target = str(op.get("target") or "")
     path = str(op.get("path") or "")
+    if kind == "set-story":
+        if op.get("value") is None:
+            document.pop("story", None)
+        else:
+            document["story"] = copy.deepcopy(op["value"])
+        return
     if kind == "set-composition":
         composition = document.setdefault("composition", {})
         key = path.lstrip("/")
@@ -514,7 +523,9 @@ def build_change_set(document: dict, intent: str, operations: list[dict],
         target = str(op.get("target") or "")
         path = str(op.get("path") or "")
         inv: dict = {"id": f"inv-{index + 1}", "inverseOf": op_id, "kind": kind, "target": target}
-        if kind == "set-composition":
+        if kind == "set-story":
+            inv["value"] = copy.deepcopy(work.get("story"))
+        elif kind == "set-composition":
             inv["path"] = path
             inv["value"] = _composition_path_value(work, path)
         elif kind == "add-layer":

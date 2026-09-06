@@ -1328,13 +1328,54 @@
                       };
                       rootChildren.forEach(visit); return count;
                     })();
-                    return {selector:block.selector,sourceKey:'root',
+                    const result={selector:block.selector,sourceKey:'root',
                       root:{width:Math.round(rr.width),height:Math.round(rr.height),style:styleOf(rcs,warnings)},
                       nodes:rootChildren,layout:rootLayout.layout,direction:rootLayout.direction,
                       gap:Math.round(rootLayout.explicit?(rootLayout.direction==='row'?num(rcs.columnGap):num(rcs.rowGap)):(rootLayout.measuredGap||0)),
                       padding:paddingOf(rcs),justify:safeEnum(justify(rcs.justifyContent),['start','center','end','space-between','space-around'],'start'),
                       align:rootAlign,visited,emitted,dropped,extras,rasterRequests,assetRequests,paintRects,leafBoxes,paintCoverage,coverage,componentBoundaries,
                       warnings:[...warnings],fontFaces:collectFontFaces()};
+                    // Chromium ignores clip offsets when a document screenshot
+                    // starts at negative x/y. Preserve the original painted root
+                    // and every child in a translated container; only the outer
+                    // artboard is intersected with the drawable document bounds.
+                    const docX=rr.left+window.scrollX, docY=rr.top+window.scrollY;
+                    if(docX<0 || docY<0){
+                      const x=Math.max(0,Math.round(docX)), y=Math.max(0,Math.round(docY));
+                      const dx=x-docX, dy=y-docY;
+                      const width=Math.round(rr.width-dx), height=Math.round(rr.height-dy);
+                      if(width<1 || height<1) return {selector:block.selector,error:'DOM block is not visible inside document bounds'};
+                      const originalStyle=result.root.style;
+                      const originalFrame={absolute:true,x:-dx,y:-dy,width:result.root.width,height:result.root.height,
+                        layout:result.layout,direction:result.direction,gap:result.gap,padding:result.padding,
+                        justify:result.justify,align:result.align,clip:true};
+                      // The inherited backdrop is itself captured from the visible
+                      // document crop; position it inside the original container
+                      // at that offset so the raster remains 1:1, never stretched.
+                      for(const node of rootChildren){
+                        if(node.sourceKey==='root::backdrop'){
+                          node.frame={absolute:true,x:dx,y:dy,width,height};
+                        }
+                      }
+                      result.nodes=[{type:'card',sourceKey:'root::original-bounds',
+                        sourceMeta:{kind:'dom',reason:'original root preserved under document-bound crop'},
+                        style:originalStyle,frame:originalFrame,children:rootChildren}];
+                      result.root={width,height,style:{},
+                        originalBounds:{x:docX,y:docY,width:rr.width,height:rr.height},
+                        visibleCrop:{x:dx,y:dy,width,height},captureRect:{x,y,width,height}};
+                      result.layout='free'; result.direction='column'; result.gap=0;
+                      result.padding=0; result.justify='start'; result.align='start';
+                      for(const box of leafBoxes){
+                        if(box.sourceKey==='root::backdrop') Object.assign(box,{x:0,y:0,width,height});
+                        else {box.x-=dx; box.y-=dy;}
+                      }
+                      for(const box of paintRects){box.x-=dx; box.y-=dy;}
+                      for(const loss of [...dropped,...extras]){
+                        if(loss.rect){loss.rect.x-=dx;loss.rect.y-=dy;}
+                      }
+                      result.emitted++;
+                    }
+                    return result;
                   };
                   return blocks.map(compileBlock);
                 }

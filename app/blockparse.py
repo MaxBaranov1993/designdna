@@ -13,6 +13,7 @@ import concurrent.futures
 import copy
 import hashlib
 import json
+import re
 import time
 import traceback
 from pathlib import Path
@@ -27,7 +28,7 @@ import fidelity_harness
 import ir
 from ir import ensure_current as ensure_current_ir
 from scraper import (blob_ref, capture_block_irs, detect_blocks, fetch_html,
-                     put_png_blob, rendered_html)
+                     put_png_blob, rendered_html, SOURCE_CAPTURE_VERSION)
 from ir.style_dna import enrich_ir, extract_from_signals
 from ir.parser_contract import build_parser_envelope
 
@@ -44,7 +45,7 @@ _SEMANTIC_ROLES = {
     "gallery", "navigation", "status", "toolbar", "profile", "panel", "section",
 }
 
-SOURCE_COMPILER_VERSION = "dom-v41"
+SOURCE_COMPILER_VERSION = "dom-v45"
 SOURCE_ARTIFACT_VERSION = "source-artifact/1.0"
 
 # Hidden blocks (display:none / zero box / no visual content) are not import
@@ -85,9 +86,33 @@ def _is_hidden_block_error(error: Any) -> bool:
     return any(marker in text for marker in _HIDDEN_BLOCK_ERRORS)
 
 
+def _capture_validation_diagnostics(doc: dict) -> list[dict]:
+    """Bounded schema diagnostics, never jsonschema's echoed instance bytes."""
+    from itertools import islice
+    from ir.schema import CURRENT_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS
+    from ir.validate import _get_validator
+
+    if not isinstance(doc, dict):
+        return [{"path": "(root)", "validator": "type", "message": "IR must be an object"}]
+    version = str(doc.get("version") or CURRENT_SCHEMA_VERSION)
+    if version not in SUPPORTED_SCHEMA_VERSIONS:
+        return [{"path": "version", "validator": "enum", "message": "Unsupported IR version"}]
+    diagnostics = []
+    for error in islice(_get_validator(version).iter_errors(doc), 3):
+        path = "/".join(str(part) for part in error.absolute_path) or "(root)"
+        if "data:" in path:
+            path = "(asset-field)"
+        diagnostics.append({"path": path[:256], "validator": str(error.validator)[:40],
+                            "message": "Source IR violates schema constraint"})
+    return diagnostics
+
+
 def _validate(doc: dict) -> list[str]:
     """Список ошибок валидации IR по схеме (пустой = ок)."""
-    return ir.format_errors(ir.validate_ir(doc))
+    # jsonschema includes the offending value in its message. An invalid
+    # screenshot URL must not turn one diagnostic into megabytes of IPC/UI text.
+    return [re.sub(r"data:[^\s'\"]+", "<inline-asset>", error)[:1000]
+            for error in ir.format_errors(ir.validate_ir(doc))]
 
 
 def _normalize_captured_page_tokens(value: dict | None, source: str) -> dict | None:
@@ -127,7 +152,7 @@ def _clean_text_nodes(node: dict) -> None:
 
 def _block_cache_key(url: str, name: str, selector: str) -> str:
     # Bump when the deterministic DOM compiler or responsive merge contract changes.
-    raw = f"{SOURCE_COMPILER_VERSION}|{url.strip().lower().rstrip('/')}|{name}|{selector}"
+    raw = f"{SOURCE_COMPILER_VERSION}|{SOURCE_CAPTURE_VERSION}|{url.strip().lower().rstrip('/')}|{name}|{selector}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -637,6 +662,9 @@ def _build_source_artifact(url: str, blocks: list[dict], tokens: dict | None,
         "version": SOURCE_ARTIFACT_VERSION,
         "source": {
             "url": url,
+            "finalUrl": next((b.get("finalUrl") for b in blocks
+                              if isinstance(b, dict) and isinstance(b.get("finalUrl"), str)
+                              and b["finalUrl"]), url),
             "authenticated": authenticated,
             "pipelineVersion": SOURCE_COMPILER_VERSION,
         },
@@ -704,7 +732,8 @@ def parse_blocks(url: str, blocks: list | None = None,
         "viewports": viewports or "default",
         "fullResolutionEvidence": bool(full_resolution_evidence),
     }, sort_keys=True, separators=(",", ":"))
-    full_key = cache_store.key_url(SOURCE_COMPILER_VERSION + "|" + viewport_key + "|" + url)
+    full_key = cache_store.key_url(SOURCE_COMPILER_VERSION + "|" + SOURCE_CAPTURE_VERSION
+                                   + "|" + viewport_key + "|" + url)
     stage_started = time.perf_counter()
     if wanted is None and cache_enabled:
         hit = cache_store.get("blockparse_url", full_key)
@@ -814,9 +843,12 @@ def parse_blocks(url: str, blocks: list | None = None,
             results.append({**head, "error": item["error"]})
             continue
         ir = item.get("ir")
-        errors = _validate(ir) if isinstance(ir, dict) else ["DOM-слепок не является IR"]
+        errors = _capture_validation_diagnostics(ir)
         if errors:
-            results.append({**head, "error": "внутренняя ошибка DOM-импорта: " + "; ".join(errors[:3])})
+            results.append({**head, "error": "Source IR validation failed: " + "; ".join(
+                f"{error['path']} ({error['validator']})" for error in errors),
+                "stage": "source-schema-validation", "component": head["name"],
+                "path": errors[0]["path"], "retryable": False, "errors": errors})
             continue
         _clean_text_nodes(ir)
         ir = enrich_ir(ir, source=url)
@@ -844,6 +876,8 @@ def parse_blocks(url: str, blocks: list | None = None,
         final_items[b["selector"]] = {**item, "ir": ir}
         preview_mapper = _full_resolution_preview if full_resolution_evidence else _compact_preview
         results.append({**head, "ir": ir, "cached": False, "source": "dom",
+                        "finalUrl": item.get("finalUrl") or "",
+                        "captureGeometryByViewport": item.get("captureGeometryByViewport") or {},
                         "parserContract": parser_contract,
                         "layers": item.get("layer_count", 0), "size": {
                             "width": item.get("width"), "height": item.get("height")},
@@ -870,6 +904,7 @@ def parse_blocks(url: str, blocks: list | None = None,
                 if payload_tokens:
                     break
     payload = {"url": url, "blocks": results, "tokens": payload_tokens,
+               "finalUrl": next((b["finalUrl"] for b in results if b.get("finalUrl")), ""),
                "authenticated": authenticated}
     stage_done("assemble")
     # Fail-closed прогрев кэша: harness рендерит финальные IR в точном размере

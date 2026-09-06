@@ -55,11 +55,17 @@ export class LiveProjectApiSync {
     this.onEvent = typeof onEvent === "function" ? onEvent : null;
     this.maxProjectBytes = maxProjectBytes;
     this.sessions = new Map();
+    this.disposed = false;
   }
 
   prepare(request) {
     const path = String(request?.path || "").split("?", 1)[0];
     if (path !== PROJECT_LOAD_PATH && path !== PROJECT_SAVE_PATH) return null;
+    if (this.disposed) {
+      const error = new Error("Live project synchronization is shutting down");
+      error.code = "SESSION_DISPOSED";
+      throw error;
+    }
     const payload = parseObject(decodeRequestBody(request), "Project API request");
     const userId = String(payload.user_id || DEFAULT_USER_ID);
     const projectId = String(payload.project_id || DEFAULT_PROJECT_ID);
@@ -96,6 +102,12 @@ export class LiveProjectApiSync {
   synchronize(context, response) {
     if (!context) return null;
     if (context.bypassReason) return null;
+    // A worker response may arrive after shutdown or a capacity reset. The
+    // canonical operation has already finished: preserve its response, but do
+    // not revive a disposed session or overwrite a newer session with old data.
+    // Active-session revision/contract errors below must still fail closed.
+    if (this.disposed || context.session?.disposed
+      || this.get(context.userId, context.projectId) !== context.session) return null;
     const body = responseJson(response);
     if (!body) return null;
     if (context.path === PROJECT_LOAD_PATH) {
@@ -137,6 +149,7 @@ export class LiveProjectApiSync {
   }
 
   dispose() {
+    this.disposed = true;
     for (const session of this.sessions.values()) session.dispose();
     this.sessions.clear();
   }

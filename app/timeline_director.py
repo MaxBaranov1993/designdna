@@ -176,7 +176,7 @@ def plan_from_llm(timeline: dict, prompt: str, provider: str | None = None, effo
     return [step for step in steps[:6] if isinstance(step, dict)]
 
 
-def direct(timeline: dict, prompt: str, allow_llm: bool | None = None, *, provider: str | None = None, effort: str = "medium") -> tuple[dict, dict, dict]:
+def direct(timeline: dict, prompt: str, allow_llm: bool | None = None, *, provider: str | None = None, effort: str = "medium", require_llm: bool = False) -> tuple[dict, dict, dict]:
     """Промпт -> применённый таймлайн + change-set + мета (атомарно, обратимо).
 
     Мета возвращает ``planSource`` ("llm" | "deterministic") и ``warning`` —
@@ -190,7 +190,10 @@ def direct(timeline: dict, prompt: str, allow_llm: bool | None = None, *, provid
     if len(text) > MAX_PROMPT_CHARS:
         raise ValueError(
             f"промпт длиннее {MAX_PROMPT_CHARS} символов — сократите запрос до ключевых приёмов монтажа")
-    use_llm = FEATURE_FLAGS.is_enabled("aiDirector") if allow_llm is None else allow_llm
+    if timeline.get("story") and allow_llm is not False:
+        from video_story import direct_story
+        return direct_story(timeline, text, provider or "codex", effort)
+    use_llm = require_llm or (FEATURE_FLAGS.is_enabled("aiDirector") if allow_llm is None else allow_llm)
     steps: list[dict] | None = None
     plan_source = "deterministic"
     warning: str | None = None
@@ -199,11 +202,15 @@ def direct(timeline: dict, prompt: str, allow_llm: bool | None = None, *, provid
             steps = plan_from_llm(timeline, text, provider=provider, effort=effort)
             plan_source = "llm"
         except Exception as exc:  # noqa: BLE001 — фолбэк не должен терять функцию
+            if require_llm:
+                raise ValueError("Выбранный AI-аккаунт не подготовил монтаж. Проверьте подключение в Agents → Connections. " + str(exc)[:200]) from exc
             steps = None  # деградация на детерминированный разбор без потери функции
             warning = (
                 "LLM-провайдер недоступен (" + (str(exc) or "нет ответа")[:200]
                 + ") — использован детерминированный план по ключевым словам")
     if not steps:
+        if require_llm:
+            raise ValueError("AI вернул пустой план монтажа. Уточните промпт и повторите запуск.")
         steps = plan_from_prompt(timeline, text)
     operations: list[dict] = []
     for step in steps:

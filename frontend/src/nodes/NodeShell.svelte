@@ -13,17 +13,19 @@
     id,
     type,
     selected = false,
+    idleStatus,
     children,
   }: {
     id: string;
     type: NodeType;
     selected?: boolean;
+    idleStatus?: {text:string; kind?:string | null};
     children?: Snippet;
   } = $props();
 
   let def = $derived(NODE_DEFS[type]);
-  let status = $derived($flowStatuses[Number(id)] ?? null);
   let busy = $derived(Boolean($flowBusy[Number(id)]));
+  let status = $derived((!busy && idleStatus) || $flowStatuses[Number(id)] || null);
   let badgeClass = $derived(busy ? "run" : status?.kind === "err" ? "err" : status?.kind === "ok" ? "ok" : "");
   let badgeText = $derived(busy ? "выполняется" : status?.text || "готова");
 

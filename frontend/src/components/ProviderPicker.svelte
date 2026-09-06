@@ -9,10 +9,12 @@
   let {
     provider = "openai" as NodeProvider,
     effort = "medium",
+    accountsOnly = false,
     onChange,
   }: {
     provider?: NodeProvider;
     effort?: string;
+    accountsOnly?: boolean;
     onChange: (next: { provider: NodeProvider; effort: string }) => void;
   } = $props();
 
@@ -31,15 +33,15 @@
   const supportsEffort = $derived(provider !== "codex");
 </script>
 
-<div class="provider-picker">
+<div class="provider-picker" class:account-picker={accountsOnly}>
   <select
     class="f-provider-select nodrag"
     value={provider}
     onchange={(e) => onChange({ provider: e.currentTarget.value as NodeProvider, effort })}
     aria-label="Провайдер"
   >
-    {#each PROVIDERS as option (option.value)}
-      <option value={option.value}>{option.label}</option>
+    {#each PROVIDERS.filter((option) => !accountsOnly || ["codex", "claude"].includes(option.value)) as option (option.value)}
+      <option value={option.value}>{accountsOnly ? (option.value === "codex" ? "GPT · мой аккаунт" : "Claude · мой аккаунт") : option.label}</option>
     {/each}
   </select>
   {#if supportsEffort}
@@ -76,6 +78,13 @@
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .account-picker select {
+    background: var(--dna-sunken);
+    color: var(--dna-text);
+    border: 1px solid var(--dna-border-strong);
+    border-radius: 7px;
+    padding: 6px 8px;
   }
   @container (max-width: 220px) {
     .provider-picker { grid-template-columns: minmax(0, 1fr); }

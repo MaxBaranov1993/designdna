@@ -11,17 +11,21 @@
    * более новые правки; при закрытии несинхронизированный остаток сбрасывается
    * немедленно). ИИ-правки приходят через timeline-change-set как ПРЕВЬЮ:
    * канонический таймлайн ноды не меняется до явного «Применить». */
+  import { onMount } from "svelte";
   import ProviderPicker from "../components/ProviderPicker.svelte";
   import { TimelineEngine, Timeline } from "../engine/timeline";
   import { IRRenderer } from "../engine/renderer";
+  import { VideoStoryPlayer, storySchedule, actionLabel } from "../engine/video-story";
+  import type { VideoStory } from "../engine/video-story";
+  import VideoStoryPanel from "./VideoStoryPanel.svelte";
   import { flow } from "../flow/state";
   import { api, apiGet } from "../flow/api";
   import { toast } from "../flow/toast";
   import { resizeTimeline, moveTimelineKey, setTimelineKeyValue } from "./timeline-edits";
   import { bodyPortal } from "../lib/bodyPortal";
-  import type { TimelineNodeData } from "../flow/types";
+  import type { TimelineNodeData, VideoRevision, VideoRevisionChange } from "../flow/types";
 
-  let { nodeId, data, onClose }: { nodeId: number; data: TimelineNodeData; onClose: () => void } = $props();
+  let { nodeId, data, onClose, startWithPrompt = false }: { nodeId: number; data: TimelineNodeData; onClose: () => void; startWithPrompt?: boolean } = $props();
 
   type AnyDoc = Record<string, any>;
 
@@ -46,6 +50,13 @@
   let playing = $state(false);
   let pxPerMs = $state(0.12);
   let aiPrompt = $state("");
+  let showVersions = $state(false);
+  let pendingRevision: VideoRevisionChange | undefined;
+  const accountProvider = $derived(data.provider === "claude" ? "claude" : "codex");
+  onMount(() => {
+    aiPrompt = data.prompt || "";
+    if (startWithPrompt && aiPrompt.trim()) void runAiDirector();
+  });
   let busy = $state(false);
   let aiBusy = $state(false);
   let message = $state("");
@@ -68,6 +79,9 @@
 
   // Превью ИИ-монтажа: канонический документ не трогается до «Применить».
   type AiPreview = {
+    prompt: string;
+    provider: "codex" | "claude";
+    effort: "medium" | "high" | "max";
     timeline: AnyDoc;
     changeSet: AnyDoc;
     intent: string;
@@ -78,6 +92,7 @@
   let preview = $state<AiPreview | null>(null);
 
   let irHost: HTMLDivElement | null = $state(null);
+  let storyPlayer = $state<VideoStoryPlayer | null>(null);
   let rulerTrack: HTMLDivElement | null = $state(null);
   let boxW = $state(800);
   let boxH = $state(450);
@@ -116,6 +131,13 @@
     const ir = designIr;
     const current = activeDoc;
     if (!host || !ir || !current) return;
+    if (current.story) {
+      try {
+        const player = new VideoStoryPlayer(host, current);
+        storyPlayer = player;
+        return () => { player.destroy(); storyPlayer = null; };
+      } catch (error) { say(error instanceof Error ? error.message : String(error)); return; }
+    }
     IRRenderer.renderIR(host, ir as any, { viewport: "desktop" });
     // секции рендерера помечены data-ir-sec="<i>"; связываем со слоями по ref
     const keysToIndex = new Map<string, number>();
@@ -143,6 +165,7 @@
     const host = irHost;
     const state = solved;
     if (!host || !state) return;
+    if (storyPlayer) { storyPlayer.seek(playhead); return; }
     Timeline.applySolvedToDom(host, state);
   });
 
@@ -256,11 +279,12 @@
         say("Правки не прошли валидацию: " + errors[0]);
         return false; // keep the last valid canonical document
       }
-      if (!$flow.commitTimeline(nodeId, canonical, sourceRevision, payload)) {
+      if (!$flow.commitTimeline(nodeId, canonical, sourceRevision, payload, pendingRevision)) {
         say("Вход или таймлайн изменился вне редактора. Скопируйте черновик перед повторным открытием.");
         return false;
       }
       canonical = payload;
+      pendingRevision = undefined;
       lastValidSeq = seq;
       say("");
       return true;
@@ -382,13 +406,19 @@
     const prompt = aiPrompt.trim();
     if (!doc || !prompt || aiBusy || busy || preview) return;
     aiBusy = true;
+    const provider = accountProvider;
+    const effort = data.effort || "medium";
+    $flow.setNodeData(nodeId, { prompt, provider });
     say("ИИ-режиссёр готовит монтаж...");
     try {
+      if (!await syncNow()) throw new Error("Сначала сохраните текущие правки");
       const resp = await api<{
         timeline?: AnyDoc; changeSet?: AnyDoc; planSource?: string; warning?: string | null; error?: string;
-      }>("/api/timeline/assist", { timeline: doc, prompt, provider: data.provider || "openai", effort: data.effort || "medium" });
+      }>("/api/timeline/assist", { timeline: doc, prompt, provider, effort, require_llm: true });
+      if (disposed || $flow.getNodeIrRevision(nodeId) !== sourceRevision) return;
       if (resp.error || !resp.timeline || !resp.changeSet) throw new Error(resp.error || "пустой ответ");
       preview = {
+        prompt, provider, effort,
         timeline: resp.timeline,
         changeSet: resp.changeSet,
         intent: String(resp.changeSet.intent || prompt),
@@ -419,11 +449,12 @@
       doc = resp.timeline;
       renderState = null;
       docSeq++;
+      pendingRevision = { kind: "prompt", label: applied.intent, prompt: applied.prompt, provider: applied.provider, effort: applied.effort };
       lastChangeSet = applied.changeSet;
       preview = null;
       aiPrompt = "";
       say("Применено: " + applied.intent);
-      scheduleSync();
+      await syncNow();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       say("Применение: " + msg);
@@ -436,6 +467,42 @@
   function cancelPreview() {
     preview = null;
     say("Превью отменено — таймлайн не изменён");
+  }
+
+  async function restoreVersion(version: VideoRevision) {
+    if (!doc || busy || aiBusy || preview) return;
+    if (JSON.stringify(version.sourceIr) !== JSON.stringify(data.ir)) {
+      say("Эта версия создана для другой исходной страницы. Подключите прежнюю страницу перед восстановлением.");
+      return;
+    }
+    busy = true;
+    try {
+      if (!await syncNow()) return;
+      const result = await api<{ errors?: string[] }>("/api/timeline/validate", { timeline: version.timeline });
+      if (result.errors?.length) throw new Error(result.errors[0]);
+      const next = JSON.parse(JSON.stringify(version.timeline));
+      if (!$flow.commitTimeline(nodeId, canonical, sourceRevision, next, {
+        kind: "restore", label: "Возврат: " + version.label, restoredFrom: version.id,
+        prompt: version.prompt, provider: version.provider, effort: version.effort,
+      })) throw new Error("Страница или монтаж изменились вне редактора. Откройте редактор заново.");
+      snapshot();
+      doc = next;
+      canonical = JSON.parse(JSON.stringify(next));
+      docSeq++;
+      lastValidSeq = docSeq;
+      pendingRevision = undefined;
+      aiPrompt = version.prompt || "";
+      $flow.setNodeData(nodeId, { prompt: aiPrompt });
+      renderState = null;
+      lastChangeSet = null;
+      playing = false;
+      playhead = Math.min(playhead, Number(next.composition.duration));
+      say("Версия восстановлена. Можно продолжить новым промптом; прежние версии сохранены.");
+    } catch (error) {
+      say(error instanceof Error ? error.message : String(error));
+    } finally {
+      busy = false;
+    }
   }
 
   async function undoAi() {
@@ -718,6 +785,30 @@
     playhead = Math.min(playhead, doc?.composition.duration || 0);
   }
 
+  async function editStory(story: VideoStory, polish = false) {
+    if (!doc || busy || aiBusy || preview) return;
+    if (!await syncNow()) return;
+    const seq = docSeq;
+    busy = true;
+    try {
+      const next = JSON.parse(JSON.stringify(doc));
+      next.story = story;
+      if (polish) next.composition.fps = 60;
+      const oldDuration = next.composition.duration;
+      const keyEnd = Math.max(0, ...next.layers.flatMap((l: AnyDoc) => Object.values(l.transform.properties).flatMap((track: any) => track.keyframes.map((k: any) => k.t))));
+      const clipEnd = Math.max(0, ...next.layers.filter((l: AnyDoc) => l.out !== oldDuration).map((l: AnyDoc) => l.out));
+      next.composition.duration = Math.max(1000, story.actions.reduce((sum, a) => sum + a.duration, 0) + 800, keyEnd, clipEnd);
+      next.layers.forEach((l: AnyDoc) => { if (l.out === oldDuration) l.out = next.composition.duration; });
+      const result = await api<{ errors?: string[] }>("/api/timeline/validate", { timeline: next });
+      if (result.errors?.length) throw new Error(result.errors[0]);
+      if (docSeq !== seq || disposed) return;
+      busy = false;
+      mutate((d) => Object.assign(d, next));
+      playhead = Math.min(playhead, next.composition.duration);
+    } catch (error) { say(error instanceof Error ? error.message : String(error)); }
+    finally { busy = false; }
+  }
+
   function timeLabel(ms: number) {
     const s = Math.max(0, ms) / 1000;
     return s.toFixed(2) + "s";
@@ -729,7 +820,9 @@
   <div class="tlw-top">
     <button class="tlw-btn" data-act="close" aria-label="Закрыть редактор и вернуться к графу"
       onclick={closeWorkspace}>← Граф</button>
-    <span class="tlw-title">Video Editor</span>
+    <span class="tlw-title">Видео</span>
+    <button class="tlw-btn" data-act="video-history" aria-expanded={showVersions}
+      onclick={() => (showVersions = !showVersions)}>История · {data.revisions?.length || 0}</button>
     <button class="tlw-btn primary" data-act="play" disabled={!duration}
       aria-label={playing ? "Пауза" : "Проиграть"} aria-pressed={playing} onclick={togglePlay}>
       {playing ? "❚❚" : "▶"}
@@ -763,19 +856,20 @@
     {/if}
     <button class="tlw-btn" data-act="render-mp4" disabled={busy || !doc || Boolean(preview)}
       onclick={() => void renderVideo("mp4")}>Рендер MP4</button>
-    <button class="tlw-btn" data-act="export-css" disabled={busy || !doc || Boolean(preview)}
+    <button class="tlw-btn" data-act="export-css" title={doc?.story?.actions.length ? "Сценарий действий экспортируется в MP4" : "Экспорт анимации компонентов"} disabled={busy || !doc || Boolean(preview) || Boolean(doc?.story?.actions.length)}
       onclick={() => void exportCss()}>Экспорт CSS</button>
   </div>
 
   <div class="tlw-ai">
     <div inert={aiBusy || busy || Boolean(preview)}>
-      <ProviderPicker provider={data.provider || "openai"} effort={data.effort || "medium"}
+      <ProviderPicker accountsOnly provider={accountProvider} effort={data.effort || "medium"}
         onChange={(choice) => $flow.setNodeData(nodeId, choice)} />
     </div>
     <input class="tlw-ai-input" data-act="ai-prompt"
       aria-label="Промпт ИИ-режиссёра"
-      placeholder="ИИ-режиссёр: «интро снизу, наезд на hero, пульс на кнопке в конце»"
+      placeholder="Например: заполни форму, прокрути к кнопке и перейди на страницу «Готово»"
       bind:value={aiPrompt} disabled={aiBusy || busy || !doc || Boolean(preview)}
+      oninput={(event) => $flow.setNodeData(nodeId, { prompt: event.currentTarget.value })}
       onkeydown={(e) => { if (e.key === "Enter") void runAiDirector(); }} />
     <button class="tlw-btn primary" data-act="ai-run"
       disabled={aiBusy || busy || !doc || !aiPrompt.trim() || Boolean(preview)}
@@ -783,6 +877,24 @@
       {aiBusy ? "..." : "Составить монтаж"}
     </button>
   </div>
+
+  {#if showVersions}
+    <section class="video-versions" aria-label="История монтажа">
+      <div class="video-versions-title">Вернитесь к версии и продолжите новым промптом. Последующие версии сохранятся.</div>
+      {#each [...(data.revisions || [])].reverse() as version (version.id)}
+        <div class="video-version" class:current={version.id === data.activeRevisionId}>
+          <div><strong>{version.label}</strong>
+            {#if version.prompt && version.prompt !== version.label}<p>{version.prompt}</p>{/if}
+            <small>{new Date(version.createdAt).toLocaleString("ru-RU")}{version.provider ? ` · ${version.provider === "claude" ? "Claude" : "GPT"}` : ""}{version.kind === "restore" ? " · новая ветка" : ""}</small>
+          </div>
+          <button class="tlw-btn" data-act="restore-version" disabled={busy || aiBusy || Boolean(preview)}
+            onclick={() => void restoreVersion(version)}>Вернуться</button>
+        </div>
+      {:else}
+        <p>После применения первого промпта здесь появятся исходный монтаж и результат.</p>
+      {/each}
+    </section>
+  {/if}
 
   {#if preview}
     <div class="tlw-preview" role="region" aria-label="Превью ИИ-монтажа" data-act="ai-preview">
@@ -800,6 +912,10 @@
 
   <div class="tlw-body">
     <div class="tlw-layers">
+      {#if activeDoc?.story}
+        <VideoStoryPanel story={activeDoc.story} disabled={busy || aiBusy || Boolean(preview)}
+          onChange={(story) => void editStory(story)} onPolish={(story) => void editStory(story, true)} onSeek={(time) => { playing = false; playhead = time; }} />
+      {/if}
       <div class="tlw-panel-title">Слои и группы</div>
       {#if !activeDoc}
         <div class="tlw-empty">Соберите таймлайн из входного Design IR</div>
@@ -875,6 +991,16 @@
   </div>
 
   <div class="tlw-timeline">
+    {#if activeDoc?.story?.actions.length}
+      <div class="story-strip" aria-label="Действия на таймлайне">
+        {#each storySchedule(activeDoc.story) as action (action.id)}
+          <button class:active={playhead >= action.start && playhead < action.end}
+            style:width={`${action.duration * pxPerMs}px`}
+            title={`${actionLabel[action.type]} · ${(action.start / 1000).toFixed(1)}–${(action.end / 1000).toFixed(1)}s`}
+            onclick={() => { playing = false; playhead = action.start; }}>{actionLabel[action.type]}</button>
+        {/each}
+      </div>
+    {/if}
     <div class="tlw-ruler" data-act="ruler" role="slider" tabindex="0"
       aria-label="Позиция воспроизведения"
       aria-valuemin={0} aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(playhead)}
@@ -942,6 +1068,18 @@
 </div>
 
 <style>
+  .story-strip { display: flex; gap: 0; padding: 5px 0 5px 148px; width: max-content; }
+  .story-strip button { box-sizing: border-box; min-width: 0; flex-shrink: 0; border: 1px solid var(--dna-border); border-radius: 4px; background: var(--dna-elevated); color: var(--dna-text-2); padding: 5px 3px; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .story-strip button.active { border-color: var(--dna-action); color: var(--dna-action); }
+  .video-versions { flex: 0 0 auto; max-height: 240px; overflow: auto; padding: 10px 16px; border-bottom: 1px solid var(--dna-border); background: var(--dna-sunken); }
+  .video-versions-title, .video-versions > p { font-size: 12px; color: var(--dna-dim); }
+  .video-version { display: flex; gap: 16px; justify-content: space-between; align-items: center; padding: 10px 8px; border-left: 2px solid transparent; border-bottom: 1px solid var(--dna-border); }
+  .video-version.current { border-left-color: var(--dna-success-text); }
+  .video-version > div { min-width: 0; }
+  .video-version strong, .video-version p { overflow-wrap: anywhere; font-size: 12px; }
+  .video-version p { margin: 4px 0; }
+  .video-version small { display: block; color: var(--dna-dim); font-size: 10px; margin-top: 4px; }
+  .video-version button { flex-shrink: 0; }
   .tlw-root { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column;
     background: var(--dna-panel); color: var(--dna-text-2); font-size: 13px;
     /* Акцент таймлайна — motion-розовый семейства DNA; активные кнопки — --dna-action. */
@@ -997,8 +1135,10 @@
     padding: 2px 8px; cursor: pointer; font-size: 11px; }
   .tlw-prop-chip[aria-pressed="true"] { background: var(--pc); color: var(--dna-bg); }
   .tlw-kf-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-  .tlw-kf-row { display: flex; align-items: center; gap: 6px; background: var(--dna-sunken); border-radius: 6px; padding: 4px 6px; }
-  .tlw-kf-row span:nth-child(2) { flex: 1; font-variant-numeric: tabular-nums; }
+  .tlw-kf-row { display: grid; grid-template-columns: 10px 38px minmax(35px, 1fr) minmax(58px, 1.4fr) 22px; align-items: center; gap: 4px; background: var(--dna-sunken); border-radius: 6px; padding: 4px; }
+  .tlw-kf-row span:nth-child(2) { font-variant-numeric: tabular-nums; font-size: 11px; }
+  .tlw-kf-row input, .tlw-kf-row select { width: 100%; min-width: 0; padding-inline: 3px; }
+  .tlw-kf-row button { padding-inline: 2px; }
   .tlw-timeline { border-top: 1px solid var(--dna-border); background: var(--dna-panel-2); max-height: 38vh; overflow: auto; }
   .tlw-ruler { padding: 6px 8px 0 148px; cursor: ew-resize; outline-offset: 2px; }
   .tlw-ruler-track { position: relative; height: 22px; }

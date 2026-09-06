@@ -120,7 +120,7 @@ export function outValue(n: FlowNode, port?: string): unknown {
         };
       }
       const document = n.data.document as Record<string, unknown> | null | undefined;
-      if (!document || typeof document !== "object") return null;
+      if (!document || typeof document !== "object") return n.data.resolvedTokens || null;
       const styleGuide = document.styleGuide as Record<string, unknown> | undefined;
       // Полные IR-токены v1 (styleGuide.irTokens) — то, что лочит генератор;
       // плоская shadcn-карта остаётся для старых ревизий (сервер её приводит).

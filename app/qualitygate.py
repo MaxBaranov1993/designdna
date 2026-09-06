@@ -955,7 +955,7 @@ def check(ir, rules=None) -> list:
     return out
 
 
-def autofix(ir, strict_tokens: bool = False) -> tuple:
+def autofix(ir, strict_tokens: bool = False, *, rules=None) -> tuple:
     """Solver без LLM: вернуть (исправленный IR, журнал правок). Вход не мутируется.
 
     strict_tokens=True (ДС в режиме strict): цвета вне палитры снапятся к ближайшему
@@ -964,7 +964,7 @@ def autofix(ir, strict_tokens: bool = False) -> tuple:
         raise ValueError("IR должен быть объектом")
     fixed = copy.deepcopy(ir)
     journal = []
-    for rule in RULES:
+    for rule in (RULES if rules is None else rules):
         fix = rule.get("fix")
         if not fix:
             continue

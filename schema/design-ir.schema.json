@@ -143,6 +143,15 @@
         "identityScore": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
         "identityReport": { "type": ["object", "null"] },
         "strictRecovery": { "type": "string" },
+        "strictRecoveryReason": { "type": "string", "maxLength": 200 },
+        "contentRewrite": {
+          "type": "object", "required": ["slots", "replaced"], "additionalProperties": false,
+          "properties": {
+            "slots": { "type": "integer", "minimum": 0 },
+            "replaced": { "type": "integer", "minimum": 0 },
+            "error": { "type": "string" }
+          }
+        },
         "requestedComponentKey": { "type": "string" },
         "sourceTokenLock": { "type": "boolean" },
         "sourceTokenNodeId": { "type": "integer", "minimum": 1 },
@@ -2043,6 +2052,7 @@
       "properties": {
         "kind": {
           "enum": [
+            "component-instance",
             "dom",
             "background-image",
             "inherited-background",

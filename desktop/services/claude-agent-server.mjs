@@ -8,8 +8,9 @@ import path from "node:path";
  * Подписочный OAuth живёт внутри самого Claude Code (его собственный `/login`),
  * поэтому DesignDNA никогда не видит и не хранит секрет: мы только проверяем,
  * что CLI установлен и залогинен, и запускаем одноразовый headless-запрос
- * (`claude -p`). Это тот же контракт, что у Codex: текстовый вход/выход,
- * без tools и без файловых операций.
+ * (`claude -p`). Текстовые запросы выполняются без tools; изображения
+ * передаются временными файлами с доступом только через Read. Codex
+ * передаёт изображения нативными входами app-server image/localImage.
  */
 
 const CLAUDE_MODEL = "opus";
@@ -28,6 +29,32 @@ const THINKING_BUDGETS = { medium: 0, high: 8_000, max: 24_000 };
 
 export function claudeEffortBudget(effort) {
   return Object.hasOwn(THINKING_BUDGETS, effort) ? THINKING_BUDGETS[effort] : THINKING_BUDGETS.medium;
+}
+
+/** Subscription chat must not inherit API credentials, gateway endpoints or
+ * cloud-provider selectors. Match case-insensitively for Windows env keys.
+ * This only builds the child environment; it never changes stored credentials
+ * or CLI settings. OAuth remains available from env, app storage or CLI login. */
+export function claudeSubscriptionEnvironment(environment, storedOAuthToken = null) {
+  const env = {};
+  let inheritedOAuthToken;
+  for (const [key, value] of Object.entries(environment)) {
+    const name = key.toUpperCase();
+    if (name === "CLAUDE_CODE_OAUTH_TOKEN") {
+      inheritedOAuthToken ??= value;
+      continue;
+    }
+    if (name.startsWith("ANTHROPIC_")
+      || name === "BASE_URL"
+      || name === "AWS_BEARER_TOKEN_BEDROCK"
+      || /^CLAUDE_CODE_(?:USE_(?:BEDROCK|VERTEX|FOUNDRY|ANTHROPIC_AWS)|SKIP_(?:BEDROCK|VERTEX|FOUNDRY)_AUTH)$/.test(name)) {
+      continue;
+    }
+    env[key] = value;
+  }
+  const token = storedOAuthToken || inheritedOAuthToken;
+  if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
+  return env;
 }
 
 function pathApiForPlatform(platform) {
@@ -102,7 +129,7 @@ export function claudeProcessSpec({
   const binary = findClaudeBinary(environment, fileExists, platform);
   if (binary) return { command: binary, args, resolved: true };
   if (platform === "win32") {
-    const quoted = args.map((arg) => (/[\s"&|<>^]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg)).join(" ");
+    const quoted = args.map((arg) => (!arg || /[\s"&|<>^]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg)).join(" ");
     return {
       command: environment.ComSpec || environment.COMSPEC || "cmd.exe",
       args: ["/d", "/s", "/c", `chcp 65001>nul && claude ${quoted}`],
@@ -144,12 +171,13 @@ const PROFILE_INSTRUCTIONS = {
 };
 
 export class ClaudeAgentServer {
-  constructor({ cwd, spawnProcess = spawn, environment = process.env, fileExists = existsSync, readFile = readFileSync, getStoredToken = null } = {}) {
+  constructor({ cwd, spawnProcess = spawn, environment = process.env, fileExists = existsSync, readFile = readFileSync, getStoredToken = null, imageTempRoot = tmpdir() } = {}) {
     this.cwd = cwd;
     this.spawnProcess = spawnProcess;
     this.environment = environment;
     this.fileExists = fileExists;
     this.readFile = readFile;
+    this.imageTempRoot = path.resolve(imageTempRoot);
     // Долгоживущий OAuth-токен из safeStorage приложения (claude setup-token):
     // секрет живёт в main-процессе и уходит только в env спауна CLI.
     this.getStoredToken = getStoredToken;
@@ -159,18 +187,20 @@ export class ClaudeAgentServer {
     try { return String(this.getStoredToken?.() || "").trim() || null; } catch { return null; }
   }
 
-  /** Статус подключения: бинарь найден + (токен приложения ИЛИ валидные креды CLI). */
+  /** Статус подключения: бинарь найден + OAuth приложения, окружения или CLI. */
   account() {
     const spec = claudeProcessSpec({ environment: this.environment, fileExists: this.fileExists });
     const installed = Boolean(spec.resolved);
     const viaApp = Boolean(this.#storedToken());
-    const loggedIn = viaApp || claudeCredentialsValid(this.environment, this.readFile, this.fileExists);
+    const viaEnv = Boolean(String(claudeSubscriptionEnvironment(this.environment).CLAUDE_CODE_OAUTH_TOKEN || "").trim());
+    const loggedIn = viaApp || viaEnv || claudeCredentialsValid(this.environment, this.readFile, this.fileExists);
     const ready = installed && loggedIn;
     return {
       provider: "claude",
       installed,
       loggedIn,
       viaApp,
+      viaEnv,
       ready,
       model: CLAUDE_MODEL,
       binary: installed ? spec.command : null,
@@ -232,6 +262,11 @@ export class ClaudeAgentServer {
     if (!Object.hasOwn(PROFILE_INSTRUCTIONS, profile)) {
       throw new Error(`Unsupported Claude chat profile: ${profile}`);
     }
+    const status = this.account();
+    if (!status.installed) throw new Error(status.hint);
+    if (!status.loggedIn) {
+      throw new Error("Claude не подключён. Требуется существующий OAuth-вход по подписке. Откройте Agents → Connections и нажмите «Подключить Claude».");
+    }
     const { lines, imageFiles, cleanup } = this.materializeMessages(messages);
     const toolRule = imageFiles.length
       ? "Use the Read tool ONLY to view the image files listed in the messages. Do not run commands or use any other tool."
@@ -239,23 +274,20 @@ export class ClaudeAgentServer {
     const prompt = [
       `${PROFILE_INSTRUCTIONS[profile]} ${toolRule}${profile === "chat" ? "" : " Return only the JSON object."}`,
       ...lines,
+      ...(profile === "chat" ? [] : ["Final response: return only the complete JSON object required above. No introduction, explanation, or Markdown fences."]),
     ].join("\n\n");
 
-    // Проверяем доступность до запуска: иначе cmd.exe возвращал собственную
-    // ошибку «не является внутренней командой» в чужой кодировке.
-    const status = this.account();
-    if (!status.installed) { cleanup(); throw new Error(status.hint); }
-
     const budget = claudeEffortBudget(effort);
-    const args = ["-p", "--output-format", "json", "--model", claudeModel(model)];
+    // Do not reload API keys, apiKeyHelper or cloud selectors from user,
+    // project or local settings after sanitizing env. This preserves the
+    // global OAuth credential location; --bare would disable OAuth entirely.
+    const args = ["-p", "--output-format", "json", "--model", claudeModel(model), "--setting-sources", ""];
     if (imageFiles.length) args.push("--allowedTools", "Read");
     const spec = claudeProcessSpec({
       environment: this.environment, args, fileExists: this.fileExists,
     });
-    const env = { ...this.environment };
+    const env = claudeSubscriptionEnvironment(this.environment, this.#storedToken());
     if (budget > 0) env.MAX_THINKING_TOKENS = String(budget);
-    const token = this.#storedToken();
-    if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
 
     try {
       const raw = await this.#run(spec, { prompt, timeoutMs, env, signal });
@@ -271,39 +303,45 @@ export class ClaudeAgentServer {
     const lines = [];
     const imageFiles = [];
     let tempDir = null;
-    for (const message of messages || []) {
-      const role = String(message.role || "user").toUpperCase();
-      const content = message.content;
-      if (!Array.isArray(content)) {
-        lines.push(`${role}:\n${String(content || "")}`);
-        continue;
-      }
-      const pieces = [];
-      for (const part of content) {
-        if (part?.type === "image_url") {
-          const url = String(part.image_url?.url || "");
-          const match = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/i.exec(url);
-          if (!match) {
-            // https-картинку CLI прочитать не может — честный отказ вместо
-            // молчаливой потери визуального входа.
-            throw new Error("Claude CLI transports only data:image base64 parts");
-          }
-          if (!tempDir) tempDir = mkdtempSync(path.join(tmpdir(), "ddna-claude-img-"));
-          const ext = match[1] === "jpeg" ? "jpg" : match[1];
-          const file = path.join(tempDir, `image-${imageFiles.length + 1}.${ext}`);
-          writeFileSync(file, Buffer.from(match[2], "base64"));
-          imageFiles.push(file);
-          pieces.push(`IMAGE FILE (view it with the Read tool): ${file}`);
-        } else {
-          pieces.push(String(part?.text || ""));
-        }
-      }
-      lines.push(`${role}:\n${pieces.join("\n")}`);
-    }
     const cleanup = () => {
-      if (tempDir) { try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* уже нет */ } }
+      if (tempDir) { try { rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* already removed or unavailable */ } }
     };
-    return { lines, imageFiles, cleanup };
+    try {
+      for (const message of messages || []) {
+        const role = String(message.role || "user").toUpperCase();
+        const content = message.content;
+        if (!Array.isArray(content)) {
+          lines.push(`${role}:\n${String(content || "")}`);
+          continue;
+        }
+        const pieces = [];
+        for (const part of content) {
+          if (part?.type === "image_url") {
+            const url = String(part.image_url?.url || "");
+            const match = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/i.exec(url);
+            if (!match) {
+              // https-картинку CLI прочитать не может — честный отказ вместо
+              // молчаливой потери визуального входа.
+              throw new Error("Claude CLI transports only data:image base64 parts");
+            }
+            if (!tempDir) tempDir = mkdtempSync(path.join(this.imageTempRoot, "ddna-claude-img-"));
+            const ext = match[1] === "jpeg" ? "jpg" : match[1];
+            const file = path.join(tempDir, `image-${imageFiles.length + 1}.${ext}`);
+            writeFileSync(file, Buffer.from(match[2], "base64"));
+            imageFiles.push(file);
+            pieces.push(`IMAGE FILE (view it with the Read tool): ${file}`);
+          } else {
+            pieces.push(String(part?.text || ""));
+          }
+        }
+        lines.push(`${role}:\n${pieces.join("\n")}`);
+      }
+      return { lines, imageFiles, cleanup };
+    } catch (error) {
+      // chat() cannot run its finally until this method has returned cleanup.
+      cleanup();
+      throw error;
+    }
   }
 
   #run(spec, { prompt, timeoutMs, env, signal }) {

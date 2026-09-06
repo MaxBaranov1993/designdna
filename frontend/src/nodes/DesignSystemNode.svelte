@@ -1,18 +1,25 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
-  import { flow, flowBusy, flowNodes } from "../flow/state";
-  import type { DesignSystemFlowNode, SourceArtifact } from "../flow/types";
+  import { flow, flowBusy, flowNodes, flowEdges } from "../flow/state";
+  import type { DesignSystemFlowNode, DesignSystemAiProvider, SourceArtifact } from "../flow/types";
+  import { resolveDesignSystemAiProvider } from "../flow/store";
   import InPorts from "./InPorts.svelte";
   import OutPorts from "./OutPorts.svelte";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
+  import { designSystemIdleStatus } from './designSystemStatus';
 
   let { id, data, selected }: NodeProps<DesignSystemFlowNode> = $props();
 
   let summary = $derived((data.summary || {}) as Record<string, any>);
   let lastError = $derived(String(data.lastError || ""));
+  let resolvedProvider = $derived.by(() => {
+    const node = $flowNodes.find((n) => n.id === id);
+    return node ? resolveDesignSystemAiProvider($flowNodes, $flowEdges, node) : "openai";
+  });
   let sourceArtifact = $derived.by((): SourceArtifact | null => {
-    const source = $flowNodes.find((node) => Number(node.id) === Number(data.sourceNodeId));
+    const wire = $flowEdges.find((edge) => edge.target === id && edge.targetHandle === "artifact");
+    const source = $flowNodes.find((node) => node.id === wire?.source);
     if (source?.type === "sourceimport") return source.data.sourceArtifact || null;
     const document = (data.document || {}) as { sourceArtifact?: SourceArtifact | null };
     return document.sourceArtifact || null;
@@ -28,6 +35,11 @@
   let acceptedMasters = $derived(Number(summary.components || 0));
   let acceptedVariants = $derived(Number(summary.variants || 0));
   let canOpen = $derived(!!data.systemId);
+  let canBuild = $derived.by(() => {
+    const edge = $flowEdges.find((e) => e.target === id && e.targetHandle === "artifact");
+    const source = $flowNodes.find((n) => n.id === edge?.source);
+    return source?.type === "sourceimport" && source.data.blocks.some((b) => !!b.ir && !b.error);
+  });
   let busy = $derived(!!$flowBusy[Number(id)]);
   let fileInput: HTMLInputElement | null = $state(null);
 
@@ -55,7 +67,7 @@
   };
 </script>
 
-<NodeShell {id} type="designsystem" {selected}>
+<NodeShell {id} type="designsystem" {selected} idleStatus={designSystemIdleStatus(data)}>
   <InPorts type="designsystem" />
   <div class="ds-head">
     <span class="ds-icon" aria-hidden="true">◈</span>
@@ -97,12 +109,16 @@
     <div class="ds-update" role="status"><strong>Source changed.</strong> Review and Sync before publishing.</div>
   {/if}
   {#if lastError}
-    <div class="ds-error" role="alert">{lastError}</div>
+    <details class="ds-error nodrag"><summary>Последнее сообщение</summary><div>{lastError}</div></details>
   {/if}
 
   <!-- Хендофф: на ноде только «Открыть» — Sync и публикация живут внутри
        панели Design System, система активна по умолчанию. -->
   <div class="ds-actions">
+    {#if !canOpen}
+      <button type="button" class="btn-node primary small nodrag" data-ds-action="build"
+        disabled={!canBuild || busy} onclick={() => $flow.rebuildDesignSystemFromSource(Number(id))}>Собрать из Source</button>
+    {/if}
     <button type="button" class="btn-node primary small nodrag" data-ds-action="open"
       aria-label="Открыть редактор Design System и Source UI" disabled={!canOpen} onclick={openEditor}>Открыть</button>
     <input class="ds-file" type="file" accept=".json,application/json" hidden bind:this={fileInput} onchange={onFile} />
@@ -115,6 +131,25 @@
       onchange={(event) => $flow.setNodeData(Number(id), { autoPublish: event.currentTarget.checked })} />
     <span>Автопубликация</span>
   </label>
+  <label class="ds-auto-publish nodrag">
+    <span>AI для всех действий</span>
+    <select aria-label="AI провайдер Design System" data-ds-ai-provider value={data.aiProvider || "inherit"} disabled={busy}
+      onchange={(event) => $flow.setNodeData(Number(id), { aiProvider: event.currentTarget.value as DesignSystemAiProvider })}>
+      <option value="inherit">Из Source · {resolvedProvider}</option>
+      <option value="codex">Codex</option>
+      <option value="claude">Claude Opus</option>
+      <option value="openai">GPT-5.6 Sol</option>
+      <option value="astra">GPT-6 Astra</option>
+    </select>
+  </label>
+  {#each Object.entries(data.pipelineStatus || {}) as [stage, result]}
+    {#if result.status === "failed" || result.status === "warning" || result.status === "cancelled"}
+      <details class="ds-error nodrag" data-ds-pipeline-stage={stage} data-status={result.status}>
+        <summary>{stage}: {result.status === 'warning' ? 'нужно ревью' : result.status === 'cancelled' ? 'не завершено' : 'ошибка'}</summary>
+        <div>{result.message}</div>
+      </details>
+    {/if}
+  {/each}
   <NodeStatus {id} />
   <OutPorts type="designsystem" />
 </NodeShell>
@@ -152,6 +187,8 @@
   .ds-update, .ds-error { margin-top: 7px; border-radius: 7px; padding: 6px 7px; font-size: 9px; }
   .ds-update { background: color-mix(in srgb, #d9a441, transparent 87%); color: #e2b85e; }
   .ds-error { background: color-mix(in srgb, #f87171, transparent 88%); color: #f87171; }
+  .ds-error summary { cursor: pointer; }
+  .ds-error > div { max-height: 160px; overflow: auto; padding-top: 6px; white-space: pre-wrap; }
   .ds-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
   .ds-actions button:disabled { cursor: not-allowed; opacity: .5; }
   .ds-auto-publish { display: flex; align-items: center; gap: 6px; color: #9da3b3; font-size: 10px; }

@@ -53,9 +53,10 @@
 <script lang="ts">
   /* Color picker инспектора (по мотивам OpenPencil color-picker-panel, MIT):
    * SV-поле + hue-слайдер + HEX + быстрые свотчи design-токенов IR.
-   * Запись идёт через скрытый нативный input[data-style-color] — wiring уже в
-   * wireInspector.ts, контракт с legacy 1:1 (включая синхронизацию text-поля). */
+   * Mounted controls commit directly through the current GeoEdit; committing
+   * must not depend on InspectorPanel's later animation-frame DOM wiring. */
   import * as ctl from "../controller";
+  import { applyInspectorColor } from "./wireInspector";
   import { COLOR_ROLE_ORDER } from "../../engine/tokensV2";
 
   /* ---------- компонент ---------- */
@@ -87,15 +88,17 @@
   let svEl: HTMLDivElement | null = $state(null);
   let hueEl: HTMLInputElement | null = $state(null);
 
-  /** Запись через скрытый нативный input: wireInspector сам применит стиль
-   *  и синхронизирует text-поле (контракт legacy). */
+  /** Commit first, then synchronize the native and text fields. A displayed
+   * value alone is not evidence that an edit reached the document. */
   function writeHex(value: string) {
     const root = fieldEl;
     if (!root) return;
+    const normalized = applyInspectorColor(styleKey, value);
+    if (normalized === undefined) return;
     const native = root.querySelector<HTMLInputElement>(`input[data-style-color="${styleKey}"]`);
-    if (!native) return;
-    native.value = value;
-    native.dispatchEvent(new Event("input", { bubbles: true }));
+    const text = root.querySelector<HTMLInputElement>(`input[data-style-text="${styleKey}"]`);
+    if (native) native.value = normalized || "#ffffff";
+    if (text) text.value = normalized;
   }
 
   function openPicker() {
@@ -208,7 +211,7 @@
   }
 
   function endInlineEdit(el: HTMLInputElement) {
-    updateInlineHex(el);
+    writeHex(el.value);
     ctl.setInspScrubbing(false);
   }
 
@@ -233,7 +236,8 @@
 <!-- svelte-ignore a11y_label_has_associated_control -->
 <div class="pi-field" bind:this={fieldEl}>
   <label>{label}</label>
-  <input type="color" data-style-color={styleKey} value={hex} class="pi-cp-native" />
+  <input type="color" data-style-color={styleKey} data-direct-change value={hex} class="pi-cp-native"
+    oninput={(e) => writeHex(e.currentTarget.value)} />
   <button
     type="button"
     bind:this={swatchEl}
@@ -246,15 +250,19 @@
   <button
     class={`pi-ibtn pi-clear-color ${transparent ? "pi-active" : ""}`}
     data-clear-style={styleKey}
+    data-direct-change
     title="Transparent"
+    onclick={() => writeHex("")}
   >×</button>
   <input
     type="text"
     data-style-text={styleKey}
+    data-direct-change
     value={raw}
     placeholder="transparent"
     onfocus={beginInlineEdit}
     oninput={(e) => updateInlineHex(e.currentTarget)}
+    onchange={(e) => writeHex(e.currentTarget.value)}
     onblur={(e) => endInlineEdit(e.currentTarget)}
     onkeydown={(e) => {
       if (e.key === "Enter") {

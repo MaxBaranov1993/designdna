@@ -85,6 +85,8 @@ export type ReferenceNodeData = {
  *  подписке через локальный CLI (OAuth живёт внутри самого CLI). */
 export type NodeProvider = "openai" | "astra" | "codex" | "claude";
 export type GeneratorNodeData = {
+  surface?: string;
+  designStyle?: string;
   provider: NodeProvider;
   effort: "medium" | "high" | "max";
   count: number;
@@ -243,7 +245,7 @@ export type SourceArtifactLibrary = {
 };
 export type SourceArtifact = {
   version: "source-artifact/1.0";
-  source: { url: string; authenticated: boolean; pipelineVersion: string };
+  source: { url: string; finalUrl?: string; authenticated: boolean; pipelineVersion: string };
   foundations: {
     tokens: Record<string, unknown> | null;
     groups?: SourceArtifactFoundationGroup[];
@@ -281,6 +283,7 @@ export type SourceImportNodeData = {
   aiRefine?: boolean;
   aiProvider?: NodeProvider;
   aiEffort?: "medium" | "high" | "max";
+  pipelineStatus?: Record<string, AiPipelineStage>;
   lastRun?: {
     cached: boolean;
     pipelineVersion?: string;
@@ -333,7 +336,19 @@ export type DesignSystemPickerChange = {
   usageMode: DesignSystemUsageMode;
   fixtureProfile: string;
 };
+export type DesignSystemAiProvider = "inherit" | NodeProvider;
+export type DesignSystemAiOperation = "organize" | "style-review" | "master-review";
+export type AiPipelineStage = {
+  status: "running" | "success" | "warning" | "failed" | "cancelled" | "skipped";
+  message: string;
+  provider?: NodeProvider;
+  updatedAt: string;
+};
 export type DesignSystemNodeData = {
+  /** Missing values inherit the provider of the Source wired to artifact. */
+  aiProvider?: DesignSystemAiProvider;
+  aiEffort?: "medium" | "high" | "max";
+  pipelineStatus?: Record<string, AiPipelineStage>;
   systemId: string | null;
   name: string;
   status: "draft" | "published" | "outdated" | "archived";
@@ -349,7 +364,7 @@ export type DesignSystemNodeData = {
    * по требованию при открытии панели. */
   document?: Record<string, unknown> | null;
   lastError?: string;
-  busyAction?: "publish" | "default" | "sync" | "validate" | "apply" | "";
+  busyAction?: "publish" | "default" | "sync" | "validate" | "apply" | DesignSystemAiOperation | "";
 } & Record<string, unknown>;
 
 export type PageBridgeNodeData = {
@@ -451,8 +466,29 @@ export type MotionNodeData = {
   sceneSettings: Record<string, Partial<MotionSceneSettings>>;
 };
 
-/* Video Editor: авторский таймлайн поверх входных компонентов (Timeline IR). */
+/* Persistent video revisions include the source needed to verify restoration. */
+export type VideoRevision = {
+  id: string;
+  parentId: string | null;
+  createdAt: string;
+  kind: "initial" | "manual" | "prompt" | "restore";
+  label: string;
+  prompt?: string;
+  provider?: NodeProvider;
+  effort?: "medium" | "high" | "max";
+  restoredFrom?: string;
+  sourceIr: IRObject | null;
+  timeline: IRObject;
+};
+export type VideoRevisionChange = Pick<VideoRevision, "kind" | "label"> &
+  Partial<Pick<VideoRevision, "prompt" | "provider" | "effort" | "restoredFrom">>;
 export type TimelineNodeData = {
+  inputs?: string[];
+  pageNames?: Record<string, string>;
+  sourcePages?: Array<{ id: string; name: string; ir: IRObject }>;
+  prompt?: string;
+  revisions?: VideoRevision[];
+  activeRevisionId?: string | null;
   provider?: NodeProvider;
   effort?: "medium" | "high" | "max";
   ir: IRObject | null;

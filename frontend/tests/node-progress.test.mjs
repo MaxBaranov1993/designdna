@@ -30,7 +30,7 @@ test("store: long runs drive setProgress and clear it in finally", async () => {
   );
   assert.match(gen, /setProgress\(id, \{ expectedMs: 90_000, label: progressLabel, stage:/);
   assert.match(gen, /setProgress\(id, null\)/);
-  assert.match(gen, /Готово: вариантов \$\{variants\.length\}.*· \$\{\(\(Date\.now\(\) - startedAt\) \/ 1000\)\.toFixed\(0\)\}с/);
+  assert.match(gen, /Предпросмотр проверен: вариантов \$\{variants\.length\}.*· \$\{\(\(Date\.now\(\) - startedAt\) \/ 1000\)\.toFixed\(0\)\}с/);
 });
 
 test("Source Import shows measured backend stages after a run", async () => {
@@ -70,7 +70,7 @@ test("video chain page lays nodes in a single row and auto-fits the view", async
     xs.push(Number(m[1]));
     ys.push(Number(m[1 + 1]));
   }
-  assert.equal(xs.length, 6, "six nodes in the preset, including Motion Design");
+  assert.equal(xs.length, 2, "assembled page and unified video editor");
   assert.ok(ys.every((y) => y === ys[0]), "single row — no vertical overlap");
   for (let i = 1; i < xs.length; i++) {
     assert.ok(xs[i] > xs[i - 1], "left-to-right order");

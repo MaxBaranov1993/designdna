@@ -91,6 +91,20 @@ test("codex selection reaches the Codex app-server, not OpenAI", async () => {
   assert.equal(result.provider, "codex");
   assert.equal(result.transport.provider, "codex");
   assert.equal(result.transport.fallback, null);
+  assert.equal(result.transport.model, null, "an adapter without metadata must not fabricate a model");
+});
+
+test("Codex transport uses response metadata instead of the requested model", async () => {
+  const result = await chatWithProvider({ envelope: { provider: "codex", model: "requested-alias", messages: [] },
+    codex: { chat: async (_messages, { onResponseMetadata }) => {
+      onResponseMetadata({ model: "resolved-model", modelProvider: "openai", authType: "chatgpt",
+        threadId: "thread-resolved", turnId: "turn-resolved", modelSource: "thread/start" });
+      return "ok";
+    } },
+  });
+  assert.equal(result.transport.model, "resolved-model");
+  assert.equal(result.transport.modelProvider, "openai");
+  assert.equal(result.transport.threadId, "thread-resolved");
 });
 
 test("claude selection reaches the Claude CLI with the node effort", async () => {
@@ -141,19 +155,42 @@ test("Codex and Claude do not require the OpenAI credential", async () => {
 });
 
 
-test("codex rejects image parts loudly instead of flattening them", async () => {
-  let reached = false;
-  await assert.rejects(
-    chatWithProvider({
-      provider: "codex",
-      envelope: { provider: "codex", messages: [{ role: "user", content: [
-        { type: "text", text: "segment" },
+for (const provider of ["codex", "claude"]) {
+  test(`${provider} keeps image evidence on the selected subscription transport`, async () => {
+    const controller = new AbortController();
+    const messages = [{ role: "user", content: [
+      { type: "text", text: "segment" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAAA", detail: "high" } },
+      { type: "text", text: "compare with Source" },
+    ] }];
+    let seen;
+    const result = await chatWithProvider({
+      envelope: { provider, system: "Source DS contract", messages, timeoutMs: 45_000 },
+      signal: controller.signal,
+      credentials: { has: () => { throw new Error("must not inspect API credentials"); } },
+      [provider]: { chat: async (input, options) => { seen = { input, options }; return "ok"; } },
+      openaiChat: () => { throw new Error("unexpected API fallback"); },
+    });
+    assert.deepEqual(seen.input, [{ role: "system", content: "Source DS contract" }, ...messages]);
+    assert.equal(seen.options.signal, controller.signal);
+    assert.equal(seen.options.timeoutMs, 45_000);
+    assert.equal(result.provider, provider);
+    assert.equal(result.transport.fallback, null);
+  });
+
+  test(`${provider} image failure never falls back to API or the other subscription`, async () => {
+    const failure = new Error("subscription vision unavailable");
+    let otherCalls = 0;
+    const unexpected = { chat: () => { otherCalls++; return "wrong"; } };
+    await assert.rejects(chatWithProvider({
+      envelope: { provider, messages: [{ role: "user", content: [
         { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
       ] }] },
-      credentials: credentials(false),
-      codex: { chat: async () => { reached = true; return "never"; } },
-    }),
-    /Claude или GPT/,
-  );
-  assert.equal(reached, false, "текстовый транспорт не должен получить изображение");
-});
+      codex: unexpected, claude: unexpected,
+      [provider]: { chat: () => { throw failure; } },
+      credentials: credentials(),
+      openaiChat: () => { otherCalls++; return { content: "wrong" }; },
+    }), (error) => error === failure);
+    assert.equal(otherCalls, 0);
+  });
+}

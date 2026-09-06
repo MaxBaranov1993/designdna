@@ -74,9 +74,18 @@ def timing_valid(t: dict | None) -> bool:
 
 
 def main() -> None:
+    # UI regression is deterministic; actual accounts have a separate opt-in smoke.
+    from timeline_director import direct
+
+    def assist_fixture(route):
+        body = route.request.post_data_json
+        timeline, changes, meta = direct(body["timeline"], body["prompt"], allow_llm=False)
+        route.fulfill(json={"timeline": timeline, "changeSet": changes, "preview": True, **meta})
+
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1600, "height": 950})
+        page.route("**/api/timeline/assist", assist_fixture)
         page.route("**/api/project/load", lambda route: route.fulfill(
             status=200, content_type="application/json", body='{"project":null}'))
         page.route("**/api/project/save", lambda route: route.fulfill(
@@ -196,7 +205,12 @@ def main() -> None:
 
         # --- 5. границы трима: 0 <= in < out <= duration при любом вводе ---
         page.click('.tlw-root [data-act="layer"] >> nth=0')
-        page.wait_for_timeout(150)
+        # Start inside both boundaries so each trim gesture makes one real edit.
+        page.locator("label:has-text('in, с') input").fill("1")
+        page.locator("label:has-text('in, с') input").press("Tab")
+        page.locator("label:has-text('out, с') input").fill("5")
+        page.locator("label:has-text('out, с') input").press("Tab")
+        page.wait_for_timeout(800)
         pre_timing = layer_timing(page, timeline_id, "layer-hero-1")
         check("исходный тайминг слоя валиден", timing_valid(pre_timing), str(pre_timing))
 
@@ -237,7 +251,7 @@ def main() -> None:
         page.wait_for_timeout(800)
         t = layer_timing(page, timeline_id, "layer-hero-1")
         check("клавиша влево на границе не даёт in=-1", timing_valid(t) and t["in"] == 0, str(t))
-        undo_times(2)
+        undo_times(1)  # setting in=0 changes once; ArrowLeft at zero is a no-op
         check("Undo вернул тайминг после клавиатурной границы",
               layer_timing(page, timeline_id, "layer-hero-1") == pre_timing)
 
@@ -251,7 +265,7 @@ def main() -> None:
         t = layer_timing(page, timeline_id, "layer-hero-1")
         check("клавиша вправо на границе не даёт out=duration+1",
               timing_valid(t) and t["out"] == t["duration"], str(t))
-        undo_times(2)
+        undo_times(1)  # setting out=duration changes once; ArrowRight is a no-op
         check("Undo вернул тайминг после клавиатурной границы duration",
               layer_timing(page, timeline_id, "layer-hero-1") == pre_timing)
 

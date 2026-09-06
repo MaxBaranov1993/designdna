@@ -1,4 +1,4 @@
-import type { AnyNodeData, EditNodeData, MixNodeData, NodeType, PageNodeData, PortDecl, PortKind, SourceImportNodeData } from "./types";
+import type { AnyNodeData, EditNodeData, MixNodeData, NodeType, PageNodeData, PortDecl, PortKind, SourceImportNodeData, TimelineNodeData } from "./types";
 
 /* Зеркало NODE_DEFS (nodes.js:24-32), расширено дизайн-хендоффом
  * design_handoff_node_editor: sub — подзаголовок шапки, accent — цвет типа
@@ -18,7 +18,7 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   recorder: { title: "Interaction Recorder", icon: "REC", w: 334, sub: "IR actions → Interaction IR", accent: "#22C55E" },
   motion: { title: "Motion Editor", icon: "M", w: 322, sub: "Design IR → editable timeline", accent: "#E05FB0" },
   motiondesign: { title: "Motion Design", icon: "MD", w: 334, sub: "prompt / video → Seedance 2.5", accent: "#4F7CFF" },
-  timeline: { title: "Video Editor", icon: "▶", w: 322, sub: "слои и кейфреймы → локальный ролик", accent: "#FF5F56" },
+  timeline: { title: "Видео", icon: "▶", w: 350, sub: "страница · промпт · монтаж", accent: "#FF5F56" },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300, sub: "передать компонент между страницами", accent: "#35B8A0" },
   designsystem: { title: "Design System / UI Kit", icon: "◈", w: 300, sub: "Source → published DS", accent: "#9B5CFF" },
 };
@@ -109,9 +109,9 @@ const RAW_PORTS: Record<NodeType, { in: RawPortDecl[]; out: RawPortDecl[] }> = {
     out: [{ name: "video", label: "Seedance video", kind: "video" }],
   },
   timeline: {
-    in: [{ name: "ir", label: "Design IR", kind: "ir" }],
+    in: [{ name: "ir", label: "Страница", kind: "ir" }],
     out: [
-      { name: "timeline", label: "Timeline IR", kind: "timeline" },
+      { name: "timeline", label: "монтаж", kind: "timeline" },
       { name: "video", label: "готовое видео", kind: "video" },
     ],
   },
@@ -137,6 +137,10 @@ export function portsOfNode(n: {
   type: NodeType;
   data?: AnyNodeData;
 }): { in: PortDecl[]; out: PortDecl[] } {
+  if (n.type === "timeline") {
+    const data = n.data as TimelineNodeData | undefined;
+    return { in: (data?.inputs || ["ir"]).map((name, i) => normalizePort({ name, label: data?.pageNames?.[name] || `Страница ${i + 1}`, kind: "ir" })), out: PORTS.timeline.out };
+  }
   if (n.type === "mix") {
     const inputs = (n.data as MixNodeData | undefined)?.inputs || [];
     return {
@@ -230,6 +234,8 @@ export function defaultData(type: NodeType): AnyNodeData {
       };
     case "timeline":
       return {
+        inputs: ["ir"], pageNames: {}, sourcePages: [],
+        prompt: "", provider: "codex", effort: "medium", revisions: [], activeRevisionId: null,
         ir: null, timeline: null,
         settings: { width: 1920, height: 1080, fps: 30, duration: 8000 },
         renderJob: null,
@@ -281,8 +287,8 @@ export const CTX_GROUPS: { label: string; color: string; items: { type: NodeType
       // (легаси-графы с нодой Quality Pass по-прежнему загружаются).
       // recorder исключён из меню по хендоффу: Motion сам строит Interaction IR
       // из Design IR (легаси-графы с нодой Recorder по-прежнему загружаются).
-      { type: "motion", note: "Design IR → editable timeline" },
-      { type: "timeline", note: "компоненты → слои, кейфреймы и локальный ролик" },
+      // Motion remains loadable for existing projects until lossless migration.
+      { type: "timeline", note: "страница → промпт → редактируемое видео" },
       { type: "motiondesign", note: "prompt / готовое видео → Seedance 2.5" },
       { type: "designsystem", note: "Source → UI Kit → published Design System" },
     ],
@@ -300,8 +306,7 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "mix", note: "смешение по весам" },
   { type: "page", note: "страница из блоков" },
   { type: "reskin", note: "вариант с локом структуры" },
-  { type: "motion", note: "Design IR -> editable timeline" },
-  { type: "timeline", note: "компоненты -> ролик: слои и кейфреймы" },
+  { type: "timeline", note: "страница → промпт → редактируемое видео" },
   { type: "motiondesign", note: "prompt / готовое видео -> Seedance 2.5" },
   { type: "pagebridge", note: "передать компонент между страницами" },
   { type: "designsystem", note: "Source → UI Kit → published Design System" },

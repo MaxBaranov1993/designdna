@@ -4,32 +4,7 @@ import test from "node:test";
 
 const storeUrl = new URL("../src/flow/store.ts", import.meta.url);
 
-test("addVideoChainPage builds the parallel rsale.net to video chain", async () => {
-  const source = await readFile(storeUrl, "utf-8");
-  const start = source.indexOf("addVideoChainPage: (options) => {");
-  const end = source.indexOf("switchPage: (id) => {", start);
-  assert.ok(start > 0 && end > start, "addVideoChainPage must exist in the flow store");
-  const body = source.slice(start, end);
-
-  assert.match(body, /rsale\.net/);
-  assert.match(body, /mode: "url", url, mine: true/);
-  assert.match(body, /const provider = "openai"/);
-
-  for (const wiring of [
-    /edge\(Number\(prompt\.id\), "out", Number\(generator\.id\), "prompt"\)/,
-    /edge\(Number\(source\.id\), "tokens", Number\(generator\.id\), "designSystem"\)/,
-    /edge\(Number\(generator\.id\), "ir", Number\(recorder\.id\), "ir"\)/,
-    /edge\(Number\(generator\.id\), "ir", Number\(motion\.id\), "ir"\)/,
-    /edge\(Number\(recorder\.id\), "interaction", Number\(motion\.id\), "interaction"\)/,
-    /edge\(Number\(prompt\.id\), "out", Number\(motionDesign\.id\), "prompt"\)/,
-    /edge\(Number\(motion\.id\), "motion", Number\(motionDesign\.id\), "motion"\)/,
-    /edge\(Number\(motion\.id\), "video", Number\(motionDesign\.id\), "video"\)/,
-  ]) {
-    assert.match(body, wiring);
-  }
-
-  assert.match(body, /withCurrentPageSaved\(state\), page/);
-});
+// The new Page → Video workspace is covered by executable store tests in video-history.test.mjs.
 
 test("Motion Design keeps planning separate from the confirmed paid Seedance call", async () => {
   const store = await readFile(storeUrl, "utf-8");

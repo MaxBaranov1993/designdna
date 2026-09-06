@@ -1909,8 +1909,20 @@ export function applyAiAssist() {
 function save() {
   if (!state) return;
   syncActiveIR();
-  const saved = state.onSave ? state.onSave(deepClone(state.ir), state.baseUpstreamRevision) : false;
+  const saved = state.onSave ? state.onSave(copyWithoutRenderMetadata(state.ir), state.baseUpstreamRevision) : false;
   if (saved) close(true);
+}
+
+function copyWithoutRenderMetadata(ir: any) {
+  const copy = deepClone(ir);
+  const visit = (node: any) => {
+    if (!node || typeof node !== "object") return;
+    delete node.__path;
+    delete node.__responsiveHidden;
+    (node.children || []).forEach(visit);
+  };
+  (copy.tree || []).forEach(visit);
+  return copy;
 }
 
 /* ---------- защита несохранённых правок ----------
@@ -2083,6 +2095,9 @@ function syncSharedStructure() {
   }
 
   function reconcile(activeParent: any, targetParent: any) {
+    // Leaf identity is significant for Source/DS pins. A style-only edit must
+    // not add children:[] to every untouched leaf in the document.
+    if (!Array.isArray(activeParent.children) && !Array.isArray(targetParent.children)) return;
     const next: any[] = [];
     (activeParent.children || []).forEach((activeChild: any) => {
       const key = activeChild.sourceKey;

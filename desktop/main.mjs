@@ -778,23 +778,6 @@ function registerIpc() {
   });
   handleTrusted("api:request", (_event, request) => {
     const validatedRequest = validateApiRequest(request);
-    let liveProjectContext = null;
-    try {
-      liveProjectContext = liveProjects.prepare(validatedRequest);
-    } catch (error) {
-      const stale = error?.code === "STALE_REVISION";
-      return {
-        status: stale ? 409 : 400,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          ok: false,
-          stale,
-          error: error?.code || "PROJECT_REQUEST_INVALID",
-          revision: error?.currentRevision || null,
-        }),
-        encoding: "utf8",
-      };
-    }
     const requestPath = validatedRequest.path.split("?", 1)[0];
     const interactive = INTERACTIVE_API_PATHS.has(requestPath);
     const worker = interactive ? pythonInteractiveWorker : pythonWorker;
@@ -802,6 +785,26 @@ function registerIpc() {
     // дорог; projects.db single-writer + монотонные ревизии Live Project
     // Session), остальное — параллельно с семафором на воркер.
     return apiScheduler.run(requestPath, worker, async () => {
+      // Capture/validate the live session only after preceding project responses
+      // have synchronized. Capacity resets can dispose a previously captured
+      // session, and a preceding save can advance the authoritative revision.
+      let liveProjectContext = null;
+      try {
+        liveProjectContext = liveProjects.prepare(validatedRequest);
+      } catch (error) {
+        const stale = error?.code === "STALE_REVISION";
+        return {
+          status: error?.code === "SESSION_DISPOSED" ? 503 : stale ? 409 : 400,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ok: false,
+            stale,
+            error: error?.code || "PROJECT_REQUEST_INVALID",
+            revision: error?.currentRevision || null,
+          }),
+          encoding: "utf8",
+        };
+      }
       let preparedRequest = validatedRequest;
       const authIntent = sourceAuthIntent(validatedRequest);
       if (authIntent) {

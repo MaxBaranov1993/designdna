@@ -38,7 +38,7 @@ from typing import Any
 
 from . import document as dsdoc
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parents[2])
 ENGINE_JS = ROOT / "app" / "static" / "flow" / "engine.js"
 
 # Прозрачный 1×1 PNG — заменяет ассет, который не удалось встроить. Пропажа
@@ -697,6 +697,13 @@ BOOTSTRAP_JS = r"""
     .then(boot, boot);
 
   document.addEventListener('click', function(event){
+    // Electron may block fragment navigation on blob:file documents.
+    // Scroll without navigating away from this live UI Kit document.
+    var link = event.target.closest ? event.target.closest('nav.toc a[href^="#"]') : null;
+    if(link && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey){
+      var section = document.getElementById(link.getAttribute('href').slice(1));
+      if(section){ event.preventDefault(); section.scrollIntoView({block: 'start'}); return; }
+    }
     var vp = event.target.closest ? event.target.closest('.vpbar button') : null;
     if(vp && vp.dataset.vp){ setViewport(vp.dataset.vp); return; }
     var button = event.target.closest ? event.target.closest('button.copy') : null;

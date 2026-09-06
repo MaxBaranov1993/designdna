@@ -52,6 +52,7 @@
   let dsOptedOut = $derived(!wiredDs && String((data as Record<string, unknown>).designSystemSelection || "") === "none");
   type LogVariant = { index?: number; autofixes?: number; journal?: string[]; lint?: { rule: string; severity?: string; path?: string; message?: string }[] };
   type GenerationLog = {
+    policy?: { surfaceLabel?: string; effectiveMode?: string; version?: string };
     product?: string; tokensLocked?: boolean; projectRules?: boolean; referenceScreens?: number; strictFallback?: string;
     designSystem?: { name?: string; usageMode?: string; componentsAvailable?: number; mastersInContext?: string[]; pinnedMaster?: string | null; strictReady?: boolean; errors?: number; warnings?: number; recovered?: unknown } | null;
     variants?: LogVariant[];
@@ -75,6 +76,20 @@
   let directions = $derived(Array.isArray(generatorData.directions) ? generatorData.directions.slice(0, 3) : []);
   let selectedDirection = $derived(generatorData.selectedDirection || "all");
   let activeReview = $derived(generatorData.qualityReviews?.[data.active] || null);
+  const surfaceOptions = [
+    ["auto", "Определить по задаче"], ["landing", "Лендинг"], ["catalog", "Поиск и каталог"],
+    ["detail", "Карточка объекта"], ["checkout", "Запись и оформление"], ["dashboard", "Кабинет и аналитика"],
+    ["form", "Форма и настройки"], ["editor", "Редактор"], ["ai-workspace", "AI-интерфейс"],
+    ["article", "Статья и журнал"], ["feed", "Лента"], ["component", "Один компонент"],
+  ];
+  const styleOptions = [
+    ["auto", "По задаче и дизайн-системе"], ["minimal", "Спокойный минимализм"], ["enterprise", "Информационный"],
+    ["marketplace", "Поиск на первом месте"], ["editorial", "Редакционный"], ["swiss", "Строгая сетка"],
+    ["product-led", "Демонстрация продукта"], ["luxury", "Сдержанный предметный"], ["organic", "Материальный"],
+    ["playful", "Иллюстративный"], ["brutal", "Плакатный"], ["industrial", "Технический"],
+    ["soft-pastel", "Мягкая палитра"], ["bento", "Модульный"], ["glass", "Многослойный"],
+    ["immersive", "Иммерсивный"], ["retro", "Ретро"],
+  ];
 
   async function selectDirection(direction: string) {
     if (busy || direction === selectedDirection) return;
@@ -113,6 +128,25 @@
       onChange={(next) => $flow.setNodeData(Number(id), next)}
     />
   </div>
+  <details class="gen-design-options nodrag nowheel">
+    <summary>Задача и направление</summary>
+    <label>Тип экрана
+      <select aria-label="Тип экрана" disabled={busy} value={data.surface || "auto"}
+        onchange={(event) => $flow.setNodeData(Number(id), { surface: event.currentTarget.value, selectedDirection: "all", directions: [] })}>
+        {#each surfaceOptions as option}<option value={option[0]}>{option[1]}</option>{/each}
+      </select>
+    </label>
+    <label>Визуальное направление
+      <select aria-label="Визуальное направление" disabled={busy || !!dsRef} value={data.designStyle || "auto"}
+        onchange={(event) => $flow.setNodeData(Number(id), { designStyle: event.currentTarget.value, selectedDirection: "all" })}>
+        {#each styleOptions as option}<option value={option[0]}>{option[1]}</option>{/each}
+      </select>
+    </label>
+    <small>{dsRef ? "Внешний вид задаёт выбранная дизайн-система." : "Без дизайн-системы генератор создаст согласованные основы под задачу."}</small>
+  </details>
+  {#if generationLog?.policy?.surfaceLabel}
+    <div class="gen-policy-summary nodrag" role="status">{generationLog.policy.surfaceLabel} · {generationLog.policy.effectiveMode === "freeform" ? "самостоятельный дизайн" : generationLog.policy.effectiveMode}</div>
+  {/if}
   {#if dsRef}
     <div class="gen-ds-row nodrag" data-ds-source={dsRef.wired ? "wire" : "project"}
       title={dsRef.wired ? "Дизайн-система пришла по проводу: генерация собирается из её токенов и мастеров" : "Дизайн-система придёт в генерацию из глобального выбора проекта"}>
@@ -158,7 +192,7 @@
           type="button"
           disabled={busy}
           onclick={() => void selectDirection("all")}
-        >Все три</button>
+        >Все направления</button>
       </div>
       <div class="direction-chips">
         {#each directions as direction (direction.id)}
@@ -223,7 +257,9 @@
       {/each}
     </div>
   {/if}
-  {#if activeReview && activeReview.passed === false}
+  {#if activeReview && activeReview.passed === null}
+    <div class="gen-policy-summary nodrag" role="status">Предпросмотр создан. Визуальная проверка не завершена.</div>
+  {:else if activeReview && activeReview.passed === false}
     <div class="revision-status nodrag" role="status">
       <strong>Нужна доработка{activeReview.score == null ? "" : ` · ${activeReview.score}/100`}</strong>
       {#if activeReview.reasons.length}
@@ -311,6 +347,12 @@
 </NodeShell>
 
 <style>
+  .gen-design-options { font-size: 11px; padding: 6px 0; }
+  .gen-design-options summary { cursor: pointer; padding: 4px 0; }
+  .gen-design-options label { display: grid; gap: 4px; margin: 8px 0; }
+  .gen-design-options select { width: 100%; min-height: 30px; padding: 4px 8px; color: inherit; background: var(--dna-sunken); border: 1px solid var(--dna-border); border-radius: 5px; }
+  .gen-design-options select:focus-visible { outline: 2px solid var(--n-accent); outline-offset: 2px; }
+  .gen-design-options small, .gen-policy-summary { font-size: 10px; line-height: 1.4; color: var(--dna-muted); }
   .direction-picker { display: grid; gap: 6px; }
   .direction-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--dna-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
   .direction-all, .direction-chip { border: 1px solid var(--dna-border); background: var(--dna-sunken); color: inherit; cursor: pointer; }

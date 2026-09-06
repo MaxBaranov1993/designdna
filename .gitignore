@@ -29,3 +29,8 @@ _rend_*.png
 .orca-design-studio-tasks.json
 
 .orca-ds-editor-tasks.json
+
+# Local agent checkouts, permissions and test caches
+.claude/worktrees/
+.claude/settings.local.json
+.pytest_cache/

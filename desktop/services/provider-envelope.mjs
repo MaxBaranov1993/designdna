@@ -796,10 +796,13 @@ const GLM_LIMITS = {
 
 export const PROVIDER_CAPABILITIES = {
   codex: {
-    hard: ["topP", "maxOutputTokens", "reasoning", "responseFormat", "stop", "seed", "toolChoice", "parallelToolCalls", "tools", "providerOptions", "multimodal", "metadata"],
+    // App-server carries image parts as native image/localImage turn inputs.
+    hard: ["topP", "maxOutputTokens", "reasoning", "stop", "seed", "toolChoice", "parallelToolCalls", "tools", "providerOptions", "metadata"],
     value: {
       temperature: { reason: "Codex chat profiles control sampling server-side; temperature is ignored" },
     },
+    constraints: (envelope) => envelope.responseFormat != null && envelope.responseFormat.type !== "json_schema"
+      ? [{ field: "responseFormat", reason: "Codex requires an explicit JSON Schema for turn/start.outputSchema" }] : [],
   },
   openai: { hard: [], value: {} },
   kimi: {
@@ -878,9 +881,8 @@ function envelopeFields(envelope) {
   if (envelope.tools != null) present.add("tools");
   if (envelope.providerOptions && Object.keys(envelope.providerOptions).length) present.add("providerOptions");
   if (envelope.metadata && Object.keys(envelope.metadata).length) present.add("metadata");
-  // Non-text content parts (images) are a transport capability: text-only
-  // transports (codex, zcode) must reject them loudly instead of flattening
-  // them into "[image attached]" placeholders.
+  // Non-text content parts (images) are a transport capability. ZCode remains
+  // text-only and must reject them loudly; Codex uses native app-server inputs.
   if (envelope.messages?.some((message) => Array.isArray(message.content)
     && message.content.some((part) => part.type !== "text"))) {
     present.add("multimodal");

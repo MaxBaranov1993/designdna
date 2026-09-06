@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import re
 
 from playwright.sync_api import sync_playwright
@@ -18,7 +19,7 @@ from timeline_render import (
 )
 
 
-APP_ROOT = Path(__file__).resolve().parent
+APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
 RENDERER_JS = APP_ROOT / "static" / "flow" / "engine.js"
 RENDER_DOCUMENT_URL = "https://render.ir.invalid/document"
 RENDER_DOCUMENT_HTML = (
@@ -139,7 +140,7 @@ def _undeclared_families(problems: list[str]) -> set[str]:
 
 
 def render_png(
-    ir: dict, width: int = 1440, *, webfonts: bool = False,
+    ir: dict, width: int = 1440, *, webfonts: bool = False, viewport: str = "desktop",
     _fallback_families: set[str] | None = None,
 ) -> bytes:
     """Render a complete Design IR page to PNG with the offline timeline path.
@@ -152,6 +153,8 @@ def render_png(
     """
     if not isinstance(ir, dict):
         raise TypeError("ir must be an object")
+    if viewport not in {"desktop", "tablet", "mobile"}:
+        raise ValueError("viewport must be desktop, tablet or mobile")
     try:
         output_width = int(width)
     except (TypeError, ValueError) as exc:
@@ -170,7 +173,7 @@ def render_png(
     # судья видел «сложенные» ряды hero. Такие страницы снимаем на ширине вывода.
     root_frame = ir.get("frame") if isinstance(ir.get("frame"), dict) else {}
     root_width = root_frame.get("width")
-    if not isinstance(root_width, (int, float)) or isinstance(root_width, bool):
+    if viewport != "desktop" or not isinstance(root_width, (int, float)) or isinstance(root_width, bool):
         ir["frame"] = dict(root_frame, width=output_width)
     assets, asset_errors = materialize_render_assets(ir)
     if asset_errors:
@@ -183,23 +186,24 @@ def render_png(
         # (Golos Text, Roboto Slab…), подменяем встроенным Inter — остальные настоящие.
         _install_deterministic_font_fallbacks(render_ir, assets, only=_fallback_families)
 
-    png, missing = _render_document(render_ir, assets, output_width, webfonts, _fallback_families)
+    png, missing = _render_document(render_ir, assets, output_width, webfonts, _fallback_families, viewport)
     if png is not None:
         return png
     # Повтор вне контекста Playwright: семейства, которых каталог не отдал,
     # подменяем Inter только для них (см. _install_deterministic_font_fallbacks).
-    return render_png(ir, width, webfonts=True, _fallback_families=missing)
+    return render_png(ir, width, webfonts=True, viewport=viewport, _fallback_families=missing)
 
 
 def _render_document(
     render_ir: dict, assets: dict, output_width: int, webfonts: bool,
-    _fallback_families: set[str] | None,
+    _fallback_families: set[str] | None, viewport: str = "desktop",
 ) -> tuple[bytes | None, set[str]]:
     """Один проход рендера. ``(None, missing)`` — в режиме веб-шрифтов каталог
     не объявил перечисленные семейства и нужен повтор с подменой."""
     blocked: list[str] = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
+        context = None
         try:
             context = browser.new_context(
                 viewport={"width": output_width, "height": 900}, device_scale_factor=1)
@@ -216,10 +220,10 @@ def _render_document(
                 page.goto(RENDER_DOCUMENT_URL, timeout=30_000)
             page.add_script_tag(path=str(RENDERER_JS))
             dimensions = page.evaluate(
-                """({designIr, outputWidth, webfonts}) => {
+                """({designIr, outputWidth, webfonts, viewport}) => {
                   const host = document.querySelector('#host');
                   window.IRRenderer.renderIR(host, designIr, {
-                    fit: false, viewport: 'desktop', offline: !webfonts,
+                    fit: false, viewport, offline: !webfonts,
                   });
                   const catalogLink = document.getElementById('ir-fonts');
                   if (catalogLink && !webfonts) catalogLink.removeAttribute('href');
@@ -235,7 +239,7 @@ def _render_document(
                   document.body.style.height = Math.ceil(artHeight * scale) + 'px';
                   return {artHeight, scale};
                 }""",
-                {"designIr": render_ir, "outputWidth": output_width, "webfonts": bool(webfonts)},
+                {"designIr": render_ir, "outputWidth": output_width, "webfonts": bool(webfonts), "viewport": viewport},
             )
             if webfonts:
                 # Каталог Google Fonts грузится асинхронно: дождаться стилей и
@@ -277,4 +281,9 @@ def _render_document(
                 caret="hide",
             ), set()
         finally:
-            browser.close()
+            try:
+                if context is not None:
+                    context.unroute_all(behavior="ignoreErrors")
+                    context.close()
+            finally:
+                browser.close()

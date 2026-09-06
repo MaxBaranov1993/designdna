@@ -122,7 +122,7 @@ def test_generate_sanitizes_provider_meta_and_typography_aliases(monkeypatch) ->
         AssertionError("server-side LLM must not be called for external provider outputs")
     ))
     response = server.generate(server.GenerateReq(
-        brief="marketplace page", count=1, provider="codex", rawOutputs=[json.dumps(fixture)],
+        brief="marketplace page", surface="landing", count=1, provider="codex", rawOutputs=[json.dumps(fixture)],
     ))
 
     result = response["variants"][0]
@@ -212,7 +212,7 @@ def test_generate_assigns_distinct_or_selected_direction(monkeypatch) -> None:
     raw = json.dumps(fixture)
 
     all_response = server.generate(server.GenerateReq(
-        brief="marketplace page", count=2, rawOutputs=[raw, raw], selectedDirection="all",
+        brief="marketplace page", surface="landing", count=2, rawOutputs=[raw, raw], selectedDirection="all",
     ))
     assert all_response["variantDirections"] == ["Editorial Focus", "Soft Product"]
     assert all_response["generationLog"]["direction"]["selected"] == "all"
@@ -220,7 +220,7 @@ def test_generate_assigns_distinct_or_selected_direction(monkeypatch) -> None:
     assert all_response["variants"][1]["meta"]["direction"]["name"] == "Soft Product"
 
     selected_response = server.generate(server.GenerateReq(
-        brief="marketplace page", count=2, rawOutputs=[raw, raw], selectedDirection="industrial",
+        brief="marketplace page", surface="landing", count=2, rawOutputs=[raw, raw], selectedDirection="industrial",
     ))
     assert selected_response["variantDirections"] == ["Industrial Grid", "Industrial Grid"]
     assert selected_response["generationLog"]["direction"]["selected"] == "industrial"
@@ -236,10 +236,10 @@ def test_two_phase_generate_only_creates_art_direction_during_prepare(monkeypatc
 
     monkeypatch.setattr(art_direction, "create_design_brief", fake_direction)
     prepared = server.generate(server.GenerateReq(
-        brief="marketplace page", count=2, prepareOnly=True, selectedDirection="industrial",
+        brief="marketplace page", surface="landing", count=2, prepareOnly=True, selectedDirection="industrial",
     ))
     applied = server.generate(server.GenerateReq(
-        brief="marketplace page", count=2, rawOutputs=[json.dumps(fixture), json.dumps(fixture)],
+        brief="marketplace page", surface="landing", count=2, rawOutputs=[json.dumps(fixture), json.dumps(fixture)],
         selectedDirection="industrial",
     ))
 
@@ -258,7 +258,7 @@ def test_generate_degrades_when_fast_art_direction_fails(monkeypatch) -> None:
     monkeypatch.setattr(server.run_registry, "stage", lambda _run_id, stage, *_args, **_kwargs: stages.append(stage))
 
     response = server.generate(server.GenerateReq(
-        brief="marketplace page", count=1, rawOutputs=[json.dumps(fixture)], runId="art-test",
+        brief="marketplace page", surface="landing", count=1, rawOutputs=[json.dumps(fixture)], runId="art-test",
     ))
 
     assert response["variants"]

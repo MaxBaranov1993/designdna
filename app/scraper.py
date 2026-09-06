@@ -22,6 +22,7 @@ import os
 import re
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -548,7 +549,7 @@ def image_dimensions(data_url: str) -> tuple[int, int]:
 # + CSS resample is not bit-stable across the source page vs <img> replay
 # (live residual: Z.AI/arena section-2 mobile 84.86 vs the 85.0 gate).
 
-SOURCE_CAPTURE_VERSION = "asset-blob-v2"
+SOURCE_CAPTURE_VERSION = "asset-blob-svg-v3"
 BLOCK_LAZY_SETTLE_MS = 1200
 MATERIALIZED_IMAGE_SETTLE_MS = 1500
 _MAX_ASSET_BYTES = 8_000_000
@@ -829,43 +830,159 @@ def resolve_ir_blobs(ir: dict) -> tuple[dict, list[str]]:
     return clone, errors
 
 
-def _persist_ir_raster_data_urls(ir: dict) -> None:
-    """Replace leftover PNG/JPEG data URLs in canonical IR with blob refs."""
+class CanonicalRasterAssetError(ValueError):
+    """Actionable asset failure without embedding image bytes in API errors."""
 
-    def persist(holder: dict, key: str) -> None:
-        src = holder.get(key)
-        if not isinstance(src, str) or not is_raster_data_url(src):
-            return
-        decoded = _decode_data_url_bytes(src)
-        if not decoded:
-            return
-        raw, _mime = decoded
+    def __init__(self, code: str, message: str, *, stage: str, component: str,
+                 path: str, retryable: bool = False):
+        self.detail = {"code": code, "message": message, "stage": stage,
+                       "component": component, "path": path, "retryable": retryable}
+        super().__init__(f"{stage}: {component} {path}: {message}")
+
+
+def canonicalize_ir_raster_assets(ir: dict, *, stage: str = "canonicalize-assets",
+                                  component: str = "", path: str = "ir") -> dict:
+    """Persist raster asset slots on a copy before hashing, saving or rendering.
+
+    PNG bytes are preserved exactly; other raster formats keep decoded pixels
+    and dimensions in lossless PNG. Raster references in metadata are assets
+    too. SVG, remote URLs, fonts and provenance text remain untouched. This is
+    an ingress boundary, not a permissive render resolver.
+    """
+    clone = copy.deepcopy(ir)
+    refs: dict[str, str] = {}
+
+    def fail(code, message, location, owner, retryable=False):
+        return CanonicalRasterAssetError(code, message, stage=stage,
+                                         component=owner, path=location, retryable=retryable)
+
+    def canonical_src(src: str, location: str, owner: str) -> str:
+        if src in refs:
+            return refs[src]
+        digest = parse_blob_ref(src)
+        if digest:
+            try:
+                read_png_blob(digest)
+            except FileNotFoundError as exc:
+                raise fail("missing-blob", "Raster blob is missing", location, owner) from exc
+            except ValueError as exc:
+                raise fail("corrupt-blob", "Raster blob failed integrity validation", location, owner) from exc
+            except OSError as exc:
+                raise fail("blob-read-failed", "Cannot read raster blob", location, owner, True) from exc
+            refs[src] = src
+            return src
+        legacy = re.fullmatch(r"ddna://blobs/([0-9a-f]{64})\.(jpe?g|webp|gif|avif|bmp)", src)
+        legacy_raw = None
+        if legacy:
+            try:
+                legacy_raw = (blobs_dir() / f"{legacy[1]}.{legacy[2]}").read_bytes()
+            except FileNotFoundError as exc:
+                raise fail("missing-blob", "Raster blob is missing", location, owner) from exc
+            except OSError as exc:
+                raise fail("blob-read-failed", "Cannot read raster blob", location, owner, True) from exc
+            if hashlib.sha256(legacy_raw).hexdigest() != legacy[1]:
+                raise fail("corrupt-blob", "Raster blob failed integrity validation", location, owner)
+        if legacy is None and not is_raster_data_url(src):
+            return src
         try:
-            if raw[:8] == b"\x89PNG\r\n\x1a\n":
-                png = raw
-            else:
-                with Image.open(io.BytesIO(raw)) as im:
+            decoded = (legacy_raw, "") if legacy is not None else _decode_data_url_bytes(src)
+            if not decoded:
+                raise ValueError("empty or malformed data URL")
+            raw, _mime = decoded
+            with Image.open(io.BytesIO(raw)) as im:
+                im.load()
+                if getattr(im, "n_frames", 1) > 1:
+                    raise ValueError("animated raster cannot be losslessly flattened")
+                if raw[:8] == b"\x89PNG\r\n\x1a\n":
+                    png = raw
+                else:
                     buf = io.BytesIO()
                     im.convert("RGBA").save(buf, format="PNG")
                     png = buf.getvalue()
-            holder[key] = _store_png_src(png)
-        except Exception:
-            return
+        except Exception as exc:
+            raise fail("invalid-raster-data", "Raster data cannot be decoded losslessly", location, owner) from exc
+        try:
+            ref = _store_png_src(png)
+        except ValueError as exc:
+            raise fail("corrupt-blob", "Raster blob failed integrity validation", location, owner) from exc
+        except OSError as exc:
+            raise fail("blob-write-failed", "Cannot persist raster blob", location, owner, True) from exc
+        refs[src] = ref
+        return ref
 
-    def visit(node) -> None:
+    def visit(node, location: str, owner: str) -> None:
         if isinstance(node, list):
-            for item in node:
-                visit(item)
-            return
-        if not isinstance(node, dict):
-            return
-        for key, value in list(node.items()):
-            if isinstance(value, str) and is_raster_data_url(value):
-                persist(node, key)
-            else:
-                visit(value)
+            for index, item in enumerate(node):
+                if isinstance(item, str):
+                    node[index] = canonical_src(item, f"{location}[{index}]", owner)
+                else:
+                    visit(item, f"{location}[{index}]", owner)
+        elif isinstance(node, dict):
+            meta = node.get("sourceMeta") or {}
+            if isinstance(meta, dict) and meta.get("componentBoundary"):
+                owner = str(node.get("sourceKey") or owner)
+            for key, value in node.items():
+                slot = f"{location}.{key}"
+                if isinstance(value, str):
+                    node[key] = canonical_src(value, slot, owner)
+                else:
+                    visit(value, slot, owner)
 
-    visit(ir)
+    visit(clone, path, component)
+    return clone
+
+
+def canonicalize_source_blocks(blocks: list, *, stage: str = "source-repair-apply",
+                               include_evidence: bool = False) -> list:
+    """Copy Source blocks and canonicalize IR only; retain screenshot evidence.
+
+    Source repair may receive expanded desktop transport assets. Call this on
+    its applied result before returning/persisting blocks, and before DS build.
+    """
+    result = copy.deepcopy(blocks)
+    for index, block in enumerate(result):
+        if not isinstance(block, dict) or block.get("error") or not isinstance(block.get("ir"), dict):
+            continue
+        block["ir"] = canonicalize_ir_raster_assets(
+            block["ir"], stage=stage, component=str(block.get("name") or index),
+            path=f"blocks[{index}].ir")
+        if include_evidence:
+            holders = [(block, "preview", f"blocks[{index}]")]
+            if isinstance(block.get("previews"), dict):
+                holders.extend((block["previews"], key, f"blocks[{index}].previews.{key}")
+                               for key in block["previews"])
+            for holder, key, location in holders:
+                if isinstance(holder.get(key), str):
+                    holder[key] = canonicalize_ir_raster_assets(
+                        {"preview": holder[key]}, stage=stage,
+                        component=str(block.get("name") or index), path=location)["preview"]
+    return result
+
+
+def source_block_render_copy(block: dict) -> dict:
+    """Expand canonical Source IR/evidence only on a disposable render copy."""
+    rendered = copy.deepcopy(block)
+    rendered["ir"], errors = resolve_ir_blobs(block["ir"])
+    holders = [(rendered, "preview")]
+    if isinstance(rendered.get("previews"), dict):
+        holders.extend((rendered["previews"], key) for key in rendered["previews"])
+    for holder, key in holders:
+        if parse_blob_ref(holder.get(key)):
+            expanded, failures = resolve_ir_blobs({"preview": holder[key]})
+            holder[key] = expanded["preview"]
+            errors.extend(failures)
+    if errors:
+        raise CanonicalRasterAssetError(
+            "blob-resolve-failed", "; ".join(errors[:3]), stage="source-repair-render",
+            component=str(block.get("name") or ""), path="block")
+    return rendered
+
+
+def _persist_ir_raster_data_urls(ir: dict) -> None:
+    """Capture compatibility wrapper: update only after every asset succeeds."""
+    canonical = canonicalize_ir_raster_assets(ir, stage="source-capture-assets")
+    ir.clear()
+    ir.update(canonical)
 
 
 def _decode_data_url_bytes(src: str) -> tuple[bytes, str] | None:
@@ -890,6 +1007,8 @@ def _sniff_image_mime(raw: bytes, src: str, declared: str = "") -> str:
     declared = (declared or "").split(";", 1)[0].strip().lower()
     if declared.startswith("image/"):
         return declared
+    if b"<svg" in raw[:2048].lower():
+        return "image/svg+xml"
     if raw[:12] == b"RIFF" and raw[8:12] == b"WEBP":
         return "image/webp"
     if raw[:3] == b"\xff\xd8\xff":
@@ -1053,10 +1172,36 @@ def build_capture_provenance(*, compiler_sha256: str, browser: dict, viewport: d
     return provenance
 
 
+def _self_contained_svg(raw: bytes) -> str | None:
+    """Keep vector bytes exactly, but never claim external dependencies captured."""
+    if not raw or len(raw) > _MAX_ASSET_BYTES:
+        return None
+    try:
+        text = raw.decode("utf-8-sig")
+        if re.search(r"<!\s*(?:DOCTYPE|ENTITY)", text, re.I):
+            return None
+        root = ET.fromstring(text)
+    except (UnicodeError, ET.ParseError):
+        return None
+    if root.tag not in {"svg", "{http://www.w3.org/2000/svg}svg"}:
+        return None
+    for element in root.iter():
+        tag = element.tag.rsplit("}", 1)[-1].lower()
+        if tag in {"script", "foreignobject"}:
+            return None
+        for key, value in element.attrib.items():
+            name = key.rsplit("}", 1)[-1].lower()
+            if name.startswith("on") or (name in {"href", "src"} and value and not value.startswith("#")):
+                return None
+    if re.search(r"@import|url\(\s*['\"]?\s*(?!#)[^\s'\"]", text, re.I):
+        return None
+    return "data:image/svg+xml;base64," + base64.b64encode(raw).decode("ascii")
+
+
 def _materialize_capture_assets(page, item: dict, block_selector: str,
                                 asset_bodies: dict[str, bytes],
                                 memo: dict[tuple, tuple[bytes, str, str, str]] | None = None) -> list[dict]:
-    """Rewrite raster IR srcs AND the live DOM to one lossless PNG per asset.
+    """Capture rasters as PNG blobs and self-contained vectors as exact SVG bytes.
 
     Editable image/background layers stay image layers; only the bytes they
     paint are replaced. Capture screenshot and IR replay then share the same
@@ -1086,6 +1231,24 @@ def _materialize_capture_assets(page, item: dict, block_selector: str,
         if not raw:
             continue
         source_digest = hashlib.sha256(raw).hexdigest()
+        if mime == "image/svg+xml":
+            vector = _self_contained_svg(raw)
+            if vector is None:
+                continue  # Preserve the original URL; evidence audit flags it.
+            node = by_key.get(key)
+            if isinstance(node, dict):
+                node["src"] = vector
+                meta = node.setdefault("sourceMeta", {})
+                meta.setdefault("kind", "dom")
+                meta.update({"url": src, "sourceSha256": source_digest,
+                             "objectSha256": source_digest, "captureVersion": SOURCE_CAPTURE_VERSION})
+            records.append({"sourceKey": key, "url": src, "sourceSha256": source_digest,
+                            "objectSha256": source_digest, "ref": vector, "mime": mime,
+                            "width": width, "height": height, "objectFit": fit,
+                            "objectPosition": position, "captureVersion": SOURCE_CAPTURE_VERSION})
+            # The live page still paints the very same vector. No resampling or
+            # object-fit rewrites: intrinsic SVG geometry must remain untouched.
+            continue
         memo_key = (source_digest, width, height, fit, position)
         cached = memo.get(memo_key)
         if cached is None:
@@ -2128,6 +2291,35 @@ def _responsive_override(node: dict) -> dict:
 
 def _merge_responsive_irs(variants: dict[str, dict], viewport_meta: dict[str, dict]) -> dict:
     """Merge viewport captures into one shared tree keyed by stable DOM paths."""
+    # A negative document crop introduces a translated original-bounds parent.
+    # Give non-cropped variants the same (zero-offset) parent before merging:
+    # otherwise stable child keys stay under a desktop-only, hidden ancestor.
+    # Work on copies; raw captures and their pixel evidence remain untouched.
+    variants = copy.deepcopy(variants)
+    crop_key = next((str(child.get("sourceKey"))
+        for variant in variants.values() for section in (variant.get("tree") or [])[:1]
+        for child in section.get("children") or [] if isinstance(child, dict)
+        if str(child.get("sourceKey") or "").endswith("root::original-bounds")
+        and (child.get("sourceMeta") or {}).get("reason") == "original root preserved under document-bound crop"), None)
+    if crop_key:
+        for variant in variants.values():
+            section = variant["tree"][0]
+            # Production namespaces descendants (panel:root/...) but leaves
+            # the section key as root. Preserve the actual captured identity.
+            key = crop_key
+            if any(child.get("sourceKey") == key for child in section.get("children") or []):
+                continue
+            frame = copy.deepcopy(section.get("frame") or {})
+            wrapper = {"type": "card", "sourceKey": key,
+                       "sourceMeta": {"kind": "dom", "reason": "original root preserved under document-bound crop"},
+                       "style": copy.deepcopy(section.get("style") or {}),
+                       "frame": {**frame, "absolute": True, "x": 0, "y": 0},
+                       "children": section.get("children") or []}
+            section["children"] = [wrapper]
+            section["style"] = {}
+            section["frame"] = {"width": frame.get("width"), "height": frame.get("height"),
+                                "layout": "free", "direction": "column", "gap": 0,
+                                "padding": 0, "clip": True, "justify": "start", "align": "start"}
     base_name = "desktop" if "desktop" in variants else next(iter(variants))
     merged = copy.deepcopy(variants[base_name])
     merged["responsive"] = {"viewports": copy.deepcopy(viewport_meta)}
@@ -2298,6 +2490,7 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
     compiler_js = (Path(__file__).resolve().parent / "source_import_compiler.js").read_text(encoding="utf-8")
     compiler_sha256 = hashlib.sha256(compiler_js.encode("utf-8")).hexdigest()
     browser_info = {"name": "chromium", "version": ""}
+    final_url = ""
     asset_bodies: dict[str, bytes] = {}
     asset_memo: dict[tuple, tuple[bytes, str, str, str]] = {}
     capture_started = time.perf_counter()
@@ -2325,6 +2518,7 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
             page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             validate_public_url(page.url)
             _wait_capture_settle(page)
+            final_url = page.url
             drain_image_bodies()
             page.add_style_tag(content="""
               *, *::before, *::after { animation:none !important; transition:none !important; }
@@ -2378,27 +2572,13 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                         ])""", BLOCK_LAZY_SETTLE_MS)
                     except Exception:
                         pass
-                    # scroll_into_view ставит блок под fixed/sticky-шапку сайта:
-                    # element-screenshot рисует её поверх блока (~85px полосы
-                    # навбара в эталоне при чистой геометрии IR — сходство
-                    # карусели/panel падало до ~58%). Сдвигаем скролл вниз на
-                    # высоту верхней fixed-полосы, снимок идёт без перекрытия.
+                    # Place the block below external sticky chrome BEFORE
+                    # compilation/backdrop/reference. Positive header-height
+                    # scrolling moved the content up behind the header.
+                    placement = None
                     try:
-                        page.evaluate("""() => {
-                          let fixedTop = 0;
-                          for (const el of document.querySelectorAll('*')) {
-                            const cs = getComputedStyle(el);
-                            if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
-                            if (cs.display === 'none' || cs.visibility === 'hidden') continue;
-                            if (parseFloat(cs.opacity || '1') < 0.05) continue;
-                            const r = el.getBoundingClientRect();
-                            if (r.height < 8 || r.height > 240) continue;
-                            if (r.top > 4) continue;
-                            if (r.width < window.innerWidth * 0.5) continue;
-                            fixedTop = Math.max(fixedTop, r.bottom);
-                          }
-                          if (fixedTop > 0) window.scrollBy(0, fixedTop + 16);
-                        }""")
+                        from source_capture_viewport import prepare_capture_viewport
+                        placement = prepare_capture_viewport(page, ref_locator)
                     except Exception:
                         pass
                     # scroll_into_view ради ленивых картинок сам прокручивает
@@ -2433,6 +2613,16 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                         if item is not None:
                             by_selector[block["selector"]] = item
                         continue
+                    if placement is None:
+                        item.setdefault("warnings", []).append("capture viewport placement unavailable")
+                    elif not placement.get("clear"):
+                        item.setdefault("warnings", []).append(
+                            "capture viewport remains overlapped by external sticky chrome")
+                    elif not placement.get("fullyVisible"):
+                        item.setdefault("warnings", []).append(
+                            "capture block exceeds visible viewport; screenshot may scroll")
+                    from source_capture_pixels import capture_source_png
+                    explicit_capture_rect = isinstance((item.get("root") or {}).get("captureRect"), dict)
                     # Capture inherited backdrop before the reference while the
                     # locator establishes its scroll position. The reference is
                     # then taken immediately at the identical fixed-background
@@ -2445,13 +2635,14 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                             continue
                         locator = page.locator(block["selector"]).first
                         try:
-                            locator.scroll_into_view_if_needed()
+                            if not explicit_capture_rect:
+                                locator.scroll_into_view_if_needed()
                             previous_visibility = locator.evaluate(
                                 "el => Array.from(el.children).map(child => child.style.visibility)")
                             locator.evaluate(
                                 "el => Array.from(el.children).forEach(child => child.style.setProperty('visibility','hidden','important'))")
                             try:
-                                backdrop_shot = locator.screenshot(type="png")
+                                backdrop_shot = capture_source_png(page, locator, item)
                             finally:
                                 locator.evaluate(
                                     "(el, values) => Array.from(el.children).forEach((child, i) => { "
@@ -2488,7 +2679,7 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                             ])""", MATERIALIZED_IMAGE_SETTLE_MS)
                         except Exception:
                             pass
-                        shot = ref_locator.screenshot(type="png")
+                        shot = capture_source_png(page, ref_locator, item)
                         target_w = int(item["root"]["width"])
                         target_h = int(item["root"]["height"])
                         with Image.open(io.BytesIO(shot)) as captured_image:
@@ -2525,7 +2716,9 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                                 locator.evaluate(
                                     "el => Array.from(el.children).forEach(child => child.style.setProperty('visibility','hidden','important'))")
                             try:
-                                shot = locator.screenshot(type="png")
+                                shot = (capture_source_png(page, locator, item)
+                                        if req.get("mode") == "backdrop"
+                                        else locator.screenshot(type="png"))
                             finally:
                                 if previous_visibility is not None:
                                     locator.evaluate(
@@ -2584,6 +2777,7 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
         leaf_boxes_by_viewport: dict[str, list] = {}
         assets_by_viewport: dict[str, list] = {}
         previews_by_viewport: dict[str, str] = {}
+        capture_geometry_by_viewport: dict[str, dict] = {}
         for viewport in viewport_defs:
             name = viewport["name"]
             item = captures.get(name, {}).get(selector)
@@ -2594,6 +2788,11 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
             ):
                 continue
             ir = _captured_ir(block, item, page_tokens, font_download_cache)
+            geometry = {key: copy.deepcopy(item["root"][key])
+                        for key in ("originalBounds", "visibleCrop", "captureRect")
+                        if isinstance(item["root"].get(key), dict)}
+            if geometry:
+                capture_geometry_by_viewport[name] = geometry
             variants[name] = ir
             # Evidence screenshots belong to the Source response, not canonical
             # Design IR. Keeping three base64 PNGs inside responsive.viewports
@@ -2660,6 +2859,8 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
             "width": meta[base_name]["width"], "height": meta[base_name]["height"],
             "preview": previews_by_viewport.get(base_name, ""),
             "previews": previews_by_viewport,
+            "captureGeometryByViewport": capture_geometry_by_viewport,
+            "finalUrl": final_url,
             "sizes": {name: {"width": value["width"], "height": value["height"]} for name, value in meta.items()},
             "warnings": sorted(warnings),
             "provenance": build_capture_provenance(

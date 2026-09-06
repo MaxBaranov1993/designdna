@@ -6,7 +6,8 @@ type Doc = Record<string, any>;
 export function resizeTimeline(doc: Doc, value: number): void {
   if (!Number.isFinite(value)) return;
   const oldDuration = doc.composition.duration;
-  const duration = Math.max(250, Math.min(600000, Math.round(value)));
+  const storyEnd = (doc.story?.actions || []).reduce((sum: number, action: Doc) => sum + action.duration, 0);
+  const duration = Math.max(250, storyEnd, Math.min(600000, Math.round(value)));
   const sampled = new TimelineEngine(doc as any).seek(duration);
   doc.composition.duration = duration;
   for (const layer of doc.layers) {

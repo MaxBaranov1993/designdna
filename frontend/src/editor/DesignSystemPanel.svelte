@@ -3,8 +3,9 @@
    * канвас мастер-компонента с viewport-переключением, инспектор, validation,
    * publish. Переиспользует IrPreview (тот же рендерер, что DNA Editor). */
 
-  import { flow, flowBusy, flowNodes } from "../flow/state";
-  import type { DesignSystemNodeData, IRObject } from "../flow/types";
+  import { flow, flowBusy, flowNodes, flowEdges } from "../flow/state";
+  import { resolveDesignSystemAiProvider } from "../flow/store";
+  import type { DesignSystemNodeData, DesignSystemAiProvider, IRObject } from "../flow/types";
   import SourceArtifactPanel from "./SourceArtifactPanel.svelte";
   import { useEditorStore } from "./store";
 
@@ -44,8 +45,18 @@
   let applying = $state(false);
   let saving = $state(false);
   let organizing = $state(false);
-  let organizerProvider = $state<"openai" | "astra" | "claude">("openai");
-  let organizerEffort = $state<"medium" | "high" | "max">("high");
+  const aiProvider = $derived(data.aiProvider || "inherit");
+  const aiEffort = $derived(data.aiEffort || "high");
+  const resolvedProvider = $derived.by(() => {
+    const node = $flowNodes.find((n) => Number(n.id) === Number(nodeId));
+    return node ? resolveDesignSystemAiProvider($flowNodes, $flowEdges, node) : "openai";
+  });
+  function setAiProvider(event: Event) {
+    $flow.setNodeData(Number(nodeId), { aiProvider: (event.currentTarget as HTMLSelectElement).value as DesignSystemAiProvider });
+  }
+  function setAiEffort(event: Event) {
+    $flow.setNodeData(Number(nodeId), { aiEffort: (event.currentTarget as HTMLSelectElement).value as "medium" | "high" | "max" });
+  }
   /* AI-ревью стиля: провайдер выбирается пользователем (Sol/Codex/Claude);
    * в desktop промпт готовит сервер, отвечает выбранный аккаунт, применяет
    * и валидирует снова сервер — креденшелы не покидают main-процесс. */
@@ -59,16 +70,23 @@
   let kitReport = $state<{ filename: string; bytes: number; components: number; warnings: number } | null>(null);
   let savingKit = $state(false);
   let kitBytes: Uint8Array | null = null;
-  let reviewProvider = $state<"openai" | "astra" | "codex" | "claude">("openai");
-  let reviewEffort = $state<"medium" | "high" | "max">("high");
   let actionError = $state("");
   let validationResult = $state<{ errors: Array<{ message: string }> } | null>(null);
   let identityResult = $state<any>(null);
   let proofRunning = $state(false);
 
   const doc = $derived((data.document || {}) as Record<string, any>);
+  const connectedSource = $derived.by(() => {
+    const wire = $flowEdges.find((edge) => Number(edge.target) === Number(nodeId) && edge.targetHandle === "artifact");
+    const source = $flowNodes.find((node) => node.id === wire?.source);
+    return source?.type === "sourceimport" ? source : null;
+  });
+  const pipelineWarnings = $derived(Object.entries({
+    ...Object.fromEntries(Object.entries(connectedSource?.data.pipelineStatus || {}).map(([key, value]) => [`Source · ${key}`, value])),
+    ...data.pipelineStatus,
+  }).filter(([, stage]) => ["warning", "failed", "cancelled"].includes(stage.status)));
   const sourceArtifact = $derived.by(() => {
-    const source = $flowNodes.find((node) => Number(node.id) === Number(data.sourceNodeId));
+    const source = connectedSource;
     if (source?.type === "sourceimport") return source.data.sourceArtifact || null;
     return doc.sourceArtifact || null;
   });
@@ -267,23 +285,34 @@
 
   /* Документ в ноде — кэш редактирования: после publish/restore нода хранит
    * только systemId@revision, полную копию подтягиваем по ссылке. */
-  let refLoading = false;
+  let requestedRef = "";
+  let loadError = $state("");
+  let loadAttempt = $state(0);
   $effect(() => {
     const current = data;
-    if (!current.document && current.systemId && !refLoading) {
-      refLoading = true;
+    const targetId = Number(nodeId);
+    const revision = Number(current.revision) || 0;
+    const key = `${targetId}:${current.systemId}:${revision}:${loadAttempt}`;
+    if (current.document) { requestedRef = ""; return; }
+    if (current.systemId && requestedRef !== key) {
+      requestedRef = key;
+      loadError = "";
       void (async () => {
         try {
           const resp = await fetch("/api/design-system/get", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ systemId: current.systemId, revision: Number(current.revision) || 0 }),
+            body: JSON.stringify({ systemId: current.systemId, revision }),
           });
           const got = await resp.json();
-          if (got.document) $flow.setNodeData(Number(nodeId), { document: got.document });
-        } catch {
-          /* документ недоступен — панель останется пустой, правка создаст новый */
-        } finally {
-          refLoading = false;
+          if (!resp.ok || !got.document) throw new Error(got.error || got.detail || `Документ недоступен (HTTP ${resp.status})`);
+          const latest = $flow.nodes.find((n) => Number(n.id) === targetId);
+          if (latest?.type === "designsystem" && latest.data.systemId === current.systemId
+              && (Number(latest.data.revision) || 0) === revision && !latest.data.document) {
+            $flow.setNodeData(targetId, { document: got.document });
+            $flow.propagate(targetId);
+          }
+        } catch (error) {
+          if (requestedRef === key) loadError = error instanceof Error ? error.message : String(error);
         }
       })();
     }
@@ -316,7 +345,7 @@
   let autoReviewFor = "";
   $effect(() => {
     const systemId = String(doc.id || "");
-    if (!systemId || styleReview || reviewing || busy) return;
+    if (!systemId || styleReview || reviewing || busy || data.pipelineStatus?.["style-review"]) return;
     if (autoReviewFor === systemId) return;
     autoReviewFor = systemId;
     void runStyleReview({ silent: true });
@@ -593,26 +622,14 @@
     if (!doc.id || !catalogEntries.length) return;
     organizing = true;
     actionError = "";
-    $flow.setNodeData(Number(nodeId), { busyAction: "organize", lastError: "" });
     try {
-      const resp = await fetch("/api/design-system/organize", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document: doc, provider: organizerProvider, reasoningEffort: organizerEffort }),
-      });
-      const result = await resp.json();
-      if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
-      pushUndo();
-      $flow.setNodeData(Number(nodeId), {
-        document: result.document,
-        summary: result.summary,
-        status: "draft",
-      });
+      const result = await $flow.runDesktopDesignSystemAi(Number(nodeId), "organize", { beforeCommit: pushUndo });
+      if (!result) return;
       activeTab = "components";
     } catch (e) {
       actionError = e instanceof Error ? e.message : String(e);
     } finally {
       organizing = false;
-      $flow.setNodeData(Number(nodeId), { busyAction: "" });
     }
   }
 
@@ -625,7 +642,7 @@
   let autoMasterReviewFor = "";
   $effect(() => {
     const systemId = String(doc.id || "");
-    if (!systemId || masterReviewing || busy || !reviewComponents.length) return;
+    if (!systemId || masterReviewing || busy || !reviewComponents.length || data.pipelineStatus?.["master-review"]) return;
     if (autoMasterReviewFor === systemId) return;
     autoMasterReviewFor = systemId;
     void runMasterReview({ silent: true });
@@ -635,18 +652,9 @@
     if (!doc.id || masterReviewing) return;
     masterReviewing = true;
     if (!silent) actionError = "";
-    $flow.setNodeData(Number(nodeId), { busyAction: "master-review", lastError: "" });
     try {
-      const resp = await fetch("/api/design-system/master-review", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document: doc, provider: reviewProvider, viewport }),
-      });
-      const result = await resp.json();
-      if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
-      if (result.reviewed) {
-        pushUndo();
-        $flow.setNodeData(Number(nodeId), { document: result.document, summary: result.summary, status: "draft" });
-      }
+      const result = await $flow.runDesktopDesignSystemAi(Number(nodeId), "master-review", { viewport, beforeCommit: pushUndo });
+      if (!result) { masterReviewNote = ""; return; }
       const failed = (result.results || []).filter((r: any) => r.error).length;
       masterReviewNote = result.reviewed
         ? `одобрено ${result.approved} из ${result.reviewed}${failed ? `, ошибок ${failed}` : ""}`
@@ -656,7 +664,6 @@
       masterReviewNote = "";
     } finally {
       masterReviewing = false;
-      $flow.setNodeData(Number(nodeId), { busyAction: "" });
     }
   }
 
@@ -664,41 +671,9 @@
     if (!doc.id) return;
     reviewing = true;
     if (!silent) actionError = "";
-    $flow.setNodeData(Number(nodeId), { busyAction: "style-review", lastError: "" });
     try {
-      const desktop = window.designDNA;
-      let payload: Record<string, unknown>;
-      if (desktop) {
-        // Desktop: сервер готовит промпт, выбранный аккаунт (Codex/Claude)
-        // отвечает, сервер валидирует и применяет ответ.
-        const prepResp = await fetch("/api/design-system/style-review", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ document: doc, prepareOnly: true }),
-        });
-        const prep = await prepResp.json();
-        if (!prepResp.ok || prep.error) throw new Error(prep.error || `HTTP ${prepResp.status}`);
-        const messages = prep.prompts?.[0]?.messages;
-        if (!messages?.length) throw new Error("Не удалось подготовить промпт ревью");
-        const route = reviewProvider === "codex"
-          ? { provider: "codex" as const, model: null }
-          : { provider: reviewProvider, model: reviewProvider === "claude" ? "opus" : reviewProvider === "astra" ? "gpt-6-astra" : "gpt-5.6-sol", reasoning: { effort: reviewEffort } };
-        const answer = await desktop.providers.chatRequest({ ...route, messages });
-        payload = { document: doc, rawOutput: answer.content, provider: reviewProvider };
-      } else {
-        payload = { document: doc, provider: reviewProvider, reasoningEffort: reviewEffort };
-      }
-      const resp = await fetch("/api/design-system/style-review", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const result = await resp.json();
-      if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
-      pushUndo();
-      $flow.setNodeData(Number(nodeId), {
-        document: result.document,
-        summary: result.summary,
-        status: "draft",
-      });
+      const result = await $flow.runDesktopDesignSystemAi(Number(nodeId), "style-review", { beforeCommit: pushUndo });
+      if (!result) return;
       if (!silent) activeTab = "styleguide";
     } catch (e) {
       // Автозапуск не должен кричать ошибкой на весь экран: измеренная часть
@@ -706,7 +681,6 @@
       if (!silent) actionError = e instanceof Error ? e.message : String(e);
     } finally {
       reviewing = false;
-      $flow.setNodeData(Number(nodeId), { busyAction: "" });
     }
   }
 
@@ -987,7 +961,11 @@
       <span class="ds-editor-meta" title="Мастер — точный компонент, извлечённый из Source (импортированного сайта) и хранимый как Design IR, промежуточное представление макета">
         {data.status === "published" ? `Опубликовано · v${data.revision}` : "Черновик"}
         {data.defaultSet ? " · проект по умолчанию" : ""}
-        · мастеров из Source: {catalogEntries.length} · принято: {components.length} · предложений: {semanticSuggestions.length}
+        {#if !data.document && data.systemId}
+          · загрузка сохранённого каталога…
+        {:else}
+          · мастеров из Source: {catalogEntries.length} · принято: {components.length} · предложений: {semanticSuggestions.length}
+        {/if}
         {dirty ? " · несохранённые правки" : ""}
       </span>
     </div>
@@ -1020,6 +998,18 @@
   </header>
   {#if actionError}
     <div class="ds-editor-error" role="alert">{actionError}</div>
+  {/if}
+  {#each pipelineWarnings as [name, stage]}
+    <details class="ds-editor-error ds-pipeline-warning" data-ds-pipeline-stage={name} data-status={stage.status}>
+      <summary>{name}: {stage.status === "warning" ? "требуется проверка" : stage.status === "cancelled" ? "не завершено" : "ошибка"} — подробности</summary>
+      <div>{stage.message}</div>
+    </details>
+  {/each}
+  {#if loadError}
+    <div class="ds-editor-error" role="alert">
+      Не удалось загрузить Design System: {loadError}
+      <button type="button" data-ds-action="retry-load" onclick={() => loadAttempt += 1}>Повторить загрузку</button>
+    </div>
   {/if}
 
   <nav class="ds-section-tabs" aria-label="Разделы дизайн-системы">
@@ -1099,15 +1089,17 @@
           </div>
           <label>
             <span>Модель</span>
-            <select bind:value={organizerProvider} disabled={busy}>
+            <select value={aiProvider} onchange={setAiProvider} disabled={busy} data-ds-ai-provider>
+              <option value="inherit">Из Source · {resolvedProvider}</option>
               <option value="openai">GPT-5.6 Sol</option>
               <option value="astra">GPT-6 Astra</option>
+              <option value="codex">Codex</option>
               <option value="claude">Claude Opus</option>
             </select>
           </label>
           <label>
             <span>Усилие</span>
-            <select bind:value={organizerEffort} disabled={busy}>
+            <select value={aiEffort} onchange={setAiEffort} disabled={busy || resolvedProvider === "codex"}>
               <option value="medium">medium</option>
               <option value="high">high</option>
               <option value="max">max</option>
@@ -1162,17 +1154,18 @@
             </div>
             <label>
               <span>Провайдер</span>
-              <select bind:value={reviewProvider} disabled={busy}>
+              <select value={aiProvider} onchange={setAiProvider} disabled={busy} data-ds-ai-provider>
+                <option value="inherit">Из Source · {resolvedProvider}</option>
                 <option value="openai">GPT-5.6 Sol</option>
         <option value="astra">GPT-6 Astra</option>
                 <option value="codex">Codex</option>
                 <option value="claude">Claude Opus</option>
               </select>
             </label>
-            {#if reviewProvider !== "codex"}
+            {#if resolvedProvider !== "codex"}
               <label>
                 <span>Усилие</span>
-                <select bind:value={reviewEffort} disabled={busy}>
+                <select value={aiEffort} onchange={setAiEffort} disabled={busy}>
                   <option value="medium">medium</option>
                   <option value="high">high</option>
                   <option value="max">max</option>
@@ -1615,6 +1608,9 @@
   .ds-editor-actions [data-ds-action="publish"] { border-color: var(--dna-violet); background: var(--dna-violet); color: #fff; }
   .ds-editor-actions .close { width: 34px; padding: 0; border-color: transparent; background: transparent; font-size: 15px; }
   .ds-editor-error { padding: 8px 18px; border-bottom: 1px solid rgba(229, 48, 92, .4); background: rgba(229, 48, 92, .12); color: var(--dna-danger-text); font-size: 12px; }
+  .ds-pipeline-warning { flex: none; }
+  .ds-pipeline-warning summary { cursor: pointer; }
+  .ds-pipeline-warning > div { max-height: 24vh; overflow: auto; padding-top: 8px; white-space: pre-wrap; }
 
   .ds-section-tabs {
     flex: none;

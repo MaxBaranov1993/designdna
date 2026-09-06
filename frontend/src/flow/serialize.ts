@@ -1,10 +1,11 @@
 import { defaultData, portsOfNode } from "./ports";
-import { edgeKindOf, reachable, WIRE_COLORS } from "./dataflow";
+import { edgeKindOf, outValue, reachable, WIRE_COLORS } from "./dataflow";
 import { isDesktopBlobUrl, offloadBlobsInPlace } from "../desktop/blobStore";
 import { toast } from "./toast";
 import type { ProjectLoadResp } from "./api";
 import type {
   AnyNodeData,
+  DesignSystemNodeData,
   FlowEdge,
   FlowNode,
   FlowPage,
@@ -88,8 +89,19 @@ function compactReferenceEvidence(value: unknown): unknown {
 export function compactForStorage(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(compactForStorage);
   if (v && typeof v === "object") {
+    const object = v as Record<string, unknown>;
+    // Even an evidence-looking property inside canonical IR is a hash input.
+    // Only its owning backend may normalize/remove it.
+    if ((Array.isArray(object.tree) && (object.version != null || object.tokens != null))
+      || (typeof object.schemaVersion === "string" && object.schemaVersion.startsWith("design-system/"))) return v;
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(v as Record<string, unknown>)) {
+      // Measured provenance (including its original raster URLs) is a hash
+      // input, not disposable preview UI. Generic saves must preserve it.
+      if (["fidelityReport", "provenance", "sourceArtifact"].includes(key)) {
+        out[key] = value;
+        continue;
+      }
       if (STORAGE_REFERENCE_KEYS.has(key)) {
         const evidence = compactReferenceEvidence(value);
         if (evidence !== undefined) out[key] = evidence;
@@ -126,6 +138,12 @@ let lastKnownRevision: string | null = null;
 /* Пока /api/project/load не ответил, ревизия БД неизвестна: безусловный POST
  * свежей (ещё пустой) страницы затирал сохранённый проект целиком. */
 let dbRevisionSynced = false;
+let projectWriteGeneration = 0;
+let preparingProject = false;
+let pendingProjectWrite: { provider: () => PagesProjectPayload; generation: number } | null = null;
+let dbSaveInFlight: Promise<void> | null = null;
+let dbConflictBlocked = false;
+let dbSaveEpoch = 0;
 
 function scheduleIdleWrite(): void {
   if (idleWriteHandle != null) return; // отложенный write возьмёт свежий provider при исполнении
@@ -158,6 +176,9 @@ function cancelIdleWrite(): void {
 /** Синхронная запись (путь beforeunload): без offload — страница может
  *  закрыться до завершения асинхронного шага, данные обязаны попасть в LS. */
 function writeProjectSync(payload: PagesProjectPayload): void {
+  // Also invalidates an older offload when beforeunload writes synchronously.
+  projectWriteGeneration += 1;
+  pendingProjectWrite = null;
   const compact = compactForStorage(payload);
   const text = JSON.stringify(compact);
   lastDbProjectText = text;
@@ -177,19 +198,40 @@ function writeProjectSync(payload: PagesProjectPayload): void {
   }
 }
 
+/** Autosave owns this detached snapshot. Graph serialization intentionally
+ * shares references; async blob puts must never write back into live node IR. */
+export async function prepareProjectForStorage(payload: PagesProjectPayload): Promise<PagesProjectPayload> {
+  const snapshot = JSON.parse(JSON.stringify(payload)) as PagesProjectPayload;
+  try {
+    await offloadBlobsInPlace(snapshot);
+  } catch {
+    // Optimization only: preserve the complete snapshot if blob storage fails.
+  }
+  return snapshot;
+}
+
 function writeProjectNow(provider: () => PagesProjectPayload): void {
-  // Десктоп: длинные inline data:-URL выносим в blob-store ДО сериализации —
-  // LS и SQLite-копия хранят короткие ddna://-ссылки. Offload мутирует живые
-  // node.data на месте (img-src грузит блобы по протоколу); при недоступном
-  // мосте просто пишем как есть — данные не теряются.
+  // One offload plus one replaceable pending provider: no unbounded snapshot
+  // queue, and a slow older blob put can never publish over a newer edit.
+  pendingProjectWrite = { provider, generation: projectWriteGeneration };
+  if (preparingProject) return;
+  preparingProject = true;
   void (async () => {
-    const payload = provider();
     try {
-      await offloadBlobsInPlace(payload);
-    } catch {
-      /* offload — оптимизация, не транзакция */
+      while (pendingProjectWrite) {
+        const pending = pendingProjectWrite;
+        pendingProjectWrite = null;
+        try {
+          const payload = await prepareProjectForStorage(pending.provider());
+          if (pending.generation === projectWriteGeneration) writeProjectSync(payload);
+        } catch {
+          // Serialization failure must not publish a partial/older snapshot.
+          // A subsequent edit can schedule a fresh attempt.
+        }
+      }
+    } finally {
+      preparingProject = false;
     }
-    writeProjectSync(payload);
   })();
 }
 
@@ -202,50 +244,69 @@ function scheduleDbProjectSave(): void {
 }
 
 async function flushDbProject(): Promise<void> {
+  if (dbSaveInFlight) return dbSaveInFlight;
   const text = lastDbProjectText;
-  if (!text) return;
-  if (!dbRevisionSynced) {
-    // Ревизия ещё не загружена — подождём: сейв повторится следующим change
-    // или beforeunload после того, как load зафиксирует базовую ревизию.
-    return;
-  }
+  if (!text || !dbRevisionSynced || !lastKnownRevision || dbConflictBlocked) return;
+  if (dbSaveTimer) clearTimeout(dbSaveTimer);
+  dbSaveTimer = null;
+  const expectedRevision = lastKnownRevision;
+  const epoch = dbSaveEpoch;
   lastDbProjectText = null;
-  try {
-    // CAS по ревизии с последнего известного load/save. Конфликт (409 stale)
-    // разрешаем одним ретраем с серверной ревизией — живое состояние редактора
-    // важнее; повторный конфликт пишет безусловно, как раньше.
-    const send = async (expectedRevision: string | null) =>
-      fetch("/api/project/save", {
+  let acknowledged = false;
+  dbSaveInFlight = (async () => {
+    try {
+      // Only one own save may use this CAS base. New edits replace the single
+      // pending text and are sent only after this response advances the base.
+      const resp = await fetch("/api/project/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // text — уже валидный JSON; склейка экономит повторный stringify мегабайтного payload
-        body: `{"project":${text}${expectedRevision ? `,"expectedRevision":${JSON.stringify(expectedRevision)}` : ""}}`,
+        body: `{"project":${text},"expectedRevision":${JSON.stringify(expectedRevision)}}`,
       });
-    const resp = await send(lastKnownRevision);
-    if (resp.status === 409) {
-      const conflict = (await resp.clone().json().catch(() => ({}))) as { revision?: string; error?: string };
-      // Fail closed: adopting the server revision and retrying would overwrite
-      // changes made by another editor. Keep the local compact snapshot for
-      // recovery and let the UI offer an explicit reload/merge decision.
-      if (lastDbProjectText === null) lastDbProjectText = text;
-      window.dispatchEvent(new CustomEvent("designdna:project-conflict", {
-        detail: {
-          expectedRevision: lastKnownRevision,
-          currentRevision: typeof conflict.revision === "string" ? conflict.revision : null,
-          error: conflict.error || "stale_revision",
-        },
-      }));
-      return;
+      if (epoch !== dbSaveEpoch) return;
+      if (resp.status === 409) {
+        const conflict = (await resp.clone().json().catch(() => ({}))) as { revision?: string; error?: string };
+        if (epoch !== dbSaveEpoch) return;
+        // External conflicts stay blocked until an explicit user decision.
+        // Never adopt the returned revision or retry unconditionally.
+        dbConflictBlocked = true;
+        if (lastDbProjectText === null) lastDbProjectText = text;
+        window.dispatchEvent(new CustomEvent("designdna:project-conflict", {
+          detail: {
+            expectedRevision,
+            currentRevision: typeof conflict.revision === "string" ? conflict.revision : null,
+            error: conflict.error || "stale_revision",
+          },
+        }));
+        return;
+      }
+      if (resp.ok) {
+        const saved = (await resp.json().catch(() => null)) as { revision?: string } | null;
+        if (epoch !== dbSaveEpoch) return;
+        if (typeof saved?.revision === "string" && saved.revision) {
+          lastKnownRevision = saved.revision;
+          acknowledged = true;
+        }
+      }
+      if (!acknowledged && lastDbProjectText === null) lastDbProjectText = text;
+    } catch {
+      if (epoch === dbSaveEpoch && lastDbProjectText === null) lastDbProjectText = text;
     }
-    if (resp.ok) {
-      const saved = (await resp.json().catch(() => null)) as { revision?: string } | null;
-      if (saved?.revision) lastKnownRevision = saved.revision;
-    } else if (lastDbProjectText === null) {
-      lastDbProjectText = text;
+  })();
+  try {
+    await dbSaveInFlight;
+  } finally {
+    dbSaveInFlight = null;
+    if (epoch === dbSaveEpoch) {
+      if (dbSaveTimer) clearTimeout(dbSaveTimer);
+      dbSaveTimer = null;
+      // Drain only newer pending work after success, never a retry loop on
+      // errors. Failed text stays available for recovery/a later edit.
+      if (acknowledged && lastDbProjectText !== null) scheduleDbProjectSave();
+    } else if (lastDbProjectText !== null && dbRevisionSynced && !dbConflictBlocked) {
+      // A reload may have established a new epoch while the old request was
+      // still settling. Drain only the new epoch's text, never restore the old.
+      scheduleDbProjectSave();
     }
-  } catch {
-    // localStorage уже содержит актуальный compact; повторит следующий сейв или unload-beacon
-    if (lastDbProjectText === null) lastDbProjectText = text;
   }
 }
 
@@ -257,19 +318,20 @@ export type ProjectConflictDetail = {
   error: string;
 };
 
-/** «Оставить мои правки»: ревизия сервера становится базой CAS и ожидающий
- *  payload уходит повторно. Если сервер ревизию не вернул — безусловная
- *  запись (save_project без expectedRevision). Повторный конфликт снова
- *  поднимет designdna:project-conflict. */
+/** Explicit keep-mine uses the supplied server revision for one CAS attempt.
+ * Missing revision or another conflict fails closed; no unconditional write. */
 export async function resolveConflictKeepMine(currentRevision: string | null): Promise<boolean> {
+  if (!currentRevision) return false;
+  if (dbSaveInFlight) await dbSaveInFlight;
   lastKnownRevision = currentRevision;
   dbRevisionSynced = true;
+  dbConflictBlocked = false;
+  // The user chose current local edits, not an older compact snapshot still
+  // waiting for blob offload/debounce. Synchronous capture invalidates that work.
+  if (lastProjectProvider) writeProjectSync(lastProjectProvider());
   if (dbSaveTimer) {
     clearTimeout(dbSaveTimer);
     dbSaveTimer = null;
-  }
-  if (lastDbProjectText === null && lastProjectProvider) {
-    lastDbProjectText = JSON.stringify(compactForStorage(lastProjectProvider()));
   }
   if (lastDbProjectText === null) return false;
   await flushDbProject();
@@ -280,6 +342,15 @@ export async function resolveConflictKeepMine(currentRevision: string | null): P
 /** «Загрузить их версию»: локальный ожидающий payload больше не нужен —
  *  store.replaceProjectFromDb перечитает БД, ревизия обновится в load. */
 export function discardPendingDbSave(): void {
+  projectWriteGeneration += 1;
+  pendingProjectWrite = null;
+  lastProjectProvider = null;
+  if (projectSaveTimer) clearTimeout(projectSaveTimer);
+  projectSaveTimer = null;
+  cancelIdleWrite();
+  dbSaveEpoch += 1;
+  dbRevisionSynced = false;
+  dbConflictBlocked = false;
   if (dbSaveTimer) {
     clearTimeout(dbSaveTimer);
     dbSaveTimer = null;
@@ -289,6 +360,7 @@ export function discardPendingDbSave(): void {
 
 /* Дебаунс 300 мс, затем idle-слот */
 export function scheduleProjectSave(provider: () => PagesProjectPayload) {
+  projectWriteGeneration += 1;
   lastProjectProvider = provider;
   if (projectSaveTimer) clearTimeout(projectSaveTimer);
   projectSaveTimer = setTimeout(() => {
@@ -311,10 +383,10 @@ window.addEventListener("beforeunload", () => {
     clearTimeout(dbSaveTimer);
     dbSaveTimer = null;
   }
-  if (lastDbProjectText && dbRevisionSynced && navigator.sendBeacon) {
-    const expected = lastKnownRevision
-      ? `,"expectedRevision":${JSON.stringify(lastKnownRevision)}`
-      : "";
+  // An in-flight request owns the CAS base. Keep newer data in localStorage
+  // instead of racing it with a beacon using that same stale revision.
+  if (lastDbProjectText && dbRevisionSynced && lastKnownRevision && !dbSaveInFlight && !dbConflictBlocked && navigator.sendBeacon) {
+    const expected = `,"expectedRevision":${JSON.stringify(lastKnownRevision)}`;
     navigator.sendBeacon(
       "/api/project/save",
       new Blob([`{"project":${lastDbProjectText}${expected}}`], { type: "application/json" }),
@@ -341,6 +413,16 @@ export function makeRfEdge(
 }
 
 function dataForStorage(type: NodeType, data: AnyNodeData): AnyNodeData {
+  if (type === "designsystem") {
+    const { document, busyAction: _busy, _dsAiRun: _run, _dsSave: _save, ...persistent } = data as DesignSystemNodeData;
+    // The DS backend owns canonical documents and their master/source pins.
+    // Project migration must see only the reference, never nested master IR.
+    // Retain a never-saved local document until it has a backend systemId.
+    if (!persistent.systemId) return data;
+    return { ...persistent, document: null,
+      contentHash: typeof document?.contentHash === "string" ? document.contentHash : persistent.contentHash || "",
+      resolvedTokens: outValue({ type, data } as FlowNode, "tokens"), busyAction: "" } as AnyNodeData;
+  }
   if (type !== "motion" && type !== "timeline") return data;
   // sceneIrs — производные материализации (полная копия страницы на каждую
   // сцену): в автосейве они раздували payload до десятков МБ и блокировали
@@ -364,6 +446,14 @@ function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
     if (Array.isArray(value) && !Array.isArray(merged[key])) merged[key] = value;
   }
   data = merged as AnyNodeData;
+  if ((type === "sourceimport" || type === "designsystem") && merged.pipelineStatus) {
+    // A persisted in-flight stage is not a resumable job. Preserve evidence
+    // and completed stages, but never show a phantom running/success after boot.
+    merged.pipelineStatus = Object.fromEntries(Object.entries(merged.pipelineStatus as Record<string, Record<string, unknown>>)
+      .map(([key, stage]) => [key, stage?.status === "running" ? { ...stage, status: "cancelled",
+        message: "Этап не подтверждён после загрузки проекта — повторите проверку" } : stage]));
+    data = merged as AnyNodeData;
+  }
   if (type === "motion") return { ...defaultData("motion"), ...data, renderJob: (data as { renderJob?: { status?: string } }).renderJob?.status === "complete" ? (data as Record<string, unknown>).renderJob : null } as AnyNodeData;
   if (type === "motiondesign") {
     const defaults = defaultData("motiondesign") as Record<string, unknown>;

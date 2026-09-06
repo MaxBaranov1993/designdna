@@ -19,6 +19,21 @@ function geo() {
   return s ? s.geo : null;
 }
 
+/** Color controls can commit as soon as Svelte mounts them, independently of
+ * InspectorPanel's deferred DOM wiring. Always resolve the current GeoEdit. */
+export function applyInspectorColor(key: string, raw: string): string | undefined {
+  const value = String(raw || "").trim();
+  const clear = !value || value.toLowerCase() === "transparent";
+  const digits = value.replace(/^#/, "");
+  const normalized = clear ? ""
+    : /^[0-9a-f]{3}$/i.test(digits) ? "#" + digits.split("").map((char) => char + char).join("").toLowerCase()
+    : /^[0-9a-f]{6}$/i.test(digits) ? "#" + digits.toLowerCase() : undefined;
+  const g = geo();
+  if (normalized === undefined || !g) return undefined;
+  g.setNodeStyle({ [key]: normalized || null });
+  return normalized;
+}
+
 /* ---------- общие data-act (align/distribute/reset-frame) ---------- */
 
 function wireActs(root: HTMLElement) {
@@ -91,6 +106,7 @@ function wireSingle(root: HTMLElement) {
   });
 
   root.querySelectorAll<HTMLInputElement>("[data-style-color]").forEach((inp) => {
+    if (inp.hasAttribute("data-direct-change")) return;
     inp.addEventListener("input", () => {
       const g2 = geo();
       if (!g2) return;
@@ -101,6 +117,7 @@ function wireSingle(root: HTMLElement) {
     });
   });
   root.querySelectorAll<HTMLInputElement>("[data-style-text]").forEach((inp) => {
+    if (inp.hasAttribute("data-direct-change")) return;
     inp.addEventListener("change", () => {
       const g2 = geo();
       if (!g2) return;
@@ -120,6 +137,7 @@ function wireSingle(root: HTMLElement) {
     });
   });
   root.querySelectorAll<HTMLElement>("[data-clear-style]").forEach((btn) => {
+    if (btn.hasAttribute("data-direct-change")) return;
     btn.addEventListener("click", () => {
       const g2 = geo();
       if (!g2) return;

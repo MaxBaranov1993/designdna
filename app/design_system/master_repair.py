@@ -297,6 +297,8 @@ def pin_master(comp: dict, master_ir: dict) -> None:
     нельзя вслепую (превью нормализует x/y корня), поэтому производную просто
     убираем — `document.migrate_draft` и так удаляет её, когда она равна мастеру.
     """
+    from .builder import normalize_new_master_numbers
+    master_ir = normalize_new_master_numbers(master_ir)
     comp["masterIr"] = master_ir
     source_ref = comp.get("sourceRef")
     if not isinstance(source_ref, dict):
@@ -334,6 +336,12 @@ def _layout_acceptance(before: dict, candidate: dict, *, page: Any, viewport: st
     import fidelity_harness
     from PIL import Image
 
+    reference = fidelity_harness._decode_data_url(original)
+    reference_size = Image.open(io.BytesIO(reference)).size
+    wrong_sizes = [label for label, png in (("before", before_png), ("candidate", candidate_png))
+                   if Image.open(io.BytesIO(png)).size != reference_size]
+    if wrong_sizes:
+        return False, ["size-mismatch:" + label for label in wrong_sizes]
     before_defects = polish.lint_master(before, page=page, viewports=(viewport,))
     after_defects = polish.lint_master(candidate, page=page, viewports=(viewport,))
     before_set = {(str(d.get("path")), str(d.get("kind"))) for d in before_defects}
@@ -341,16 +349,8 @@ def _layout_acceptance(before: dict, candidate: dict, *, page: Any, viewport: st
     reasons: list[str] = []
     if not after_set.issubset(before_set): reasons.append("new-defect")
     if any(d.get("kind") == "escape" for d in after_defects): reasons.append("escape")
-    reference = fidelity_harness._decode_data_url(original)
-    ref_image = Image.open(io.BytesIO(reference))
-    def normalize(png: bytes) -> bytes:
-        image = Image.open(io.BytesIO(png)).convert("RGB")
-        if image.size == ref_image.size:
-            return png
-        image = image.resize(ref_image.size); buffer = io.BytesIO()
-        image.save(buffer, format="PNG"); return buffer.getvalue()
-    before_similarity = fidelity_harness._image_metrics(reference, normalize(before_png)).get("pixel_similarity")
-    after_similarity = fidelity_harness._image_metrics(reference, normalize(candidate_png)).get("pixel_similarity")
+    before_similarity = fidelity_harness._image_metrics(reference, before_png).get("pixel_similarity")
+    after_similarity = fidelity_harness._image_metrics(reference, candidate_png).get("pixel_similarity")
     threshold = float(fidelity_harness.GATE_THRESHOLDS["min_pixel_similarity"])
     if before_similarity is None or after_similarity is None:
         reasons.append("similarity-unavailable")

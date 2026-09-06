@@ -6,11 +6,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import builder, compiler, document as dsdoc, importer, mock, resolver, store
+from .desktop_ai import router as desktop_ai_router
 
 router = APIRouter()
+router.include_router(desktop_ai_router)
 
 
 class BuildRequest(BaseModel):
+    systemId: str = ""
     name: str = ""
     sourceNodeId: str | int = ""
     sourceUrl: str = ""
@@ -130,8 +133,8 @@ class PolishRequest(BaseModel):
     headless: bool = True
 
 
-def _err(status: int, message: str):
-    return JSONResponse({"error": message, "status": status}, status_code=status)
+def _err(status: int, error_message: str, **details):
+    return JSONResponse({"error": error_message, "status": status, **details}, status_code=status)
 
 
 @router.post("/api/design-system/build")
@@ -139,15 +142,37 @@ def build_design_system(req: BuildRequest):
     """Source-данные → draft (без публикации)."""
     if not any(isinstance(b, dict) and b.get("ir") for b in req.blocks):
         return _err(422, "Source не содержит валидных блоков — запустите импорт заново")
+    existing = None
+    if req.systemId:
+        existing = store.get_revision(req.systemId, 0)
+        if not isinstance(existing, dict) or existing.get("id") != req.systemId:
+            return _err(404, "Design System draft for rebuild was not found",
+                        stage="ds-build-target", component="", path="systemId", retryable=False)
     node_data = {"blocks": req.blocks, "tokens": req.tokens,
                  "sourceArtifact": req.sourceArtifact,
                  "mode": "url" if req.sourceUrl else "screenshot", "url": req.sourceUrl,
                  "capturedAt": req.capturedAt}
-    pack = builder.build_source_pack(node_data, source_node_id=req.sourceNodeId)
-    pack["_raw_blocks"] = req.blocks
-    document = builder.build_draft(
-        pack, name=req.name or None, locale=req.locale,
-        include_generated_states=req.includeGeneratedStates, create_mock=req.createMock)
+    from scraper import CanonicalRasterAssetError, canonicalize_source_blocks
+    from fidelity_harness import FidelityRenderError
+    try:
+        node_data["blocks"] = canonicalize_source_blocks(
+            req.blocks, stage="ds-build-assets", include_evidence=True)
+        pack = builder.build_source_pack(node_data, source_node_id=req.sourceNodeId)
+        # Raw blocks retain component evidence omitted from the compact pack,
+        # but must never bypass canonicalization with the transport payload.
+        pack["_raw_blocks"] = node_data["blocks"]
+        document = builder.build_draft(
+            pack, name=req.name or (existing or {}).get("name") or None, locale=req.locale,
+            include_generated_states=req.includeGeneratedStates, create_mock=req.createMock)
+    except CanonicalRasterAssetError as exc:
+        return _err(503 if exc.detail["retryable"] else 422, str(exc), **exc.detail)
+    except FidelityRenderError as exc:
+        return _err(503, str(exc), **exc.detail)
+    if existing:
+        # save_draft writes revision 0 only. Published snapshots, registry
+        # history and default pins remain attached to the existing system.
+        document["id"] = existing["id"]
+        document["projectId"] = existing.get("projectId") or "default"
     saved = store.save_draft(document)
     from .document import summary
     return {"document": saved.get("document") or document, "summary": summary(saved.get("document") or document)}

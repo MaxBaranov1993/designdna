@@ -72,7 +72,10 @@ test("Design System catalog exposes guarded user-selected semantic organization"
     read("../src/editor/SourceArtifactPanel.svelte"),
   ]);
   assert.match(panel, /data-ds-action="organize"/);
-  assert.match(panel, /\/api\/design-system\/organize/);
+  assert.match(panel, /\$flow\.runDesktopDesignSystemAi\(Number\(nodeId\), "organize"/);
+  assert.match(panel, /value=\{aiProvider\} onchange=\{setAiProvider\}/);
+  assert.match(panel, /value="inherit"/);
+  assert.match(panel, /value="codex"/);
   assert.match(panel, /gpt-5\.6-sol/);
   for (const effort of ["medium", "high", "max"]) {
     assert.match(panel, new RegExp(`value="${effort}"`));

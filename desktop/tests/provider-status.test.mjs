@@ -36,6 +36,14 @@ test("provider status honours explicit binary override env", () => {
   );
 });
 
+test("provider status uses the same native Claude discovery as chat", () => {
+  const binary = "C:\\Users\\qa\\.local\\bin\\claude.exe";
+  assert.deepEqual(providerCommand({ command: "claude", args: ["--version"] }, {
+    platform: "win32", environment: { USERPROFILE: "C:\\Users\\qa", PATH: "" },
+    fileExists: (candidate) => candidate === binary,
+  }), { command: binary, args: ["--version"] });
+});
+
 /* Фейковый child_process: сценарий задаёт stdout/код выхода/ошибку/зависание. */
 function fakeSpawn(scenario) {
   const calls = [];

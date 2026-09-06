@@ -254,10 +254,19 @@ def lint_master(master_ir: dict, *, page: Any = None,
     if page is None:
         return _dedupe([d for viewport in viewports for d in static_lint(master_ir, viewport)])
     import fidelity_harness
+    import scraper
     from .document import preview_ir_for_master
     preview = preview_ir_for_master(master_ir)
+    render_preview, asset_errors = scraper.resolve_ir_blobs(preview)
+    if asset_errors:
+        root = (master_ir.get("tree") or [{}])[0]
+        raise scraper.CanonicalRasterAssetError(
+            "blob-resolve-failed", "; ".join(asset_errors[:3]), stage="ds-polish-render",
+            component=str(root.get("sourceKey") or ""), path="masterIr")
     defects: list[dict] = []
     for viewport in viewports:
+        if _master_hidden(master_ir, viewport):
+            continue  # Explicit Source state; acceptance still requires proof.
         width, height = VIEWPORTS.get(viewport, VIEWPORTS["desktop"])
         root = (preview.get("tree") or [{}])[0]
         frame = root.get("frame") if isinstance(root, dict) and isinstance(root.get("frame"), dict) else {}
@@ -265,7 +274,7 @@ def lint_master(master_ir: dict, *, page: Any = None,
         height = max(320, int(_num(frame.get("height")) or height))
         line_counts = {path: count for path, node in _walk((master_ir or {}).get("tree") or [])
                        if (count := _source_line_count(node)) is not None}
-        measured = fidelity_harness.measure_layout(page, preview, viewport, width, height,
+        measured = fidelity_harness.measure_layout(page, render_preview, viewport, width, height,
                                                    source_line_counts=line_counts,
                                                    thresholds={
                                                        "overflowMinPx": TEXT_OVERFLOW_MIN_PX,
@@ -434,6 +443,12 @@ def frame_has_width(frame: dict) -> bool:
     return _num(frame.get("width")) is not None
 
 
+def _master_hidden(master: dict, viewport: str) -> bool:
+    roots = master.get("tree") or []
+    return bool(roots) and all(isinstance(root, dict) and not _viewport_node(root, viewport)[0]
+                               for root in roots)
+
+
 def _fidelity_passed(component: dict) -> bool:
     fidelity = component.get("fidelity") if isinstance(component.get("fidelity"), dict) else {}
     gate = fidelity.get("gate") if isinstance(fidelity.get("gate"), dict) else {}
@@ -450,6 +465,9 @@ def polish_component(component: dict, *, page: Any = None,
         return {"changed": False, "defectsBefore": [], "defectsAfter": [], "rounds": 0}
     before_defects = lint_master(master, page=page)
     candidate, journal = autofix(master, before_defects)
+    if journal:
+        from .builder import normalize_new_master_numbers
+        candidate = normalize_new_master_numbers(candidate)
     after_defects = lint_master(candidate, page=page) if journal else list(before_defects)
     gate_result = fidelity_check(candidate) if fidelity_check else _fidelity_passed(component)
     gate_ok = bool(gate_result.get("passed")) if isinstance(gate_result, dict) else bool(gate_result)
@@ -476,10 +494,11 @@ def polish_component(component: dict, *, page: Any = None,
         fidelity["polish"] = {"defectsBefore": before_defects,
                               "defectsAfter": remaining_defects,
                               "rounds": 1 if journal else 0, "accepted": accepted,
-                              "status": "ready" if not remaining_defects else "needs-polish"}
+                              "status": ("needs-polish" if remaining_defects else
+                                         "ready" if gate_ok else "needs-review")}
         if isinstance(gate_result, dict):
             fidelity["polish"].update({k: v for k, v in gate_result.items() if k != "passed"})
-        if accepted or not remaining_defects:
+        if accepted or (not remaining_defects and gate_ok):
             fidelity["polish"].pop("rejected", None)
         else:
             fidelity["polish"]["rejected"] = reasons
@@ -532,11 +551,31 @@ def polish_document(document: dict, *, headless: bool = False) -> tuple[dict, li
                             required = fidelity.get("requiredViewports") if isinstance(fidelity.get("requiredViewports"), list) else []
                             viewports = list(dict.fromkeys([*required, *stored.keys()])) or ["desktop"]
                             similarities: dict[str, dict[str, float]] = {}
+                            hidden_viewports: list[str] = []
                             rejected: list[str] = []
                             for candidate_viewport in viewports:
+                                before_hidden = _master_hidden(component["masterIr"], candidate_viewport)
+                                after_hidden = _master_hidden(candidate, candidate_viewport)
+                                if before_hidden != after_hidden:
+                                    rejected.append(f"{candidate_viewport}: visibility-changed")
+                                    continue
+                                if before_hidden:
+                                    from .desktop_ai import _hidden_evidence
+                                    if _hidden_evidence(updated, component, candidate_viewport):
+                                        hidden_viewports.append(candidate_viewport)
+                                    else:
+                                        rejected.append(f"{candidate_viewport}: hidden-without-source-proof")
+                                    continue
+                                ref = component.get("sourceRef") or {}
+                                evidence = (updated.get("referenceAssets") or {}).get(ref.get("evidenceKey")) or {}
+                                if (not (evidence.get("referencePreviews") or {}).get(candidate_viewport)
+                                        or candidate_viewport not in (ref.get("boundsByViewport") or {})
+                                        or candidate_viewport not in (evidence.get("blockSizes") or {})):
+                                    rejected.append(f"{candidate_viewport}: no-source-proof")
+                                    continue
                                 source, _size, note = styleguide.proof_crop(
                                     updated, component, candidate_viewport, budget_left=4_000_000)
-                                if not source:
+                                if not source or note:
                                     rejected.append(f"{candidate_viewport}: no-source-proof ({note or 'missing'})")
                                     continue
                                 render_comp = {**component, "masterIr": candidate}
@@ -545,9 +584,10 @@ def polish_document(document: dict, *, headless: bool = False) -> tuple[dict, li
                                 ref_image = Image.open(io.BytesIO(reference))
                                 rendered_image = Image.open(io.BytesIO(rendered)).convert("RGB")
                                 if rendered_image.size != ref_image.size:
-                                    rendered_image = rendered_image.resize(ref_image.size)
-                                    buffer = io.BytesIO(); rendered_image.save(buffer, format="PNG")
-                                    rendered = buffer.getvalue()
+                                    rejected.append(
+                                        f"{candidate_viewport}: size-mismatch "
+                                        f"{rendered_image.size} != {ref_image.size}")
+                                    continue  # Never rescale a candidate to manufacture fidelity.
                                 similarity = fidelity_harness._image_metrics(reference, rendered).get("pixel_similarity")
                                 if similarity is None:
                                     rejected.append(f"{candidate_viewport}: similarity-unavailable")
@@ -562,6 +602,7 @@ def polish_document(document: dict, *, headless: bool = False) -> tuple[dict, li
                             measured_fidelity["pixelSimilarity"] = similarities
                             return {"passed": not rejected and bool(similarities),
                                     "pixelSimilarity": similarities,
+                                    "sourceHiddenViewports": hidden_viewports,
                                     "fidelityRejected": rejected}
                         fidelity_check = check_candidate
                     results.append({"componentKey": key, "pool": pool,

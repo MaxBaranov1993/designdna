@@ -61,6 +61,7 @@ PRESET_LABELS = {
 class TimelineBuildRequest(BaseModel):
     ir: dict
     settings: dict = Field(default_factory=dict)
+    pages: list[dict] | None = None
 
 
 class TimelineCommitRequest(BaseModel):
@@ -85,6 +86,7 @@ class TimelineAssistRequest(BaseModel):
     prompt: str
     provider: Literal["openai", "astra", "codex", "claude"] = "openai"
     effort: Literal["medium", "high", "max"] = "medium"
+    require_llm: bool = False
 
 
 class TimelineRenderRequest(BaseModel):
@@ -116,7 +118,11 @@ def timeline_build(req: TimelineBuildRequest):
     if not isinstance(req.ir, dict) or not isinstance(req.ir.get("tree"), list) or not req.ir.get("tree"):
         return _err(422, "Нужен Design IR с непустым деревом")
     try:
-        document = build(req.ir, req.settings)
+        if req.pages:
+            from video_story import build_pages
+            document = build_pages(req.pages, req.settings)
+        else:
+            document = build(req.ir, req.settings)
     except ValueError as e:
         return _err(422, str(e))
     return {"timeline": document}
@@ -196,7 +202,7 @@ def timeline_assist(req: TimelineAssistRequest):
         return _err(422, "Таймлайн невалиден до применения: " + "; ".join(errors[:3]))
     from timeline_director import direct
     try:
-        preview_timeline, change_set, meta = direct(req.timeline, req.prompt, provider=req.provider, effort=req.effort)
+        preview_timeline, change_set, meta = direct(req.timeline, req.prompt, provider=req.provider, effort=req.effort, require_llm=req.require_llm)
     except ValueError as e:
         return _err(422, str(e))
     return {
@@ -225,6 +231,9 @@ def timeline_render(req: TimelineRenderRequest):
         return _err(409, "Таймлайн не принадлежит переданному Design IR")
     # Fail closed на входе: политика + наличие/целостность локальных ассетов
     _assets, asset_errors = materialize_render_assets(req.ir)
+    for page in (req.timeline.get("story") or {}).get("pages", []):
+        _, page_errors = materialize_render_assets(page["ir"])
+        asset_errors.extend(page_errors)
     if asset_errors:
         return _err(422, "Ассеты рендера не прошли проверку: " + "; ".join(asset_errors[:3]))
     try:
@@ -329,6 +338,8 @@ def timeline_export(req: TimelineExportRequest):
     errors = validate(req.timeline)
     if errors:
         return _err(422, "Таймлайн невалиден: " + "; ".join(errors[:3]))
+    if (req.timeline.get("story") or {}).get("actions"):
+        return _err(422, "Сценарий с действиями экспортируется в MP4 или WebM")
     if req.mode == "waapi":
         recipe = export_waapi(req.timeline)
         return {"files": {"timeline.waapi.json": json.dumps(recipe, ensure_ascii=False, indent=2)}}

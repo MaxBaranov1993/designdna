@@ -3987,10 +3987,6 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           if (v === null || v === "") delete style[k];
           else style[k] = v;
         }
-        if (node.type === "text" || node.type === "heading") {
-          for (const k of ["borderColor", "borderWidth", "borderRadius", "boxShadow"]) delete style[k];
-          delete node.fill;
-        }
         if (node.type === "rect") {
           if (partial.background !== void 0) {
             if (partial.background === null || partial.background === "") delete node.fill;
@@ -4806,6 +4802,214 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     applySolvedToDom,
     propertyDefaults: TIMELINE_PROPERTY_DEFAULTS
   };
+  function motionEase(value, easing = "soft") {
+    const p = Math.max(0, Math.min(1, value));
+    if (easing === "linear") return p;
+    if (easing === "ease-in") return p * p * p;
+    if (easing === "ease-out") return 1 - (1 - p) ** 3;
+    return p * p * p * (p * (p * 6 - 15) + 10);
+  }
+  function storySchedule(story) {
+    let time = 0;
+    return story.actions.map((action) => {
+      const start = time;
+      time += action.duration;
+      return { ...action, start, end: time };
+    });
+  }
+  function storyTarget(root, target) {
+    const match = /^s(\d+)(?:\.(.+))?$/.exec(target);
+    if (!match) return null;
+    const section = root.querySelector(`[data-ir-sec="${Number(match[1])}"]`);
+    if (!section || !match[2]) return section;
+    return Array.from(section.querySelectorAll("[data-ir-path]")).find((el) => el.dataset.irPath === match[2]) || null;
+  }
+  function actionTarget(root, id) {
+    const target = storyTarget(root, id);
+    if (!target.dataset.irPath || target.matches("input,textarea,button,a,[role=button]")) return target;
+    return Array.from(target.querySelectorAll("input,textarea,button,a,[role=button]")).find((el) => el.dataset.irPath === target.dataset.irPath || el.closest("[data-ir-path]") === target) || target;
+  }
+  class VideoStoryPlayer {
+    constructor(host, document2, offline = false) {
+      __publicField(this, "roots", /* @__PURE__ */ new Map());
+      __publicField(this, "fields", /* @__PURE__ */ new Map());
+      __publicField(this, "mapped", []);
+      __publicField(this, "cursor");
+      __publicField(this, "pulse");
+      __publicField(this, "engine");
+      __publicField(this, "story");
+      var _a, _b, _c, _d;
+      this.host = host;
+      this.document = document2;
+      this.story = document2.story;
+      this.engine = new TimelineEngine(document2);
+      host.replaceChildren();
+      Object.assign(host.style, { width: `${document2.composition.width}px`, height: `${document2.composition.height}px`, position: "relative", overflow: "hidden", pointerEvents: "none", background: document2.composition.background });
+      for (const page of this.story.pages) {
+        const outer = window.document.createElement("div");
+        outer.dataset.storyPage = page.id;
+        Object.assign(outer.style, { position: "absolute", inset: "0", overflow: "hidden", background: document2.composition.background });
+        const inner = window.document.createElement("div");
+        outer.append(inner);
+        host.append(outer);
+        IRRenderer.renderIR(inner, page.ir, { viewport: "desktop", fit: false, offline });
+        const artWidth = Number((_a = inner.querySelector("[data-design-width]")) == null ? void 0 : _a.dataset.designWidth) || Number((_b = page.ir.frame) == null ? void 0 : _b.width) || 1440;
+        const scale = document2.composition.width / artWidth;
+        Object.assign(inner.style, { width: artWidth + "px", transformOrigin: "top left" });
+        this.roots.set(page.id, { outer, inner, scale });
+        for (const layer of document2.layers || []) {
+          if (layer.type !== "component" || (layer.pageId || this.story.pages[0].id) !== page.id) continue;
+          let target = layer.storyTarget;
+          if (!target) {
+            const visit = (node, path) => {
+              if ((node.sourceKey || node.id) === layer.ref) target = path;
+              (node.children || []).forEach((child, i) => visit(child, `${path}.children.${i}`));
+            };
+            (page.ir.tree || []).forEach((section, i) => visit(section, `s${i}`));
+          }
+          const el = target ? storyTarget(inner, target) : null;
+          if (el) {
+            el.dataset.timelineLayer = layer.id;
+            const base = getComputedStyle(el);
+            this.mapped.push({ el, id: layer.id, transform: base.transform === "none" ? "" : base.transform, opacity: Number(base.opacity), visibility: base.visibility });
+          }
+        }
+      }
+      for (const action of this.story.actions.filter((a) => a.type === "type")) {
+        const key = `${action.pageId}/${action.target}`;
+        if (this.fields.has(key)) continue;
+        const root = (_c = this.roots.get(action.pageId)) == null ? void 0 : _c.inner;
+        const target = root && storyTarget(root, action.target || "");
+        if (!target) throw new Error(`Не найдено поле ${action.target} на странице ${action.pageId}`);
+        const input = target.matches("input,textarea") ? target : target.querySelector("input,textarea");
+        if (input) {
+          this.fields.set(key, { el: input, initial: input.value });
+        } else {
+          const overlay = window.document.createElement("span");
+          overlay.dataset.storyTyped = "true";
+          Object.assign(overlay.style, { position: "absolute", inset: "0", padding: "8px 12px", display: "none", alignItems: "center", whiteSpace: "pre-wrap", font: "inherit", color: "inherit", overflow: "hidden" });
+          if (getComputedStyle(target).position === "static") target.style.position = "relative";
+          target.append(overlay);
+          this.fields.set(key, { el: target, initial: "", overlay });
+        }
+      }
+      for (const action of this.story.actions.filter((a) => a.target)) {
+        const root = (_d = this.roots.get(action.pageId)) == null ? void 0 : _d.inner;
+        if (!root || !storyTarget(root, action.target)) throw new Error(`Не найден элемент ${action.target} на странице ${action.pageId}`);
+      }
+      this.cursor = window.document.createElement("div");
+      this.cursor.dataset.storyCursor = "true";
+      this.cursor.innerHTML = '<svg width="30" height="38" viewBox="0 0 30 38"><path d="M3 2L25 23L15 24L11 34L3 2Z" fill="white" stroke="#101218" stroke-width="2" stroke-linejoin="round"/></svg>';
+      Object.assign(this.cursor.style, { position: "absolute", left: "0", top: "0", zIndex: "9999", filter: "drop-shadow(0 2px 3px #0005)" });
+      this.pulse = window.document.createElement("div");
+      this.pulse.dataset.storyClick = "true";
+      Object.assign(this.pulse.style, { position: "absolute", width: "48px", height: "48px", left: "0", top: "0", margin: "-24px", border: "3px solid #ff691d", borderRadius: "50%", zIndex: "9998" });
+      host.append(this.pulse, this.cursor);
+      this.seek(0);
+    }
+    writeField(key, text) {
+      const field = this.fields.get(key);
+      if (!field) return;
+      if (!field.overlay) field.el.value = text ?? field.initial;
+      else {
+        for (const child of Array.from(field.el.children)) if (child !== field.overlay) child.style.visibility = text === null ? "" : "hidden";
+        field.overlay.style.display = text === null ? "none" : "flex";
+        field.overlay.textContent = text || "";
+      }
+    }
+    seek(time) {
+      const t = Math.max(0, Math.min(this.document.composition.duration, time));
+      const solved = this.engine.seek(t);
+      for (const base of this.mapped) {
+        const state = solved[base.id];
+        base.el.style.visibility = state.visible ? base.visibility : "hidden";
+        base.el.style.opacity = String(state.visible ? state.opacity * base.opacity : 0);
+        base.el.style.transform = `translate3d(${state.x}px,${state.y}px,0) rotate(${state.rotation}deg) scale(${state.scale}) ${base.transform}`;
+      }
+      for (const key of this.fields.keys()) this.writeField(key, null);
+      const scrolls = {};
+      const typed = {};
+      let pageId = this.story.initialPageId;
+      let x = 32, y = 32, visible = false, pulse = 0, cursorOpacity = 0, cursorScale = 1;
+      let fade = null;
+      const applyScroll = () => {
+        for (const [id, root] of this.roots) root.inner.style.transform = `scale(${root.scale}) translateY(${-(scrolls[id] || 0)}px)`;
+      };
+      for (const root of this.roots.values()) root.outer.style.transform = "none";
+      applyScroll();
+      for (const action of storySchedule(this.story)) {
+        if (t < action.start) break;
+        const p = Math.min(1, (t - action.start) / action.duration);
+        const ease = (v) => motionEase(v, action.easing);
+        if (action.type === "navigate") {
+          const to = action.toPageId;
+          fade = action.transition !== "cut" && p < 1 ? { from: pageId, to, progress: ease(p), motion: action.transition === "motion" } : null;
+          cursorOpacity *= fade ? 1 - motionEase(Math.min(1, p * 2)) : 0;
+          pageId = to;
+          visible = visible && cursorOpacity > 0;
+        } else if (action.type === "scroll") {
+          const root = this.roots.get(pageId);
+          const max = Math.max(0, root.inner.scrollHeight - this.document.composition.height / root.scale);
+          let destination = action.y || 0;
+          if (action.target) {
+            const target = actionTarget(root.inner, action.target);
+            const box = target.getBoundingClientRect(), origin = root.inner.getBoundingClientRect();
+            const viewScale = this.host.getBoundingClientRect().width / this.document.composition.width || 1;
+            destination = (box.top + box.height / 2 - origin.top) / (root.scale * viewScale) - this.document.composition.height / (2 * root.scale);
+          }
+          const end = Math.min(max, Math.max(0, destination));
+          scrolls[pageId] = (scrolls[pageId] || 0) + (end - (scrolls[pageId] || 0)) * ease(p);
+          applyScroll();
+        } else if (action.target) {
+          const root = this.roots.get(pageId);
+          const target = actionTarget(root.inner, action.target);
+          const box = target.getBoundingClientRect(), hostBox = this.host.getBoundingClientRect();
+          const viewScale = hostBox.width / this.document.composition.width || 1;
+          const endX = (box.left + box.width / 2 - hostBox.left) / viewScale;
+          const endY = (box.top + box.height / 2 - hostBox.top) / viewScale;
+          const movement = action.type === "move" ? p : Math.min(1, p / (action.type === "type" ? 0.35 : 0.5));
+          const q = ease(movement), dx = endX - x, dy = endY - y, distance = Math.hypot(dx, dy);
+          const arc = action.easing === "linear" ? 0 : Math.min(24, distance * 0.07) * Math.sin(Math.PI * q);
+          x += dx * q - (distance ? dy / distance : 0) * arc;
+          y += dy * q + (distance ? dx / distance : 0) * arc;
+          if (!visible) cursorOpacity = motionEase((t - action.start) / 240);
+          visible = true;
+          if (action.type === "click" && p > 0.6 && p < 1) {
+            pulse = (p - 0.6) / 0.4;
+            cursorScale = 1 - 0.12 * Math.sin(Math.PI * pulse) ** 2;
+          }
+          if (action.type === "type") {
+            const progress = Math.max(0, (p - 0.35) / 0.65);
+            const value = Array.from(action.text || "").slice(0, Math.floor(Array.from(action.text || "").length * progress)).join("");
+            typed[`${pageId}/${action.target}`] = value;
+            this.writeField(`${pageId}/${action.target}`, value);
+          }
+        }
+        if (p < 1) break;
+      }
+      for (const [id, root] of this.roots) {
+        const opacity = fade ? id === fade.from ? 1 : id === fade.to ? fade.progress : 0 : id === pageId ? 1 : 0;
+        if (fade == null ? void 0 : fade.motion) {
+          const q = fade.progress;
+          root.outer.style.transformOrigin = "center center";
+          root.outer.style.transform = id === fade.to ? `translateY(${Math.min(10, this.document.composition.height * 0.012) * (1 - q)}px) scale(${1 + 0.035 * (1 - q)})` : "none";
+        }
+        root.outer.style.zIndex = fade ? id === fade.to ? "2" : id === fade.from ? "1" : "0" : "0";
+        root.outer.style.opacity = String(opacity);
+        root.outer.style.visibility = opacity > 0 ? "visible" : "hidden";
+      }
+      this.cursor.style.visibility = visible ? "visible" : "hidden";
+      this.cursor.style.opacity = String(cursorOpacity);
+      this.cursor.style.transformOrigin = "3px 2px";
+      this.cursor.style.transform = `translate(${x}px,${y}px) scale(${cursorScale})`;
+      this.pulse.style.opacity = pulse ? String(0.75 * Math.sin(Math.PI * pulse) ** 2) : "0";
+      this.pulse.style.transform = `translate(${x}px,${y}px) scale(${0.35 + 0.9 * motionEase(pulse, "ease-out")})`;
+      return { pageId, cursor: { x, y, visible, opacity: cursorOpacity, scale: cursorScale }, typed, scrolls, time: t };
+    }
+    destroy() {
+      this.host.replaceChildren();
+    }
+  }
   if (typeof window !== "undefined") {
     window.MotionComposition = MotionComposition;
     window.IRRenderer = IRRenderer;
@@ -4814,6 +5018,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     window.DesignAIFontCatalog = DesignAIFontCatalog;
     window.TimelineEngine = TimelineEngine;
     window.Timeline = Timeline;
+    window.VideoStoryPlayer = VideoStoryPlayer;
   }
   exports.DesignAIFontCatalog = DesignAIFontCatalog;
   exports.GeoEdit = GeoEdit;

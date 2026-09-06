@@ -343,7 +343,28 @@ def _inline_font_face_css(ir: dict) -> str:
     return "\n".join(rules)
 
 
+class FidelityRenderError(RuntimeError):
+    """A failed measurement is retryable, never a passing fidelity result."""
+
+    def __init__(self, ir: dict, viewport: str, error: Exception):
+        root = next(iter(ir.get("tree") or []), {})
+        message = f"Render failed ({viewport}): {str(error)[:350]}"
+        super().__init__(message)
+        self.detail = {"code": "render-failed", "stage": "fidelity-render",
+                       "component": str(root.get("sourceKey") or ""),
+                       "path": "masterIr.tree[0]", "viewport": viewport,
+                       "retryable": True}
+
+
 def _render_block_png(page, ir: dict, viewport_name: str, width: int, height: int) -> bytes:
+    from playwright.sync_api import Error as PlaywrightError
+    try:
+        return _render_block_png_impl(page, ir, viewport_name, width, height)
+    except PlaywrightError as exc:
+        raise FidelityRenderError(ir, viewport_name, exc) from exc
+
+
+def _render_block_png_impl(page, ir: dict, viewport_name: str, width: int, height: int) -> bytes:
     """Отрисовать IR движком редактора в точном размере viewport и вернуть PNG.
 
     Viewport страницы выставляется в размер захваченного viewport, контейнер —
@@ -360,11 +381,13 @@ def _render_block_png(page, ir: dict, viewport_name: str, width: int, height: in
     if inline_fonts:
         page.add_style_tag(content=inline_fonts)
     page.evaluate(
-        "(args) => window.IRRenderer.renderIR(document.querySelector('#preview'), args.ir,"
-        " {viewport: args.viewport})",
+        "(args) => { const container = document.querySelector('#preview');"
+        " window.IRRenderer.renderIR(container, args.ir, {viewport: args.viewport, fit: false});"
+        " window.IRRenderer.fitPreview(container); }",
         {"ir": ir, "viewport": viewport_name})
     page.wait_for_selector('[data-ir-sec="0"]', timeout=5000)
-    # fitPreview выставляет высоту контейнера в requestAnimationFrame
+    # Headless measurement owns layout: fit synchronously, rather than depend
+    # on a preview-only deferred callback. Keep the font/image paint barrier.
     page.wait_for_function("() => document.querySelector('#preview').style.height !== ''",
                            timeout=5000)
     # The renderer returns before remote images and webfonts necessarily finish.

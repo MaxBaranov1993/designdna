@@ -19,6 +19,26 @@ def test_render_png_reports_missing_engine(monkeypatch, tmp_path):
         ir_render.render_png({}, width=1440)
 
 
+def test_mobile_render_passes_viewport_and_changes_only_private_artboard(monkeypatch, tmp_path):
+    import copy
+    engine = tmp_path / "engine.js"
+    engine.write_text("", encoding="utf-8")
+    monkeypatch.setattr(ir_render, "RENDERER_JS", engine)
+    monkeypatch.setattr(ir_render, "materialize_render_assets", lambda ir: ({}, []))
+    monkeypatch.setattr(ir_render, "rewrite_local_asset_urls", copy.deepcopy)
+    monkeypatch.setattr(ir_render, "_install_deterministic_font_fallbacks", lambda *_a, **_k: None)
+    seen = []
+    monkeypatch.setattr(ir_render, "_render_document", lambda ir, assets, width, fonts, fallback, viewport:
+        (seen.append((ir, width, viewport)) or b"png", set()))
+    source = {"frame": {"width": 1440, "height": "hug"}, "tree": []}
+    assert ir_render.render_png(source, width=390, viewport="mobile") == b"png"
+    assert source["frame"]["width"] == 1440
+    assert seen[0][0]["frame"]["width"] == 390
+    assert seen[0][1:] == (390, "mobile")
+    with pytest.raises(ValueError, match="viewport"):
+        ir_render.render_png(source, viewport="phone")
+
+
 
 def test_render_neutralizes_non_asset_hrefs_before_asset_guard():
     """mailto/якоря/внешние ссылки — не ассеты: гард не должен ронять рендер."""

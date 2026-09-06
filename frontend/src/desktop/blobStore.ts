@@ -120,8 +120,9 @@ export async function expandBlobRefs(body: string): Promise<string> {
   });
 }
 
-/** Обходит payload и выносит все длинные data:-URL (мутирует объекты на месте:
- *  компоненты продолжают работать — <img src> грузит блоб по протоколу). */
+/** Offload presentation assets in an owned save snapshot only. Canonical IR
+ * and DS documents are backend-owned hash inputs, including embedded assets;
+ * replacing data URLs there invalidates Source/master pins even in a copy. */
 export async function offloadBlobsInPlace(payload: unknown, budgetMs = 800): Promise<boolean> {
   if (!blobBridgesAvailable()) return false;
   const started = performance.now();
@@ -133,7 +134,12 @@ export async function offloadBlobsInPlace(payload: unknown, budgetMs = 800): Pro
       return;
     }
     if (value && typeof value === "object") {
+      const object = value as Record<string, unknown>;
+      if (object.type === "designsystem"
+        || (typeof object.schemaVersion === "string" && object.schemaVersion.startsWith("design-system/"))
+        || (Array.isArray(object.tree) && (object.version != null || object.tokens != null))) return;
       for (const key of Object.keys(value as Record<string, unknown>)) {
+        if (["ir", "masterIr", "templateIr", "sourceIr", "fidelityReport", "provenance", "sourceArtifact"].includes(key)) continue;
         const v = (value as Record<string, unknown>)[key];
         if (typeof v === "string" && v.startsWith("data:") && v.length >= OFFLOAD_MIN_LENGTH) {
           const ref = await offloadDataUrl(v);

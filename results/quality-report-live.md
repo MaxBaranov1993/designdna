@@ -1,6 +1,6 @@
 # Design Studio v3 — quality report
 
-Generated: 2026-09-03 17:00 UTC. Render width: 1440 px. Exemplar target: vision score ≥90.
+Generated: 2026-09-03 17:48 UTC. Render width: 1440 px. Exemplar target: vision score ≥90.
 
 ## Fixed five-brief benchmark
 
@@ -8,13 +8,13 @@ Generated: 2026-09-03 17:00 UTC. Render width: 1440 px. Exemplar target: vision 
 
 | Product | Before PNG | Before score | After PNG | After score | Delta |
 |---|---|---:|---|---:|---:|
-| SaaS | [PNG](quality-report-assets-live/briefs/saas-before.png) | 55 | [PNG](quality-report-assets-live/briefs/saas-after.png) | 84 | +29 |
-| Маркетплейс | [PNG](quality-report-assets-live/briefs/marketplace-before.png) | 55 | [PNG](quality-report-assets-live/briefs/marketplace-after.png) | 58 | +3 |
-| Ресторан | [PNG](quality-report-assets-live/briefs/restaurant-before.png) | 72 | [PNG](quality-report-assets-live/briefs/restaurant-after.png) | 62 | -10 |
-| Портфолио | [PNG](quality-report-assets-live/briefs/portfolio-before.png) | 62 | [PNG](quality-report-assets-live/briefs/portfolio-after.png) | 72 | +10 |
-| Финтех | [PNG](quality-report-assets-live/briefs/fintech-before.png) | 66 | [PNG](quality-report-assets-live/briefs/fintech-after.png) | 48 | -18 |
+| SaaS | [PNG](quality-report-assets-live/briefs/saas-before.png) | 52 | [PNG](quality-report-assets-live/briefs/saas-after.png) | 72 | +20 |
+| Маркетплейс | [PNG](quality-report-assets-live/briefs/marketplace-before.png) | 66 | [PNG](quality-report-assets-live/briefs/marketplace-after.png) | 73 | +7 |
+| Ресторан | [PNG](quality-report-assets-live/briefs/restaurant-before.png) | 88 | [PNG](quality-report-assets-live/briefs/restaurant-after.png) | 76 | -12 |
+| Портфолио | [PNG](quality-report-assets-live/briefs/portfolio-before.png) | 56 | [PNG](quality-report-assets-live/briefs/portfolio-after.png) | 76 | +20 |
+| Финтех | [PNG](quality-report-assets-live/briefs/fintech-before.png) | 76 | [PNG](quality-report-assets-live/briefs/fintech-after.png) | 76 | +0 |
 
-Median: **62 → 62** (пар с оценкой: 5 из 5).
+Median: **66 → 76** (пар с оценкой: 5 из 5).
 
 ## Exemplar library
 
@@ -22,22 +22,16 @@ Count: **10**. Live score cells remain `not run` until a configured vision provi
 
 | Exemplar | PNG | Schema | Sanitize stable | Quality gate | Slop checklist | Vision score |
 |---|---|---|---|---|---|---:|
-| ecommerce | [PNG](quality-report-assets-live/exemplars/ecommerce.png) | pass | pass | pass | pass | 72 |
-| education | [PNG](quality-report-assets-live/exemplars/education.png) | pass | pass | pass | pass | 66 |
-| fintech | [PNG](quality-report-assets-live/exemplars/fintech.png) | pass | pass | pass | pass | 78 |
-| healthcare | [PNG](quality-report-assets-live/exemplars/healthcare.png) | pass | pass | pass | pass | failed: Error: Page.goto: net::ERR_ABORTED at https://render.ir.invalid/document
-Call log:
-  - navigating to "https://render.ir.invalid/document", waiting until "load"
- |
-| marketplace | [PNG](quality-report-assets-live/exemplars/marketplace.png) | pass | pass | pass | pass | 72 |
+| ecommerce | [PNG](quality-report-assets-live/exemplars/ecommerce.png) | pass | pass | pass | pass | 76 |
+| education | [PNG](quality-report-assets-live/exemplars/education.png) | pass | pass | pass | pass | 68 |
+| fintech | [PNG](quality-report-assets-live/exemplars/fintech.png) | pass | pass | pass | pass | 84 |
+| healthcare | [PNG](quality-report-assets-live/exemplars/healthcare.png) | pass | pass | pass | pass | 72 |
+| marketplace | [PNG](quality-report-assets-live/exemplars/marketplace.png) | pass | pass | pass | pass | 76 |
 | portfolio | [PNG](quality-report-assets-live/exemplars/portfolio.png) | pass | pass | pass | pass | 68 |
-| real-estate | [PNG](quality-report-assets-live/exemplars/real-estate.png) | pass | pass | pass | pass | 89 |
-| restaurant | [PNG](quality-report-assets-live/exemplars/restaurant.png) | pass | pass | pass | pass | failed: TimeoutError: Page.goto: Timeout 30000ms exceeded.
-Call log:
-  - navigating to "https://render.ir.invalid/document", waiting until "load"
- |
-| saas-landing | [PNG](quality-report-assets-live/exemplars/saas-landing.png) | pass | pass | pass | pass | 68 |
-| travel | [PNG](quality-report-assets-live/exemplars/travel.png) | pass | pass | pass | pass | 84 |
+| real-estate | [PNG](quality-report-assets-live/exemplars/real-estate.png) | pass | pass | pass | pass | 88 |
+| restaurant | [PNG](quality-report-assets-live/exemplars/restaurant.png) | pass | pass | pass | pass | 81 |
+| saas-landing | [PNG](quality-report-assets-live/exemplars/saas-landing.png) | pass | pass | pass | pass | 64 |
+| travel | [PNG](quality-report-assets-live/exemplars/travel.png) | pass | pass | pass | pass | 88 |
 
 ## Verification contract
 

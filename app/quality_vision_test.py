@@ -42,8 +42,8 @@ def test_quality_scorecard_sends_rendered_png_and_rubric_to_vision(monkeypatch):
     assert stages == ["render", "judge"]
     assert calls[0]["image"][0].startswith("data:image/png;base64,iVBORw0K")
     assert calls[0]["role"] == "quality_judge"
-    assert "Иерархия" in calls[0]["prompt"]
-    assert "slop-тропов" in calls[0]["prompt"]
+    assert "Task and information architecture: 25" in calls[0]["prompt"]
+    assert "Justified visual decisions: 10" in calls[0]["prompt"]
     assert "Лендинг кофейни" in calls[0]["prompt"]
     assert "Главное доказательство" in calls[0]["system"]
 
@@ -65,7 +65,7 @@ def test_quality_pass_repair_rejudges_a_fresh_screenshot(monkeypatch):
         server.llm, "chat",
         lambda *args, **kwargs: json.dumps(BASE_IR, ensure_ascii=False),
     )
-    monkeypatch.setattr(server.qualitygate, "check", lambda ir: [])
+    monkeypatch.setattr(server.qualitygate, "check", lambda ir, **kwargs: [])
     stages = []
     monkeypatch.setattr(server.run_registry, "stage", lambda run_id, stage, message, **kw: stages.append(stage))
 
@@ -76,7 +76,7 @@ def test_quality_pass_repair_rejudges_a_fresh_screenshot(monkeypatch):
     assert result["min_score"] == 80
     assert result["initial_scorecard"]["score"] == 61
     assert result["scorecard"]["score"] == 91
-    assert len(render_calls) == 2
+    assert len(render_calls) == 4
     assert stages == ["render", "judge", "repair", "rejudge", "render", "judge"]
 
 

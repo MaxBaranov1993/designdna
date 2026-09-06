@@ -4,53 +4,125 @@
   "title": "TimelineIR",
   "description": "Authored video timeline over Design IR: layers/groups with transform keyframes. Deterministic layer extraction from Design IR; interpolation is the engine's job (frontend/src/engine/timeline.ts).",
   "type": "object",
-  "required": ["version", "source", "composition", "groups", "layers"],
+  "required": [
+    "version",
+    "source",
+    "composition",
+    "groups",
+    "layers"
+  ],
   "additionalProperties": false,
   "properties": {
-    "version": { "const": "timeline-ir/1.0" },
+    "version": {
+      "const": "timeline-ir/1.0"
+    },
     "source": {
       "type": "object",
-      "required": ["designIrHash", "layerManifestHash"],
+      "required": [
+        "designIrHash",
+        "layerManifestHash"
+      ],
       "additionalProperties": false,
       "properties": {
-        "designIrHash": { "$ref": "#/$defs/optionalHash" },
-        "layerManifestHash": { "$ref": "#/$defs/optionalHash" },
-        "createdAt": { "type": "string" }
+        "designIrHash": {
+          "$ref": "#/$defs/optionalHash"
+        },
+        "layerManifestHash": {
+          "$ref": "#/$defs/optionalHash"
+        },
+        "createdAt": {
+          "type": "string"
+        }
       }
     },
     "composition": {
       "type": "object",
-      "required": ["width", "height", "fps", "duration", "background", "aspect"],
+      "required": [
+        "width",
+        "height",
+        "fps",
+        "duration",
+        "background",
+        "aspect"
+      ],
       "additionalProperties": false,
       "properties": {
-        "width": { "type": "integer", "minimum": 320, "maximum": 3840 },
-        "height": { "type": "integer", "minimum": 240, "maximum": 2160 },
-        "fps": { "type": "integer", "minimum": 12, "maximum": 60 },
-        "duration": { "type": "integer", "minimum": 0, "maximum": 600000 },
-        "background": { "type": "string", "pattern": "^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$" },
-        "aspect": { "enum": ["16:9", "9:16", "1:1", "custom"] }
+        "width": {
+          "type": "integer",
+          "minimum": 320,
+          "maximum": 3840
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 240,
+          "maximum": 2160
+        },
+        "fps": {
+          "type": "integer",
+          "minimum": 12,
+          "maximum": 60
+        },
+        "duration": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        },
+        "background": {
+          "type": "string",
+          "pattern": "^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$"
+        },
+        "aspect": {
+          "enum": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "custom"
+          ]
+        }
       }
     },
     "groups": {
       "type": "array",
-      "items": { "$ref": "#/$defs/group" }
+      "items": {
+        "$ref": "#/$defs/group"
+      }
     },
     "layers": {
       "type": "array",
-      "items": { "$ref": "#/$defs/layer" }
+      "items": {
+        "$ref": "#/$defs/layer"
+      }
     },
     "presetsApplied": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["preset", "at"],
+        "required": [
+          "preset",
+          "at"
+        ],
         "additionalProperties": false,
         "properties": {
-          "preset": { "type": "string", "minLength": 1, "maxLength": 120 },
-          "at": { "type": "integer", "minimum": 0 },
-          "layerIds": { "type": "array", "items": { "type": "string" } }
+          "preset": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "at": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "layerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
+    },
+    "story": {
+      "$ref": "#/$defs/story"
     }
   },
   "$defs": {
@@ -61,96 +133,323 @@
     "optionalHash": {
       "description": "Empty string marks an unlinked draft timeline (e.g. before inputs arrive); linked documents carry a real hash.",
       "anyOf": [
-        { "const": "" },
-        { "type": "string", "minLength": 16, "maxLength": 256 }
+        {
+          "const": ""
+        },
+        {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 256
+        }
       ]
     },
     "group": {
       "type": "object",
-      "required": ["id", "name"],
+      "required": [
+        "id",
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/identifier" },
-        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
-        "parent": { "type": ["string", "null"] },
-        "locked": { "type": "boolean" }
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "locked": {
+          "type": "boolean"
+        }
       }
     },
     "layer": {
       "type": "object",
-      "required": ["id", "name", "type", "in", "out", "transform"],
+      "required": [
+        "id",
+        "name",
+        "type",
+        "in",
+        "out",
+        "transform"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/identifier" },
-        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
-        "type": { "enum": ["component", "group", "camera", "overlay"] },
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "type": {
+          "enum": [
+            "component",
+            "group",
+            "camera",
+            "overlay"
+          ]
+        },
         "ref": {
           "type": "string",
           "maxLength": 500,
           "description": "sourceKey or node id in the base Design IR. Required for component layers."
         },
-        "parent": { "type": ["string", "null"] },
-        "in": { "type": "integer", "minimum": 0, "maximum": 600000 },
-        "out": { "type": "integer", "minimum": 0, "maximum": 600000 },
-        "locked": { "type": "boolean" },
-        "transform": { "$ref": "#/$defs/transform" }
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "in": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        },
+        "out": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "transform": {
+          "$ref": "#/$defs/transform"
+        },
+        "pageId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "storyTarget": {
+          "type": "string",
+          "maxLength": 500,
+          "pattern": "^s[0-9]+(\\.children\\.[0-9]+)*$"
+        }
       }
     },
     "transform": {
       "type": "object",
-      "required": ["anchor", "properties"],
+      "required": [
+        "anchor",
+        "properties"
+      ],
       "additionalProperties": false,
       "properties": {
         "anchor": {
           "type": "object",
-          "required": ["x", "y"],
+          "required": [
+            "x",
+            "y"
+          ],
           "additionalProperties": false,
           "properties": {
-            "x": { "type": "number", "minimum": 0, "maximum": 1 },
-            "y": { "type": "number", "minimum": 0, "maximum": 1 }
+            "x": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
           }
         },
         "properties": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "x": { "$ref": "#/$defs/track" },
-            "y": { "$ref": "#/$defs/track" },
-            "scale": { "$ref": "#/$defs/track" },
-            "rotation": { "$ref": "#/$defs/track" },
-            "opacity": { "$ref": "#/$defs/track" }
+            "x": {
+              "$ref": "#/$defs/track"
+            },
+            "y": {
+              "$ref": "#/$defs/track"
+            },
+            "scale": {
+              "$ref": "#/$defs/track"
+            },
+            "rotation": {
+              "$ref": "#/$defs/track"
+            },
+            "opacity": {
+              "$ref": "#/$defs/track"
+            }
           }
         }
       }
     },
     "track": {
       "type": "object",
-      "required": ["keyframes"],
+      "required": [
+        "keyframes"
+      ],
       "additionalProperties": false,
       "properties": {
         "keyframes": {
           "type": "array",
-          "items": { "$ref": "#/$defs/keyframe" }
+          "items": {
+            "$ref": "#/$defs/keyframe"
+          }
         }
       }
     },
     "keyframe": {
       "type": "object",
-      "required": ["t", "value"],
+      "required": [
+        "t",
+        "value"
+      ],
       "additionalProperties": false,
       "properties": {
-        "t": { "type": "integer", "minimum": 0, "maximum": 600000 },
-        "value": { "type": "number" },
+        "t": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        },
+        "value": {
+          "type": "number"
+        },
         "easing": {
-          "enum": ["linear", "ease", "ease-in", "ease-out", "ease-in-out", "cubic-bezier"],
+          "enum": [
+            "linear",
+            "ease",
+            "ease-in",
+            "ease-out",
+            "ease-in-out",
+            "cubic-bezier"
+          ],
           "description": "Easing of the segment from this keyframe to the next one."
         },
         "bezier": {
           "type": "array",
           "minItems": 4,
           "maxItems": 4,
-          "items": { "type": "number", "minimum": -2, "maximum": 2 },
+          "items": {
+            "type": "number",
+            "minimum": -2,
+            "maximum": 2
+          },
           "description": "cubic-bezier(x1,y1,x2,y2); required when easing is cubic-bezier."
+        }
+      }
+    },
+    "story": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pages",
+        "initialPageId",
+        "actions"
+      ],
+      "properties": {
+        "pages": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "name",
+              "ir"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/identifier"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "ir": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "initialPageId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "actions": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/storyAction"
+          }
+        }
+      }
+    },
+    "storyAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "pageId",
+        "duration"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "pageId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "enum": [
+            "move",
+            "click",
+            "type",
+            "wait",
+            "scroll",
+            "navigate"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "duration": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "toPageId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "transition": {
+          "enum": [
+            "cut",
+            "fade",
+            "motion"
+          ]
+        },
+        "easing": {
+          "enum": [
+            "soft",
+            "ease-in",
+            "ease-out",
+            "linear"
+          ]
         }
       }
     }

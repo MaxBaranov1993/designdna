@@ -17,7 +17,7 @@ import typography
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = ROOT / "schema" / "design-brief.schema.json"
 CACHE_KIND = "art_direction"
-CACHE_VERSION = "design-directions/1.0"
+CACHE_VERSION = "design-directions/1.1"
 
 
 def load_schema() -> dict:
@@ -38,6 +38,7 @@ def cache_key(
     style_dna: dict | None = None,
     *,
     count: int = 1,
+    provider: str | None = None,
 ) -> str:
     canonical = json.dumps(
         {
@@ -46,6 +47,7 @@ def cache_key(
             "productType": product_type,
             "styleDNA": style_dna,
             "count": count,
+            "provider": provider,
         },
         ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
     ).encode("utf-8")
@@ -77,6 +79,12 @@ def _prompt(brief: Any, product_type: str, style_dna: dict | None, count: int) -
         "brief": brief, "productType": product_type, "styleDNA": style_dna,
         "count": count, "typePairs": pair_catalog, "designBriefSchema": load_schema(),
     }
+    if style_dna and style_dna.get("policyHash"):
+        import generator_policy
+        policy = generator_policy.context(str(brief), surface=style_dna.get("surface", "landing"),
+                                          style=style_dna.get("style", "auto"))
+        system += "\n" + generator_policy.prompt(policy)
+        system += "\nAll alternatives must respect the selected style. The schema's rhythm.risk is a justified composition choice, never obligatory spectacle."
     return [{"role": "system", "content": system},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
 
@@ -98,7 +106,7 @@ def create_design_brief(
     if not isinstance(product_type, str) or not product_type.strip():
         raise ValueError("product_type must be a non-empty string")
     count = max(1, min(int(count), 3))
-    key = cache_key(brief, product_type, style_dna, count=count)
+    key = cache_key(brief, product_type, style_dna, count=count, provider=provider)
     cached = cache_store.get(CACHE_KIND, key)
     if count == 1 and isinstance(cached, dict):
         return deepcopy(validate_design_brief(cached))

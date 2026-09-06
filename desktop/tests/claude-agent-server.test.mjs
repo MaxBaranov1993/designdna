@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
@@ -66,12 +67,19 @@ test("DESIGNDNA_CLAUDE bypasses discovery on every platform", () => {
   for (const platform of ["win32", "darwin", "linux"]) {
     const spec = claudeProcessSpec({
       platform,
-      environment: { DESIGNDNA_CLAUDE: "/opt/claude" },
+      environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" },
       args: ["-p"],
     });
     assert.equal(spec.command, "/opt/claude");
     assert.deepEqual(spec.args, ["-p"]);
   }
+});
+
+test("Windows shim preserves the empty setting-sources argument", () => {
+  const spec = claudeProcessSpec({ platform: "win32", environment: { PATH: "" },
+    fileExists: () => false, args: ["-p", "--setting-sources", "", "--model", "opus"],
+  });
+  assert.equal(spec.args[3], 'chcp 65001>nul && claude -p --setting-sources "" --model opus');
 });
 
 test("POSIX invokes the claude binary directly", () => {
@@ -187,12 +195,12 @@ test("chat sends a headless JSON request and returns the result field", async ()
   const server = new ClaudeAgentServer({
     cwd: "/repo",
     spawnProcess,
-    environment: { DESIGNDNA_CLAUDE: "/opt/claude" },
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" },
     fileExists: () => true,
   });
   const output = await server.chat([{ role: "user", content: "make it" }], { profile: "generator" });
   assert.equal(output, '{"ir":true}');
-  assert.deepEqual(calls[0].args, ["-p", "--output-format", "json", "--model", "opus"]);
+  assert.deepEqual(calls[0].args, ["-p", "--output-format", "json", "--model", "opus", "--setting-sources", ""]);
   assert.match(calls[0].stdin, /USER:\nmake it/);
   assert.match(calls[0].stdin, /Return only the JSON object/);
 });
@@ -203,7 +211,7 @@ test("workspace chat accepts prose without requesting Design IR or JSON", async 
   });
   const server = new ClaudeAgentServer({
     cwd: "/repo", spawnProcess,
-    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
   });
   const output = await server.chat([{ role: "user", content: "Оцени идею" }], { profile: "chat", model: "opus" });
   assert.equal(output, "Предлагаю упростить навигацию.");
@@ -217,10 +225,10 @@ test("chat passes a supported model through and falls back on unknown", async ()
     const { spawnProcess, calls } = fakeSpawn({ stdout: JSON.stringify({ result: "ok" }) });
     const server = new ClaudeAgentServer({
       cwd: "/repo", spawnProcess,
-      environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+      environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
     });
     await server.chat([{ role: "user", content: "hi" }], { model: requested });
-    assert.deepEqual(calls[0].args, ["-p", "--output-format", "json", "--model", expected]);
+    assert.deepEqual(calls[0].args, ["-p", "--output-format", "json", "--model", expected, "--setting-sources", ""]);
   }
 });
 
@@ -230,18 +238,108 @@ test("high effort sets a thinking budget, medium leaves it unset", async () => {
     const { spawnProcess, calls } = fakeSpawn({ stdout: envelope });
     const server = new ClaudeAgentServer({
       cwd: "/repo", spawnProcess,
-      environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+      environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
     });
     await server.chat([{ role: "user", content: "hi" }], { effort });
     assert.equal(calls[0].options.env.MAX_THINKING_TOKENS, expected);
   }
 });
 
+const API_ROUTE_ENV_NAMES = [
+  "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "BASE_URL",
+  "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_PROFILE",
+  "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_BASE_URL", "AWS_BEARER_TOKEN_BEDROCK",
+  "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_SKIP_BEDROCK_AUTH", "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+];
+
+for (const source of ["inherited OAuth", "app-stored OAuth", "CLI OAuth file"]) {
+  test(`subscription child strips API routes and preserves ${source} without mutating parent env`, async () => {
+    const { spawnProcess, calls } = fakeSpawn({ stdout: JSON.stringify({ result: "ok" }) });
+    // Synthetic values only. Assertions report names/booleans, never credentials.
+    const inheritedToken = "fixture-inherited-oauth";
+    const appToken = "fixture-app-oauth";
+    const environment = Object.freeze({
+      DESIGNDNA_CLAUDE: "/opt/claude", USERPROFILE: "C:\\Users\\fixture", Path: "fixture-path",
+      SystemRoot: "C:\\Windows", TEMP: "fixture-temp", HTTPS_PROXY: "http://fixture-proxy",
+      ...Object.fromEntries(API_ROUTE_ENV_NAMES.flatMap((name) => [[name, "fixture-route"], [name.toLowerCase(), "fixture-route"]])),
+      ...(source === "CLI OAuth file" ? {} : { claude_code_oauth_token: inheritedToken }),
+    });
+    const server = new ClaudeAgentServer({ cwd: "/repo", environment, spawnProcess,
+      fileExists: () => true, readFile: () => source === "CLI OAuth file" ? VALID_CREDS : EMPTY_CREDS,
+      getStoredToken: () => source === "app-stored OAuth" ? appToken : null,
+    });
+    if (source === "CLI OAuth file") assert.equal(server.account().ready, true);
+    assert.equal(await server.chat([{ role: "user", content: "Judge" }], { effort: "high" }), "ok");
+    const childEnv = calls[0].options.env;
+    const sourceFlagIndex = calls[0].args.indexOf("--setting-sources");
+    assert.ok(sourceFlagIndex >= 0);
+    assert.equal(calls[0].args[sourceFlagIndex + 1], "", "headless requests must exclude user/project/local routing settings");
+    assert.equal(calls[0].args.includes("--bare"), false, "OAuth must remain available");
+    assert.equal(calls[0].args.includes("--settings"), false, "do not load additional routing settings");
+    for (const name of API_ROUTE_ENV_NAMES) {
+      assert.equal(Object.keys(childEnv).some((key) => key.toUpperCase() === name), false, `${name} must not reach the child`);
+      assert.ok(environment[name] === "fixture-route", "parent environment must remain unchanged");
+    }
+    for (const name of ["USERPROFILE", "Path", "SystemRoot", "TEMP", "HTTPS_PROXY"]) {
+      assert.ok(childEnv[name] === environment[name], `${name} must remain available`);
+    }
+    if (source === "CLI OAuth file") {
+      assert.equal(Object.hasOwn(childEnv, "CLAUDE_CODE_OAUTH_TOKEN"), false, "file-based login must not inject an env token");
+    } else {
+      const expected = source === "app-stored OAuth" ? appToken : inheritedToken;
+      assert.ok(childEnv.CLAUDE_CODE_OAUTH_TOKEN === expected, "subscription OAuth must reach the child");
+      assert.equal(Object.hasOwn(childEnv, "claude_code_oauth_token"), false, "OAuth env key must be canonical on Windows");
+    }
+    assert.equal(childEnv.MAX_THINKING_TOKENS, "8000");
+    assert.equal(calls.length, 1);
+  });
+}
+
+test("subscription authentication failure does not retry with stripped API credentials", async () => {
+  const { spawnProcess, calls } = fakeSpawn({
+    stdout: JSON.stringify({ is_error: true, result: "Not logged in" }), code: 1,
+  });
+  const environment = Object.freeze({ DESIGNDNA_CLAUDE: "/opt/claude", ANTHROPIC_API_KEY: "fixture-api" });
+  const server = new ClaudeAgentServer({ spawnProcess, environment, fileExists: () => true, getStoredToken: () => "fixture-expired-oauth" });
+  await assert.rejects(server.chat([{ role: "user", content: "Judge" }]), /Claude/);
+  assert.equal(calls.length, 1);
+  assert.equal(Object.hasOwn(calls[0].options.env, "ANTHROPIC_API_KEY"), false);
+  assert.ok(environment.ANTHROPIC_API_KEY === "fixture-api", "parent credentials must not change");
+});
+
+test("API credentials alone cannot pass the subscription login guard or start a child", async () => {
+  const { spawnProcess, calls } = fakeSpawn({ stdout: JSON.stringify({ result: "must not run" }) });
+  const server = new ClaudeAgentServer({ spawnProcess,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", ANTHROPIC_API_KEY: "fixture-api",
+      ANTHROPIC_AUTH_TOKEN: "fixture-bearer", CLAUDE_CODE_USE_BEDROCK: "1" },
+    fileExists: () => false,
+  });
+  const status = server.account();
+  assert.equal(status.loggedIn, false);
+  assert.equal(status.ready, false);
+  server.materializeMessages = () => { throw new Error("must reject before image materialization"); };
+  await assert.rejects(server.chat([{ role: "user", content: "Judge" }]), /OAuth.*Connections/);
+  assert.equal(calls.length, 0, "no provider request or automatic login may start");
+});
+
+test("inherited OAuth is recognized by readiness without reading or changing credentials", () => {
+  const server = new ClaudeAgentServer({
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", claude_code_oauth_token: "fixture-oauth" },
+    fileExists: () => false,
+    readFile: () => { throw new Error("must not read credentials for env OAuth"); },
+  });
+  const status = server.account();
+  assert.equal(status.viaEnv, true);
+  assert.equal(status.loggedIn, true);
+  assert.equal(status.ready, true);
+});
+
 test("unknown profiles are rejected before the process starts", async () => {
   const { spawnProcess, calls } = fakeSpawn({ stdout: "{}" });
   const server = new ClaudeAgentServer({
     cwd: "/repo", spawnProcess,
-    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
   });
   await assert.rejects(
     server.chat([{ role: "user", content: "hi" }], { profile: "shell" }),
@@ -259,7 +357,7 @@ test("a login failure reported on stdout is surfaced, not swallowed as exit 1", 
   });
   const server = new ClaudeAgentServer({
     cwd: "/repo", spawnProcess,
-    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
   });
   await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude не подключён.*Подключить Claude/s);
 });
@@ -268,7 +366,7 @@ test("an authentication failure becomes a readable login instruction", async () 
   const { spawnProcess } = fakeSpawn({ stderr: "Invalid API key · please run /login", code: 1 });
   const server = new ClaudeAgentServer({
     cwd: "/repo", spawnProcess,
-    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => false,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => false,
   });
   await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude не подключён.*Подключить Claude/s);
 });
@@ -280,7 +378,7 @@ test("cmd.exe OEM-encoded failures are decoded, not shown as mojibake", async ()
   const { spawnProcess } = fakeSpawn({ stderr: oem, code: 1 });
   const server = new ClaudeAgentServer({
     cwd: "/repo", spawnProcess,
-    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
   });
   await assert.rejects(
     server.chat([{ role: "user", content: "hi" }]),
@@ -298,7 +396,7 @@ test("an error envelope and an empty result both surface as failures", async () 
   for (const [{ spawnProcess }, pattern] of [[errored, /rate limited/], [emptyOut, /empty response/]]) {
     const server = new ClaudeAgentServer({
       cwd: "/repo", spawnProcess,
-      environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+      environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
     });
     await assert.rejects(server.chat([{ role: "user", content: "hi" }]), pattern);
   }
@@ -319,7 +417,7 @@ test("cancellation kills the CLI process", async () => {
   };
   const server = new ClaudeAgentServer({
     cwd: "/repo", spawnProcess,
-    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
   });
   await assert.rejects(
     server.chat([{ role: "user", content: "hi" }], { signal: controller.signal }),
@@ -333,13 +431,57 @@ test("cancellation kills the CLI process", async () => {
 
 const PNG_1PX = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==";
 
+for (const separateMessages of [false, true]) {
+  test(`materialization failure removes earlier image files (${separateMessages ? "later message" : "same message"})`, async (t) => {
+    const imageTempRoot = mkdtempSync(path.join(tmpdir(), "ddna-claude-cleanup-test-"));
+    t.after(() => rmSync(imageTempRoot, { recursive: true, force: true }));
+    const { spawnProcess, calls } = fakeSpawn();
+    const server = new ClaudeAgentServer({ imageTempRoot, spawnProcess,
+      environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" },
+      fileExists: () => true,
+    });
+    let materializedFile;
+    const good = { type: "image_url", image_url: { url: `data:image/png;base64,${PNG_1PX}` } };
+    const bad = { type: "image_url", image_url: { get url() {
+      const directories = readdirSync(imageTempRoot);
+      assert.equal(directories.length, 1, "first image must already be materialized");
+      const directory = path.join(imageTempRoot, directories[0]);
+      materializedFile = path.join(directory, readdirSync(directory)[0]);
+      assert.equal(readFileSync(materializedFile).toString("base64"), PNG_1PX);
+      return "https://example.test/unsupported.png";
+    } } };
+    const messages = separateMessages
+      ? [{ role: "user", content: [good] }, { role: "user", content: [bad] }]
+      : [{ role: "user", content: [good, bad] }];
+    await assert.rejects(server.chat(messages), /Claude CLI transports only data:image base64 parts/);
+    assert.ok(materializedFile, "regression must exercise a partially written image request");
+    assert.equal(existsSync(materializedFile), false);
+    assert.equal(existsSync(path.dirname(materializedFile)), false);
+    assert.deepEqual(readdirSync(imageTempRoot), []);
+    assert.equal(calls.length, 0, "materialization failure must not start a provider process");
+  });
+}
+
+for (const profile of ["generator", "quality_judge", "quality_repair", "editor"]) {
+  test(`${profile} ends with a JSON-only reminder and preserves prose-prefixed raw output`, async () => {
+    const raw = 'Here is the visual verdict:\n{"approved":false,"score":62}\n';
+    const { spawnProcess, calls } = fakeSpawn({ stdout: JSON.stringify({ result: raw }) });
+    const server = new ClaudeAgentServer({ spawnProcess,
+      environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
+    });
+    assert.equal(await server.chat([{ role: "user", content: "Review the supplied evidence" }], { profile }), raw);
+    assert.match(calls[0].stdin, /Review the supplied evidence\n\nFinal response: return only the complete JSON object required above\. No introduction, explanation, or Markdown fences\.$/);
+    assert.equal(calls[0].args.includes("--json-schema"), false, "prompt reminder must not force a schema");
+  });
+}
+
 test("image parts become temp files, Read is allowed, and the dir is cleaned up", async () => {
   const { spawnProcess, calls } = fakeSpawn({
     stdout: JSON.stringify({ type: "result", is_error: false, result: '{"regions":[]}' }),
   });
   const server = new ClaudeAgentServer({
     cwd: "/repo", spawnProcess,
-    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
   });
   const output = await server.chat([
     { role: "system", content: "segment" },
@@ -362,7 +504,7 @@ test("text-only requests keep the no-tools contract and flat prompt", async () =
   });
   const server = new ClaudeAgentServer({
     cwd: "/repo", spawnProcess,
-    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
   });
   await server.chat([{ role: "user", content: "plain" }]);
   assert.equal(calls[0].args.includes("--allowedTools"), false);
@@ -373,7 +515,7 @@ test("non-data image urls are rejected loudly before any spawn", async () => {
   const { spawnProcess, calls } = fakeSpawn({ stdout: "{}" });
   const server = new ClaudeAgentServer({
     cwd: "/repo", spawnProcess,
-    environment: { DESIGNDNA_CLAUDE: "/opt/claude" }, fileExists: () => true,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
   });
   await assert.rejects(
     server.chat([{ role: "user", content: [

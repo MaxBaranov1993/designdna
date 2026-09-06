@@ -380,31 +380,55 @@ test("UI camelCase tool history (toolCalls/toolCallId) normalizes to the wire sh
   assert.equal(tool.content, "{\"value\":7}");
 });
 
-test("multimodal content is rejected loudly on text-only transports (codex, zcode)", () => {
+test("Codex image parts pass capability validation and adaptation without loss", () => {
   const envelope = createEnvelope({
     provider: "codex",
     messages: [{
       role: "user",
       content: [
         { type: "text", text: "describe" },
-        { type: "image_url", image_url: { url: "data:image/png;base64,aGk=" } },
+        { type: "image_url", image_url: { url: "data:image/png;base64,aGk=", detail: "high" } },
+        { type: "text", text: "compare with Source" },
+        { type: "image_url", image_url: { url: "https://example.test/source.png", detail: "low" } },
       ],
     }],
   });
-  for (const provider of ["codex", "zcode"]) {
-    assert.throws(
-      () => assertEnvelopeSupported(envelope, provider),
-      (error) => {
-        assert.ok(error instanceof UnsupportedCapabilityError);
-        assert.ok(error.issues.some((i) => i.field === "multimodal"));
-        return true;
-      },
-    );
-  }
+  assert.doesNotThrow(() => assertEnvelopeSupported(envelope, "codex"));
+  const { envelope: adapted, dropped } = adaptEnvelopeForProvider(envelope, "codex");
+  assert.deepEqual(adapted.messages, envelope.messages);
+  assert.deepEqual(dropped, []);
   // OpenAI-compatible providers transport image parts unchanged.
   assert.doesNotThrow(() => assertEnvelopeSupported(envelope, "openai"));
   const { payload } = buildOpenAiCompatiblePayload(envelope, "openai", { defaultModel: "m" });
   assert.equal(payload.messages[0].content[1].type, "image_url");
+});
+
+test("ZCode still rejects image parts during capability validation and adaptation", () => {
+  const envelope = createEnvelope({ provider: "zcode", messages: [{ role: "user", content: [
+    { type: "image_url", image_url: { url: "data:image/png;base64,aGk=" } },
+  ] }] });
+  for (const check of [assertEnvelopeSupported, adaptEnvelopeForProvider]) {
+    assert.throws(() => check(envelope, "zcode"), (error) => {
+      assert.ok(error instanceof UnsupportedCapabilityError);
+      assert.ok(error.issues.some((issue) => issue.field === "multimodal"));
+      return true;
+    });
+  }
+});
+
+test("Codex accepts explicit JSON Schema and rejects unsupported response format modes", () => {
+  const schema = { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"], additionalProperties: false };
+  const envelope = createEnvelope({ provider: "codex", messages: [{ role: "user", content: "Review" }],
+    responseFormat: { type: "json_schema", jsonSchema: { name: "review", schema } },
+  });
+  assert.doesNotThrow(() => assertEnvelopeSupported(envelope, "codex"));
+  const { envelope: adapted, dropped } = adaptEnvelopeForProvider(envelope, "codex");
+  assert.deepEqual(adapted.responseFormat.jsonSchema.schema, schema);
+  assert.deepEqual(dropped, []);
+  for (const type of ["json_object", "text"]) {
+    assert.throws(() => assertEnvelopeSupported({ ...envelope, responseFormat: { type } }, "codex"),
+      (error) => error.issues.some((issue) => issue.field === "responseFormat"));
+  }
 });
 
 test("tool_call arguments: objects canonicalize deterministically, strings pass verbatim, nothing truncates", () => {

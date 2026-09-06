@@ -78,7 +78,8 @@ class _Studio:
 
     def render(self, page, comp, viewport):
         self.rendered.append(copy.deepcopy(comp))
-        return _png()
+        frame = comp['masterIr']['tree'][0]['frame']
+        return _png(int(frame['width']), int(frame['height']))
 
     def _border(self) -> str:
         master = self.rendered[-1]["masterIr"] if self.rendered else {}

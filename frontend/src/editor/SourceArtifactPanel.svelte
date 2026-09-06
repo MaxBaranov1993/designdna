@@ -118,8 +118,11 @@
     : artifact?.summary.variantCount ?? artifact?.summary.observedStateCount ?? 0);
 
   const percent = (value: unknown) => {
+    if (value == null || value === "") return "—";
     const score = Number(value);
-    return Number.isFinite(score) ? `${Math.round(score * 100)}%` : "—";
+    // Historical artifacts use fractions; measured capture scores use 0..100.
+    return Number.isFinite(score) && score >= 0 && score <= 100
+      ? `${Math.round(score <= 1 ? score * 100 : score)}%` : "—";
   };
   const dimension = (value: unknown) => {
     const size = Number(value);

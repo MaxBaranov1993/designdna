@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
 from playwright.sync_api import Route, sync_playwright
 
@@ -73,6 +74,7 @@ def main() -> None:
     generate_payloads: list[dict] = []
     taste_payloads: list[dict] = []
     quality_index = 0
+    quality_payloads: list[dict] = []
 
     def route_api(route: Route) -> None:
         nonlocal quality_index
@@ -93,6 +95,7 @@ def main() -> None:
                 "errors": [],
             }, ensure_ascii=False))
         elif url.endswith("/api/quality-pass"):
+            quality_payloads.append(route.request.post_data_json)
             index = quality_index % len(VARIANTS)
             quality_index += 1
             failed = index == 0
@@ -136,6 +139,10 @@ def main() -> None:
         check("generator keeps exactly three inputs",
               page.locator(f'.svelte-flow__node[data-id="{node_id}"] .port-row.in').count() == 3)
         page.evaluate("id => window.GraphDev.patchData(id, {ownPrompt:'Design a calm finance landing page'})", node_id)
+        node = page.locator(f'.svelte-flow__node[data-id="{node_id}"]')
+        node.locator(".gen-design-options summary").click()
+        node.get_by_label("Тип экрана", exact=True).select_option("form")
+        node.get_by_label("Визуальное направление", exact=True).select_option("enterprise")
         page.evaluate("id => window.GraphDev.run(id)", node_id)
 
         node = page.locator(f'.svelte-flow__node[data-id="{node_id}"]')
@@ -153,6 +160,12 @@ def main() -> None:
 
         revision = node.locator(".revision-status")
         revision.wait_for(timeout=5_000)
+        check("Generator sends the chosen recipe, style and strict policy",
+              generate_payloads[0].get("surface") == "form"
+              and generate_payloads[0].get("designStyle") == "enterprise"
+              and generate_payloads[0].get("allowStrictFallback") is False)
+        check("Generator requests viewport images for Quality Pass",
+              bool(quality_payloads) and quality_payloads[0].get("visualReview") is True)
         revision_text = revision.inner_text()
         check("failed judge result uses needs-revision status", "Нужна доработка · 68/100" in revision_text)
         check("judge reason is visible", "equal visual weight" in revision_text)
@@ -198,6 +211,16 @@ def main() -> None:
         node.locator(".direction-all").click()
         page.wait_for_function("id => window.GraphDev.node(id).data.selectedDirection === 'all'", arg=node_id)
         check("all three can be selected", "active" in (node.locator(".direction-all").get_attribute("class") or ""))
+
+        node.get_by_label("Тип экрана", exact=True).select_option("catalog")
+        check("changing the surface clears stale art directions", node.locator(".direction-chip").count() == 0)
+        page.evaluate("""id => window.GraphDev.patchData(id, {active:0,
+          qualityReviews:[{score:90, passed:null, reasons:[]}]})""", node_id)
+        page.get_by_text("Предпросмотр создан. Визуальная проверка не завершена.", exact=True).wait_for()
+        check("an unverified review is visibly labelled", "Визуальная проверка не завершена" in node.inner_text())
+        evidence = Path(__file__).resolve().parent.parent / ".tmp" / "generator-policy-evidence"
+        evidence.mkdir(parents=True, exist_ok=True)
+        node.screenshot(path=str(evidence / "generator-node.png"))
 
         browser.close()
 

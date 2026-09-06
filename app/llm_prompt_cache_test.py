@@ -11,7 +11,7 @@ import llm_client
 
 
 PROMPT_FILES = (
-    "spike/system-prompt.md", "schema/design-ir.schema.json",
+    "app/prompts/SYSTEM.md", "schema/design-ir.schema.json",
     "app/prompts/BLOCKS.md", "app/prompts/DESIGN.md",
 )
 

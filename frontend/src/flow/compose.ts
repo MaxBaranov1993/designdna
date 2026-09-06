@@ -279,8 +279,13 @@ export function composePage(
   const effectiveTokens = tokensOverride || (isRecord(fallbackTokens) ? fallbackTokens : null);
   const usedIds = new Set<string>();
   const usedKeys = new Set<string>();
+  const fontFaces = new Map<string, Record<string, unknown>>();
   const tree: IRNode[] = [];
   for (const { name, ir } of blocks) {
+    const meta = isRecord(ir.meta) ? ir.meta : {};
+    for (const face of Array.isArray(meta.fontFaces) ? meta.fontFaces : []) {
+      if (isRecord(face)) fontFaces.set(JSON.stringify(face), deepClone(face));
+    }
     const sections = Array.isArray(ir?.tree) ? (ir.tree as IRNode[]) : [];
     for (const sec of sections) {
       const s = deepClone(sec) as IRNode;
@@ -326,6 +331,7 @@ export function composePage(
       name: "Страница",
       description: blocks.map((b) => b.name).join(" + "),
       activeViewport,
+      ...(fontFaces.size ? { fontFaces: [...fontFaces.values()] } : {}),
     },
     // Канонический артборд всегда desktop: materializeResponsiveIR подставит
     // ширину активного вьюпорта при рендере, а редактор сохраняет canonical 1440.

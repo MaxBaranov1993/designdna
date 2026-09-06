@@ -1,8 +1,93 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
+
+const IMAGE_EXTENSIONS = { png: "png", jpeg: "jpg", webp: "webp", gif: "gif" };
+const MAX_IMAGE_URL_CHARS = 8_000_000;
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+
+// Native image inputs need no tools or filesystem permissions in the prompt.
+// Only generated names under a private, request-owned directory reach localImage.
+function materializeInput(messages, instruction, tempRoot) {
+  const input = [];
+  let text = instruction;
+  let directory = null;
+  let imageCount = 0;
+  let imageBytes = 0;
+  const flushText = () => {
+    if (text) input.push({ type: "text", text, text_elements: [] });
+    text = "";
+  };
+  const cleanup = () => {
+    if (directory) rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  };
+  try {
+    for (const message of messages) {
+      text += `\n\n${String(message.role || "user").toUpperCase()}:\n`;
+      const parts = Array.isArray(message.content)
+        ? message.content : [{ type: "text", text: String(message.content ?? "") }];
+      for (const [index, part] of parts.entries()) {
+        if (index) text += "\n";
+        if (part?.type === "text" && typeof part.text === "string") {
+          text += part.text;
+          continue;
+        }
+        if (part?.type !== "image_url") throw new Error("Unsupported Codex message content part");
+        const { url, detail } = part.image_url || {};
+        if (typeof url !== "string" || url.length > MAX_IMAGE_URL_CHARS) {
+          throw new Error("Codex image URL is missing or exceeds 8000000 characters");
+        }
+        if (detail != null && !["auto", "low", "high", "original"].includes(detail)) {
+          throw new Error("Unsupported Codex image detail");
+        }
+        if (++imageCount > 32) throw new Error("Codex accepts at most 32 images per request");
+        flushText();
+        const imageDetail = detail == null ? {} : { detail };
+        if (url.startsWith("https://")) {
+          let parsed;
+          try { parsed = new URL(url); } catch { throw new Error("Invalid Codex HTTPS image URL"); }
+          if (parsed.username || parsed.password) throw new Error("Codex image URL must not contain credentials");
+          input.push({ type: "image", url, ...imageDetail });
+          continue;
+        }
+        const comma = url.indexOf(",");
+        const header = /^data:image\/(png|jpeg|webp|gif);base64$/i.exec(url.slice(0, comma));
+        if (!header) throw new Error("Codex images require PNG, JPEG, WebP or GIF base64 data, or an HTTPS URL");
+        const encoded = url.slice(comma + 1);
+        if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)
+          || (encoded.includes("=") && encoded.length % 4 !== 0)) {
+          throw new Error("Invalid Codex image base64 data");
+        }
+        const bytes = Buffer.from(encoded, "base64");
+        if (!bytes.length || bytes.toString("base64").replace(/=+$/, "") !== encoded.replace(/=+$/, "")) {
+          throw new Error("Invalid Codex image base64 data");
+        }
+        const format = header[1].toLowerCase();
+        const validSignature = {
+          png: bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")),
+          jpeg: bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])),
+          gif: ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii")),
+          webp: bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP",
+        }[format];
+        if (!validSignature) throw new Error("Codex image bytes do not match the declared image format");
+        imageBytes += bytes.length;
+        if (imageBytes > MAX_IMAGE_BYTES) throw new Error("Codex image data exceeds 20 MiB per request");
+        directory ||= mkdtempSync(path.join(tempRoot, "ddna-codex-img-"));
+        const file = path.join(directory, `image-${imageCount}.${IMAGE_EXTENSIONS[format]}`);
+        writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });
+        input.push({ type: "localImage", path: file, ...imageDetail });
+      }
+    }
+    flushText();
+    return { input, cleanup };
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
 
 function findWindowsCodexBinary(environment) {
   const target = process.arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc";
@@ -43,10 +128,12 @@ export function codexProcessSpec({
 }
 
 export class CodexAppServer extends EventEmitter {
-  constructor({ cwd, timeoutMs = 30_000 } = {}) {
+  constructor({ cwd, timeoutMs = 30_000, spawnProcess = spawn, imageTempRoot = tmpdir() } = {}) {
     super();
     this.cwd = cwd;
     this.timeoutMs = timeoutMs;
+    this.spawnProcess = spawnProcess;
+    this.imageTempRoot = path.resolve(imageTempRoot);
     this.child = null;
     this.pending = new Map();
     this.sequence = 0;
@@ -57,7 +144,7 @@ export class CodexAppServer extends EventEmitter {
     this.initialized = this.#startAndInitialize();
     try { return await this.initialized; } catch (error) { this.initialized = null; throw error; }
   }
-  async account() { await this.start(); return this.request("account/read", {}); }
+  async account() { await this.start(); return this.request("account/read", { refreshToken: false }); }
   async login({ type, apiKey } = {}) {
     await this.start();
     if (type === "apiKey") {
@@ -76,8 +163,7 @@ export class CodexAppServer extends EventEmitter {
   async startTurn(params) { await this.start(); return this.request("turn/start", params); }
   async steerTurn(params) { await this.start(); return this.request("turn/steer", params); }
   async interruptTurn(threadId, turnId) { await this.start(); return this.request("turn/interrupt", { threadId, turnId }); }
-  async chat(messages, { timeoutMs = 180_000, profile = "generator" } = {}) {
-    await this.start();
+  async chat(messages, { timeoutMs = 180_000, profile = "generator", signal = null, model = null, effort = null, outputSchema = null, onResponseMetadata = null } = {}) {
     const profileInstructions = {
       generator: "Generate the requested Design IR. The SYSTEM section below is the complete, authoritative design specification — follow it exactly, including the design craft rules and any locked Style DNA tokens: token colors (primary for CTAs and key accents, alternating background/surface sections) are mandatory, a plain white-and-grey wireframe is a failure.",
       quality_judge: "Evaluate the supplied Design IR exactly as requested.",
@@ -85,56 +171,133 @@ export class CodexAppServer extends EventEmitter {
       editor: "Apply the requested visual edit to the supplied Design IR scope. The SYSTEM section below defines the exact output contract - follow it precisely and return only the JSON object it specifies. Do not generate a full page, do not restructure anything outside the selected scope.",
     };
     if (!Object.hasOwn(profileInstructions, profile)) throw new Error(`Unsupported Codex chat profile: ${profile}`);
-    // Envelope нормализует строковый content в массив частей [{type:"text",text}]:
-    // String(частей) давал "[object Object]", и Codex получал пустой промпт.
-    const textOf = (content) => (Array.isArray(content)
-      ? content.map((part) => (part && part.type === "text" ? String(part.text || "") : "")).filter(Boolean).join("\n")
-      : String(content || ""));
-    const prompt = [
-      `${profileInstructions[profile]} Do not inspect files, run commands, or call tools. Return only the JSON object.`,
-      ...messages.map((message) => `${String(message.role || "user").toUpperCase()}:\n${textOf(message.content)}`),
-    ].join("\n\n");
-    const started = await this.startThread({
-      cwd: this.cwd,
-      approvalPolicy: "never",
-      sandbox: "read-only",
-      serviceName: "designdna-generator",
-      // Generator and Quality Pass turns are implementation details of
-      // DesignDNA, not user-facing Codex work sessions. Keeping them
-      // ephemeral prevents every IR request from appearing as a separate
-      // task in the Codex history.
-      ephemeral: true,
-    });
-    const threadId = String(started.thread?.id || "");
-    if (!threadId) throw new Error("Codex did not return a generator thread id");
-    return new Promise((resolve, reject) => {
-      let streamed = "";
-      let completed = "";
-      const timer = setTimeout(() => finish(new Error("Codex generator timed out")), timeoutMs);
-      const finish = (error, value) => {
-        clearTimeout(timer);
-        this.removeListener("notification", onNotification);
-        if (error) reject(error); else resolve(value);
-      };
-      const onNotification = ({ method, params = {} }) => {
-        if (params.threadId && String(params.threadId) !== threadId) return;
-        if (method === "item/agentMessage/delta") streamed += String(params.delta || "");
-        if (method === "item/completed" && params.item?.type === "agentMessage") {
-          completed = String(params.item.text || "");
-        }
-        if (method === "turn/completed") {
-          const status = String(params.turn?.status || "completed");
-          if (status !== "completed") {
-            finish(new Error(params.turn?.error?.message || `Codex generator ${status}`));
-            return;
+    if (outputSchema != null && (typeof outputSchema !== "object" || Array.isArray(outputSchema))) {
+      throw new Error("Codex outputSchema must be a JSON Schema object");
+    }
+    if (signal?.aborted) throw new Error("Codex request cancelled");
+    const { input, cleanup } = materializeInput(messages,
+      `${profileInstructions[profile]} Evaluate any attached images directly. Do not inspect files, run commands, or call tools. Return only the JSON object.`,
+      this.imageTempRoot);
+    let responseMetadata = null;
+    try {
+      const output = await new Promise((resolve, reject) => {
+        let threadId = "";
+        let turnId = "";
+        let settled = false;
+        let interrupted = false;
+        let shouldInterrupt = false;
+        let streamed = "";
+        let completed = "";
+        const deltasByItem = new Map();
+        let completedItemId = null;
+        const interrupt = () => {
+          if (!threadId || !turnId || interrupted) return;
+          interrupted = true;
+          // Do not restart a failed app-server merely to cancel a finished chat.
+          void this.request("turn/interrupt", { threadId, turnId }).catch(() => {});
+        };
+        const finish = (error, value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+          this.removeListener("notification", onNotification);
+          this.removeListener("serverError", onServerError);
+          if (error) reject(error); else resolve(value);
+        };
+        const cancel = (error) => { shouldInterrupt = true; interrupt(); finish(error); };
+        const onAbort = () => cancel(new Error("Codex request cancelled"));
+        const onServerError = (error) => finish(error);
+        const timer = setTimeout(() => cancel(new Error("Codex generator timed out")), timeoutMs);
+        const onNotification = ({ method, params = {} }) => {
+          if (!threadId || String(params.threadId || "") !== threadId) return;
+          const eventTurnId = String(params.turnId || params.turn?.id || "");
+          if (turnId && eventTurnId && eventTurnId !== turnId) return;
+          if (!turnId && eventTurnId) turnId = eventTurnId;
+          if (responseMetadata && turnId) responseMetadata.turnId = turnId;
+          if (method === "model/rerouted" && typeof params.toModel === "string" && params.toModel.trim()) {
+            responseMetadata.model = params.toModel;
+            responseMetadata.modelSource = "model/rerouted";
           }
-          const output = completed || streamed;
-          finish(output.trim() ? null : new Error("Codex generator returned an empty response"), output);
-        }
-      };
-      this.on("notification", onNotification);
-      this.startTurn({ threadId, input: [{ type: "text", text: prompt }] }).catch((error) => finish(error));
-    });
+          if (method === "item/agentMessage/delta") {
+            const delta = String(params.delta || "");
+            streamed += delta;
+            const itemId = String(params.itemId || "");
+            deltasByItem.set(itemId, (deltasByItem.get(itemId) || "") + delta);
+          }
+          if (method === "item/completed" && params.item?.type === "agentMessage") {
+            completed = String(params.item.text || "");
+            completedItemId = params.item.id || null;
+          }
+          if (method === "turn/completed") {
+            const status = String(params.turn?.status || "completed");
+            if (status !== "completed") {
+              finish(new Error(params.turn?.error?.message || `Codex generator ${status}`));
+              return;
+            }
+            const output = completed || streamed;
+            const itemDeltas = completedItemId ? deltasByItem.get(String(completedItemId))
+              : deltasByItem.size === 1 ? [...deltasByItem.values()][0] : undefined;
+            responseMetadata.completion = {
+              source: completed ? "item/completed" : "deltas",
+              outputChars: output.length, completedChars: completed.length,
+              streamedChars: streamed.length, agentItemId: completedItemId,
+              itemDeltaChars: itemDeltas?.length ?? null,
+              itemDeltaMatchesCompleted: itemDeltas == null || !completed ? null : itemDeltas === completed,
+              outputSchemaRequested: outputSchema != null,
+            };
+            finish(output.trim() ? null : new Error("Codex generator returned an empty response"), output);
+          }
+        };
+        this.on("notification", onNotification);
+        this.on("serverError", onServerError);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) { onAbort(); return; }
+        void (async () => {
+          await this.start();
+          if (settled) return;
+          const accountState = await this.account();
+          if (settled) return;
+          if (accountState?.account?.type !== "chatgpt") {
+            throw new Error("Codex requires an existing ChatGPT login. Open Agents → Connections; API-key authentication is not supported for the subscription route.");
+          }
+          const started = await this.startThread({
+            modelProvider: "openai",
+            ...(model ? { model } : {}),
+            cwd: this.cwd,
+            approvalPolicy: "never",
+            sandbox: "read-only",
+            serviceName: "designdna-generator",
+            // Internal DesignDNA requests must not clutter the user's history.
+            ephemeral: true,
+          });
+          if (settled) return;
+          threadId = String(started.thread?.id || "");
+          if (!threadId) throw new Error("Codex did not return a generator thread id");
+          if (started.modelProvider !== "openai"
+            || (started.thread?.modelProvider != null && started.thread.modelProvider !== "openai")) {
+            throw new Error("Codex did not confirm the OpenAI subscription provider; refusing to send the turn.");
+          }
+          if (typeof started.model !== "string" || !started.model.trim()) {
+            throw new Error("Codex did not report the resolved model; refusing to send the turn.");
+          }
+          responseMetadata = { model: started.model, modelProvider: started.modelProvider,
+            authType: "chatgpt", threadId, turnId: null, modelSource: "thread/start" };
+          const startedTurn = await this.startTurn({ threadId, input,
+            model: started.model, ...(effort ? { effort } : {}),
+            ...(outputSchema != null ? { outputSchema } : {}) });
+          turnId = String(startedTurn?.turn?.id || turnId);
+          responseMetadata.turnId = turnId || null;
+          // Cancellation may race the turn/start response that supplies its id.
+          if (shouldInterrupt) interrupt();
+        })().catch((error) => finish(error));
+      });
+      // Per-call metadata avoids races between concurrent chat() requests.
+      onResponseMetadata?.(Object.freeze({ ...responseMetadata }));
+      return output;
+    } finally {
+      cleanup();
+    }
   }
   request(method, params = {}) {
     if (!this.child) return Promise.reject(new Error("Codex app-server is not running"));
@@ -150,10 +313,10 @@ export class CodexAppServer extends EventEmitter {
     this.child.stdin.write(`${JSON.stringify(error ? { id, error } : { id, result })}\n`);
   }
   notify(method, params = {}) { this.child?.stdin.write(`${JSON.stringify({ method, params })}\n`); }
-  stop() { this.child?.kill(); this.child = null; this.initialized = null; }
+  stop() { this.child?.kill(); this.#fail(new Error("Codex app-server stopped")); }
   async #startAndInitialize() {
     const spec = codexProcessSpec();
-    const child = spawn(spec.command, spec.args, {
+    const child = this.spawnProcess(spec.command, spec.args, {
       cwd: this.cwd,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -163,8 +326,10 @@ export class CodexAppServer extends EventEmitter {
     createInterface({ input: child.stdout }).on("line", (line) => this.#onLine(line));
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-4_000); });
-    child.once("error", (error) => this.#fail(error));
-    child.once("exit", (code) => this.#fail(new Error(`Codex app-server exited (${code}): ${stderr.trim()}`)));
+    child.once("error", (error) => { if (this.child === child) this.#fail(error); });
+    child.once("exit", (code) => {
+      if (this.child === child) this.#fail(new Error(`Codex app-server exited (${code}): ${stderr.trim()}`));
+    });
     const result = await this.request("initialize", {
       clientInfo: { name: "designdna", title: "DesignDNA", version: "0.3.0" },
       capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },

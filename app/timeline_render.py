@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import math
 import re
 import subprocess
@@ -48,7 +49,8 @@ RENDER_DOCUMENT_HTML = (
 # Детерминированный запасной Inter: мердж токенов по умолчанию всегда просит
 # Inter, поэтому офлайн-рендер материализует его из собранных ассетов
 # приложения (интер в продукте идёт из @fontsource/inter в статике билда).
-_APP_STATIC_ASSETS = Path(__file__).resolve().parent / "static" / "flow" / "_app" / "immutable" / "assets"
+_APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
+_APP_STATIC_ASSETS = _APP_ROOT / "static" / "flow" / "_app" / "immutable" / "assets"
 _INTER_FILE_RE = re.compile(r"^inter-(latin|cyrillic|latin-ext|cyrillic-ext)-(400|500|600)-normal\.[A-Za-z0-9_-]+\.woff2$")
 _INTER_SUBSET_RANGE = {
     "latin": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
@@ -509,6 +511,17 @@ def render_timeline_video(
     файл удаляется — хвостов не остаётся.
     """
     assets, asset_errors = materialize_render_assets(design_ir, data_dir)
+    render_timeline = copy.deepcopy(timeline)
+    for source_page in (render_timeline.get("story") or {}).get("pages", []):
+        page_assets, page_errors = materialize_render_assets(source_page["ir"], data_dir)
+        assets.update(page_assets)
+        asset_errors.extend(page_errors)
+        page_ir = rewrite_local_asset_urls(source_page["ir"])
+        if _design_needs_inter(page_ir) and not _local_inter_declared(page_ir):
+            faces, fonts = _builtin_inter_faces()
+            page_ir.setdefault("meta", {})["fontFaces"] = list(page_ir.get("meta", {}).get("fontFaces") or []) + faces
+            assets.update(fonts)
+        source_page["ir"] = page_ir
     if asset_errors:
         raise ValueError("ассеты рендера не прошли проверку: " + "; ".join(asset_errors[:3]))
     count, fps = validate_timeline_render(timeline, design_ir)
@@ -546,10 +559,16 @@ def render_timeline_video(
                                            RENDER_DOCUMENT_URL, RENDER_DOCUMENT_HTML)
                 page = context.new_page()
                 page.goto(RENDER_DOCUMENT_URL)
-                page.add_script_tag(path=str(Path(__file__).resolve().parent / "static" / "flow" / "engine.js"))
+                page.add_script_tag(path=str(_APP_ROOT / "static" / "flow" / "engine.js"))
                 page.evaluate(
                     """({timeline, designIr, marks}) => {
                       const host = document.querySelector('#host');
+                      if (timeline.story) {
+                        const player = new window.VideoStoryPlayer(host, timeline, true);
+                        window.__timelineSeek = (t) => player.seek(t);
+                        window.__timelineSeek(0);
+                        return;
+                      }
                       window.IRRenderer.renderIR(host, designIr, { fit: false, viewport: 'desktop', offline: true });
                       // офлайн-рендер не ходит в каталог внешних шрифтов: локальные
                       // лица уже инжектнуты, ссылка движка гасится до запроса
@@ -573,7 +592,7 @@ def render_timeline_video(
                       };
                       window.__timelineSeek(0);
                     }""",
-                    {"timeline": timeline, "designIr": render_ir, "marks": _layer_marks(timeline, design_ir)},
+                    {"timeline": render_timeline, "designIr": render_ir, "marks": _layer_marks(timeline, design_ir)},
                 )
                 readiness = page.evaluate(_READINESS_JS)
                 problems = [str(item) for item in (readiness.get("errors") or [])]

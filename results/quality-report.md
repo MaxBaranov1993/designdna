@@ -1,6 +1,6 @@
 # Design Studio v3 — quality report
 
-Generated: 2026-09-03 10:52 UTC. Render width: 1440 px. Exemplar target: vision score ≥90.
+Generated: 2026-09-03 11:42 UTC. Render width: 1440 px. Exemplar target: vision score ≥90.
 
 ## Fixed five-brief benchmark
 
