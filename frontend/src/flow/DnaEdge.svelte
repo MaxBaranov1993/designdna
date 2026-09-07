@@ -1,8 +1,11 @@
 <script lang="ts">
   import type { EdgeProps } from "@xyflow/svelte";
+  import { flowBusy } from "./state";
 
   let {
     id,
+    source,
+    selected,
     sourceX,
     sourceY,
     targetX,
@@ -41,5 +44,5 @@
   fill="none"
   stroke={stroke}
 />
-<path d={path} class="dna-wire-dash" fill="none" stroke={stroke} pointer-events="none" />
+<path d={path} class="dna-wire-dash" class:wire-active={selected || Boolean($flowBusy[Number(source)])} fill="none" stroke={stroke} pointer-events="none" />
 <path d={path} class="svelte-flow__edge-interaction" fill="none" stroke-opacity="0" stroke-width="20" />

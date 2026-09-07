@@ -1,17 +1,10 @@
 <script lang="ts">
-  import { useSvelteFlow, useViewport } from "@xyflow/svelte";
   import { onMount } from "svelte";
   import { buildExportPayload, downloadJson, parseLegacyPayload } from "./flow/serialize";
-  import { flowGraphHistory } from "./flow/state";
   import { useFlowStore } from "./flow/store";
   import { toast } from "./flow/toast";
   import { leftPanelOpen, requestNodeMenu } from "./flow/ui";
 
-  const canUndo = $derived($flowGraphHistory.past.length > 0);
-  const canRedo = $derived($flowGraphHistory.future.length > 0);
-
-  const { fitView, setViewport } = useSvelteFlow();
-  const viewport = useViewport();
   let cacheStat = $state("");
   let fileInput: HTMLInputElement | null = null;
 
@@ -23,19 +16,6 @@
       })
       .catch(() => {});
   });
-
-  const onFit = () => {
-    if (!useFlowStore.getState().nodes.length) {
-      void setViewport({ x: 80, y: 40, zoom: 1 });
-      return;
-    }
-    void fitView({ padding: 0.14 });
-  };
-
-  const stepZoom = (delta: number) => {
-    const current = viewport.current;
-    void setViewport({ x: current.x, y: current.y, zoom: Math.min(2, Math.max(0.3, current.zoom + delta)) });
-  };
 
   const onExport = () => downloadJson("designai-graph.json", buildExportPayload(useFlowStore.getState()));
 
@@ -66,39 +46,13 @@
     <span class="dna-vsep"></span>
     <div class="dna-hints" aria-label="Управление холстом">
       <span class="dna-hint-chip">ПКМ — нода</span>
-      <span class="dna-hint-chip">Колесо — зум</span>
-      <span class="dna-hint-chip">Drag или СКМ — панорама</span>
+      <span class="dna-hint-chip">Ctrl + колесо — зум</span>
+      <span class="dna-hint-chip">Пробел + drag — перемещение</span>
     </div>
   </div>
   <div class="dna-strip-right">
     {#if cacheStat}<span class="dna-cache-chip" title="Повторные Source Import отданы из кэша">{cacheStat}</span>{/if}
-    <div class="dna-zoom" aria-label="Масштаб холста">
-      <button class="dna-zoom-step" title="Уменьшить" onclick={() => stepZoom(-0.1)}>−</button>
-      <button class="dna-zoom-pct" title="Сбросить масштаб" onclick={() => void setViewport({ x: viewport.current.x, y: viewport.current.y, zoom: 1 })}>
-        {Math.round(viewport.current.zoom * 100)}%
-      </button>
-      <button class="dna-zoom-step" title="Увеличить" onclick={() => stepZoom(0.1)}>+</button>
-      <button class="dna-zoom-fit" id="btn-fit" onclick={onFit}>Всё</button>
-    </div>
     <div class="dna-tools">
-      <button
-        class="dna-tool-btn dna-undo-btn"
-        id="btn-undo"
-        title="Отменить (Ctrl+Z)"
-        aria-label="Отменить последнее изменение графа"
-        aria-keyshortcuts="Control+Z"
-        disabled={!canUndo}
-        onclick={() => useFlowStore.getState().undoGraph()}
-      >↶</button>
-      <button
-        class="dna-tool-btn dna-undo-btn"
-        id="btn-redo"
-        title="Повторить (Ctrl+Y)"
-        aria-label="Повторить отменённое изменение графа"
-        aria-keyshortcuts="Control+Y"
-        disabled={!canRedo}
-        onclick={() => useFlowStore.getState().redoGraph()}
-      >↷</button>
       <button class="dna-tool-btn" id="btn-import" onclick={() => fileInput?.click()}>Импорт</button>
       <button class="dna-tool-btn" id="btn-export" onclick={onExport}>Экспорт JSON</button>
       <button class="dna-btn-primary" onclick={requestNodeMenu}>+ Нода</button>

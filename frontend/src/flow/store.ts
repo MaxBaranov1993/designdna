@@ -941,6 +941,7 @@ export interface FlowStoreState {
   removePageInput: (id: number, name: string) => void;
   reorderPageInputs: (id: number, from: number, to: number) => void;
   syncFromCanvas: (nodes: FlowNode[], edges: FlowEdge[]) => void;
+  commitNodeDrag: (pageId: string, updates: { id: string; position: { x: number; y: number } }[], selectedIds: string[]) => void;
   loadGraph: (payload: LegacyGraphPayload) => void;
   clearGraph: () => void;
   setView: (v: LegacyView) => void;
@@ -1365,6 +1366,29 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         return position ? { ...node, position } : node;
       }),
     });
+  },
+
+  // A drag owns geometry and selection, never the graph snapshot. Async node
+  // creation, deletion, connections and generation results may finish mid-drag.
+  commitNodeDrag: (pageId, updates, selectedIds) => {
+    const state = get();
+    if (state.activePageId !== pageId) return;
+    const positions = new Map(updates
+      .filter(({ position }) => Number.isFinite(position.x) && Number.isFinite(position.y))
+      .map(({ id, position }) => [id, { x: Math.round(position.x), y: Math.round(position.y) }]));
+    const selected = new Set(selectedIds);
+    let moved = false;
+    let changed = false;
+    const nodes = state.nodes.map((node) => {
+      const position = positions.get(node.id) ?? node.position;
+      const positionChanged = position.x !== node.position.x || position.y !== node.position.y;
+      moved ||= positionChanged;
+      if (!positionChanged && Boolean(node.selected) === selected.has(node.id) && !node.dragging) return node;
+      changed = true;
+      return { ...node, position, selected: selected.has(node.id), dragging: false };
+    });
+    if (moved) recordGraphHistory();
+    if (changed) set({ nodes });
   },
 
   /* Правила проводов — зеркало connect() (nodes.js:1049-1070), см. docs/ARCHITECTURE.md */

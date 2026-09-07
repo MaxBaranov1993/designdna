@@ -29,6 +29,7 @@
   let outer: HTMLDivElement | null = null;
   let inner: HTMLDivElement | null = null;
   let measuredHeight = $state<number | null>(null);
+  let activated = $state(false);
 
   function syncPreviewSize() {
     const el = inner;
@@ -41,6 +42,7 @@
   }
 
   $effect(() => {
+    if (!activated) return;
     const el = inner;
     if (!el) return;
     const currentIr = ir;
@@ -68,7 +70,18 @@
 
   onMount(() => {
     const el = outer;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (!el) return;
+    // Keep node instances and rendered previews alive across pan/zoom. Delay
+    // only the FIRST expensive IR render until its card approaches the screen.
+    const visibility = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        activated = true;
+        visibility?.disconnect();
+      }
+    }, { rootMargin: "500px" });
+    if (visibility) visibility.observe(el);
+    else activated = true;
+    if (typeof ResizeObserver === "undefined") return () => visibility?.disconnect();
     // ResizeObserver callbacks run inside the browser's layout-delivery loop.
     // fitPreview/fitHeight write dimensions, so doing that synchronously can
     // recursively invalidate the observed outer box and flood Electron with
@@ -81,6 +94,7 @@
     });
     ro.observe(el);
     return () => {
+      visibility?.disconnect();
       ro.disconnect();
       cancelAnimationFrame(resizeFrame);
     };

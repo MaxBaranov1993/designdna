@@ -20,6 +20,7 @@
   import { OPEN_NODE_MENU_EVENT } from "./flow/ui";
   import { selectReadable } from "./lib/zustand";
   import EmptyState from "./flow/EmptyState.svelte";
+  import CanvasToolbar from "./flow/CanvasToolbar.svelte";
 
   import PromptNode from "./nodes/PromptNode.svelte";
   import ReferenceNode from "./nodes/ReferenceNode.svelte";
@@ -82,6 +83,11 @@
   // subscriber and both autosave pipelines, which makes drag progressively
   // sluggish on larger graphs. Commit positions once in onnodedragstop.
   let nodeDragActive = $state(false);
+  let dragPageId: string | null = null;
+  let tool = $state<"select" | "hand">("select");
+  let spacePressed = $state(false);
+  let showMinimap = $state(false);
+  const handActive = $derived(tool === "hand" || spacePressed);
 
   const rf = useSvelteFlow();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -180,6 +186,7 @@
     measuredNodeIds = signature;
     void tick().then(() => {
       requestAnimationFrame(() => {
+        if (nodeDragActive) { measuredNodeIds = ""; return; }
         const dimensions = new Map<string, { width: number; height: number }>();
         document.querySelectorAll<HTMLElement>(".svelte-flow__node[data-id]").forEach((wrapper) => {
           const id = wrapper.dataset.id;
@@ -227,6 +234,7 @@
     const pid = $flowActivePageId;
     if (pid === lastPageId) return;
     lastPageId = pid;
+    nodeDragActive = false;
     void rf.setViewport(useFlowStore.getState().view);
   });
 
@@ -336,8 +344,26 @@
 </script>
 
 <svelte:window
+  onblur={() => { spacePressed = false; }}
+  onkeyup={(event) => { if (event.code === "Space") spacePressed = false; }}
   onkeydown={(e) => {
     if ((menu || nodeMenu) && e.key === "Escape") closeMenu();
+    const target = e.target as HTMLElement | null;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+    if (document.querySelector('[role="dialog"][aria-modal="true"], .dna-editor[data-editor-open="true"]')) return;
+    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (e.code === "Space") {
+        if (target?.closest('button, a, [role="button"]')) return;
+        e.preventDefault(); spacePressed = true; return;
+      }
+      if (e.code === "KeyV") tool = "select";
+      if (e.code === "KeyH") tool = "hand";
+      if (e.code === "Digit1" && e.shiftKey) { e.preventDefault(); void rf.fitView({ padding: 0.16, duration: 200 }); }
+      if (e.code === "Digit2" && e.shiftKey) {
+        const selected = nodes.filter((node) => node.selected);
+        if (selected.length) { e.preventDefault(); void rf.fitView({ nodes: selected, padding: 0.24, maxZoom: 1, duration: 200 }); }
+      }
+    }
     // Undo/redo структуры графа. Не перехватываем в полях ввода (у них свой
     // undo) и когда сверху открыт модальный оверлей (DNA-редактор, DS-панель,
     // таймлайн) — у них собственные стеки истории.
@@ -346,9 +372,6 @@
     const isUndo = (key === "z" || key === "я") && !e.shiftKey;
     const isRedo = key === "y" || key === "н" || ((key === "z" || key === "я") && e.shiftKey);
     if (!isUndo && !isRedo) return;
-    const target = e.target as HTMLElement | null;
-    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
-    if (document.querySelector('[role="dialog"][aria-modal="true"], .dna-editor[data-editor-open="true"]')) return;
     e.preventDefault();
     const st = useFlowStore.getState();
     if (isUndo) st.undoGraph();
@@ -360,6 +383,7 @@
   bind:this={canvasHost}
   class="relative h-full w-full"
   class:flow-drag-active={nodeDragActive}
+  class:flow-hand-active={handActive}
   role="presentation"
   onmousemove={(e) => updateSnapTarget(e.clientX, e.clientY)}
   onmouseleave={clearSnapTarget}
@@ -369,12 +393,19 @@
     bind:edges
     {nodeTypes}
     {edgeTypes}
-    onlyRenderVisibleElements={true}
+    onlyRenderVisibleElements={false}
     onconnect={onConnect}
     {isValidConnection}
-    minZoom={0.3}
+    minZoom={0.1}
     maxZoom={2}
-    panOnDrag={[0, 1]}
+    panOnDrag={handActive ? [0, 1] : [1]}
+    nodesDraggable={!handActive}
+    elementsSelectable={!handActive}
+    selectionOnDrag={!handActive}
+    panOnScroll
+    zoomOnScroll={false}
+    zoomOnDoubleClick={false}
+    nodeDragThreshold={3}
     onconnectstart={(_event, params) => {
       if (params.handleType === "source" && params.nodeId && params.handleId) {
         didConnect = false;
@@ -421,38 +452,20 @@
       clearPortHighlights();
     }}
     onnodedragstart={() => {
+      dragPageId = useFlowStore.getState().activePageId;
       nodeDragActive = true;
     }}
     onnodedragstop={({ targetNode, nodes: dragged }) => {
-      // конец drag: округляем позицию (legacy Math.round, nodes.js:336-337)
-      useFlowStore.getState().moveNodes(
-        dragged.map((node) => ({ id: Number(node.id), x: node.position.x, y: node.position.y })),
-      );
-      nodeDragActive = false;
-      // Выделение, которое Svelte Flow сделал на старте drag, живёт только в
-      // bind-массиве (эффект «канвас → стор» на время drag выключен). Переносим
-      // его в стор сами, иначе «стор → канвас» вернёт старый массив и снимет
-      // выделение с только что перетащенной ноды. Позиции — из стора (округлены).
-      const st = useFlowStore.getState();
-      const byId = new Map(st.nodes.map((node) => [node.id, node.position]));
-      // The drag event is sourced from Svelte Flow's internal lookup and is
-      // therefore authoritative for selection even when the controlled
-      // `nodes` binding has not published its pointer-down update yet.
       const selectedIds = new Set(
         dragged.filter((node) => node.selected).map((node) => node.id),
       );
-      // Defensive fallback for library versions that omit `selected` from the
-      // drag payload: a single-node drag still selects its target.
       if (!selectedIds.size && targetNode) selectedIds.add(targetNode.id);
-      const merged = nodes.map((node) => {
-        const position = byId.get(node.id);
-        const selected = selectedIds.has(node.id);
-        if ((position && position !== node.position) || node.selected !== selected) {
-          return { ...node, ...(position ? { position } : {}), selected };
-        }
-        return node;
-      });
-      if (st.nodes !== nodes || st.edges !== edges) st.syncFromCanvas(merged, edges);
+      if (dragPageId !== null) useFlowStore.getState().commitNodeDrag(dragPageId, dragged, [...selectedIds]);
+      // Rejoin the latest canonical graph before enabling either mirror.
+      nodes = useFlowStore.getState().nodes;
+      edges = useFlowStore.getState().edges;
+      dragPageId = null;
+      nodeDragActive = false;
     }}
     {initialViewport}
     onmoveend={(_event, vp) => useFlowStore.getState().setView(vp)}
@@ -472,19 +485,18 @@
     }}
     /* SF сам гасит клавиши в полях ввода (isInputDOMNode) — зеркало гарда nodes.js:1147-1151 */
     deleteKey={["Delete", "Backspace"]}
-    /* Shift+drag оставляем свободным для внутренних/оверлейных редакторских жестов. */
-    selectionKey={[]}
+    selectionKey={["Shift"]}
     connectionLineStyle="stroke: #d4d4d8; stroke-width: 2; stroke-dasharray: 5 4;"
   >
     <Background variant={BackgroundVariant.Dots} gap={26} size={1} patternColor="#1B1B22" />
-    <MiniMap
+    {#if showMinimap}<MiniMap
       pannable
       zoomable
       maskColor="rgba(10,10,12,.72)"
       bgColor="#101013"
       nodeColor={(node) => node.type ? NODE_DEFS[node.type as NodeType].accent : "#9B5CFF"}
-    />
-    <div class="dna-minimap-label"></div>
+    />{/if}
+    <CanvasToolbar bind:tool bind:showMinimap {handActive} selectedCount={nodes.filter((node) => node.selected).length} />
   </SvelteFlow>
   {#if showEmptyState}
     <EmptyState onfit={() => void rf.fitView({ padding: 0.12, duration: 250 })} />

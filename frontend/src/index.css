@@ -980,11 +980,15 @@
   stroke-dasharray: 3 21;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
+  opacity: 0;
+}
+.dna-wire-dash.wire-active {
+  opacity: 1;
   animation: dnaFlow 1.2s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dna-wire-dash {
+  .dna-wire-dash.wire-active {
     animation: none;
     opacity: 0.55;
   }
@@ -1012,16 +1016,19 @@
 .svelte-flow__node.dragging {
   will-change: transform;
 }
+.flow-hand-active .svelte-flow__pane,
+.flow-hand-active .svelte-flow__node,
+.flow-hand-active .node-head { cursor: grab; }
+.flow-hand-active .svelte-flow__pane.dragging { cursor: grabbing; }
 .svelte-flow__node.dragging .fnode {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.34);
   transition: none;
 }
 .flow-drag-active .svelte-flow__node:not(.dragging) .fnode {
-  visibility: hidden;
   box-shadow: none;
 }
-.flow-drag-active .svelte-flow__node:not(.dragging) .node-head {
-  visibility: visible;
+.flow-drag-active .dna-wire-dash {
+  animation-play-state: paused;
 }
 .node-head {
   display: flex;
