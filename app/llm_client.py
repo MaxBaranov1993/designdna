@@ -385,12 +385,14 @@ def chat_envelope(
         messages = list(request.messages or [])
         if request.system:
             messages = [{"role": "system", "content": request.system}, *messages]
+        schema = (request.response_json_schema or {}).get("schema") if request.response_format == "json_schema" else None
         content = cli_llm.chat(
             cli_provider, messages,
             model=(request.model or ("opus" if request.provider == "claude" else None)) if request.provider in ("codex", "claude") else None,
             effort=request.reasoning_effort,
             # HTTP-таймаут (120 с) для CLI слишком короток: берём больший из двух
             timeout=max(request.timeout_s or TIMEOUT, cli_llm.DEFAULT_TIMEOUT),
+            output_schema=schema if isinstance(schema, dict) else None,
         )
         if on_delta and content:
             on_delta(content)

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, session, shell } from "electron";
 import { JsonlProcess } from "./lib/jsonl-process.mjs";
@@ -14,6 +15,7 @@ import { chatWithProvider, prepareProviderRequest } from "./services/provider-ro
 import { ClaudeAgentServer, claudeProcessSpec } from "./services/claude-agent-server.mjs";
 import { EnvelopeValidationError, redactForLog, UnsupportedCapabilityError } from "./services/provider-envelope.mjs";
 import { CodexAppServer, codexProcessSpec } from "./services/codex-app-server.mjs";
+import { loadAgentContract } from "./services/agent-contract.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
 import { canonicalMcpSpec, createMcpActivationApprover } from "./services/mcp-activation-approval.mjs";
 import { ApiScheduler } from "./services/api-scheduler.mjs";
@@ -617,11 +619,26 @@ function createWorkers() {
   // Claude — headless-запуск Claude Code CLI. Вход ведёт само приложение
   // (`claude setup-token`); долгоживущий токен лежит в safeStorage и уходит
   // только в env спауна CLI — renderer секрета не видит.
+  // Герметичные рабочие каталоги для headless-запросов продукта: пустые
+  // каталоги приложения вместо папки пользователя — ни CLAUDE.md/AGENTS.md,
+  // ни его файлов в контексте модели (см. services/hermetic-agent.mjs).
+  const hermeticCwd = (provider) => {
+    const dir = path.join(app.getPath("userData"), "agent-cwd", provider);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+  // Пакет инструкций агентов лежит в app/prompts вместе с промптами и
+  // читается из runtimeRoot: в упакованном приложении app/ — в resources.
+  const agentContract = loadAgentContract(path.join(runtimeRoot, "app", "prompts", "agent-contract"));
   claude = new ClaudeAgentServer({
     cwd: repositoryRoot,
+    hermeticCwd: hermeticCwd("claude"),
+    contract: agentContract,
     getStoredToken: () => { try { return credentials?.get("claude"); } catch { return null; } },
   });
-  codex = new CodexAppServer({ cwd: repositoryRoot });
+  // Флаги установленного Claude Code читаются один раз при старте (без модели).
+  void claude.probeCapabilities().catch(() => undefined);
+  codex = new CodexAppServer({ cwd: repositoryRoot, hermeticCwd: hermeticCwd("codex"), contract: agentContract });
   codex.on("notification", (message) => broadcast("codex:event", message));
   codex.on("request", async (message) => {
     if (message.method === "item/tool/call") {
@@ -952,6 +969,13 @@ function registerIpc() {
     }
   });
   handleTrusted("claude:status", () => claude.account());
+  // Самопроверка изоляции подписочных CLI (кнопка в Connections): Codex —
+  // без вызова модели, Claude — один короткий запрос haiku по подписке.
+  handleTrusted("providers:self-test", (_event, { provider } = {}) => {
+    if (provider === "claude") return claude.selfTest();
+    if (provider === "codex") return codex.selfTest();
+    throw new Error(`Unknown provider for self-test: ${provider}`);
+  });
   // Вход Claude из приложения: открываем окно терминала с `claude /login`
   // (OAuth и сохранение кредов ведёт сам CLI), затем ждём валидные креды.
   handleTrusted("claude:login-start", () => claude.loginStart());

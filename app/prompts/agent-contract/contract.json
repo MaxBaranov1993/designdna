@@ -1,0 +1,53 @@
+{
+  "version": "agent-contract/1.0",
+  "description": "Единый источник инструкций ролей для подписочных CLI (Claude Code, Codex) и Python-пути. Текст роли + правило инструментов + правило вывода собираются адаптерами одинаково для всех провайдеров; различается только транспорт.",
+  "roles": {
+    "chat": {
+      "output": "text",
+      "file": "roles/chat.md"
+    },
+    "generator": {
+      "output": "json",
+      "file": "roles/generator.md"
+    },
+    "quality_judge": {
+      "output": "json",
+      "file": "roles/quality_judge.md"
+    },
+    "quality_repair": {
+      "output": "json",
+      "file": "roles/quality_repair.md"
+    },
+    "editor": {
+      "output": "json",
+      "file": "roles/editor.md"
+    },
+    "graphics": {
+      "output": "svg",
+      "file": "roles/graphics.md"
+    }
+  },
+  "toolRules": {
+    "none": "Do not inspect files, run commands, or call tools.",
+    "read-images": "Use the Read tool ONLY to view the image files listed in the messages. Do not run commands or use any other tool.",
+    "inline-images": "Evaluate any attached images directly. Do not inspect files, run commands, or call tools."
+  },
+  "outputRules": {
+    "json": "Return only the JSON object.",
+    "svg": "Return only the SVG markup.",
+    "text": ""
+  },
+  "reminders": {
+    "json": "Final response: return only the complete JSON object required above. No introduction, explanation, or Markdown fences.",
+    "svg": "Final response: return only the complete <svg> document required above. No introduction, explanation, or Markdown fences.",
+    "text": ""
+  },
+  "effort": {
+    "levels": [
+      "medium",
+      "high",
+      "max"
+    ],
+    "default": "medium"
+  }
+}

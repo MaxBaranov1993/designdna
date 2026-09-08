@@ -23,6 +23,7 @@ import signal
 from pathlib import Path
 
 import cancel_token
+import agent_contract
 
 CODEX_DEFAULT_MODEL = "gpt-5.6-sol"
 CLAUDE_DEFAULT_MODEL = "opus"
@@ -30,8 +31,30 @@ CLAUDE_DEFAULT_MODEL = "opus"
 # лимит заметно выше HTTP-пути, настраивается LLM_CLI_TIMEOUT_S.
 DEFAULT_TIMEOUT = int(os.environ.get("LLM_CLI_TIMEOUT_S", "900"))
 _EFFORTS = {"low", "medium", "high", "max", "xhigh", "ultra"}
-# Claude Code думает по бюджету токенов, а не по уровню усилия (как в десктопе)
-_CLAUDE_THINKING = {"low": 0, "medium": 4_000, "high": 12_000, "max": 32_000, "xhigh": 32_000}
+# Запасной путь для старых Claude Code без --effort: бюджет thinking через env.
+# Таблица совпадает с десктопным адаптером (claude-agent-server.mjs), чтобы
+# одна и та же нода давала одинаковое усилие в обоих путях запуска.
+_CLAUDE_THINKING = {"low": 0, "medium": 0, "high": 8_000, "max": 24_000, "xhigh": 24_000}
+_CLAUDE_EFFORT_LEVELS = ("medium", "high", "max")
+# Headless-флаги, появившиеся в Claude Code не одновременно. Продукт ставят на
+# чужие машины с произвольной версией CLI: набор флагов — capability, которая
+# читается из `claude --help` один раз на процесс; без справки считаем
+# современный CLI.
+_CLAUDE_FLAGS = {
+    "setting_sources": "--setting-sources",
+    "tools": "--tools",
+    "strict_mcp_config": "--strict-mcp-config",
+    "system_prompt_file": "--system-prompt-file",
+    "effort": "--effort",
+    "json_schema": "--json-schema",
+}
+_CLAUDE_HELP_CACHE: dict[str, str | None] = {}
+# Переменные, которые переводят Claude Code с подписки на API/облако: детям
+# их не отдаём (как claudeSubscriptionEnvironment в десктопе).
+_CLAUDE_API_ROUTE_RE = re.compile(
+    r"^(ANTHROPIC_.*|BASE_URL|AWS_BEARER_TOKEN_BEDROCK|"
+    r"CLAUDE_CODE_(USE_(BEDROCK|VERTEX|FOUNDRY|ANTHROPIC_AWS)|SKIP_(BEDROCK|VERTEX|FOUNDRY)_AUTH))$",
+    re.IGNORECASE)
 
 
 def _command(provider: str) -> str | None:
@@ -40,6 +63,57 @@ def _command(provider: str) -> str | None:
     if override:
         return override if Path(override).exists() or shutil.which(override) else None
     return shutil.which(provider)
+
+
+def _claude_help_text(command: str) -> str | None:
+    """`claude --help` без модели и сети; None — справку прочитать не удалось."""
+    if command in _CLAUDE_HELP_CACHE:
+        return _CLAUDE_HELP_CACHE[command]
+    options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    try:
+        done = subprocess.run([command, "--help"], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=20, **options)
+        text: str | None = (done.stdout or "") + (done.stderr or "")
+    except Exception:
+        text = None
+    _CLAUDE_HELP_CACHE[command] = text
+    return text
+
+
+def _claude_capabilities(command: str) -> dict[str, bool]:
+    text = _claude_help_text(command)
+    if not text:
+        return {key: True for key in _CLAUDE_FLAGS}
+    caps = {}
+    for key, flag in _CLAUDE_FLAGS.items():
+        # `--system-prompt[-file]` в справке описывает оба флага сразу
+        variants = {flag, flag.replace("-file", "[-file]")}
+        caps[key] = any(re.search(rf"(^|[\s,]){re.escape(v)}(?=$|[\s,<])", text, re.M) for v in variants)
+    return caps
+
+
+def _claude_subscription_env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if not _CLAUDE_API_ROUTE_RE.match(key)}
+
+
+def _split_system(messages: list) -> tuple[list[str], list]:
+    """system-сообщения — в системный канал, остальные — в ввод."""
+    system_texts: list[str] = []
+    rest: list = []
+    for message in messages:
+        if str(message.get("role") or "") != "system":
+            rest.append(message)
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            if any(isinstance(p, dict) and p.get("type") == "image_url" for p in content):
+                raise ValueError("system messages cannot carry images")
+            text = "\n".join(str(p.get("text") or "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+        else:
+            text = str(content or "")
+        if text.strip():
+            system_texts.append(text)
+    return system_texts, rest
 
 
 def available(provider: str) -> bool:
@@ -120,7 +194,8 @@ def _run(args: list[str], *, stdin_text: str, cwd: Path, timeout: int, env: dict
         process.communicate()
 
 
-def _codex(messages: list, *, model: str | None, effort: str | None, timeout: int) -> str:
+def _codex(messages: list, *, model: str | None, effort: str | None, timeout: int,
+           output_schema: dict | None = None) -> str:
     command = _command("codex")
     if not command:
         raise RuntimeError("Codex CLI не найден: установите @openai/codex и войдите в аккаунт (codex login)")
@@ -128,13 +203,22 @@ def _codex(messages: list, *, model: str | None, effort: str | None, timeout: in
         tmp = Path(tmpdir)
         prompt, images = _materialize(messages, tmp)
         last = tmp / "last-message.txt"
+        # Герметично: пустой временный cwd, без AGENTS.md пользователя
+        # (project_doc_max_bytes=0), без сохранения сессии (--ephemeral).
+        # --ignore-rules касается только execpolicy .rules, не AGENTS.md.
         args = [
             command, "exec", "--skip-git-repo-check", "--ephemeral", "--ignore-rules",
+            "-c", "project_doc_max_bytes=0", "-c", "mcp_servers={}",
             "-s", "read-only", "-C", str(tmp), "-m", model or CODEX_DEFAULT_MODEL,
             "-o", str(last),
         ]
         if effort in _EFFORTS:
             args += ["-c", f'model_reasoning_effort="{effort}"']
+        if isinstance(output_schema, dict) and output_schema:
+            # Структурированный вывод: JSON Schema финального сообщения (файл).
+            schema_file = tmp / "output-schema.json"
+            schema_file.write_text(json.dumps(output_schema, ensure_ascii=False), encoding="utf-8")
+            args += ["--output-schema", str(schema_file)]
         for image in images:
             args += ["-i", str(image)]
         args.append("-")  # промпт из stdin: системные промпты больше лимита командной строки
@@ -146,23 +230,58 @@ def _codex(messages: list, *, model: str | None, effort: str | None, timeout: in
         return text
 
 
-def _claude(messages: list, *, model: str | None, effort: str | None, timeout: int) -> str:
+def _claude(messages: list, *, model: str | None, effort: str | None, timeout: int,
+            output_schema: dict | None = None) -> str:
+    """Герметичный headless-запрос: тот же контракт, что у десктопного адаптера.
+
+    - инструкции и system-сообщения — настоящий системный промпт через
+      --system-prompt-file (файл обходит лимит командной строки Windows);
+    - --tools "" запрещает инструменты на уровне CLI, для картинок — только Read;
+    - --strict-mcp-config и --setting-sources "" отключают MCP и settings
+      пользователя (хуки, apiKeyHelper, CLAUDE.md); --bare не подходит: он
+      выключает OAuth;
+    - усилие через --effort, для старых CLI — бюджет thinking через env.
+    """
     command = _command("claude")
     if not command:
         raise RuntimeError("Claude Code не найден: установите claude и выполните /login")
+    caps = _claude_capabilities(command)
     with tempfile.TemporaryDirectory(prefix="ddna-claude-") as tmpdir:
         tmp = Path(tmpdir)
-        prompt, images = _materialize(messages, tmp)
-        rule = ("Use the Read tool ONLY to view the image files listed in the messages. Do not run commands or use any other tool."
-                if images else "Do not inspect files, run commands, or call tools.")
+        system_texts, rest = _split_system(messages) if caps["system_prompt_file"] else ([], list(messages))
+        prompt, images = _materialize(rest, tmp)
+        rule = agent_contract.load().tool_rule("read-images" if images else "none")
         args = [command, "-p", "--output-format", "json", "--model", model or CLAUDE_DEFAULT_MODEL]
+        if caps["setting_sources"]:
+            args += ["--setting-sources", ""]
+        if caps["strict_mcp_config"]:
+            args.append("--strict-mcp-config")
+        if caps["tools"]:
+            args += ["--tools", "Read" if images else ""]
         if images:
             args += ["--allowedTools", "Read"]
-        env = dict(os.environ)
-        budget = _CLAUDE_THINKING.get(effort or "medium", 4_000)
-        if budget:
-            env["MAX_THINKING_TOKENS"] = str(budget)
-        done = _run(args, stdin_text=f"{rule}\n\n{prompt}", cwd=tmp, timeout=timeout, env=env)
+        env = _claude_subscription_env()
+        if caps["effort"]:
+            args += ["--effort", effort if effort in _CLAUDE_EFFORT_LEVELS else "medium"]
+        else:
+            budget = _CLAUDE_THINKING.get(effort or "medium", 0)
+            if budget:
+                env["MAX_THINKING_TOKENS"] = str(budget)
+        structured = False
+        if isinstance(output_schema, dict) and output_schema:
+            if caps["json_schema"]:
+                # structured_output в JSON-конверте; внутри CLI это отдельный ход,
+                # поэтому --max-turns не ограничиваем.
+                args += ["--json-schema", json.dumps(output_schema, ensure_ascii=False)]
+                structured = True
+        if caps["system_prompt_file"]:
+            system_file = tmp / "system-prompt.md"
+            system_file.write_text("\n\n".join([rule, *system_texts]), encoding="utf-8")
+            args += ["--system-prompt-file", str(system_file)]
+            stdin_text = prompt
+        else:
+            stdin_text = f"{rule}\n\n{prompt}"
+        done = _run(args, stdin_text=stdin_text, cwd=tmp, timeout=timeout, env=env)
         raw = (done.stdout or "").strip()
         if not raw:
             raise RuntimeError(f"Claude Code не вернул ответ (exit {done.returncode}): {(done.stderr or '')[-600:]}")
@@ -173,6 +292,8 @@ def _claude(messages: list, *, model: str | None, effort: str | None, timeout: i
         if isinstance(envelope, dict):
             if envelope.get("is_error"):
                 raise RuntimeError(f"Claude Code: {envelope.get('result') or envelope.get('error') or 'ошибка'}")
+            if structured and envelope.get("structured_output") is not None:
+                return json.dumps(envelope["structured_output"], ensure_ascii=False)
             result = envelope.get("result")
             if isinstance(result, str):
                 return result.strip()
@@ -180,10 +301,10 @@ def _claude(messages: list, *, model: str | None, effort: str | None, timeout: i
 
 
 def chat(provider: str, messages: list, *, model: str | None = None, effort: str | None = None,
-         timeout: int | None = None) -> str:
+         timeout: int | None = None, output_schema: dict | None = None) -> str:
     timeout = int(timeout or DEFAULT_TIMEOUT)
     if provider == "codex":
-        return _codex(messages, model=model, effort=effort, timeout=timeout)
+        return _codex(messages, model=model, effort=effort, timeout=timeout, output_schema=output_schema)
     if provider == "claude":
-        return _claude(messages, model=model, effort=effort, timeout=timeout)
+        return _claude(messages, model=model, effort=effort, timeout=timeout, output_schema=output_schema)
     raise ValueError(f"unknown CLI provider: {provider}")

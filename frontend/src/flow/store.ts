@@ -259,7 +259,9 @@ export async function runDesktopDesignSystemAi(
             : preparation.stage === "master-review" || preparation.stage === "master-verify" ? "quality_judge" : "editor";
           // The subscription transport supports a real output schema; prompts alone
           // let judges invent verdict/issue keys and non-contract severity values.
-          const responseFormat = profile === "quality_judge" && provider !== "claude" ? {
+          // Claude Code carries it as --json-schema (structured_output); an older
+          // CLI reports the schema as dropped and the prompt still requests JSON.
+          const responseFormat = profile === "quality_judge" ? {
             type: "json_schema" as const,
             jsonSchema: { name: "design_system_verdict", schema: {
               type: "object", additionalProperties: false,

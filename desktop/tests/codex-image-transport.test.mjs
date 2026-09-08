@@ -72,8 +72,14 @@ test("Source DS visual QA sends actual image bytes through envelope, router and 
   assert.equal(wire.model, "gpt-5.6-sol");
   assert.equal(wire.effort, "high");
   assert.deepEqual(wire.input.map((part) => part.type), ["text", "localImage", "text", "localImage", "text"]);
-  assert.match(wire.input[0].text, /Evaluate the supplied Design IR/);
-  assert.match(wire.input[0].text, /SYSTEM:\nEnvelope system contract\n\nSYSTEM:\nСохрани Source DS tokens\n\nUSER:\nBefore screenshot/);
+  // Герметичный контракт: инструкции профиля и system-сообщения конверта —
+  // developerInstructions треда; в input остаётся только переписка.
+  assert.match(thread.developerInstructions, /Evaluate the supplied Design IR/);
+  assert.match(thread.developerInstructions, /Envelope system contract\n\nСохрани Source DS tokens/);
+  assert.equal(thread.config.project_doc_max_bytes, 0);
+  assert.deepEqual(thread.config.mcp_servers, {});
+  assert.doesNotMatch(wire.input[0].text, /SYSTEM:|Evaluate the supplied Design IR/);
+  assert.match(wire.input[0].text, /^USER:\nBefore screenshot/);
   assert.equal(wire.input[2].text, "\nAfter screenshot — compare\n");
   assert.equal(wire.input[4].text, "\nFinal instruction\nKeep layout");
   for (const part of wire.input.filter((item) => item.type === "localImage")) {

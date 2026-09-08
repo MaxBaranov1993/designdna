@@ -61,6 +61,7 @@ import project_store
 import typography
 import designkb
 import generator_policy
+import agent_contract
 from editor_assist import router as editor_assist_router
 
 import ir
@@ -946,6 +947,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
                        for n in range(len(variants_out))],
                 "design": {"type": ptype, "label": pinfo["label"]},
                 "generationLog": {
+                    "contractVersion": agent_contract.version(),
                     "product": pinfo["label"], "mode": mode, "tokensLocked": True,
                     "projectRules": bool(rules_block),
                     "referenceScreens": len([x for x in (req.referenceIrs or []) if isinstance(x, dict)]),
@@ -1333,6 +1335,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
                     return err(422, f"Design System Strict отклонил все варианты: {first}")
     # Журнал решений: что агент получил и что проверил — вместо чёрного ящика.
     generation_log = {
+        "contractVersion": agent_contract.version(),
         "product": pinfo["label"],
         "mode": mode,
         "tokensLocked": bool(dna),
@@ -2895,6 +2898,7 @@ def app_config():
     """Runtime configuration and feature flags for the frontend."""
     return {
         "schemaVersion": ir.CURRENT_SCHEMA_VERSION,
+        "agentContract": agent_contract.load().summary(),
         "flags": FEATURE_FLAGS.all(),
         "models": {
             "generator": llm.routing_models("generator")[0],

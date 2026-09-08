@@ -56,6 +56,21 @@ type EngineState = {
 type ApiCancelResult = { cancelled: boolean; scope?: string; requestId?: string; mode?: "cooperative" | "abort" };
 
 type DesktopProvider = "openai" | "astra" | "codex" | "claude";
+
+/** Результат самопроверки изоляции CLI: isolated=null — проверка не выполнена. */
+type IsolationSelfTest = {
+  provider: "claude" | "codex";
+  ok: boolean;
+  isolated: boolean | null;
+  error?: string;
+  model?: string | null;
+  contractVersion?: string;
+  elapsedMs: number;
+  sample?: string;
+  capabilities?: Record<string, boolean>;
+  instructionSources?: string[];
+  globalInstructionSources?: string[];
+};
 type SolEffort = "medium" | "high" | "max";
 
 type ChatRequestEnvelope = {
@@ -146,6 +161,8 @@ declare global {
           Promise<{ content: string; toolCalls?: Array<{ id: string; name: string; arguments: string }> }>;
         chatRequest(request: ChatRequestEnvelope): Promise<ChatResponse>;
         cancel(requestId: string): Promise<{ cancelled: boolean; requestId?: string }>;
+        /** Самопроверка изоляции подписочного CLI (см. docs/AGENT-CONTRACT.md). */
+        selfTest(provider: "claude" | "codex"): Promise<IsolationSelfTest>;
       };
       claude: {
         status(): Promise<{ provider: "claude"; installed: boolean; loggedIn: boolean; viaApp?: boolean; model: string; hint: string | null }>;

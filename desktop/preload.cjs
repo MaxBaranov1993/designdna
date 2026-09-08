@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld("designDNA", Object.freeze({
     // + requestId, transport.dropped и структурные ошибки валидации/возможностей.
     chatRequest: (request) => ipcRenderer.invoke("providers:chat-request", request),
     cancel: (requestId) => ipcRenderer.invoke("providers:cancel", { requestId }),
+    // Самопроверка изоляции CLI: результат {ok, isolated, error?, …}.
+    selfTest: (provider) => ipcRenderer.invoke("providers:self-test", { provider }),
   }),
   claude: Object.freeze({
     status: () => ipcRenderer.invoke("claude:status"),

@@ -72,6 +72,10 @@ async function chatViaCodex({ codex, source, messages, model, profile, signal, e
       turnId: responseMetadata?.turnId || null,
       modelSource: responseMetadata?.modelSource || null,
       completion: responseMetadata?.completion || null,
+      // Файлы инструкций, которые app-server подхватил с диска пользователя
+      // (глобальный ~/.codex/AGENTS.md отключить нельзя): для трассировки.
+      instructionSources: responseMetadata?.instructionSources || null,
+      contractVersion: responseMetadata?.contractVersion || codex.contract?.version || null,
       requestedProvider,
       requestId: source.id || null, dropped: [], fallback },
   };
@@ -109,14 +113,22 @@ export async function chatWithProvider({
     const claudeMessages = source.system
       ? [{ role: "system", content: source.system }, ...(source.messages || messages || [])]
       : source.messages || messages || [];
+    let claudeMetadata = null;
     const content = await claude.chat(claudeMessages,
       { profile, effort, signal, model: claudeResolvedModel,
+        // json_schema уходит в --json-schema, если установленный CLI его знает;
+        // иначе адаптер сообщает dropped, а промпт по-прежнему просит JSON.
+        ...(source.responseFormat ? { responseFormat: source.responseFormat } : {}),
+        onResponseMetadata: (metadata) => { claudeMetadata = metadata; },
         ...(source.timeoutMs != null ? { timeoutMs: source.timeoutMs } : {}) });
     return {
       content,
       toolCalls: [],
       provider: "claude",
-      transport: { provider: "claude", model: claudeResolvedModel, requestId: source.id || null, dropped: [], fallback },
+      transport: { provider: "claude", model: claudeResolvedModel, requestId: source.id || null,
+        dropped: [...(claudeMetadata?.dropped || [])], fallback,
+        contractVersion: claudeMetadata?.contractVersion || claude.contract?.version || null,
+        structuredOutput: claudeMetadata?.structuredOutput ?? false },
     };
   }
 

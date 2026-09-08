@@ -34,6 +34,34 @@
   let codexStatus = $state<CodexStatus | null>(null);
   let codexLoginActive = $state(false);
   let codexLoginError = $state("");
+  /* Самопроверка изоляции: Codex — thread/start без вызова модели, Claude —
+   * один короткий запрос haiku по подписке. Только по кнопке пользователя. */
+  type IsolationSelfTest = { provider: "claude" | "codex"; ok: boolean; isolated: boolean | null; error?: string;
+    model?: string | null; elapsedMs: number; globalInstructionSources?: string[]; sample?: string };
+  let isolation = $state<Record<string, IsolationSelfTest>>({});
+  let isolationBusy = $state<"claude" | "codex" | null>(null);
+  async function runIsolationCheck(provider: "claude" | "codex") {
+    if (!desktop?.providers?.selfTest || isolationBusy) return;
+    isolationBusy = provider;
+    try {
+      isolation = { ...isolation, [provider]: await desktop.providers.selfTest(provider) };
+    } catch (reason) {
+      isolation = { ...isolation, [provider]: { provider, ok: false, isolated: null, elapsedMs: 0,
+        error: reason instanceof Error ? reason.message : String(reason) } };
+    } finally {
+      isolationBusy = null;
+    }
+  }
+  const isolationLabel = (result: IsolationSelfTest | undefined): string => {
+    if (!result) return "";
+    if (result.error) return `Изоляция: ошибка · ${result.error}`;
+    if (result.isolated === false) return "Изоляция: НЕ работает — инструкции с диска попадают в модель";
+    if (result.isolated) {
+      const globals = result.globalInstructionSources?.length || 0;
+      return `Изоляция: работает${globals ? ` · глобальных файлов инструкций: ${globals}` : ""}${result.model ? ` · ${result.model}` : ""}`;
+    }
+    return "Изоляция: не проверена";
+  };
   let agentModel = $state("gpt-5.6-sol");
   const modelLabel = (model: string) => model === "opus" ? "Claude Opus" : model === "gpt-6-astra" ? "GPT-6 Astra" : "GPT-5.6 Sol";
   let agentEffort = $state<"medium" | "high" | "max">("medium");
@@ -331,6 +359,10 @@
           {/if}
           {#if codexLoginError}<p class="agent-runtime-hint">{codexLoginError}</p>{/if}
           <Button variant="outline" onclick={() => void refreshCodex()}>Проверить GPT</Button>
+          <Button variant="outline" onclick={() => void runIsolationCheck("codex")} disabled={isolationBusy !== null || !codexStatus?.loggedIn}>
+            {isolationBusy === "codex" ? "Проверяю изоляцию…" : "Проверить изоляцию GPT"}
+          </Button>
+          {#if isolation.codex}<p class="agent-runtime-hint" data-isolation="codex">{isolationLabel(isolation.codex)}</p>{/if}
         </div>
         <div class="agent-runtime" data-provider="claude">
           <span class={claudeStatus?.loggedIn ? "ok" : "bad"}>
@@ -352,6 +384,10 @@
           {/if}
           {#if claudeLoginError}<p class="agent-runtime-hint">{claudeLoginError}</p>{/if}
           <Button variant="outline" onclick={() => void refreshClaude()}>Проверить Claude</Button>
+          <Button variant="outline" onclick={() => void runIsolationCheck("claude")} disabled={isolationBusy !== null || !claudeStatus?.loggedIn}>
+            {isolationBusy === "claude" ? "Проверяю изоляцию…" : "Проверить изоляцию Claude"}
+          </Button>
+          {#if isolation.claude}<p class="agent-runtime-hint" data-isolation="claude">{isolationLabel(isolation.claude)} · один короткий запрос haiku по подписке</p>{/if}
         </div>
         <label><span>Ключ OpenRouter (только видео Seedance) {providerState.credentials?.openrouter ? "· сохранён" : ""}</span><input type="password" bind:value={openrouterKey} placeholder="sk-or-v1-…" /></label>
         <Button variant="outline" onclick={() => void saveKey("openrouter", openrouterKey)}>Сохранить ключ OpenRouter</Button>

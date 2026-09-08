@@ -11,6 +11,8 @@ import {
   claudeEffortBudget,
   claudeInstallPaths,
   claudeProcessSpec,
+  DEFAULT_CLAUDE_CAPABILITIES,
+  parseClaudeCapabilities,
 } from "../services/claude-agent-server.mjs";
 
 /** Минимальный дубль child_process: собирает stdin, отдаёт заданный stdout. */
@@ -22,7 +24,12 @@ function fakeSpawn({ stdout = "", stderr = "", code = 0 } = {}) {
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     child.kill = () => { calls.at(-1).killed = true; };
-    calls.push({ command, args, options, stdin: null, killed: false });
+    // Системный промпт живёт во временном файле только на время запроса —
+    // читаем его в момент spawn, как это сделал бы настоящий CLI.
+    const systemIndex = args.indexOf("--system-prompt-file");
+    const systemPrompt = systemIndex >= 0 && existsSync(args[systemIndex + 1])
+      ? readFileSync(args[systemIndex + 1], "utf8") : null;
+    calls.push({ command, args, options, stdin: null, killed: false, systemPrompt });
     queueMicrotask(() => {
       if (stdout) child.stdout.emit("data", Buffer.from(stdout));
       if (stderr) child.stderr.emit("data", Buffer.isBuffer(stderr) ? stderr : Buffer.from(stderr));
@@ -200,9 +207,12 @@ test("chat sends a headless JSON request and returns the result field", async ()
   });
   const output = await server.chat([{ role: "user", content: "make it" }], { profile: "generator" });
   assert.equal(output, '{"ir":true}');
-  assert.deepEqual(calls[0].args, ["-p", "--output-format", "json", "--model", "opus", "--setting-sources", ""]);
+  assert.deepEqual(calls[0].args.slice(0, 7), ["-p", "--output-format", "json", "--model", "opus", "--setting-sources", ""]);
+  assert.deepEqual(calls[0].args.slice(7, 12), ["--strict-mcp-config", "--tools", "", "--effort", "medium"]);
+  assert.equal(calls[0].args[12], "--system-prompt-file");
   assert.match(calls[0].stdin, /USER:\nmake it/);
-  assert.match(calls[0].stdin, /Return only the JSON object/);
+  assert.match(calls[0].systemPrompt, /Return only the JSON object/);
+  assert.doesNotMatch(calls[0].stdin, /Generate the requested Design IR/, "инструкции профиля — системный промпт, не текст пользователя");
 });
 
 test("workspace chat accepts prose without requesting Design IR or JSON", async () => {
@@ -215,9 +225,10 @@ test("workspace chat accepts prose without requesting Design IR or JSON", async 
   });
   const output = await server.chat([{ role: "user", content: "Оцени идею" }], { profile: "chat", model: "opus" });
   assert.equal(output, "Предлагаю упростить навигацию.");
-  assert.match(calls[0].stdin, /Answer the user in their language/);
+  assert.match(calls[0].systemPrompt, /Answer the user in their language/);
+  assert.doesNotMatch(calls[0].systemPrompt, /Return only the JSON object/);
   assert.doesNotMatch(calls[0].stdin, /Return only the JSON object/);
-  assert.match(calls[0].stdin, /Do not inspect files, run commands, or call tools/);
+  assert.match(calls[0].systemPrompt, /Do not inspect files, run commands, or call tools/);
 });
 
 test("chat passes a supported model through and falls back on unknown", async () => {
@@ -228,20 +239,36 @@ test("chat passes a supported model through and falls back on unknown", async ()
       environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
     });
     await server.chat([{ role: "user", content: "hi" }], { model: requested });
-    assert.deepEqual(calls[0].args, ["-p", "--output-format", "json", "--model", expected, "--setting-sources", ""]);
+    assert.deepEqual(calls[0].args.slice(0, 7), ["-p", "--output-format", "json", "--model", expected, "--setting-sources", ""]);
   }
 });
 
-test("high effort sets a thinking budget, medium leaves it unset", async () => {
+test("effort goes through --effort on a modern CLI, unknown values fall back to medium", async () => {
   const envelope = JSON.stringify({ result: "ok" });
-  for (const [effort, expected] of [["medium", undefined], ["high", String(claudeEffortBudget("high"))]]) {
+  for (const [effort, expected] of [["medium", "medium"], ["high", "high"], ["max", "max"], ["ultra", "medium"]]) {
     const { spawnProcess, calls } = fakeSpawn({ stdout: envelope });
     const server = new ClaudeAgentServer({
       cwd: "/repo", spawnProcess,
       environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
     });
     await server.chat([{ role: "user", content: "hi" }], { effort });
+    const index = calls[0].args.indexOf("--effort");
+    assert.deepEqual(calls[0].args.slice(index, index + 2), ["--effort", expected]);
+    assert.equal(Object.hasOwn(calls[0].options.env, "MAX_THINKING_TOKENS"), false, "env-бюджет — только для CLI без --effort");
+  }
+});
+
+test("without --effort support high effort sets a thinking budget, medium leaves it unset", async () => {
+  const envelope = JSON.stringify({ result: "ok" });
+  for (const [effort, expected] of [["medium", undefined], ["high", String(claudeEffortBudget("high"))]]) {
+    const { spawnProcess, calls } = fakeSpawn({ stdout: envelope });
+    const server = new ClaudeAgentServer({
+      cwd: "/repo", spawnProcess, capabilities: { ...DEFAULT_CLAUDE_CAPABILITIES, effort: false },
+      environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
+    });
+    await server.chat([{ role: "user", content: "hi" }], { effort });
     assert.equal(calls[0].options.env.MAX_THINKING_TOKENS, expected);
+    assert.equal(calls[0].args.includes("--effort"), false);
   }
 });
 
@@ -291,7 +318,9 @@ for (const source of ["inherited OAuth", "app-stored OAuth", "CLI OAuth file"]) 
       assert.ok(childEnv.CLAUDE_CODE_OAUTH_TOKEN === expected, "subscription OAuth must reach the child");
       assert.equal(Object.hasOwn(childEnv, "claude_code_oauth_token"), false, "OAuth env key must be canonical on Windows");
     }
-    assert.equal(childEnv.MAX_THINKING_TOKENS, "8000");
+    assert.equal(Object.hasOwn(childEnv, "MAX_THINKING_TOKENS"), false, "modern CLI takes --effort, not an env budget");
+    const effortIndex = calls[0].args.indexOf("--effort");
+    assert.deepEqual(calls[0].args.slice(effortIndex, effortIndex + 2), ["--effort", "high"]);
     assert.equal(calls.length, 1);
   });
 }
@@ -493,6 +522,10 @@ test("image parts become temp files, Read is allowed, and the dir is cleaned up"
   assert.equal(output, '{"regions":[]}');
   assert.ok(calls[0].args.includes("--allowedTools"), "vision-запрос обязан разрешить Read");
   assert.ok(calls[0].args.includes("Read"));
+  const toolsIndex = calls[0].args.indexOf("--tools");
+  assert.deepEqual(calls[0].args.slice(toolsIndex, toolsIndex + 2), ["--tools", "Read"], "кроме Read инструментов быть не должно");
+  assert.match(calls[0].systemPrompt, /segment/, "system-сообщение уходит в системный промпт");
+  assert.doesNotMatch(calls[0].stdin, /SYSTEM:/);
   const match = /IMAGE FILE \(view it with the Read tool\): (.+)/.exec(calls[0].stdin);
   assert.ok(match, "путь к изображению обязан попасть в промпт");
   assert.equal(existsSync(match[1].trim()), false, "временный файл обязан удаляться после запроса");
@@ -508,7 +541,10 @@ test("text-only requests keep the no-tools contract and flat prompt", async () =
   });
   await server.chat([{ role: "user", content: "plain" }]);
   assert.equal(calls[0].args.includes("--allowedTools"), false);
-  assert.match(calls[0].stdin, /Do not inspect files, run commands, or call tools/);
+  const toolsIndex = calls[0].args.indexOf("--tools");
+  assert.deepEqual(calls[0].args.slice(toolsIndex, toolsIndex + 2), ["--tools", ""], "инструменты выключены на уровне CLI, не просьбой");
+  assert.ok(calls[0].args.includes("--strict-mcp-config"), "MCP-серверы пользователя не поднимаются");
+  assert.match(calls[0].systemPrompt, /Do not inspect files, run commands, or call tools/);
 });
 
 test("non-data image urls are rejected loudly before any spawn", async () => {
@@ -524,4 +560,82 @@ test("non-data image urls are rejected loudly before any spawn", async () => {
     /data:image/,
   );
   assert.equal(calls.length, 0);
+});
+
+test("hermetic cwd is used for headless requests instead of the project root", async () => {
+  const { spawnProcess, calls } = fakeSpawn({ stdout: JSON.stringify({ result: "ok" }) });
+  const server = new ClaudeAgentServer({
+    cwd: "/repo", hermeticCwd: "/app-data/agent-cwd/claude", spawnProcess,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
+  });
+  await server.chat([{ role: "user", content: "hi" }]);
+  assert.equal(calls[0].options.cwd, "/app-data/agent-cwd/claude");
+});
+
+test("system messages travel through --system-prompt-file, never through stdin", async () => {
+  const { spawnProcess, calls } = fakeSpawn({ stdout: JSON.stringify({ result: "ok" }) });
+  const server = new ClaudeAgentServer({ spawnProcess,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
+  });
+  await server.chat([
+    { role: "system", content: "DESIGN CONTRACT §1" },
+    { role: "user", content: "make it" },
+  ], { profile: "editor" });
+  const file = calls[0].args[calls[0].args.indexOf("--system-prompt-file") + 1];
+  assert.ok(file, "system prompt file argument is required");
+  assert.match(calls[0].systemPrompt, /Apply the requested visual edit/);
+  assert.match(calls[0].systemPrompt, /DESIGN CONTRACT §1/);
+  assert.doesNotMatch(calls[0].stdin, /SYSTEM:/);
+  assert.doesNotMatch(calls[0].stdin, /DESIGN CONTRACT/);
+  assert.match(calls[0].stdin, /USER:\nmake it/);
+  assert.match(calls[0].stdin, /Final response: return only the complete JSON object required above/);
+  assert.equal(existsSync(file), false, "временный системный промпт удаляется после запроса");
+});
+
+test("legacy CLI capabilities fall back to the pre-flag contract", async () => {
+  const { spawnProcess, calls } = fakeSpawn({ stdout: JSON.stringify({ result: "ok" }) });
+  const server = new ClaudeAgentServer({ spawnProcess,
+    capabilities: { ...DEFAULT_CLAUDE_CAPABILITIES, tools: false, strictMcpConfig: false, systemPromptFile: false, effort: false },
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
+  });
+  await server.chat([{ role: "system", content: "CONTRACT" }, { role: "user", content: "hi" }], { effort: "high" });
+  assert.deepEqual(calls[0].args, ["-p", "--output-format", "json", "--model", "opus", "--setting-sources", ""]);
+  assert.equal(calls[0].options.env.MAX_THINKING_TOKENS, String(claudeEffortBudget("high")));
+  assert.match(calls[0].stdin, /SYSTEM:\nCONTRACT/);
+  assert.match(calls[0].stdin, /Do not inspect files, run commands, or call tools/);
+  assert.equal(calls[0].systemPrompt, null);
+});
+
+test("parseClaudeCapabilities reads flags from --help, including the [-file] shorthand", () => {
+  const help = [
+    "  --setting-sources <sources>  Comma-separated list of setting sources",
+    "  --bare  Minimal mode ... via: --system-prompt[-file], --append-system-prompt[-file]",
+    "  --tools <tools...>  Specify the list of available tools",
+    "  --strict-mcp-config  Only use MCP servers from --mcp-config",
+    "  --effort <level>  Effort level for the current session",
+  ].join("\n");
+  const caps = parseClaudeCapabilities(help);
+  assert.deepEqual(caps, {
+    probed: true, settingSources: true, tools: true, strictMcpConfig: true, systemPromptFile: true, effort: true, jsonSchema: false,
+  });
+  const legacy = parseClaudeCapabilities("  --setting-sources <sources>\n  --allowedTools <tools...>\n  --toolset x");
+  assert.equal(legacy.tools, false, "`--toolset` must not count as --tools");
+  assert.equal(legacy.settingSources, true);
+  assert.equal(legacy.effort, false);
+});
+
+test("probeCapabilities runs --help once and downgrades unsupported flags", async () => {
+  const help = "  --setting-sources <sources>\n  --tools <tools...>\n";
+  const { spawnProcess, calls } = fakeSpawn({ stdout: help });
+  const server = new ClaudeAgentServer({ spawnProcess,
+    environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
+  });
+  const caps = await server.probeCapabilities();
+  assert.deepEqual(calls[0].args, ["--help"]);
+  assert.equal(caps.probed, true);
+  assert.equal(caps.tools, true);
+  assert.equal(caps.effort, false);
+  assert.equal(caps.systemPromptFile, false);
+  assert.equal(server.capabilities, caps);
+  assert.equal(calls.length, 1);
 });
