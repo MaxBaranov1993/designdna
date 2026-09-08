@@ -111,7 +111,7 @@ def main() -> None:
         baseline = node_timeline(page, timeline_id)
         check("timeline собран из входного Design IR", bool(baseline and baseline.get("layers")))
 
-        page.click(f'.svelte-flow__node[data-id="{timeline_id}"] button:has-text("Открыть редактор")')
+        page.click(f'.svelte-flow__node[data-id="{timeline_id}"] button:has-text("Редактор")')
         page.wait_for_selector('.tlw-root [data-act="ruler"]')
 
         # --- 1. клавиатурный скраб линейки ---
@@ -191,6 +191,8 @@ def main() -> None:
               not page.locator('.tlw-root [data-act="ai-preview"]').is_visible()
               and json.dumps(node_timeline(page, timeline_id), sort_keys=True) == canonical_before)
 
+        # Chat clears the composer after send. Reuse the cancelled message to retry.
+        page.get_by_role("button", name="Редактировать сообщение").last.click()
         page.click('.tlw-root [data-act="ai-run"]')
         page.wait_for_selector('.tlw-root [data-act="ai-preview"]')
         page.click('.tlw-root [data-act="ai-apply"]')

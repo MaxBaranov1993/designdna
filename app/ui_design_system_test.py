@@ -85,6 +85,11 @@ def main() -> None:
             # The panel starts both AI reviews automatically. This lifecycle test
             # covers deterministic UI actions, so keep those background calls
             # local and immediate instead of invoking an account-backed LLM.
+            page.route("**/api/design-system/organize", lambda route: route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":"disabled in deterministic UI lifecycle test"}',
+            ))
             page.route("**/api/design-system/style-review", lambda route: route.fulfill(
                 status=503,
                 content_type="application/json",
@@ -130,8 +135,9 @@ def main() -> None:
             summary = node.get("summary") or {}
             check("summary has catalog components", int(summary.get("catalogComponents") or 0) >= 1, json.dumps(summary))
             check("Source masters stay review-gated", int(summary.get("reviewMasters") or 0) >= 1, json.dumps(summary))
-            check("review gate leaves an explanatory draft status",
-                  "ждут ревью" in page.locator(f'.n-designsystem[data-id="{ds_id}"] .n-status').inner_text())
+            check("unavailable AI leaves an explanatory draft status",
+                  bool(node.get("lastError")) and node["lastError"] in
+                  page.locator(f'.n-designsystem[data-id="{ds_id}"] .n-status').inner_text())
 
             open_btn = page.locator(f'.n-designsystem[data-id="{ds_id}"] [data-ds-action="open"]')
             check("open has accessible label", (open_btn.get_attribute("aria-label") or "").startswith("Открыть"))

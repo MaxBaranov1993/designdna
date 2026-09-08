@@ -57,7 +57,9 @@ def main() -> None:
         )
         page.wait_for_timeout(800)
         rendered_nodes = page.locator(".svelte-flow__node").count()
-        assert rendered_nodes < 40, rendered_nodes
+        # Keep custom nodes mounted so offscreen handles retain measured bounds.
+        # The frame budget below still applies to the complete 72-node graph.
+        assert rendered_nodes == 72, rendered_nodes
         header = page.locator(f'.svelte-flow__node[data-id="{target_id}"] .node-head')
         box = header.bounding_box()
         assert box

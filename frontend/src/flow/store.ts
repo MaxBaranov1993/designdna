@@ -3610,8 +3610,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       } as unknown as Partial<DesignSystemNodeData>);
       const count = Number(result.summary?.components || 0);
       const reviewMasters = Number(result.summary?.reviewMasters || 0);
-      if (reviewMasters) if (scope.owns()) get().setStatus(nodeId, `Черновик: ${reviewMasters} мастеров ждут ревью`, "ok");
-      else if ((get().nodes.find((x) => Number(x.id) === Number(nodeId))?.data as DesignSystemNodeData | undefined)?.autoPublish !== false) {
+      if (reviewMasters) {
+        if (scope.owns()) get().setStatus(nodeId, `Черновик: ${reviewMasters} мастеров ждут ревью`, "ok");
+      } else if ((get().nodes.find((x) => Number(x.id) === Number(nodeId))?.data as DesignSystemNodeData | undefined)?.autoPublish !== false) {
         await scope.wait(get().publishDesignSystem(nodeId));
       } else if (scope.owns()) get().setStatus(nodeId, `ДС загружена (${result.format}): ${count} компонентов`, "ok");
       await scope.wait(get().refreshDesignSystems());

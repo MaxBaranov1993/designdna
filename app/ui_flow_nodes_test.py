@@ -224,8 +224,8 @@ def main():
 
         pg.click(".svelte-flow__pane", button="right", position={"x": 520, "y": 100})
         pg.wait_for_selector("#ctx-menu")
-        # 14 типов в палитре: qualitypass/recorder/designui живут только в legacy-графах
-        check("menu has 14 current node types", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
+        # 15 типов в палитре: qualitypass/recorder/designui живут только в legacy-графах
+        check("menu has 15 current node types", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 15"))
         check("old nodes are removed from menu", pg.locator("#ctx-menu .ctx-item[data-type='clone']").count() == 0
               and pg.locator("#ctx-menu .ctx-item[data-type='reproduce']").count() == 0
               and pg.locator("#ctx-menu .ctx-item[data-type='blockparse']").count() == 0)
@@ -246,9 +246,9 @@ def main():
         check("created 8 nodes", pg.evaluate("window.GraphDev.state().nodes.length === 8"))
         check("Browser Generator defaults to Sol",
               pg.locator(".n-generator .f-provider-select option:checked").inner_text().strip() == "GPT-5.6 Sol")
-        check("Browser Generator offers Sol, Codex and Claude",
+        check("Browser Generator offers Sol, Astra, Codex and Claude",
               pg.locator(".n-generator .f-provider-select option").evaluate_all(
-                  "els => els.map(e => e.value)") == ["openai", "codex", "claude"])
+                  "els => els.map(e => e.value)") == ["openai", "astra", "codex", "claude"])
         check("Browser Generator offers only the closed effort contract",
               pg.locator(".n-generator .f-effort-select option").evaluate_all(
                   "els => els.map(e => e.value)") == ["medium", "high", "max"])

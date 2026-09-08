@@ -1,4 +1,4 @@
-"""Project persistence omits inline Source screenshots but keeps immutable blob evidence."""
+"""Persistence compacts presentation screenshots and preserves canonical IR and blob evidence."""
 from __future__ import annotations
 
 import json
@@ -37,15 +37,18 @@ def main() -> None:
           const heavy = 'data:image/jpeg;base64,' + 'A'.repeat(1800000);
           const evidenceRef = 'ddna://blobs/' + 'a'.repeat(64) + '.png';
           const editableSrc = 'data:image/svg+xml;base64,PHN2Zy8+';
+          // Canonical IR (including evidence-looking fields) is a hash input.
+          // Large disposable screenshots belong to Source presentation fields.
+          const canonicalPreview = 'data:image/png;base64,Y2Fub25pY2Fs';
           const ir = {
-            version:'1.0', sourcePreview:heavy,
+            version:'1.0', sourcePreview:canonicalPreview,
             responsive:{viewports:{
-              desktop:{width:1440,height:100,preview:heavy},
-              tablet:{width:768,height:120,preview:heavy},
-              mobile:{width:390,height:180,preview:heavy},
+              desktop:{width:1440,height:100,preview:canonicalPreview},
+              tablet:{width:768,height:120,preview:canonicalPreview},
+              mobile:{width:390,height:180,preview:canonicalPreview},
             }},
-            tree:[{id:'imported-block',type:'source-block',variant:'dom-capture',preview:heavy,
-              props:{sourcePreview:heavy},frame:{width:1440,height:100,layout:'auto',direction:'row'},
+            tree:[{id:'imported-block',type:'source-block',variant:'dom-capture',preview:canonicalPreview,
+              props:{sourcePreview:canonicalPreview},frame:{width:1440,height:100,layout:'auto',direction:'row'},
               children:[{type:'image',src:editableSrc,frame:{width:24,height:24}}]}],
           };
           const source=window.GraphDev.add('sourceimport',80,60);
@@ -53,7 +56,7 @@ def main() -> None:
             previews:{desktop:heavy,tablet:evidenceRef,mobile:heavy}}]});
           const edit=window.GraphDev.add('edit',440,60);
           window.GraphDev.setIR(edit.id,ir);
-          return {source:source.id,edit:edit.id,editableSrc,evidenceRef};
+          return {source:source.id,edit:edit.id,editableSrc,evidenceRef,ir};
         }""")
         page.wait_for_timeout(2200)
 
@@ -76,6 +79,9 @@ def main() -> None:
         check("editable image src is preserved", stored["hasEditableSrc"], json.dumps(stored))
         check("legacy graph key is no longer written", len(stored["legacy"]) == 0, json.dumps(stored))
         check("quota warning is not shown", not stored["quotaToast"], json.dumps(stored))
+        local_ir = page.evaluate("""id => JSON.parse(localStorage.getItem('designai-flow-pages-v1'))
+          .pages.flatMap(page => page.graph.nodes).find(node => node.id === id).data.ir""", result["edit"])
+        check("localStorage preserves the complete canonical IR", local_ir == result["ir"])
 
         db_saved = page.evaluate("""async (evidenceRef) => {
           const resp = await fetch('/api/project/load', {
@@ -100,6 +106,8 @@ def main() -> None:
         page.wait_for_function("window.GraphDev")
         restored = page.evaluate("(id) => window.GraphDev.node(id)?.data?.ir?.tree?.[0]?.children?.[0]?.src", result["edit"])
         check("compact project restores editable IR", restored == result["editableSrc"], str(restored))
+        check("reload preserves canonical evidence and geometry exactly",
+              page.evaluate("id => window.GraphDev.node(id)?.data?.ir", result["edit"]) == result["ir"])
         restored_evidence = page.evaluate("(id) => window.GraphDev.node(id)?.data?.blocks?.[0]?.previews?.tablet", result["source"])
         check("compact project restores Source comparison evidence", restored_evidence == result["evidenceRef"], str(restored_evidence))
         browser.close()

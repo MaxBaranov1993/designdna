@@ -91,9 +91,9 @@ def main():
         # правый клик по канвасу — контекстное меню создания ноды
         pg.click(".svelte-flow__pane", button="right", position={"x": 320, "y": 300})
         check("контекстное меню открыто", pg.is_visible("#ctx-menu"))
-        # 14 типов: qualitypass/recorder/designui поддерживаются для legacy-графов,
+        # 15 типов: qualitypass/recorder/designui поддерживаются для legacy-графов,
         # но намеренно скрыты из палитры создания.
-        check("в меню 14 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
+        check("в меню 15 типов нод", pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 15"))
         check("в меню есть Page Bridge", pg.evaluate("!!document.querySelector('#ctx-menu .ctx-item[data-type=\"pagebridge\"]')"))
 
         # создать Промпт

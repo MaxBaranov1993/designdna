@@ -32,6 +32,33 @@ const add = type => store.getState().addNode(type,0,0).id;
 const patch = (id,data) => store.getState().setNodeData(id,data);
 const node = id => store.getState().nodes.find(n=>Number(n.id)===id);
 const tick = () => new Promise(resolve=>setImmediate(resolve));
+
+test('Design System import publishes only review-free documents with autoPublish enabled', async () => {
+ for (const scenario of [
+  {reviewMasters:0, autoPublish:true, expected:'published'},
+  {reviewMasters:1, autoPublish:true, expected:'draft'},
+  {reviewMasters:0, autoPublish:false, expected:'draft'},
+ ]) {
+  reset();
+  const id = add('designsystem');
+  patch(id, {autoPublish:scenario.autoPublish});
+  const document = {id:'import-test', name:'Tokens', components:{}, tokens:{color:{primary:'#123456'}}};
+  let publishes = 0;
+  globalThis.fetch = async path => {
+   if (path === '/api/design-system/import') return response({document, format:'w3c', summary:{components:0, reviewMasters:scenario.reviewMasters}});
+   if (path === '/api/design-system/publish') {
+    publishes++;
+    return response({document:{...document, revision:1, contentHash:'published-hash'}, summary:{components:0}});
+   }
+   if (path === '/api/design-system/list') return response({systems:[]});
+   throw new Error(`Unexpected request: ${path}`);
+  };
+  assert.equal(await store.getState().importDesignSystemDocument(id, {color:{primary:'#123456'}}, 'tokens.json'), true);
+  assert.equal(node(id).data.status, scenario.expected);
+  assert.equal(publishes, scenario.expected === 'published' ? 1 : 0);
+ }
+});
+
 function setup() {
  reset(); const prompt=add('prompt'), id=add('generator');
  patch(prompt,{text:'Marketplace header'}); patch(id,{count:1,provider:'claude'});

@@ -48,7 +48,7 @@ def main() -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1500, "height": 1000})
-        page.add_init_script("""
+        planner_bridge = """
           window.__motionPlannerCalls = [];
           window.designDNA = {
             providers: {
@@ -65,7 +65,7 @@ def main() -> None:
               }
             }
           };
-        """)
+        """
         page.route("**/api/**", route_api)
         for _ in range(30):
             try:
@@ -77,6 +77,8 @@ def main() -> None:
         page.reload()
         page.wait_for_function("window.GraphDev")
         page.evaluate("window.GraphDev.clear()")
+        # Install only the provider mock after browser boot; it is not a full Electron preload.
+        page.evaluate(planner_bridge)
 
         node_id = page.evaluate("window.GraphDev.add('motiondesign', 300, 120).id")
         video = {
@@ -110,11 +112,11 @@ def main() -> None:
         inputs = node.locator('.dna-port.in')
         input_tops = [inputs.nth(i).get_attribute("style") for i in range(inputs.count())]
         check("four inputs are ordered on the left", input_tops == [
-            "top: 61px;", "top: 85px;", "top: 109px;", "top: 133px;",
+            "top: 44px;", "top: 66px;", "top: 88px;", "top: 110px;",
         ], str(input_tops))
         check("video output is on the right", node.locator('.dna-port.out[data-kind="video"]').count() == 1)
 
-        generate = node.get_by_role("button", name="Generate video")
+        generate = node.get_by_role("button", name="Сгенерировать")
         check("paid Seedance button starts disabled", generate.is_disabled())
         check("no submit happened while confirmation was absent", len(submitted) == 0)
         node.locator('.md-paid input[type="checkbox"]').check()

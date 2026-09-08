@@ -95,7 +95,7 @@ def main():
         # ---------- ctx-Р СР ВµР Р…РЎР‹: 14 РЎвЂљР С‘Р С—Р С•Р Р†, Р ВµРЎРѓРЎвЂљРЎРЉ Page ----------
         pg.click(".svelte-flow__pane", button="right")
         check("Р Р† Р СР ВµР Р…РЎР‹ 14 РЎвЂљР С‘Р С—Р С•Р Р† Р Р…Р С•Р Т‘",
-              pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 14"))
+              pg.evaluate("document.querySelectorAll('#ctx-menu .ctx-item').length === 15"))
         check("Р Р† Р СР ВµР Р…РЎР‹ Р ВµРЎРѓРЎвЂљРЎРЉ Р РЋРЎвЂљРЎР‚Р В°Р Р…Р С‘РЎвЂ Р В°",
               pg.evaluate("!!document.querySelector('#ctx-menu .ctx-item[data-type=\"page\"]')"))
         pg.click("#ctx-menu .ctx-item[data-type='page']")
