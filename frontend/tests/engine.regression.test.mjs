@@ -50,6 +50,16 @@ function check(name, fn) {
   console.log("OK", name);
 }
 
+check("captured font families do not load extra Google weights", () => {
+  const tokens = { font: { body: { family: "Open Sans", weight: 500 }, display: { family: "Inter", weight: 700 } } };
+  const captured = { meta: { fontFaces: [{ family: "Open Sans", weight: "400", url: "/fonts/source.woff2" }] } };
+  const url = IRRendererTest.fontsUrl(tokens, captured);
+  assert(!url.includes("Open+Sans"));
+  assert(url.includes("Inter"));
+  assert(IRRendererTest.fontsUrl(tokens, {}).includes("Open+Sans"));
+  assert.equal(IRRendererTest.fontsUrl({ font: { body: tokens.font.body } }, captured), "");
+});
+
 /* ---------- Page: common artboard follows every editable block ---------- */
 
 check("Page artboard is auto-height and viewport metadata sums all blocks", () => {
@@ -464,6 +474,15 @@ check("typeRole renders as a text-style class and drops inline type overrides", 
   assert.ok(!plain.includes("t-nope") && plain.includes("font-size:14px"), plain);
   const css = IRRendererTest.baseCss(3);
   assert.ok(css.includes(".ir-3 .t-h1 {") && css.includes(".ir-3 .t-body {") && css.includes(".ir-3.ir-mobile .t-h1 {"), "role classes in base css");
+});
+
+check("input primitives preserve control type, values and escaped content", () => {
+  const render = el => IRRendererTest.renderElement({type: "input", ...el}, 3, false, null);
+  assert.match(render({inputType: "search", placeholder: "Поиск"}), /type="search"/);
+  assert.match(render({inputType: "number", value: 0}), /value="0"/);
+  assert.match(render({inputType: "textarea", value: "<script>"}), /<textarea[^>]*>&lt;script&gt;<\/textarea>/);
+  assert.match(render({inputType: "select", items: ["One", "Two"], value: "Two"}), /<option selected>Two<\/option>/);
+  assert.match(render({inputType: 'file" onclick="evil()'}), /type="text"/);
 });
 
 console.log(`ALL ENGINE REGRESSION CHECKS PASSED (${passed})`);

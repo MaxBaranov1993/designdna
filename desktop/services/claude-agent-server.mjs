@@ -168,6 +168,7 @@ const PROFILE_INSTRUCTIONS = {
   quality_judge: "Evaluate the supplied Design IR exactly as requested.",
   quality_repair: "Repair the supplied Design IR exactly as requested.",
   editor: "Apply the requested visual edit to the supplied Design IR scope. The SYSTEM section below defines the exact output contract - follow it precisely and return only the JSON object it specifies. Do not generate a full page, do not restructure anything outside the selected scope.",
+  graphics: "Draw the requested graphic as one self-contained SVG document exactly as the SYSTEM section specifies.",
 };
 
 export class ClaudeAgentServer {
@@ -272,9 +273,11 @@ export class ClaudeAgentServer {
       ? "Use the Read tool ONLY to view the image files listed in the messages. Do not run commands or use any other tool."
       : "Do not inspect files, run commands, or call tools.";
     const prompt = [
-      `${PROFILE_INSTRUCTIONS[profile]} ${toolRule}${profile === "chat" ? "" : " Return only the JSON object."}`,
+      `${PROFILE_INSTRUCTIONS[profile]} ${toolRule}${profile === "chat" ? "" : profile === "graphics" ? " Return only the SVG markup." : " Return only the JSON object."}`,
       ...lines,
-      ...(profile === "chat" ? [] : ["Final response: return only the complete JSON object required above. No introduction, explanation, or Markdown fences."]),
+      ...(profile === "chat" ? [] : profile === "graphics"
+        ? ["Final response: return only the complete <svg> document required above. No introduction, explanation, or Markdown fences."]
+        : ["Final response: return only the complete JSON object required above. No introduction, explanation, or Markdown fences."]),
     ].join("\n\n");
 
     const budget = claudeEffortBudget(effort);

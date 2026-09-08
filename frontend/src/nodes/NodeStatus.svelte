@@ -18,7 +18,11 @@
 </script>
 
 <div class="n-status-row">
-  <div class={cn("n-status", status?.kind)}>{status?.text || ""}</div>
+  {#if status?.kind === "err" && status.text.length > 220}
+    <details class="n-status err nodrag"><summary>Есть замечания · диагностика</summary><div class="status-details">{status.text}</div></details>
+  {:else}
+    <div class={cn("n-status", status?.kind)}>{status?.text || ""}</div>
+  {/if}
   {#if canCancel}
     <button
       class="n-cancel nodrag"
@@ -28,3 +32,8 @@
     >✕</button>
   {/if}
 </div>
+
+<style>
+  .status-details { max-height: 160px; overflow: auto; padding-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  summary { cursor: pointer; }
+</style>

@@ -14,35 +14,34 @@
 </script>
 
 <NodeShell {id} type="pagebridge" {selected}>
+  {#snippet footer()}
+    <div class="foot-left"><span>{hasComponent ? "компонент готов" : "канал пуст"}</span></div>
+    <div class="foot-right">
+      <button class="btn-node primary small f-run nodrag" onclick={() => $flow.runNode(Number(id))}>
+        {data.mode === "send" ? "Передать" : "Получить"}
+      </button>
+    </div>
+  {/snippet}
   <InPorts type="pagebridge" {data} />
-  <div class="bridge-mode nodrag">
-    <button class={data.mode === "send" ? "active" : ""} onclick={() => $flow.setNodeData(Number(id), { mode: "send" })}>
-      Send
-    </button>
-    <button class={data.mode === "receive" ? "active" : ""} onclick={() => $flow.setNodeData(Number(id), { mode: "receive" })}>
-      Receive
-    </button>
+  <div class="n-seg grow nodrag" role="group" aria-label="Режим">
+    <button class={data.mode === "send" ? "active" : ""} onclick={() => $flow.setNodeData(Number(id), { mode: "send" })}>Передать</button>
+    <button class={data.mode === "receive" ? "active" : ""} onclick={() => $flow.setNodeData(Number(id), { mode: "receive" })}>Получить</button>
   </div>
-  <label class="field">
-    <span>Channel</span>
-    <input
-      class="nodrag"
-      value={data.channel}
-      oninput={(e) => {
-        const value = e.currentTarget.value;
-        commitNodeText(`pagebridge:${id}:channel`, () => $flow.setNodeData(Number(id), { channel: value }));
-      }}
-      onblur={() => {
-        flushNodeText(`pagebridge:${id}:channel`);
-        $flow.runNode(Number(id));
-      }}
-      placeholder="shared-component"
-    />
-  </label>
-  <button class="btn-node primary small f-run nodrag" onclick={() => $flow.runNode(Number(id))}>
-    {data.mode === "send" ? "Передать" : "Получить"}
-  </button>
-  <div class="bridge-chip">{hasComponent ? "component ready" : "empty channel"}</div>
+  <input
+    class="nodrag"
+    type="text"
+    value={data.channel}
+    aria-label="Канал"
+    oninput={(e) => {
+      const value = e.currentTarget.value;
+      commitNodeText(`pagebridge:${id}:channel`, () => $flow.setNodeData(Number(id), { channel: value }));
+    }}
+    onblur={() => {
+      flushNodeText(`pagebridge:${id}:channel`);
+      $flow.runNode(Number(id));
+    }}
+    placeholder="shared-component"
+  />
   <NodeStatus {id} />
   <OutPorts type="pagebridge" {data} />
 </NodeShell>

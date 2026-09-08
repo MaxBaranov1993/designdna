@@ -109,7 +109,7 @@ def test_router_exact_contract_and_provider_restriction(client):
         "responses": [{"taskId": prepared["tasks"][0]["id"], "output": json.dumps(organizer_output(document()))}]})
     assert result.status_code == 200, result.text
     assert set(result.json()) == {"document", "summary", "results", "complete", "nextPreparation"}
-    for provider in ("auto", "openai", "astra", "", None):
+    for provider in ("auto", "unknown", "", None):
         bad = client.post("/api/design-system/desktop-ai/prepare", json={
             "document": document(), "operation": "organize", "provider": provider})
         assert bad.status_code == 422
@@ -772,3 +772,54 @@ def test_task_schema_failure_is_retryable_but_bad_task_ids_are_not_format_correc
     response = client.post("/api/design-system/desktop-ai/apply", json=request)
     assert response.status_code == 422 and isinstance(response.json()["detail"], str)
     assert not store._db_path().exists()
+
+
+@pytest.mark.parametrize("provider", ["openai", "astra"])
+def test_gpt_desktop_routes_prepare_apply_without_server_api_key(client, provider):
+    doc = document()
+    response = client.post("/api/design-system/desktop-ai/prepare", json={
+        "document": doc, "operation": "master-review", "provider": provider})
+    assert response.status_code == 200, response.text
+    prepared = response.json()
+    assert prepared["provider"] == provider
+    result = apply(prepared, doc)
+    assert result["complete"] is True
+    assert not result["document"]["reviewComponents"]
+    reviewed = next(iter(result["document"]["components"].values()))
+    assert reviewed["fidelity"]["aiReview"]["provider"] == provider
+
+
+def test_retry_preserves_repair_validation_feedback_for_next_agent_prompt():
+    doc = document()
+    comp = doc["reviewComponents"]["list-item-review"]
+    comp["fidelity"]["aiReview"] = {"rejected": ["mobile: layout regression"]}
+    prepared = prepare(doc)
+    result = apply(prepared, doc, verdict(False))
+    next_task = result["nextPreparation"]["tasks"][0]
+    assert "mobile: layout regression" in json.dumps(next_task["messages"])
+    assert result["document"]["reviewComponents"]["list-item-review"]["fidelity"]["aiReview"]["previousRepairRejections"] == ["mobile: layout regression"]
+
+
+def test_invalid_layout_feedback_identifies_operation_and_measured_frame():
+    doc = document()
+    reviewed = apply(prepare(doc), doc, verdict(False))
+    prepared = reviewed["nextPreparation"]
+    with pytest.raises(ai.InvalidAIOutput) as exc:
+        apply(prepared, reviewed["document"], {"operations": [
+            {"op": "restore-layout", "sourceKey": "row", "property": "width", "value": 9999}]})
+    message = exc.value.detail["message"]
+    assert "operations[0]" in message and "sourceKey=row" in message
+    assert '"width": 240' in message and "omit it" in message
+    assert prepared["prepareId"] in ai._PREPARATIONS
+
+
+def test_fresh_desktop_review_does_not_present_historical_capture_offsets_as_current():
+    doc = document()
+    comp = doc["reviewComponents"]["list-item-review"]
+    comp["fidelity"]["viewports"]["desktop"]["originError"] = 123.456
+    comp["review"]["reasons"] = ["historical offset 123.456px"]
+    prepared = prepare(doc)
+    prompt = json.dumps(prepared["tasks"][0]["messages"])
+    assert "123.456" not in prompt
+    assert "fresh, isolated renders" in prompt
+    assert comp["fidelity"]["viewports"]["desktop"]["originError"] == 123.456

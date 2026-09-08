@@ -30,3 +30,9 @@ export function flushNodeText(key: string): void {
   if (t) clearTimeout(t);
   if (pending.has(key)) fire(key);
 }
+
+
+/** Commit edits to their current sheet before navigation or running the graph. */
+export function flushAllNodeText(): void {
+  for (const key of [...pending.keys()]) flushNodeText(key);
+}

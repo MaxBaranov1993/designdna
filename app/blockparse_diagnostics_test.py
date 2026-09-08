@@ -14,7 +14,7 @@ import scraper  # noqa: E402
 
 def _captured_item() -> dict:
     return {
-        "ir": {"version": "1.0", "tokens": {}, "tree": []},
+        "ir": {"version": "1.0", "tokens": json.loads((ROOT / "app/fixtures/frame-example.json").read_text(encoding="utf-8"))["tokens"], "tree": [{"id": "hero", "type": "hero", "variant": "centered", "props": {"heading": "Hero", "ctaPrimary": {"text": "Go", "href": "#"}}}]},
         "width": 100,
         "height": 40,
         "layer_count": 1,

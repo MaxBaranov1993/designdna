@@ -1,50 +1,64 @@
 <script lang="ts">
+  import { captureNodeUpload } from "../flow/store";
   import type { NodeProps } from "@xyflow/svelte";
-  import { flow } from "../flow/state";
+  import { flow, flowEdges, flowNodes } from "../flow/state";
+  import { pullInput } from "../flow/dataflow";
+  import { isImageSource } from "../flow/image-assets";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
-  import { toast } from "../flow/toast";
   import type { ReferenceFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
   import InPorts from "./InPorts.svelte";
   import OutPorts from "./OutPorts.svelte";
 
-  /* «Референс» — живая нода: изображение + описание стиля (уходит в текстовый провод).
-   * Контролы — зеркало bodyHtml/wireNodeEvents (nodes.js:169-177, 371-388). */
+  /* «Референс» — картинка как герой (Weavy File node): своя загрузка или
+   * картинка по проводу из ноды «Изображение»; короткое описание стиля под
+   * ней; «Разбить на компоненты» живёт в инспекторе. */
   let { id, data, selected }: NodeProps<ReferenceFlowNode> = $props();
+
+  let selfNode = $derived($flowNodes.find((node) => node.id === id) || null);
+  let wiredImage = $derived.by(() => {
+    if (!selfNode) return null;
+    const value = pullInput($flowNodes, $flowEdges, selfNode, "image");
+    return isImageSource(value) ? value : null;
+  });
+  let shownImage = $derived(data.image || wiredImage);
 
   const onFile = (e: Event) => {
     const input = e.currentTarget as HTMLInputElement;
     const f = input.files && input.files[0];
     if (!f) return;
+    const applyUpload = captureNodeUpload(Number(id));
     const rd = new FileReader();
-    rd.onload = () => $flow.setNodeData(Number(id), { image: String(rd.result), fileName: f.name });
+    rd.onload = () => applyUpload({ image: String(rd.result), fileName: f.name });
     rd.readAsDataURL(f);
     input.value = "";
-  };
-
-  const onDecompose = (e: Event) => {
-    if ((e.currentTarget as HTMLInputElement).checked) {
-      // разбор на компоненты требует vision-API (runDecompose) — подключается в Фазе B2
-      toast("Разбор референса на компоненты появится в Фазе B2");
-      return;
-    }
-    $flow.setNodeData(Number(id), { decomposed: false });
   };
 </script>
 
 <NodeShell {id} type="reference" {selected}>
+  {#snippet footer()}
+    <div class="foot-left">
+      <label class="btn-node small add-input nodrag" style="cursor: pointer">
+        {data.image ? "Заменить изображение" : "+ Изображение"}
+        <input type="file" accept="image/*" class="f-file" hidden onchange={onFile} />
+      </label>
+    </div>
+    <div class="foot-right"><span class="foot-hint">{data.image ? data.fileName || "" : wiredImage ? "по проводу" : ""}</span></div>
+  {/snippet}
   <InPorts type="reference" />
-  {#if data.image}
-    <img class="ref-img" alt="референс" src={data.image} />
+  {#if shownImage}
+    <div class="n-hero nodrag"><img class="ref-img" alt="референс" src={shownImage} /></div>
+  {:else}
+    <label class="ref-drop nodrag">
+      Перетащите или выберите скриншот
+      <input type="file" accept="image/*" hidden onchange={onFile} />
+    </label>
   {/if}
-  <label class="ref-drop nodrag">
-    {data.fileName || "Кликните, чтобы выбрать скриншот/изображение"}
-    <input type="file" accept="image/*" class="f-file" hidden onchange={onFile} />
-  </label>
   <textarea
     class="f-brief nodrag nowheel"
-    placeholder="Описание стиля / что взять из референса (уходит в провод)"
+    rows="2"
+    placeholder="Что взять из референса (уходит в провод «стиль»)"
     value={data.brief}
     oninput={(e) => {
       const value = e.currentTarget.value;
@@ -55,10 +69,12 @@
     }}
     onblur={() => flushNodeText(`reference:${id}:brief`)}
   ></textarea>
-  <label class="ref-decompose nodrag">
-    <input type="checkbox" class="f-decompose" checked={!!data.decomposed} onchange={onDecompose} />
-    <span>Разбить на компоненты</span>
-  </label>
   <NodeStatus {id} />
   <OutPorts type="reference" />
 </NodeShell>
+
+<style>
+  .n-hero .ref-img { display: block; width: 100%; max-height: 260px; object-fit: contain; border: 0; border-radius: 0; background: #0d0d0f; }
+  .f-brief { min-height: 44px; }
+  .foot-hint { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dna-dim); font-size: 10.5px; }
+</style>

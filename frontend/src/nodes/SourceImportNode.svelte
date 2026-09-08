@@ -1,19 +1,20 @@
 <script lang="ts">
+  import { captureNodeUpload } from "../flow/store";
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
-  import ProviderPicker from "../components/ProviderPicker.svelte";
   import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import { useFlowStore } from "../flow/store";
-  import type { SourceImportFlowNode, SourceViewport } from "../flow/types";
+  import type { SourceImportFlowNode } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
   import OutPorts from "./OutPorts.svelte";
 
+  /* Source Import — результат-первый: адрес или скриншот сверху, список
+   * зажжённых блоков (= выходы) как основное содержимое, футер «Импорт».
+   * Вьюпорт, режим превью, авторизованная сессия и AI-аккаунт — в инспекторе. */
   let { id, data, selected }: NodeProps<SourceImportFlowNode> = $props();
 
-  const VIEWPORTS: SourceViewport[] = ["desktop", "tablet", "mobile"];
-  const PREVIEW_MODES = ["reference", "ir", "compare"] as const;
   const STAGE_LABELS: Record<string, string> = {
     renderDom: "DOM",
     detectBlocks: "Blocks",
@@ -26,29 +27,23 @@
 
   let busy = $derived(!!$flowBusy[Number(id)]);
   let previewMode = $derived(data.previewMode || "reference");
-  let desktopAuth = $derived(typeof window !== "undefined" ? window.designDNA?.sourceAuth : undefined);
   let expandedBlock = $state<string | null>(null);
+  let litCount = $derived(data.blocks.filter((b) => b.lit && !b.error).length);
 
   // Сбрасываем раскрытие только если блок исчез (напр. re-import).
-  // selected здесь не условие: selection нод — runtime-only и не всегда
-  // доходит до пропа, из-за чего превью мгновенно схлопывалось.
   $effect(() => {
     if (expandedBlock && !data.blocks.some((block) => block.name === expandedBlock)) {
       expandedBlock = null;
     }
   });
 
-  const setViewport = (viewport: SourceViewport) => {
-    $flow.setNodeData(Number(id), { activeViewport: viewport });
-    queueMicrotask(() => $flow.propagate(Number(id)));
-  };
-
   const onFile = (e: Event) => {
     const input = e.currentTarget as HTMLInputElement;
     const f = input.files && input.files[0];
     if (!f) return;
+    const applyUpload = captureNodeUpload(Number(id));
     const rd = new FileReader();
-    rd.onload = () => $flow.setNodeData(Number(id), { image: String(rd.result), fileName: f.name, mode: "screenshot" });
+    rd.onload = () => applyUpload({ image: String(rd.result), fileName: f.name, mode: "screenshot" });
     rd.readAsDataURL(f);
     input.value = "";
   };
@@ -66,13 +61,6 @@
     }
   };
 
-  const openAuthenticatedSession = async () => {
-    const rawUrl = (data.url || "").trim();
-    if (!rawUrl || !desktopAuth) return;
-    const url = /^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
-    await desktopAuth.open(url);
-  };
-
   const createDesignSystem = () => {
     void useFlowStore.getState().createDesignSystemFromSource(Number(id));
   };
@@ -84,13 +72,28 @@
 </script>
 
 <NodeShell {id} type="sourceimport" {selected}>
-  <div class="seg-row nodrag">
-    <button class={"seg-btn" + (data.mode === "url" ? " active" : "")} onclick={() => $flow.setNodeData(Number(id), { mode: "url" })}>
-      URL
-    </button>
-    <button class={"seg-btn" + (data.mode === "screenshot" ? " active" : "")} onclick={() => $flow.setNodeData(Number(id), { mode: "screenshot" })}>
-      screenshot
-    </button>
+  {#snippet footer()}
+    <div class="foot-left">
+      {#if data.mode === "url" && data.importedUrl && data.blocks.length}
+        <button class="btn-node small f-refresh nodrag" disabled={busy} onclick={refreshImport} title="Повторно загрузить страницу и обновить локальный результат">Обновить</button>
+        <button class="btn-node small f-create-ds nodrag" disabled={busy || !data.blocks?.length} title="Собрать UI Kit и дизайн-систему из этого Source" onclick={createDesignSystem}>◈ UI Kit &amp; ДС</button>
+      {:else if data.blocks.length}
+        <span>{litCount} из {data.blocks.length} блоков на выходе</span>
+      {/if}
+    </div>
+    <div class="foot-right">
+      <button
+        class="btn-node primary small f-run nodrag"
+        disabled={busy || (data.mode === "url" && !data.mine)}
+        onclick={() => $flow.runNode(Number(id))}
+      >
+        {#if busy}<span class="spinner"></span>{/if} Импорт
+      </button>
+    </div>
+  {/snippet}
+  <div class="seg-row n-seg grow nodrag" role="group" aria-label="Источник">
+    <button class={"seg-btn" + (data.mode === "url" ? " active" : "")} onclick={() => $flow.setNodeData(Number(id), { mode: "url" })}>URL</button>
+    <button class={"seg-btn" + (data.mode === "screenshot" ? " active" : "")} onclick={() => $flow.setNodeData(Number(id), { mode: "screenshot" })}>Скриншот</button>
   </div>
   {#if data.mode === "url"}
     <input
@@ -119,89 +122,22 @@
       />
       это мой сайт / есть право
     </label>
-    {#if desktopAuth}
-      <label class="bp-mine nodrag" title="Cookies остаются в изолированной памяти desktop-приложения и не сохраняются в графе">
-        <input
-          type="checkbox"
-          class="f-auth-session"
-          checked={data.authenticatedSession}
-          onchange={(e) => $flow.setNodeData(Number(id), { authenticatedSession: e.currentTarget.checked })}
-        />
-        использовать авторизованную сессию
-      </label>
-      {#if data.authenticatedSession}
-        <button class="btn-node small f-auth-open nodrag" onclick={openAuthenticatedSession}>Открыть вход</button>
-      {/if}
+    {#if !data.mine}
+      <div class="bp-hint">Запуск доступен после отметки «это мой сайт / есть право»</div>
     {/if}
-    {#if desktopAuth}
-      <!-- Чекбокс AI-уточнения снят по хендоффу: уточнение и AI-починка идут
-           сами на каждом импорте (aiRefine включён в defaultData). Выбор здесь
-           один — чей аккаунт отвечает. -->
-      <ProviderPicker
-        provider={data.aiProvider || "openai"}
-        effort={data.aiEffort || "high"}
-        onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider, aiEffort: next.effort as "medium" | "high" | "max" })}
-      />
-    {/if}
-    <div class="nrow">
-      <span class="nrow-cap">ПРЕВЬЮ ВЬЮПОРТА · СНИМАЮТСЯ ВСЕ ТРИ</span>
-      <div class="source-viewports nodrag" aria-label="Source viewport">
-        {#each VIEWPORTS as viewport (viewport)}
-          <button
-            class={"source-viewport" + (data.activeViewport === viewport ? " active" : "")}
-            onclick={() => setViewport(viewport)}
-            title={"Импорт снимает все три вьюпорта; здесь выбирается превью · " + (viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px")}
-          >
-            {viewport === "desktop" ? "Desktop" : viewport === "tablet" ? "Tablet" : "Mobile"}
-          </button>
-        {/each}
-      </div>
-    </div>
   {:else}
     {#if data.image}
-      <img class="ref-img" alt="screenshot" src={data.image} style="max-height: 120px; object-fit: contain" />
+      <div class="n-hero nodrag"><img class="ref-img" alt="screenshot" src={data.image} /></div>
     {/if}
     <label class="ref-drop nodrag">
-      {data.image ? (data.fileName || "screenshot") + " (заменить)" : "загрузить скриншот элемента"}
+      {data.image ? (data.fileName || "screenshot") + " (заменить)" : "Загрузить скриншот элемента"}
       <input type="file" accept="image/*" hidden onchange={onFile} />
     </label>
-    {#if desktopAuth}
-      <!-- Скриншот размечает агент-сегментатор: рамки компонентов ставит
-           выбранный здесь аккаунт, судит их пиксельная проверка сервера. -->
-      <ProviderPicker
-        provider={data.aiProvider || "openai"}
-        effort={data.aiEffort || "high"}
-        onChange={(next) => $flow.setNodeData(Number(id), { aiProvider: next.provider, aiEffort: next.effort as "medium" | "high" | "max" })}
-      />
-    {/if}
   {/if}
-  {#if data.mode === "url" && !data.mine}
-    <div class="bp-hint">Запуск доступен после отметки «это мой сайт / есть право»</div>
-  {/if}
-  <div class="ctl-row">
-    {#if data.mode === "url" && data.importedUrl && data.blocks.length}
-      <button class="btn-node small f-refresh nodrag" disabled={busy} onclick={refreshImport} title="Повторно загрузить страницу и обновить локальный результат">
-        Обновить
-      </button>
-
-      <button class="btn-node small f-create-ds nodrag" disabled={busy || !data.blocks?.length}
-              title="Собрать UI Kit и дизайн-систему из этого Source" onclick={createDesignSystem}>
-        ◈ UI Kit &amp; DS
-      </button>
-    {/if}
-    <button
-      class="btn-node primary small f-run nodrag"
-      style="margin-left: auto"
-      disabled={busy || (data.mode === "url" && !data.mine)}
-      onclick={() => $flow.runNode(Number(id))}
-    >
-      {#if busy}<span class="spinner"></span>{/if} Import
-    </button>
-  </div>
   {#if data.lastRun}
     <div class="source-run-diagnostics" title={`Pipeline ${data.lastRun.pipelineVersion || "unknown"}`}>
       <div class="source-run-summary">
-        <span>{data.lastRun.cached ? "Cache hit" : "Measured run"}</span>
+        <span>{data.lastRun.cached ? "Из кэша" : "Измерено"}</span>
         <strong>{(data.lastRun.totalMs / 1000).toFixed(1)}s</strong>
       </div>
       <div class="source-run-stages">
@@ -220,7 +156,7 @@
     </div>
   {/if}
   {#if data.blocks.length}
-    <div class="bp-blocks">
+    <div class="bp-blocks nowheel">
       {#each data.blocks as b (b.name)}
         <div class="bp-block" data-block={b.name}>
           <div class="bp-block-head">
@@ -255,13 +191,6 @@
           {#if b.error}
             <div class="bp-error">{b.error}</div>
           {:else if expandedBlock === b.name}
-            <div class="source-preview-mode nodrag" aria-label="Source preview mode">
-              {#each PREVIEW_MODES as mode (mode)}
-                <button class={previewMode === mode ? "active" : ""} onclick={() => $flow.setNodeData(Number(id), { previewMode: mode })}>
-                  {mode === "reference" ? "Reference" : mode === "ir" ? "IR" : "Compare"}
-                </button>
-              {/each}
-            </div>
             {#if previewMode === "reference"}
               {@render sourceReferencePreview(b.previews?.[data.activeViewport] || b.preview)}
             {:else if previewMode === "compare"}
@@ -308,3 +237,7 @@
     </div>
   {/if}
 {/snippet}
+
+<style>
+  .n-hero .ref-img { display: block; width: 100%; max-height: 160px; object-fit: contain; object-position: top; border: 0; border-radius: 0; background: #fff; }
+</style>

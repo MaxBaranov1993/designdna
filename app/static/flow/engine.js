@@ -517,6 +517,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     if (Array.isArray(node.tree)) node.tree.forEach((sec) => collectStyleFonts(sec, fams));
   }
   function fontsUrl(tokens, ir) {
+    var _a;
     const fams = /* @__PURE__ */ new Set();
     for (const key of ["display", "body"]) {
       const f = tokens.font && tokens.font[key];
@@ -525,6 +526,11 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }
     }
     collectStyleFonts(ir, fams);
+    const capturedFamilies = new Set((((_a = ir == null ? void 0 : ir.meta) == null ? void 0 : _a.fontFaces) || []).filter((face) => face && typeof face.url === "string" && face.url.startsWith("/fonts/")).map((face) => safeFontFamily(face.family).toLowerCase()));
+    for (const spec of fams) {
+      const family = String(spec).split(":")[0].replace(/\+/g, " ").toLowerCase();
+      if (capturedFamilies.has(family)) fams.delete(spec);
+    }
     if (!fams.size) return "";
     return "https://fonts.googleapis.com/css2?" + [...fams].map((f) => "family=" + f).join("&") + "&display=swap";
   }
@@ -925,7 +931,13 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
           return `<div class="source-input"${path}${transformAttr(el.frame)}${css ? ` style="${css}"` : ""}>${kids}</div>`;
         }
-        return `<input class="input" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value || "")}">`;
+        if (el.inputType === "textarea") {
+          return `<textarea class="input" placeholder="${esc(el.placeholder || el.label || "")}">${esc(el.value ?? "")}</textarea>`;
+        }
+        if (el.inputType === "select") {
+          return `<select class="input" aria-label="${esc(el.label || el.placeholder || "")}">${(el.items || []).map((item) => `<option${String(item) === String(el.value) ? " selected" : ""}>${esc(item)}</option>`).join("")}</select>`;
+        }
+        return `<input class="input" type="${["text", "search", "email", "tel", "url", "password", "number", "checkbox"].includes(el.inputType) ? el.inputType : "text"}" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value ?? "")}">`;
       case "frame": {
         const free = el.frame && el.frame.layout === "free";
         const inner = (el.children || []).map((c) => renderElement(c, uid, free, el.frame)).join("");

@@ -135,7 +135,7 @@
     <div class="empty-kicker">Пустая страница</div>
     <h2>С чего начать</h2>
     <p>
-      <kbd>ПКМ</kbd> по канвасу создаёт ноду, <kbd>?</kbd> — горячие клавиши.
+      <kbd>ПКМ</kbd> или двойной клик по канвасу создаёт ноду, <kbd>Ctrl</kbd>+<kbd>K</kbd> — поиск, <kbd>?</kbd> — горячие клавиши.
       Или соберите стартовый граф одной кнопкой:
     </p>
     <div class="empty-actions">
@@ -173,18 +173,17 @@
   .empty-card {
     width: min(560px, 100%);
     padding: 18px 20px;
-    border: 1px solid var(--dna-border-strong);
+    border: 1px solid var(--dna-border);
     border-radius: 16px;
-    background: color-mix(in srgb, var(--dna-elevated), transparent 8%);
+    background: var(--dna-panel);
     color: var(--dna-text);
-    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(6px);
+    box-shadow: var(--shadow-panel);
     pointer-events: auto;
     user-select: none;
   }
   .empty-kicker {
     margin-bottom: 6px;
-    color: var(--dna-violet-text);
+    color: var(--dna-dim);
     font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.08em;
@@ -232,10 +231,10 @@
   }
   .empty-btn:hover {
     background: var(--dna-hover);
-    border-color: var(--dna-violet-l);
+    border-color: var(--dna-border-strong);
   }
   .empty-btn:focus-visible {
-    outline: 2px solid var(--dna-violet-l);
+    outline: 2px solid var(--dna-text);
     outline-offset: 2px;
   }
   .empty-ic {
@@ -245,8 +244,9 @@
     display: grid;
     place-items: center;
     border-radius: 7px;
-    background: color-mix(in srgb, var(--dna-violet-l), transparent 84%);
-    color: var(--dna-violet-text);
+    background: var(--dna-sunken);
+    border: 1px solid var(--dna-border);
+    color: var(--dna-text-2);
     font-size: 13px;
   }
   .empty-txt {

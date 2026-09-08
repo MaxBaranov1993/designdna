@@ -16,7 +16,7 @@ import llm_client  # noqa: E402
 
 ROOT = APP.parent
 PROMPT_FILES = (
-    "spike/system-prompt.md", "schema/design-ir.schema.json",
+    "app/prompts/SYSTEM.md", "schema/design-ir.schema.json",
     "app/prompts/BLOCKS.md", "app/prompts/DESIGN.md",
 )
 
@@ -39,10 +39,11 @@ def test_generate_is_the_primary_mode():
     """Регрессия на корневую причину из §2.3 аудита: edit больше не «главная роль»."""
     prompt = llm_client.build_system_prompt("generate")
     assert "You are an EDITING tool first" not in prompt
-    assert "MODE: generate — the primary mode" in prompt
-    assert "MODE: edit" in prompt, "правила edit-режима должны остаться"
-    assert prompt.index("MODE: generate") < prompt.index("MODE: edit")
-    assert 'type: "composition"' in prompt
+    assert "Current operation: generate" in prompt
+    assert "In generate mode, solve the brief" in prompt
+    assert "In edit mode, reproduce" in prompt
+    assert "preserve all other content and structure" in prompt
+    assert '"composition"' in prompt
 
 
 def test_default_call_stays_cached_and_backward_compatible():
@@ -144,5 +145,8 @@ def test_full_generate_prompt_carries_brief_and_exemplars():
     )
     assert "editorial" in prompt
     assert "### exemplar: restaurant" in prompt
-    # правило «варианты — разные направления» доезжает вместе с контрактом meta.direction
-    assert "tradeoff" in prompt and "DIFFERENT DESIGN DIRECTION" in prompt
+    # Assigned art direction and examples remain subordinate to pinned masters.
+    assert "tradeoff" in prompt
+    assert "Assigned direction (subordinate to locked DS and user scope)" in prompt
+    assert "Relevant examples (not facts or replacement masters)" in prompt
+    assert prompt.index("Applicable policy and pinned constraints") < prompt.index("### exemplar: restaurant")

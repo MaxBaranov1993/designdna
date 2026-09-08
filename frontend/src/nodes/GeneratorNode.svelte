@@ -4,25 +4,23 @@
   import ProviderPicker from "../components/ProviderPicker.svelte";
   import { flow, flowBusy, flowDesignSystemPicker, flowDesignSystems, flowEdges, flowNodes } from "../flow/state";
   import { pinnedDesignSystemRef } from "../flow/store";
+  import { generatorInputKey } from "../flow/generator-inputs";
+  import { flowActivePageId } from "../flow/state";
   import { pullInput } from "../flow/dataflow";
-  import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { GeneratorFlowNode, GeneratorNodeData } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
   import InPorts from "./InPorts.svelte";
   import OutPorts from "./OutPorts.svelte";
 
-  /* «Генератор» — run-based: бриф тянет из входов prompt/style (pull-based,
-   * fallback ownPrompt), POST /api/generate (payload — зеркало runGenerator,
-   * nodes.js:498-518). Варианты — миниатюрами, активный — в IrPreview и на
-   * выход ir (outValue). Пресеты стиля сняты по хендоффу: стиль приходит
-   * из style DNA источника. */
+  /* «Генератор» — результат-первый: превью активного варианта как герой,
+   * миниатюры вариантов и арт-дирекция под ним, строка модели, футер
+   * «Сгенерировать». Свой промпт, тип экрана, направление, ДС и действия
+   * с вариантом живут в инспекторе (GeneratorParams). Бриф тянет из входов
+   * prompt/style (pull-based, fallback ownPrompt), POST /api/generate. */
   let { id, data, selected }: NodeProps<GeneratorFlowNode> = $props();
 
   let busy = $derived(!!$flowBusy[Number(id)]);
-  /* ДС по проводу (порт designSystem) — граф говорит, от какой системы
-   * генерировать: загруженной файлом или собранной из Source. Без провода —
-   * глобальный выбор проекта, иначе strict-ошибки выглядят беспричинными. */
   let selfNode = $derived($flowNodes.find((node) => Number(node.id) === Number(id)) || null);
   let wiredDs = $derived.by(() => {
     if (!selfNode) return null;
@@ -63,6 +61,13 @@
   let lintWarnings = $derived((activeLog?.lint || []).filter((v) => v.severity === "warning"));
   let lintErrors = $derived((activeLog?.lint || []).filter((v) => v.severity !== "warning"));
   let activeIr = $derived(data.variants.length ? data.variants[data.active] || null : null);
+  function emptyContainer(node: any): boolean {
+    if (!node || !["composition", "frame"].includes(node.type)) return false;
+    if (["heading", "title", "text", "subheading"].some(key => node.props?.[key])) return false;
+    if (["background", "backgroundColor", "backgroundImage", "borderColor", "boxShadow"].some(key => ![undefined, null, "", "none", "transparent"].includes(node.style?.[key]))) return false;
+    return (node.children || []).every(emptyContainer);
+  }
+  let emptyResult = $derived(!!activeIr && (!Array.isArray(activeIr.tree) || !activeIr.tree.length || activeIr.tree.every(emptyContainer)));
   let effort = $derived(["medium", "high", "max"].includes(data.effort) ? data.effort : "medium");
   let count = $derived(Math.max(1, Math.min(2, Number(data.count) || 1)));
   type Direction = { id: string; label: string; motivation: string; tradeoff: string };
@@ -75,7 +80,9 @@
   });
   let directions = $derived(Array.isArray(generatorData.directions) ? generatorData.directions.slice(0, 3) : []);
   let selectedDirection = $derived(generatorData.selectedDirection || "all");
-  let activeReview = $derived(generatorData.qualityReviews?.[data.active] || null);
+  let resultCurrent = $derived(!!selfNode && data.generationContext?.pageId === $flowActivePageId
+    && data.generationContext?.inputKey === generatorInputKey($flowNodes, $flowEdges, selfNode, $flowDesignSystemPicker));
+  let activeReview = $derived(!busy && resultCurrent ? generatorData.qualityReviews?.[data.active] || null : null);
   const surfaceOptions = [
     ["auto", "Определить по задаче"], ["landing", "Лендинг"], ["catalog", "Поиск и каталог"],
     ["detail", "Карточка объекта"], ["checkout", "Запись и оформление"], ["dashboard", "Кабинет и аналитика"],
@@ -110,76 +117,60 @@
 </script>
 
 <NodeShell {id} type="generator" {selected}>
-  <InPorts type="generator" />
-  <textarea
-    class="f-own nodrag nowheel"
-    placeholder="Свой промпт (если нет провода)"
-    value={data.ownPrompt}
-    oninput={(e) => {
-      const value = e.currentTarget.value;
-      commitNodeText(`generator:${id}:ownPrompt`, () => $flow.setNodeData(Number(id), { ownPrompt: value }));
-    }}
-    onblur={() => flushNodeText(`generator:${id}:ownPrompt`)}
-  ></textarea>
-  <div class="generator-model-row">
-    <ProviderPicker
-      provider={data.provider || "openai"}
-      {effort}
-      onChange={(next) => $flow.setNodeData(Number(id), next)}
-    />
-  </div>
-  <details class="gen-design-options nodrag nowheel">
-    <summary>Задача и направление</summary>
-    <label>Тип экрана
-      <select aria-label="Тип экрана" disabled={busy} value={data.surface || "auto"}
-        onchange={(event) => $flow.setNodeData(Number(id), { surface: event.currentTarget.value, selectedDirection: "all", directions: [] })}>
-        {#each surfaceOptions as option}<option value={option[0]}>{option[1]}</option>{/each}
-      </select>
-    </label>
-    <label>Визуальное направление
-      <select aria-label="Визуальное направление" disabled={busy || !!dsRef} value={data.designStyle || "auto"}
-        onchange={(event) => $flow.setNodeData(Number(id), { designStyle: event.currentTarget.value, selectedDirection: "all" })}>
-        {#each styleOptions as option}<option value={option[0]}>{option[1]}</option>{/each}
-      </select>
-    </label>
-    <small>{dsRef ? "Внешний вид задаёт выбранная дизайн-система." : "Без дизайн-системы генератор создаст согласованные основы под задачу."}</small>
-  </details>
-  {#if generationLog?.policy?.surfaceLabel}
-    <div class="gen-policy-summary nodrag" role="status">{generationLog.policy.surfaceLabel} · {generationLog.policy.effectiveMode === "freeform" ? "самостоятельный дизайн" : generationLog.policy.effectiveMode}</div>
-  {/if}
-  {#if dsRef}
-    <div class="gen-ds-row nodrag" data-ds-source={dsRef.wired ? "wire" : "project"}
-      title={dsRef.wired ? "Дизайн-система пришла по проводу: генерация собирается из её токенов и мастеров" : "Дизайн-система придёт в генерацию из глобального выбора проекта"}>
-      <span class="gen-ds-label">◈ ДС: {dsName} · {dsRef.wired ? "провод" : "проект"}</span>
+  {#snippet footer()}
+    <div class="foot-left">
       <select
-        class="gen-ds-mode f-ds-mode"
-        title="Режим: strict — только мастера и токены; extend — мастера + новое в токенах; style-only — токены и характер"
-        value={usageMode}
-        onchange={(e) => $flow.setNodeData(Number(id), { designSystemUsageMode: e.currentTarget.value })}
+        class="f-count gen-count nodrag"
+        aria-label="Число вариантов"
+        title="Число вариантов"
+        value={String(count)}
+        onchange={(e) => $flow.setNodeData(Number(id), { count: Number(e.currentTarget.value) })}
       >
-        <option value="strict">strict</option>
-        <option value="extend">extend</option>
-        <option value="style-only">style-only</option>
+        <option value="1">1 вариант</option>
+        <option value="2">2 варианта</option>
       </select>
-      {#if !dsRef.wired}
-        <button
-          class="gen-ds-off"
-          title="Генерировать без дизайн-системы"
-          onclick={() => $flow.setNodeData(Number(id), { designSystemSelection: "none" })}
-        >×</button>
-      {/if}
     </div>
-    {#if dsRef.wired && !dsRef.published}
-      <div class="gen-ds-warn nodrag" role="status">ДС черновик — опубликуется автоматически при запуске.</div>
+    <div class="foot-right">
+      <button class="btn-node primary small f-run nodrag" disabled={busy} onclick={() => $flow.runNode(Number(id))}>
+        {#if busy}<span class="spinner"></span>{:else}<span>▶</span>{/if} Сгенерировать
+      </button>
+    </div>
+  {/snippet}
+  <InPorts type="generator" />
+  {#if activeIr && (!resultCurrent || busy)}
+    <div class="dna-field-hint" style="padding: 8px 12px">{busy ? "Идёт новый запуск · оценка появится после проверки" : "Результат предыдущего запуска · запустите ноду для текущего промпта"}</div>
+  {/if}
+  <div class="n-hero nodrag">
+    <IrPreview class="f-preview" ir={emptyResult ? null : activeIr} height={220} fitHeight empty={emptyResult ? "В прошлом ответе нет содержимого макета" : "Варианты появятся после запуска"} />
+    {#if data.variants.length > 1}
+      <span class="n-hero-tag">{data.active + 1} / {data.variants.length}</span>
     {/if}
-  {:else if dsOptedOut}
-    <div class="gen-ds-row nodrag">
-      <span class="gen-ds-label">ДС отключена для этой ноды</span>
-      <button
-        class="gen-ds-off"
-        title="Вернуть дизайн-систему проекта"
-        onclick={() => $flow.setNodeData(Number(id), { designSystemSelection: "inherit" })}
-      >↺</button>
+  </div>
+  {#if data.variants.length}
+    <div class="thumbs">
+      {#each data.variants as v, i (i)}
+        <div
+          class={"thumb nodrag" + (i === data.active ? " active" : "")}
+          title={generatorData.variantDirections?.[i] || directions[i]?.label || `Направление ${i + 1}`}
+          role="button"
+          tabindex="0"
+          onkeydown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            if (busy) return;
+            $flow.setNodeData(Number(id), { active: i });
+            $flow.propagate(Number(id));
+          }}
+          onclick={() => {
+            if (busy) return;
+            $flow.setNodeData(Number(id), { active: i });
+            $flow.propagate(Number(id));
+          }}
+        >
+          <span class="tbadge">{generatorData.variantDirections?.[i] || directions[i]?.label || `Направление ${i + 1}`}</span>
+          <IrPreview ir={v} height={72} empty="" />
+        </div>
+      {/each}
     </div>
   {/if}
   {#if directions.length}
@@ -213,50 +204,6 @@
       </div>
     </section>
   {/if}
-  <div class="ctl-row">
-    <select
-      class="f-count nodrag"
-      value={String(count)}
-      onchange={(e) => $flow.setNodeData(Number(id), { count: Number(e.currentTarget.value) })}
-    >
-      <option value="1">1</option>
-      <option value="2">2</option>
-    </select>
-    <button
-      class="btn-node primary small f-run nodrag"
-      disabled={busy}
-      onclick={() => $flow.runNode(Number(id))}
-    >
-      {#if busy}<span class="spinner"></span>{:else}<span>▶</span>{/if} Сгенерировать
-    </button>
-  </div>
-  {#if data.variants.length}
-    <div class="thumbs">
-      {#each data.variants as v, i (i)}
-        <div
-          class={"thumb nodrag" + (i === data.active ? " active" : "")}
-          title={generatorData.variantDirections?.[i] || directions[i]?.label || `Направление ${i + 1}`}
-          role="button"
-          tabindex="0"
-          onkeydown={(event) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            if (busy) return;
-            $flow.setNodeData(Number(id), { active: i });
-            $flow.propagate(Number(id));
-          }}
-          onclick={() => {
-            if (busy) return;
-            $flow.setNodeData(Number(id), { active: i });
-            $flow.propagate(Number(id));
-          }}
-        >
-          <span class="tbadge">{generatorData.variantDirections?.[i] || directions[i]?.label || `Направление ${i + 1}`}</span>
-          <IrPreview ir={v} height={96} empty="" />
-        </div>
-      {/each}
-    </div>
-  {/if}
   {#if activeReview && activeReview.passed === null}
     <div class="gen-policy-summary nodrag" role="status">Предпросмотр создан. Визуальная проверка не завершена.</div>
   {:else if activeReview && activeReview.passed === false}
@@ -271,10 +218,69 @@
       {/if}
     </div>
   {/if}
+  <div class="generator-model-row">
+    <ProviderPicker
+      provider={data.provider || "openai"}
+      {effort}
+      onChange={(next) => $flow.setNodeData(Number(id), next)}
+    />
+  </div>
+  {#if dsRef}
+    <div class="gen-ds-row nodrag" data-ds-source={dsRef.wired ? "wire" : "project"}
+      title={dsRef.wired ? "Дизайн-система пришла по проводу: генерация собирается из её токенов и мастеров" : "Дизайн-система придёт в генерацию из глобального выбора проекта"}>
+      <span class="gen-ds-label">◈ {dsName} · {dsRef.wired ? "провод" : "проект"}</span>
+      <select
+        class="gen-ds-mode f-ds-mode"
+        title="Режим: strict — только мастера и токены; extend — мастера + новое в токенах; style-only — токены и характер"
+        value={usageMode}
+        onchange={(e) => $flow.setNodeData(Number(id), { designSystemUsageMode: e.currentTarget.value })}
+      >
+        <option value="strict">strict</option>
+        <option value="extend">extend</option>
+        <option value="style-only">style-only</option>
+      </select>
+      {#if !dsRef.wired}
+        <button
+          class="gen-ds-off"
+          title="Генерировать без дизайн-системы"
+          onclick={() => $flow.setNodeData(Number(id), { designSystemSelection: "none" })}
+        >×</button>
+      {/if}
+    </div>
+    {#if dsRef.wired && !dsRef.published}
+      <div class="gen-ds-warn nodrag" role="status">ДС черновик — опубликуется автоматически при запуске.</div>
+    {/if}
+  {:else if dsOptedOut}
+    <div class="gen-ds-row nodrag">
+      <span class="gen-ds-label">ДС отключена для этой ноды</span>
+      <button
+        class="gen-ds-off"
+        title="Вернуть дизайн-систему проекта"
+        onclick={() => $flow.setNodeData(Number(id), { designSystemSelection: "inherit" })}
+      >↺</button>
+    </div>
+  {/if}
   {#if hasReference}
     <div class="gen-ref-row nodrag" title="Экраны с порта reference уйдут в промпт как паттерн: те же мастера, плотность и роли текста">▣ Референс-экраны подключены</div>
   {/if}
-  <IrPreview class="f-preview" ir={activeIr} height={180} empty="Варианты появятся после запуска" />
+  <details class="n-details gen-design-options nodrag nowheel">
+    <summary>Задача и направление{generationLog?.policy?.surfaceLabel ? ` · ${generationLog.policy.surfaceLabel}` : ""}</summary>
+    <div class="gen-design-body">
+      <label>Тип экрана
+        <select aria-label="Тип экрана" disabled={busy} value={data.surface || "auto"}
+          onchange={(event) => $flow.setNodeData(Number(id), { surface: event.currentTarget.value, selectedDirection: "all", directions: [] })}>
+          {#each surfaceOptions as option}<option value={option[0]}>{option[1]}</option>{/each}
+        </select>
+      </label>
+      <label>Визуальное направление
+        <select aria-label="Визуальное направление" disabled={busy || !!dsRef} value={data.designStyle || "auto"}
+          onchange={(event) => $flow.setNodeData(Number(id), { designStyle: event.currentTarget.value, selectedDirection: "all" })}>
+          {#each styleOptions as option}<option value={option[0]}>{option[1]}</option>{/each}
+        </select>
+      </label>
+      <small>{dsRef ? "Внешний вид задаёт выбранная дизайн-система." : "Без дизайн-системы генератор создаст согласованные основы под задачу."}</small>
+    </div>
+  </details>
   {#if generationLog}
     <section class="gen-log nodrag f-gen-log" aria-label="Журнал решений генерации">
       <button type="button" class="gen-log-head" onclick={() => (logOpen = !logOpen)} aria-expanded={logOpen}>
@@ -325,54 +331,39 @@
       {/if}
     </section>
   {/if}
-  <div class="gen-actions">
-    <button class="btn-node small f-to-editor nodrag" onclick={() => $flow.sendToNode(Number(id), "edit")}>
-      → Editor
-    </button>
-    <button class="btn-node small f-to-reference nodrag" onclick={() => $flow.sendToNode(Number(id), "reference")}>
-      → Reference
-    </button>
-    <button class="btn-node small nodrag" title="Запомнить как удачный вариант" disabled={busy || !activeIr} onclick={() => void $flow.recordVariantTaste(Number(id), "accepted")}>
-      ✓ Принять
-    </button>
-    <button class="btn-node small nodrag" title="Запомнить как неудачный вариант" disabled={busy || !activeIr} onclick={() => void $flow.recordVariantTaste(Number(id), "rejected")}>
-      × Отклонить
-    </button>
-    <button class="btn-node small primary nodrag" title="Сделать этот вариант дизайн-системой" disabled={busy || !activeIr} onclick={() => void $flow.promoteVariantToDesignSystem(Number(id))}>
-      ◈ Закрепить стиль
-    </button>
-  </div>
   <NodeStatus {id} />
   <OutPorts type="generator" />
 </NodeShell>
 
 <style>
-  .gen-design-options { font-size: 11px; padding: 6px 0; }
-  .gen-design-options summary { cursor: pointer; padding: 4px 0; }
-  .gen-design-options label { display: grid; gap: 4px; margin: 8px 0; }
-  .gen-design-options select { width: 100%; min-height: 30px; padding: 4px 8px; color: inherit; background: var(--dna-sunken); border: 1px solid var(--dna-border); border-radius: 5px; }
-  .gen-design-options select:focus-visible { outline: 2px solid var(--n-accent); outline-offset: 2px; }
-  .gen-design-options small, .gen-policy-summary { font-size: 10px; line-height: 1.4; color: var(--dna-muted); }
+  .gen-count { width: auto; padding: 4px 6px; font-size: 11px; color: var(--dna-muted); background: transparent; border-color: transparent; }
+  .gen-count:hover { border-color: var(--dna-border); }
+  .gen-design-body { display: grid; gap: 6px; }
+  .gen-design-body label { display: grid; gap: 4px; font-size: 10.5px; color: var(--dna-muted); }
+  .gen-design-body select { width: 100%; min-height: 28px; padding: 4px 8px; color: var(--dna-text-2); background: var(--dna-node); border: 1px solid var(--dna-border); border-radius: 6px; font-size: 11px; }
+  .gen-design-body select:focus-visible { outline: 2px solid var(--dna-text); outline-offset: 2px; }
+  .gen-design-body small, .gen-policy-summary { font-size: 10px; line-height: 1.4; color: var(--dna-muted); }
   .direction-picker { display: grid; gap: 6px; }
-  .direction-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--dna-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
-  .direction-all, .direction-chip { border: 1px solid var(--dna-border); background: var(--dna-sunken); color: inherit; cursor: pointer; }
-  .direction-all { border-radius: 999px; padding: 3px 8px; font-size: 10px; text-transform: none; letter-spacing: 0; }
+  .direction-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--dna-dim); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+  .direction-all, .direction-chip { border: 1px solid var(--dna-border); background: transparent; color: inherit; cursor: pointer; }
+  .direction-all { border-radius: 999px; padding: 3px 8px; font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--dna-muted); }
   .direction-chips { display: grid; gap: 5px; }
   .direction-chip { display: grid; gap: 2px; width: 100%; border-radius: 8px; padding: 7px 8px; text-align: left; }
   .direction-chip strong { font-size: 11px; }
   .direction-chip span, .direction-chip small { color: var(--dna-muted); font-size: 10px; line-height: 1.3; }
-  .direction-chip.active, .direction-all.active { border-color: var(--dna-violet-l); background: rgba(155, 92, 255, .1); box-shadow: 0 0 0 2px rgba(155, 92, 255, .12); }
+  .direction-chip.active, .direction-all.active { border-color: var(--dna-text); background: color-mix(in srgb, var(--dna-text), transparent 92%); color: var(--dna-text); }
   .direction-chip:disabled, .direction-all:disabled { cursor: default; opacity: .65; }
-  .revision-status { border: 1px solid rgba(239, 68, 68, .35); border-radius: 8px; background: rgba(239, 68, 68, .08); padding: 8px; color: #b91c1c; font-size: 10px; line-height: 1.35; }
+  .revision-status { border: 1px solid color-mix(in srgb, var(--dna-danger), transparent 65%); border-radius: 8px; background: color-mix(in srgb, var(--dna-danger), transparent 90%); padding: 8px; color: var(--dna-danger-text); font-size: 10px; line-height: 1.35; }
   .revision-status ul { margin: 4px 0 0; padding-left: 16px; }
   .tbadge { max-width: calc(100% - 8px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .gen-ds-mode { flex: none; border: 1px solid var(--dna-border); border-radius: 6px; background: var(--dna-sunken); color: inherit; font-size: 10px; padding: 2px 4px; }
-  .gen-ds-warn { border: 1px solid rgba(245, 166, 35, .4); border-radius: 8px; background: rgba(245, 166, 35, .08); padding: 6px 8px; color: var(--dna-amber); font-size: 10px; line-height: 1.35; }
+  .gen-ds-mode { flex: none; border: 1px solid var(--dna-border); border-radius: 6px; background: var(--dna-node); color: inherit; font-size: 10px; padding: 2px 4px; }
+  .gen-ds-warn { border: 1px solid color-mix(in srgb, var(--dna-amber), transparent 60%); border-radius: 8px; background: color-mix(in srgb, var(--dna-amber), transparent 92%); padding: 6px 8px; color: var(--dna-amber); font-size: 10px; line-height: 1.35; }
   .gen-ref-row { color: var(--dna-muted); font-size: 10px; }
   .gen-log { border: 1px solid var(--dna-border); border-radius: 8px; background: var(--dna-sunken); font-size: 10px; }
-  .gen-log-head { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: var(--dna-text-2); padding: 6px 8px; cursor: pointer; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; font-size: 9.5px; }
-  .gen-log-sum { color: var(--dna-muted); font-weight: 600; text-transform: none; letter-spacing: 0; }
-  .gen-log-body { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin: 0; padding: 0 8px 8px; }
+  .gen-log-head { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: var(--dna-muted); padding: 7px 9px; cursor: pointer; font-weight: 700; font-size: 10.5px; }
+  .gen-log-head:hover { color: var(--dna-text); }
+  .gen-log-sum { color: var(--dna-dim); font-weight: 600; }
+  .gen-log-body { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin: 0; padding: 0 9px 9px; }
   .gen-log-body dt { color: var(--dna-dim); }
   .gen-log-body dd { margin: 0; color: var(--dna-text-2); line-height: 1.35; overflow-wrap: anywhere; }
   .gen-log-body ul { margin: 0; padding-left: 12px; }

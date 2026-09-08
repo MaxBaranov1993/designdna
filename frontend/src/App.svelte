@@ -3,8 +3,9 @@
   import { onMount } from "svelte";
   import type { Component } from "svelte";
 
-  import TopBar from "./TopBar.svelte";
-  import PagesPanel from "./PagesPanel.svelte";
+  import Rail from "./chrome/Rail.svelte";
+  import ProjectCard from "./chrome/ProjectCard.svelte";
+  import StatusCard from "./chrome/StatusCard.svelte";
   import FlowCanvas from "./FlowCanvas.svelte";
   import GraphInspector from "./GraphInspector.svelte";
   import ToastViewport from "./flow/ToastViewport.svelte";
@@ -17,8 +18,11 @@
   import { useFlowStore } from "./flow/store";
   import { getConfig } from "./flow/api";
   import { installRendererLiveCommands } from "./desktop/live-command-handler";
-  import EngineStatus from "./desktop/EngineStatus.svelte";
 
+  /* Каркас по мотивам Weavy: канвас на весь экран, слева рельса 56px, над
+   * канвасом плавают карточка проекта (страницы), правая карточка (движок,
+   * экспорт, очередь задач) и инспектор, который появляется только при
+   * выделении ноды. Поверхности Project Map / Agents переключаются в рельсе. */
   type WorkspaceSurface = "design" | "map" | "agents";
   type LazyComponent = Component<Record<string, never>>;
 
@@ -31,7 +35,11 @@
   /* Конфликт 409 автосейва: пока не null — модалка ConflictDialog */
   let projectConflict = $state<ProjectConflictDetail | null>(null);
   let DsEditorComponent: any = $state(null);
+  /* Десктоп: системная шапка скрыта (titleBarStyle hidden), свою полосу 36px
+   * с зоной перетаскивания рисуем сами; оверлеи редакторов (portal в body)
+   * сдвигаются через html[data-desktop]. */
   const isDesktop = typeof window !== "undefined" && !!window.designDNA;
+  if (isDesktop && typeof document !== "undefined") document.documentElement.dataset.desktop = "1";
   async function ensureDsEditor() {
     if (!DsEditorComponent) {
       const mod = await import("./editor/DesignSystemPanel.svelte");
@@ -108,61 +116,49 @@
 </script>
 
 <div class="dna-scroll">
-  <div class="dna-app">
-    <header class="dna-topbar">
-      <div class="dna-topbar-group">
-        <div class="dna-logo-badge">D</div>
-        <div class="dna-logo-name">DesignDNA</div>
-        <div class="dna-version-pill">{isDesktop ? "v2 · local" : "v2 · browser"}</div>
+  <div class="dna-app" class:desktop={isDesktop} data-surface={surface}>
+    {#if isDesktop}
+      <div class="dna-titlebar" role="presentation">
+        <span class="tb-name">DesignDNA</span>
+        <span class="tb-badge">локально</span>
       </div>
-      <div class="dna-seg" aria-label="Workspace surface">
-        <button class:active={surface === "design"} onclick={() => showSurface("design")}>Design</button>
-        <button class:active={surface === "map"} onclick={() => showSurface("map")}>Project Map</button>
-        <button class:active={surface === "agents"} onclick={() => showSurface("agents")}>Agents</button>
-      </div>
-      <div class="dna-topbar-group">
-        <!-- Честное состояние движка (engine:status из main.mjs) вместо косметического бейджа -->
-        <EngineStatus />
-        <div class="dna-avatar">M</div>
-      </div>
-    </header>
-    <div class="min-h-0 flex-1" style="display: flex; flex-direction: column;">
-      {#if surface === "design"}
-        <div class="flex h-full min-h-0 flex-1 flex-col">
-          <SvelteFlowProvider>
-            <TopBar />
-            <div class="dna-body">
-              <PagesPanel />
-              <main class="dna-canvas">
-                <FlowCanvas />
-              </main>
-              <GraphInspector />
-            </div>
-          </SvelteFlowProvider>
-          <ToastViewport />
-          <HotkeyCheatsheet />
-          {#if projectConflict}
-            <ConflictDialog detail={projectConflict} onclose={() => (projectConflict = null)} />
-          {/if}
-          {#if EditorComponent}<EditorComponent />{/if}
-          {#if DsEditorComponent && dsEditorNodeId != null}
-            <DsEditorComponent nodeId={dsEditorNodeId} onClose={() => (dsEditorNodeId = null)} />
-          {/if}
-        </div>
-      {:else if surface === "map"}
+    {/if}
+    <Rail {surface} onselect={showSurface} />
+    {#if surface === "design"}
+      <SvelteFlowProvider>
+        <main class="dna-canvas">
+          <FlowCanvas />
+        </main>
+        <ProjectCard />
+        <StatusCard />
+        <GraphInspector />
+      </SvelteFlowProvider>
+      <ToastViewport />
+      <HotkeyCheatsheet />
+      {#if projectConflict}
+        <ConflictDialog detail={projectConflict} onclose={() => (projectConflict = null)} />
+      {/if}
+      {#if EditorComponent}<EditorComponent />{/if}
+      {#if DsEditorComponent && dsEditorNodeId != null}
+        <DsEditorComponent nodeId={dsEditorNodeId} onClose={() => (dsEditorNodeId = null)} />
+      {/if}
+    {:else if surface === "map"}
+      <div class="dna-surface">
         {#if ProjectMapComponent}
           <ProjectMapComponent />
         {:else}
           <div class="grid h-full place-items-center text-sm text-muted-foreground">Загрузка Project Map…</div>
         {/if}
-      {:else}
+      </div>
+    {:else}
+      <div class="dna-surface">
         {#if AgentComponent}
           <AgentComponent />
         {:else}
           <div class="grid h-full place-items-center text-sm text-muted-foreground">Загрузка Agents…</div>
         {/if}
-      {/if}
-    </div>
+      </div>
+    {/if}
     <!-- Фирменный confirm вне переключателя поверхностей: нужен и графу, и Project Map -->
     <ConfirmHost />
   </div>

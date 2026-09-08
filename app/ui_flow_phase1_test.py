@@ -158,9 +158,8 @@ def main() -> None:
         check("кнопка Undo в тулбаре вернула ноду", graph_counts(pg) == (2, 1), str(graph_counts(pg)))
         check("Redo активна, пока есть что повторить", pg.locator("#btn-redo").is_enabled())
 
-        # NB: путь Del/Backspace (Svelte Flow → syncFromCanvas) здесь не
-        # проверяется: клик по ноде не даёт ей класс selected (известный баг
-        # канваса, не зависящий от undo), поэтому клавиша не имеет цели.
+        # Путь Del/Backspace (клик → selected → Svelte Flow → syncFromCanvas →
+        # undo) проверяется отдельно в app/ui_flow_selection_test.py.
 
         # Ctrl+Z в поле ввода — нативный undo текста, граф не трогаем
         pg.fill(".n-prompt .f-text", "текст промпта")

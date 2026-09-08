@@ -35,7 +35,7 @@ test("store: long runs drive setProgress and clear it in finally", async () => {
 
 test("Source Import shows measured backend stages after a run", async () => {
   const source = await read("../src/nodes/SourceImportNode.svelte");
-  assert.match(source, /Measured run/);
+  assert.match(source, /Измерено/);
   assert.match(source, /data\.lastRun\.timingsMs/);
   assert.match(source, /captureCompile: "Layers"/);
   assert.match(source, /fidelity: "Fidelity"/);

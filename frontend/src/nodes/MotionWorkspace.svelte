@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { useFlowStore } from "../flow/store";
+  import { useFlowStore, captureNodeScope } from "../flow/store";
   import { IRHistory } from "../engine/irhistory";
   import { compositionFrame, COMP_CARD_STYLE } from "./motion-composition";
   import { untrack } from "svelte";
@@ -267,10 +267,12 @@
   const onUpload = (event: Event) => {
     const input = event.currentTarget as HTMLInputElement;
     const files = Array.from(input.files || []);
+    const scope = captureNodeScope(useFlowStore.getState, nodeId);
+    const sceneId = activeScene?.id;
     files.forEach((file) => {
       const reader = new FileReader();
       reader.onload = () => {
-        if (!activeScene) return;
+        if (!scope.owns() || !activeScene || activeScene.id !== sceneId) return;
         const base = baselineLayers;
         const id = nextLayerId(base);
         commitLayers(

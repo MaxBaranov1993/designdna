@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { generateCodexImage } from "./codex-image-generation.mjs";
 
 const IMAGE_EXTENSIONS = { png: "png", jpeg: "jpg", webp: "webp", gif: "gif" };
 const MAX_IMAGE_URL_CHARS = 8_000_000;
@@ -11,7 +12,7 @@ const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 // Native image inputs need no tools or filesystem permissions in the prompt.
 // Only generated names under a private, request-owned directory reach localImage.
-function materializeInput(messages, instruction, tempRoot) {
+function materializeInput(messages, instruction, tempRoot, maxUrlChars = MAX_IMAGE_URL_CHARS) {
   const input = [];
   let text = instruction;
   let directory = null;
@@ -37,8 +38,8 @@ function materializeInput(messages, instruction, tempRoot) {
         }
         if (part?.type !== "image_url") throw new Error("Unsupported Codex message content part");
         const { url, detail } = part.image_url || {};
-        if (typeof url !== "string" || url.length > MAX_IMAGE_URL_CHARS) {
-          throw new Error("Codex image URL is missing or exceeds 8000000 characters");
+        if (typeof url !== "string" || url.length > maxUrlChars) {
+          throw new Error(`Codex image URL is missing or exceeds ${maxUrlChars} characters`);
         }
         if (detail != null && !["auto", "low", "high", "original"].includes(detail)) {
           throw new Error("Unsupported Codex image detail");
@@ -138,6 +139,7 @@ export class CodexAppServer extends EventEmitter {
     this.pending = new Map();
     this.sequence = 0;
     this.initialized = null;
+    this.imageCleanup = new Set();
   }
   async start() {
     if (this.initialized) return this.initialized;
@@ -163,12 +165,49 @@ export class CodexAppServer extends EventEmitter {
   async startTurn(params) { await this.start(); return this.request("turn/start", params); }
   async steerTurn(params) { await this.start(); return this.request("turn/steer", params); }
   async interruptTurn(threadId, turnId) { await this.start(); return this.request("turn/interrupt", { threadId, turnId }); }
+  async generateImage({ prompt, model = null, referenceImage = null, removeBackground = false }, { signal, timeoutMs } = {}) {
+    if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 20_000) throw new Error("Нужен промпт изображения до 20000 символов");
+    if (model != null && (typeof model !== "string" || !/^[a-zA-Z0-9._-]{1,100}$/.test(model))) throw new Error("Некорректная модель изображения");
+    if (removeBackground && !referenceImage) throw new Error("Подключите изображение для удаления фона");
+    const directory = mkdtempSync(path.join(this.imageTempRoot, "ddna-raster-"));
+    let cleanup = () => {};
+    try {
+      const content = [{ type: "text", text: prompt }];
+      if (referenceImage) content.push({ type: "image_url", image_url: { url: referenceImage } });
+      const materialized = materializeInput([{ role: "user", content }],
+        removeBackground
+          ? "Use built-in image generation to create a SEGMENTATION MASK of the attached image, not a photo or cutout. The image is the edit target. Return exactly one opaque grayscale PNG: pure WHITE (255) for the entire foreground subject including its interior, pure BLACK (0) for all background and floor shadows. Only boundary antialiasing may be gray. Match the source canvas aspect ratio, object position, silhouette, proportions and crop exactly. Do not move, resize or redraw the object. Do not include colors, checkerboards, gradients inside the object, labels or text. This mask will become the alpha channel of the ORIGINAL pixels."
+          : "Generate exactly one raster image using the built-in image generation tool. Use the attached image, if any, as a visual reference.", directory, 28_000_000);
+      cleanup = materialized.cleanup;
+      return await generateCodexImage(this, materialized.input, { signal, timeoutMs, cwd: directory, model });
+    } finally {
+      // Windows keeps a thread's cwd open until thread/closed. Do not turn a
+      // successful image into an error merely because that empty cwd is locked.
+      try { cleanup(); } finally {
+        this.imageCleanup.add(directory);
+        this.#retryImageCleanup();
+      }
+    }
+  }
+  #retryImageCleanup() {
+    for (const directory of this.imageCleanup) {
+      const relative = path.relative(this.imageTempRoot, directory);
+      if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || !path.basename(directory).startsWith("ddna-raster-")) continue;
+      try {
+        rmSync(directory, { recursive: true, force: true });
+        this.imageCleanup.delete(directory);
+      } catch (error) {
+        if (!["EPERM", "EBUSY", "ENOTEMPTY", "EACCES"].includes(error.code)) throw error;
+      }
+    }
+  }
   async chat(messages, { timeoutMs = 180_000, profile = "generator", signal = null, model = null, effort = null, outputSchema = null, onResponseMetadata = null } = {}) {
     const profileInstructions = {
       generator: "Generate the requested Design IR. The SYSTEM section below is the complete, authoritative design specification — follow it exactly, including the design craft rules and any locked Style DNA tokens: token colors (primary for CTAs and key accents, alternating background/surface sections) are mandatory, a plain white-and-grey wireframe is a failure.",
       quality_judge: "Evaluate the supplied Design IR exactly as requested.",
       quality_repair: "Repair the supplied Design IR exactly as requested.",
       editor: "Apply the requested visual edit to the supplied Design IR scope. The SYSTEM section below defines the exact output contract - follow it precisely and return only the JSON object it specifies. Do not generate a full page, do not restructure anything outside the selected scope.",
+      graphics: "Draw the requested graphic as one self-contained SVG document exactly as the SYSTEM section specifies.",
     };
     if (!Object.hasOwn(profileInstructions, profile)) throw new Error(`Unsupported Codex chat profile: ${profile}`);
     if (outputSchema != null && (typeof outputSchema !== "object" || Array.isArray(outputSchema))) {
@@ -176,7 +215,7 @@ export class CodexAppServer extends EventEmitter {
     }
     if (signal?.aborted) throw new Error("Codex request cancelled");
     const { input, cleanup } = materializeInput(messages,
-      `${profileInstructions[profile]} Evaluate any attached images directly. Do not inspect files, run commands, or call tools. Return only the JSON object.`,
+      `${profileInstructions[profile]} Evaluate any attached images directly. Do not inspect files, run commands, or call tools. ${profile === "graphics" ? "Return only the SVG markup." : "Return only the JSON object."}`,
       this.imageTempRoot);
     let responseMetadata = null;
     try {
@@ -329,6 +368,7 @@ export class CodexAppServer extends EventEmitter {
     child.once("error", (error) => { if (this.child === child) this.#fail(error); });
     child.once("exit", (code) => {
       if (this.child === child) this.#fail(new Error(`Codex app-server exited (${code}): ${stderr.trim()}`));
+      this.#retryImageCleanup();
     });
     const result = await this.request("initialize", {
       clientInfo: { name: "designdna", title: "DesignDNA", version: "0.3.0" },
@@ -340,6 +380,7 @@ export class CodexAppServer extends EventEmitter {
   #onLine(line) {
     let message;
     try { message = JSON.parse(line); } catch { return; }
+    if (message.method === "thread/closed") this.#retryImageCleanup();
     if (message.id != null && message.method) { this.emit("request", { id: message.id, method: message.method, params: message.params || {} }); return; }
     if (message.id == null && message.method) { this.emit("notification", { method: message.method, params: message.params || {} }); return; }
     const item = this.pending.get(message.id);

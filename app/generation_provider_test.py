@@ -267,3 +267,28 @@ def test_generate_degrades_when_fast_art_direction_fails(monkeypatch) -> None:
     assert response["generationLog"]["direction"]["degraded"] is True
     assert "fast model unavailable" in response["generationLog"]["direction"]["error"]
     assert "art-direction" in stages
+
+
+def test_generate_accepts_claude_search_input_without_another_model_call(monkeypatch):
+    fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
+    fixture["tree"][0]["children"] = [{"type": "frame", "children": [
+        {"type": "input", "inputType": "search", "placeholder": "Search listings"}]}]
+    monkeypatch.setattr(server.llm, "chat", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("Finalization must not call a model")))
+    response = server.generate(server.GenerateReq(brief="Marketplace search header", surface="component",
+        count=1, provider="claude", rawOutputs=[json.dumps(fixture)]))
+    assert isinstance(response, dict), getattr(response, "body", response)
+    result = response["variants"][0]
+    assert server.validate_ir(result) == []
+    assert result["tree"][0]["children"][0]["children"][0]["inputType"] == "search"
+
+
+def test_empty_composition_refusal_is_not_a_generated_variant(monkeypatch):
+    fixture = json.loads((ROOT / "app" / "fixtures" / "frame-example.json").read_text(encoding="utf-8"))
+    fixture["tree"] = [{"id": "missing-reference", "type": "composition", "variant": "empty", "props": {},
+                        "children": [{"type": "frame", "children": []}]}]
+    monkeypatch.setattr(server.llm, "chat", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("No model calls")))
+    response = server.generate(server.GenerateReq(brief="Marketplace header", surface="component", count=1,
+        provider="claude", rawOutputs=[json.dumps(fixture)]))
+    assert response.status_code == 502
+    assert "пустой макет" in response.body.decode("utf-8")

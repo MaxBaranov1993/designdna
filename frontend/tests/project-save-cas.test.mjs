@@ -7,7 +7,7 @@ const storeUrl = new URL("../src/flow/store.ts", import.meta.url);
 const canvasUrl = new URL("../src/FlowCanvas.svelte", import.meta.url);
 
 test("project autosave fails closed on a stale revision", async () => {
-  const source = await readFile(sourceUrl, "utf8");
+  const source = (await readFile(sourceUrl, "utf8")).replace(/\r\n/g, "\n");
   const flushStart = source.indexOf("async function flushDbProject");
   const flushEnd = source.indexOf("\n}\n", flushStart);
   const flushSource = source.slice(flushStart, flushEnd + 2);
@@ -20,7 +20,7 @@ test("project autosave fails closed on a stale revision", async () => {
 });
 
 test("empty loads and unload beacons preserve the CAS revision", async () => {
-  const source = await readFile(sourceUrl, "utf8");
+  const source = (await readFile(sourceUrl, "utf8")).replace(/\r\n/g, "\n");
   assert.match(source, /data\.revision[\s\S]{0,180}if \(!data\.project\) return null/);
   assert.match(source, /expectedRevision[\s\S]{0,240}navigator\.sendBeacon/);
   assert.doesNotMatch(source, /new Blob\(\[`\{"project":\$\{lastDbProjectText\}\}`\]/);

@@ -21,6 +21,8 @@ export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: numbe
   timeline: { title: "Видео", icon: "▶", w: 350, sub: "страница · промпт · монтаж", accent: "#FF5F56" },
   pagebridge: { title: "Page Bridge", icon: "↔", w: 300, sub: "передать компонент между страницами", accent: "#35B8A0" },
   designsystem: { title: "Design System / UI Kit", icon: "◈", w: 300, sub: "Source → published DS", accent: "#9B5CFF" },
+  image: { title: "Изображение", icon: "◐", w: 320, sub: "GPT Image · PNG / JPEG", accent: "#3FB950" },
+  removebackground: { title: "Удалить фон", icon: "◒", w: 320, sub: "GPT Image · прозрачный PNG", accent: "#3FB950" },
 };
 
 /* Зеркало PORTS (nodes.js:35-48); у mix входы динамические — из data.inputs (portsOfNode),
@@ -29,8 +31,14 @@ type RawPortDecl = Omit<PortDecl, "kinds"> & { kinds?: PortKind[] };
 const RAW_PORTS: Record<NodeType, { in: RawPortDecl[]; out: RawPortDecl[] }> = {
   prompt: { in: [], out: [{ name: "out", label: "текст", kind: "text" }] },
   reference: {
-    in: [{ name: "ir", label: "IR", kind: "ir" }],
-    out: [{ name: "out", label: "стиль", kind: "text" }],
+    in: [
+      { name: "ir", label: "IR", kind: "ir" },
+      { name: "image", label: "картинка", kind: "image" },
+    ],
+    out: [
+      { name: "out", label: "стиль", kind: "text" },
+      { name: "image", label: "картинка", kind: "image" },
+    ],
   },
   generator: {
     in: [
@@ -114,6 +122,17 @@ const RAW_PORTS: Record<NodeType, { in: RawPortDecl[]; out: RawPortDecl[] }> = {
       { name: "timeline", label: "монтаж", kind: "timeline" },
       { name: "video", label: "готовое видео", kind: "video" },
     ],
+  },
+  image: {
+    in: [
+      { name: "prompt", label: "Промт", kind: "text" },
+      { name: "reference", label: "референс", kind: "image" },
+    ],
+    out: [{ name: "image", label: "картинка", kind: "image" }],
+  },
+  removebackground: {
+    in: [{ name: "image", label: "изображение", kind: "image" }],
+    out: [{ name: "image", label: "без фона", kind: "image" }],
   },
   pagebridge: {
     in: [{ name: "ir", label: "component", kind: "ir" }],
@@ -243,6 +262,10 @@ export function defaultData(type: NodeType): AnyNodeData {
     case "designsystem":
       return ({ systemId: null, name: "", status: "draft", revision: 0, summary: null,
                sourceNodeId: null, defaultSet: false, sourceUpdate: false, autoPublish: true } as unknown as AnyNodeData);
+    case "image":
+      return { engine: "raster", outputFormat: "png", prompt: "", style: "vector", width: 1024, height: 1024, tileable: false, provider: "codex", effort: "medium", variants: [], active: 0 };
+    case "removebackground":
+      return { image: null, fileName: "", prompt: "", variants: [], active: 0 };
     case "pagebridge":
       return { channel: "shared-component", mode: "send", ir: null };
   }
@@ -258,6 +281,8 @@ export const CTX_GROUPS: { label: string; color: string; items: { type: NodeType
       { type: "prompt", note: "текст задачи" },
       { type: "reference", note: "лёгкая стилевая подсказка" },
       { type: "sourceimport", note: "URL/скрин → блоки + DNA" },
+      { type: "image", note: "GPT Image · PNG / JPEG" },
+      { type: "removebackground", note: "delete background · прозрачный PNG" },
     ],
   },
   {
@@ -301,6 +326,8 @@ export const CTX_ITEMS: { type: NodeType; note: string }[] = [
   { type: "reference", note: "лёгкая стилевая подсказка" },
   { type: "generator", note: "LLM → варианты IR" },
   { type: "sourceimport", note: "URL/скрин → блоки + DNA" },
+  { type: "image", note: "GPT Image · PNG / JPEG" },
+  { type: "removebackground", note: "delete background · прозрачный PNG" },
   { type: "derive", note: "родственный компонент" },
   { type: "edit", note: "DNA-редактор" },
   { type: "mix", note: "смешение по весам" },

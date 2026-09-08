@@ -14,8 +14,10 @@
     {
       title: "Канвас графа",
       rows: [
-        { keys: ["ПКМ"], label: "Создать ноду (меню с поиском)" },
-        { keys: ["ПКМ по ноде"], label: "Меню ноды: разорвать связи" },
+        { keys: ["ПКМ", "Двойной клик"], label: "Создать ноду (меню с поиском)" },
+        { keys: ["Ctrl", "K"], label: "Поиск нод и команд" },
+        { keys: ["Провод в пустоту"], label: "Создать совместимую ноду и сразу соединить" },
+        { keys: ["ПКМ по ноде", "···"], label: "Меню ноды: запустить, редактор, связи, удалить" },
         { keys: ["Ctrl", "Колесо"], label: "Зум к курсору" },
         { keys: ["V"], label: "Выбор и выделение рамкой" },
         { keys: ["H"], label: "Рука" },
@@ -25,7 +27,7 @@
         { keys: ["Del", "Backspace"], label: "Удалить выбранную ноду или связь" },
         { keys: ["Ctrl", "Z"], label: "Отменить изменение графа" },
         { keys: ["Ctrl", "Y"], label: "Повторить изменение графа" },
-        { keys: ["Esc"], label: "Закрыть меню или диалог" },
+        { keys: ["Esc"], label: "Закрыть меню, диалог или снять выделение" },
         { keys: ["?"], label: "Эта шпаргалка" },
       ],
     },
@@ -88,6 +90,17 @@
 
   $effect(() => {
     if (open) closeBtn?.focus();
+  });
+
+  /* Кнопка «Помощь» в рельсе открывает ту же шпаргалку событием. */
+  $effect(() => {
+    const onOpen = () => {
+      if (open || modalOpen()) return;
+      restoreFocus = document.activeElement as HTMLElement | null;
+      open = true;
+    };
+    window.addEventListener("designdna:open-cheatsheet", onOpen);
+    return () => window.removeEventListener("designdna:open-cheatsheet", onOpen);
   });
 </script>
 

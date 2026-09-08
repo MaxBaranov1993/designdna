@@ -31,7 +31,7 @@ test("Design System is the single new canvas surface for Source UI", async () =>
   ]);
 
   assert.match(node, /Source detected/);
-  assert.match(node, /System accepted/);
+  assert.match(node, /system accepted/i);
   assert.match(node, /<InPorts type="designsystem"/);
   assert.match(panel, /data-ds-tab="source"/);
   assert.match(panel, /<SourceArtifactPanel/);

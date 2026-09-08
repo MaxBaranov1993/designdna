@@ -100,12 +100,19 @@ def describe_nodes(master_ir: dict, limit: int = MAX_PROMPT_NODES) -> list[dict]
         entry: dict[str, Any] = {"sourceKey": source_key, "type": str(node.get("type") or "")}
         text = " ".join(str(node.get("text") or "").split())
         if text:
-            entry["text"] = text[:40]
+            entry["text"] = text[:240]
         entry["style"] = {prop: style[prop] for prop in STYLE_SUMMARY_PROPS if style.get(prop) is not None}
         entry["size"] = {
             "width": round(float(frame.get("width") or 0), 1),
             "height": round(float(frame.get("height") or 0), 1),
         }
+        # Layout repairs are bounded against these measured values. The model
+        # must not guess x/y/gap/padding from a screenshot or confuse viewports.
+        entry["frame"] = {prop: copy.deepcopy(frame[prop]) for prop in
+                          ("x", "y", "width", "height", "layout", "gap", "padding") if prop in frame}
+        entry["responsive"] = {vp: copy.deepcopy(value) for vp, value in
+                               (node.get("responsive") or {}).items()
+                               if vp in ("desktop", "tablet", "mobile") and isinstance(value, dict)}
         nodes.append(entry)
         if len(nodes) >= max(1, int(limit)):
             break
@@ -121,6 +128,7 @@ def build_repair_prompt(comp: dict, verdict: dict, viewport: str, nodes: list[di
     payload = {
         "nodes": nodes,
         "allowedProperties": sorted(repairable_props()),
+        "previousRepairRejections": ((comp.get("fidelity") or {}).get("aiReview") or {}).get("previousRepairRejections", []),
         "output": {"operations": [{
             "op": "restore-style",
             "sourceKey": "<sourceKey from nodes above>",
@@ -145,6 +153,7 @@ def build_repair_prompt(comp: dict, verdict: dict, viewport: str, nodes: list[di
         "or remove nodes, never invent a sourceKey. Use an 8-digit hex when the "
         "original channel is translucent. Emit only the operations needed to fix the listed defects.\n"
         f"Master nodes and their current styles:\n{json.dumps(payload, ensure_ascii=False)}\n"
+        "If previousRepairRejections are supplied, address those validation failures; do not repeat the rejected repair. "
         "Answer with ONE JSON object and nothing else."
     )
 

@@ -52,6 +52,7 @@ test("legacy providers:chat payload shape wraps into a valid envelope with a cor
   const result = await chatWithProvider({
     envelope,
     profile: payload.profile,
+    gptTransport: "openai",
     credentials: { has: () => true, get: () => "test-key" },
     codex: { account: async () => ({ account: null }) },
     openaiChat: async ({ envelope: passed }) => {
@@ -85,6 +86,7 @@ test("providers:chat-request migrates a retired provider to the Sol contract", a
       provider: "openai",
       model: "gpt-5.6-sol",
     }),
+    gptTransport: "openai",
     credentials: { has: () => true, get: () => "test-key" },
     codex: { account: async () => ({ account: null }) },
     openaiChat: async ({ envelope: passed }) => {

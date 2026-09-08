@@ -31,7 +31,7 @@ def test_explicit_account_request_calls_chosen_provider_even_with_default_flag_o
         })
     assert response.status_code == 200, response.text
     assert response.json()["planSource"] == "llm"
-    assert planner.call_args.kwargs == {"provider": "claude", "effort": "high"}
+    assert planner.call_args.kwargs == {"provider": "claude", "effort": "high", "model": None}
 
 
 def test_empty_account_plan_does_not_fallback():

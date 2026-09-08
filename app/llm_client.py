@@ -36,7 +36,7 @@ _ROLES = (
     "judge", "quality_judge", "quality_repair", "edit", "derive", "optimizer",
     "tokens", "components", "clone", "blockparse", "source_semantics",
     "source_vision_audit", "reproduce", "a11y", "docs", "mechanics", "taste",
-    "art-direction",
+    "art-direction", "graphics",
 )
 ROUTING = {role: [f"openai/{SOL_MODEL}"] for role in _ROLES}
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")

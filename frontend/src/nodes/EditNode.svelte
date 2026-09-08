@@ -10,11 +10,9 @@
   import NodeStatus from "./NodeStatus.svelte";
   import OutPorts from "./OutPorts.svelte";
 
-  /* «Редактор (DNA)» в графе — thin node.
-   * Нода не дублирует Figma/Pen.dev-инструменты: внутри графа только read-only
-   * превью, а вся работа с GeoEdit/Inspector/Layers/Tools/Undo живёт в
-   * полноэкранном DNA Editor (frontend/src/editor). Одна редактирующая
-   * поверхность и один контракт сохранения IR. */
+  /* «Редактор (DNA)» в графе — thin node: превью IR как герой, компактный
+   * список входов, футер «+ вход» и «Открыть редактор». Вся работа с
+   * инструментами живёт в полноэкранном DNA Editor (frontend/src/editor). */
   let { id, data, selected }: NodeProps<EditFlowNode> = $props();
 
   let nodeId = $derived(Number(id));
@@ -28,7 +26,6 @@
       toast("Сначала подключите IR к входу ноды", "error");
       return;
     }
-    // DNA Editor: snapshot/save/propagate — внутри editor store.
     window.dispatchEvent(new Event("designdna:ensure-editor"));
     try {
       await loadEditorController();
@@ -41,47 +38,53 @@
 </script>
 
 <NodeShell {id} type="edit" {selected}>
-  <InPorts type="edit" data={data} />
-  <div class="nrow-cap">КОМПОНЕНТЫ · ПОРЯДОК СВЕРХУ ВНИЗ</div>
-  {#each inputs as name, index (name)}
-    <div
-      class="merge-row"
-      data-port={name}
-      data-kind="ir"
-      role="listitem"
-      draggable="true"
-      ondragstart={() => {
-        dragFrom = index;
-      }}
-      ondragover={(event) => event.preventDefault()}
-      ondrop={(event) => {
-        event.preventDefault();
-        if (dragFrom !== null) $flow.reorderEditInputs(nodeId, dragFrom, index);
-        dragFrom = null;
-      }}
-    >
-      <span class="merge-n">{index + 1}</span>
-      <span class="merge-name">{name}</span>
-      <span class="merge-ctl nodrag">
-        <button title="Выше" disabled={index === 0} onclick={() => $flow.reorderEditInputs(nodeId, index, index - 1)}>↑</button>
-        <button title="Ниже" disabled={index === inputs.length - 1} onclick={() => $flow.reorderEditInputs(nodeId, index, index + 1)}>↓</button>
-        <button title="Убрать вход" onclick={() => $flow.removeEditInput(nodeId, name)}>✕</button>
-      </span>
+  {#snippet footer()}
+    <div class="foot-left">
+      <button class="btn-node small add-input edit-add-input nodrag" onclick={() => $flow.addEditInput(nodeId)}>+ Вход</button>
     </div>
-  {/each}
-  <button class="btn-node small edit-add-input nodrag" onclick={() => $flow.addEditInput(nodeId)}>+ Вход</button>
-  <div class="edit-preview-card nodrag">
+    <div class="foot-right">
+      <button class="btn-node primary small f-open-editor nodrag" disabled={!hasIr} onclick={openEditor}>Открыть редактор</button>
+    </div>
+  {/snippet}
+  <InPorts type="edit" data={data} />
+  <div class="edit-preview-card n-hero nodrag">
     <IrPreview
       ir={data.ir}
       height={240}
       fitHeight
       class="f-preview"
-      empty="Подключите IR — здесь будет только превью"
+      empty="Подключите IR — здесь будет превью"
     />
-    <div class="edit-preview-meta">
-      <span>{hasIr ? `${sources.length || 1} источн.` : "Нет IR на входе"}</span>
-      <span>{hasIr ? "Source Lens внутри" : "подключите компоненты"}</span>
-    </div>
+  </div>
+  <div class="n-meta">
+    <span>{hasIr ? `${sources.length || 1} источн.` : "нет IR на входе"}</span>
+    <span>{hasIr ? "Source Lens внутри" : `${inputs.length} вх.`}</span>
+  </div>
+  <div class="nrow-merge nodrag" role="list" aria-label="Компоненты · порядок сверху вниз">
+    {#each inputs as name, index (name)}
+      <div
+        class="merge-row"
+        data-port={name}
+        data-kind="ir"
+        role="listitem"
+        draggable="true"
+        ondragstart={() => { dragFrom = index; }}
+        ondragover={(event) => event.preventDefault()}
+        ondrop={(event) => {
+          event.preventDefault();
+          if (dragFrom !== null) $flow.reorderEditInputs(nodeId, dragFrom, index);
+          dragFrom = null;
+        }}
+      >
+        <span class="merge-n">{index + 1}</span>
+        <span class="merge-name">{name}</span>
+        <span class="merge-ctl">
+          <button title="Выше" disabled={index === 0} onclick={() => $flow.reorderEditInputs(nodeId, index, index - 1)}>↑</button>
+          <button title="Ниже" disabled={index === inputs.length - 1} onclick={() => $flow.reorderEditInputs(nodeId, index, index + 1)}>↓</button>
+          <button title="Убрать вход" onclick={() => $flow.removeEditInput(nodeId, name)}>✕</button>
+        </span>
+      </div>
+    {/each}
   </div>
   {#if sources.length}
     <div class="edit-source-list" aria-label="Источники компонентов">
@@ -92,9 +95,6 @@
       {/each}
     </div>
   {/if}
-  <button class="btn-node primary small f-open-editor nodrag" style="width: 100%" onclick={openEditor}>
-    ✦ Открыть DNA-редактор
-  </button>
   <NodeStatus {id} />
   <OutPorts type="edit" />
 </NodeShell>

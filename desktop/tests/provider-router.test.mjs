@@ -8,11 +8,41 @@ const credentials = (connected = true) => ({
   get: (provider) => connected && provider === "openai" ? "test-key" : null,
 });
 
+/* GPT по подписке: Sol и Astra по умолчанию уходят в Codex с явной моделью. */
+for (const [provider, model] of [["openai", "gpt-5.6-sol"], ["astra", "gpt-6-astra"]]) {
+  test(`${provider} routes through the Codex subscription with ${model}`, async () => {
+    let seen;
+    let openaiCalled = false;
+    const result = await chatWithProvider({
+      provider,
+      envelope: { provider, messages: [{ role: "user", content: "hi" }], reasoning: { effort: "high" } },
+      credentials: credentials(false),
+      codex: { chat: async (messages, options) => { seen = { messages, options }; return "codex-output"; } },
+      openaiChat: async () => { openaiCalled = true; return { content: "", transport: {} }; },
+    });
+    assert.equal(openaiCalled, false);
+    assert.equal(seen.options.model, model);
+    assert.equal(seen.options.effort, "high");
+    assert.equal(result.provider, "codex");
+    assert.equal(result.transport.requestedProvider, provider);
+    assert.equal(result.transport.fallback, null);
+    assert.equal(result.content, "codex-output");
+  });
+}
+
+test("GPT without a wired Codex fails with a subscription hint, not an API-key hint", async () => {
+  await assert.rejects(
+    chatWithProvider({ provider: "openai", messages: [{ role: "user", content: "hi" }], credentials: credentials() }),
+    /Codex.*Connections/,
+  );
+});
+
 for (const effort of ["medium", "high", "max"]) {
-  test(`router keeps Sol ${effort}`, async () => {
+  test(`router keeps Sol ${effort} on the explicit API transport`, async () => {
     let received;
     const result = await chatWithProvider({
       provider: "openai",
+      gptTransport: "openai",
       envelope: {
         provider: "openai",
         model: "gpt-5.6-sol",
@@ -36,6 +66,7 @@ test("router migrates a retired persisted selection to Sol medium", async () => 
   let received;
   const result = await chatWithProvider({
     provider: "kimi",
+    gptTransport: "openai",
     messages: [{ role: "user", content: "hi" }],
     credentials: credentials(),
     openaiChat: async ({ envelope }) => {
@@ -48,9 +79,9 @@ test("router migrates a retired persisted selection to Sol medium", async () => 
   assert.equal(result.transport.fallback, "openai");
 });
 
-test("router fails clearly when OpenAI is disconnected", async () => {
+test("router fails clearly when the explicit API transport has no OpenAI key", async () => {
   await assert.rejects(
-    chatWithProvider({ provider: "openai", messages: [{ role: "user", content: "hi" }], credentials: credentials(false) }),
+    chatWithProvider({ provider: "openai", gptTransport: "openai", messages: [{ role: "user", content: "hi" }], credentials: credentials(false) }),
     /OpenAI.*Connections/,
   );
 });

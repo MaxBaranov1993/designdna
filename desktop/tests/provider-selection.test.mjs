@@ -11,7 +11,7 @@ for (const [provider, model] of [["openai", "gpt-5.6-sol"], ["astra", "gpt-6-ast
     const prepared = prepareProviderRequest({ provider, model, messages, reasoning: { effort: "max" } }, "chosen-model");
     let wire;
     const result = await chatWithProvider({
-      ...prepared, credentials,
+      ...prepared, credentials, gptTransport: "openai",
       openaiChat: (args) => chatWithOpenAI({ ...args, fetchImpl: async (_url, init) => {
         wire = JSON.parse(init.body);
         return { ok: true, json: async () => ({ status: "completed", output_text: "ok" }) };
@@ -75,9 +75,22 @@ test("partial Responses output is never reported as a successful result", async 
   }), (error) => error.code === "PROVIDER_INCOMPLETE" && /max_output_tokens/.test(error.message));
 });
 
-test("an unavailable Astra key does not fall back to another account", async () => {
+test("an unavailable Astra key does not fall back to another account on the API transport", async () => {
   const prepared = prepareProviderRequest({ provider: "astra", messages }, "missing-key");
-  await assert.rejects(chatWithProvider({ ...prepared, credentials: { has: () => false },
+  await assert.rejects(chatWithProvider({ ...prepared, gptTransport: "openai", credentials: { has: () => false },
     claude: { chat: () => { throw new Error("unexpected Claude call"); } },
   }), /OpenAI.*Connections/);
+});
+
+test("Astra by subscription never touches Claude or the API", async () => {
+  const prepared = prepareProviderRequest({ provider: "astra", messages }, "subscription");
+  let seen;
+  const result = await chatWithProvider({ ...prepared, credentials: { has: () => false },
+    codex: { chat: async (_messages, options) => { seen = options; return "ok"; } },
+    claude: { chat: () => { throw new Error("unexpected Claude call"); } },
+    openaiChat: () => { throw new Error("unexpected API call"); },
+  });
+  assert.equal(seen.model, "gpt-6-astra");
+  assert.equal(result.provider, "codex");
+  assert.equal(result.transport.requestedProvider, "astra");
 });

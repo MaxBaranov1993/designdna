@@ -99,6 +99,7 @@ type ChatResponse = {
     requestId: string;
     dropped?: Array<{ field: string; reason: string }>;
     fallback?: string | null;
+    requestedProvider?: string;
   };
 };
 
@@ -135,6 +136,7 @@ declare global {
       sourceAuth: { open(url: string): Promise<{ opened: boolean }>; clear(): Promise<{ cleared: boolean }> };
       repoCanvas: { snapshot(): Promise<RepoCanvasSnapshot>; check(): Promise<Record<string, unknown>>; refresh(options?: Record<string, unknown>): Promise<Record<string, unknown>> };
       providers: {
+        imageRequest(request: { id: string; prompt: string; model?: string; referenceImage?: string | null; removeBackground?: boolean }): Promise<{ image: string; transparent: boolean }>;
         status(): Promise<{ runtimes: Array<Record<string, any>>; credentials: Record<"openai" | "openrouter", boolean>; encryptedStorage: boolean }>;
         credentials(): Promise<{ configured: Record<string, boolean>; encryptedStorage: boolean }>;
         setCredential(provider: "openai" | "openrouter", value: string): Promise<{ provider: string; configured: boolean }>;

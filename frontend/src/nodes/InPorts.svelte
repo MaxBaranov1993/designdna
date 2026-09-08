@@ -5,9 +5,9 @@
   import { cn } from "../lib/utils";
   import { kindClass } from "./portKind";
 
-  /* Входные порты — строки слева (зеркало .port-row.in). У mix входы динамические
-   * и рендерятся прямо в MixNode вместе со слайдерами весов; у page —
-   * тоже динамические, с drag-порядком прямо в PageNode. */
+  /* Входные порты — точки на левой кромке от 44px с шагом 22px (Weavy:
+   * порты у верхнего края, подписи только по наведению / при выделении /
+   * во время протягивания провода — см. .plabel в index.css). */
   let { type, data = undefined }: { type: NodeType; data?: AnyNodeData } = $props();
 
   let ports = $derived(portsOfNode({ type, data }).in);
@@ -19,7 +19,7 @@
     data-port={p.name}
     data-kind={p.kind}
     data-kinds={(p.kinds || [p.kind]).join(",")}
-    style={`top: ${60 + index * 24}px`}
+    style={`top: ${44 + index * 22}px`}
   >
     <span class="plabel">{p.label}</span>
     <Handle

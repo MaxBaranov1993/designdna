@@ -142,3 +142,15 @@ def test_exemplars_cover_the_new_variants():
                  ("feature-grid", "list-rail"), ("feature-grid", "bento-asym"),
                  ("feature-grid", "two-col-manifest")]:
         assert pair in used, f"вариант {pair} не показан ни в одном эталоне"
+
+
+@pytest.mark.parametrize("kind", ["text", "search", "email", "tel", "url", "password", "number", "textarea", "select", "checkbox"])
+def test_composition_input_type_is_valid_and_preserved(kind):
+    node = {"type": "input", "inputType": kind, "placeholder": "Поиск объявлений"}
+    doc = _document({"id": "search-header", "type": "composition", "variant": "default", "props": {}, "children": [
+        {"type": "frame", "children": [node]}]})
+    out = sanitize_generated_ir(doc)
+    assert not _errors(out)
+    assert out["tree"][0]["children"][0]["children"][0]["inputType"] == kind
+    node["inputType"] = "file"
+    assert _errors(doc), "unsupported control types must still fail validation"

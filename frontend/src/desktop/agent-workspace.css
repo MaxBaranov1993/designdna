@@ -1,122 +1,367 @@
-.agent-shell{display:grid;grid-template-columns:320px minmax(0,1fr);height:100%;background:hsl(var(--background));color:hsl(var(--foreground))}.agent-sidebar{display:flex;flex-direction:column;gap:14px;overflow:auto;border-right:1px solid hsl(var(--border));padding:20px}.agent-sidebar h1{font-size:22px;font-weight:680;letter-spacing:-.03em}.agent-sidebar h2{margin-top:8px;font-size:12px;text-transform:uppercase;letter-spacing:.1em}.agent-sidebar p{font-size:12px;color:hsl(var(--muted-foreground))}.agent-eyebrow{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:rgb(129,140,248)}.agent-thread{display:flex;flex-direction:column;gap:4px;border:1px solid hsl(var(--border));border-radius:9px;padding:10px}.agent-thread span{font-size:10px;text-transform:uppercase;color:hsl(var(--muted-foreground))}.agent-thread code,.agent-mcp-list code{overflow-wrap:anywhere;font-size:10px}.agent-config{min-height:190px;resize:vertical;border:1px solid hsl(var(--border));border-radius:9px;background:hsl(var(--muted)/.35);padding:10px;font:11px/1.5 ui-monospace,monospace}.agent-mcp-list{display:grid;gap:6px}.agent-mcp-list span,.agent-mcp-list code{border-radius:7px;background:hsl(var(--muted)/.55);padding:7px}.agent-mcp-list .ok{color:rgb(74,222,128)}.agent-mcp-list .bad{color:rgb(248,113,113)}.agent-main{display:flex;min-width:0;flex-direction:column}.agent-timeline{flex:1;overflow:auto;padding:26px}.agent-welcome{display:grid;height:100%;place-content:center;text-align:center;color:hsl(var(--muted-foreground))}.agent-welcome h2{font-size:20px;color:hsl(var(--foreground))}.agent-message,.agent-event{max-width:900px;margin:0 auto 12px;border:1px solid hsl(var(--border));border-radius:12px;padding:14px;background:hsl(var(--card))}.agent-message>span{display:block;margin-bottom:7px;font-size:10px;text-transform:uppercase;color:rgb(129,140,248)}.agent-message>div{white-space:pre-wrap;font-size:13px;line-height:1.6}.agent-event header{display:flex;justify-content:space-between;margin-bottom:8px;font-size:11px}.agent-event code{display:block;overflow-wrap:anywhere;font-size:11px}.agent-event pre,.agent-modal pre{max-height:220px;overflow:auto;white-space:pre-wrap;font-size:11px}.agent-composer{display:flex;gap:8px;border-top:1px solid hsl(var(--border));padding:14px}.agent-composer textarea{min-height:74px;flex:1;resize:none;border:1px solid hsl(var(--border));border-radius:10px;background:hsl(var(--card));padding:12px;font-size:13px}.agent-error{margin:14px 14px 0;border:1px solid rgba(248,113,113,.45);border-radius:8px;padding:9px;color:rgb(248,113,113);font-size:12px}.agent-modal{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:rgba(0,0,0,.66);padding:24px}.agent-modal>div{width:min(620px,100%);border:1px solid hsl(var(--border));border-radius:14px;background:hsl(var(--card));padding:20px;box-shadow:0 24px 80px rgba(0,0,0,.4)}.agent-modal h2{margin:5px 0;font-size:18px}.agent-modal p{white-space:pre-wrap;color:hsl(var(--muted-foreground));font-size:12px}.agent-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}.agent-empty{display:grid;height:100%;place-items:center;color:hsl(var(--muted-foreground))}@media(max-width:900px){.agent-shell{grid-template-columns:1fr}.agent-sidebar{display:none}}
-
-.agent-backend { display: flex; gap: 6px; }
-.agent-backend button { flex: 1; padding: 6px 10px; border-radius: 8px; border: 1px solid hsl(var(--border));
-  background: transparent; color: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
-.agent-backend button.active { border-color: hsl(var(--primary)); color: hsl(var(--primary)); }
-.agent-backend button:disabled { opacity: .5; cursor: default; }
-.agent-tool-message { opacity: .8; font-size: 12px; }
-.agent-tool-message div { font-family: ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
-
-/* Keep every provider and connection control reachable in the packaged app.
- * The sidebar is intentionally scrollable on the Y axis only: an X scrollbar
- * hid Grok/ZCode and made credential rows overlap at the default window size. */
+/* Agents — та же визуальная система, что и канвас: --dna-* токены, Manrope,
+ * нейтральная база, белая активная плитка, тёмные поля и выпадающие списки. */
 .agent-shell {
+  display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
+  height: 100%;
   min-width: 0;
   min-height: 0;
+  background: var(--dna-bg);
+  color: var(--dna-text);
 }
-
 .agent-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  border-right: 1px solid var(--dna-border-soft);
+  background: var(--dna-panel);
+  padding: 20px;
 }
-
-.agent-backend {
+.agent-sidebar h1 {
+  margin: 2px 0 4px;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.agent-sidebar h2 {
+  margin-top: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dna-dim);
+}
+.agent-sidebar p {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dna-muted);
+}
+.agent-sidebar > label {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dna-dim);
 }
-
-.agent-backend button {
-  min-width: 0;
-  min-height: 48px;
-  white-space: normal;
-  overflow-wrap: anywhere;
+.agent-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dna-muted);
 }
-
-.agent-connections {
-  display: grid;
-  min-width: 0;
-  gap: 8px;
-}
-
-.agent-connections h2 {
-  margin: 8px 0 0;
-}
-
-.agent-connections label {
-  display: grid;
-  min-width: 0;
-  gap: 5px;
-  color: hsl(var(--muted-foreground));
-  font-size: 11px;
-}
-
+.agent-sidebar select,
 .agent-connections input,
 .agent-config {
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
-}
-
-.agent-connections input {
   min-width: 0;
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  background: hsl(var(--muted) / .35);
-  color: hsl(var(--foreground));
+  border: 1px solid var(--dna-border);
+  border-radius: var(--r-ctl);
+  background: var(--dna-sunken);
+  color: var(--dna-text);
   padding: 8px 10px;
+  font: 500 12.5px "Manrope Variable", Manrope, sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+  outline: none;
+  color-scheme: dark;
 }
-
+.agent-sidebar select:focus-visible,
+.agent-connections input:focus-visible,
+.agent-config:focus-visible {
+  border-color: var(--dna-text-2);
+}
+.agent-sidebar select:disabled {
+  opacity: 0.55;
+}
+.agent-backend {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--dna-border);
+  border-radius: 9px;
+  background: var(--dna-sunken);
+}
+.agent-backend button {
+  min-width: 0;
+  min-height: 30px;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dna-muted);
+  font: 600 12px "Manrope Variable", Manrope, sans-serif;
+  cursor: pointer;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.agent-backend button:hover:not(:disabled) {
+  color: var(--dna-text);
+}
+.agent-backend button.active {
+  background: var(--dna-active-bg);
+  color: var(--dna-active-fg);
+  font-weight: 700;
+}
+.agent-backend button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.agent-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--dna-border);
+  border-radius: 9px;
+  padding: 10px;
+}
+.agent-thread span {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--dna-muted);
+}
+.agent-thread code,
+.agent-mcp-list code {
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+.agent-config {
+  min-height: 190px;
+  resize: vertical;
+  font: 11px/1.5 ui-monospace, Consolas, monospace;
+}
+.agent-mcp-list {
+  display: grid;
+  gap: 6px;
+}
+.agent-mcp-list span,
+.agent-mcp-list code {
+  border-radius: 7px;
+  background: var(--dna-sunken);
+  border: 1px solid var(--dna-border-soft);
+  padding: 7px 9px;
+  font-size: 11px;
+}
+.agent-mcp-list .ok {
+  color: var(--dna-success-text);
+}
+.agent-mcp-list .bad {
+  color: var(--dna-danger-text);
+}
+.agent-connections {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+.agent-connections h2 {
+  margin: 8px 0 0;
+}
+.agent-connections label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--dna-muted);
+  font-size: 11px;
+}
 .agent-sidebar > button,
 .agent-connections > button {
   width: 100%;
 }
-
 .agent-connection-status {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: hsl(var(--muted-foreground));
+  color: var(--dna-muted);
   font-size: 11px;
   line-height: 1.45;
 }
-
 /* Рантайм-провайдер по подписке (Claude): статус + инструкция, без полей ввода —
    вход выполняется в самом CLI, секрет в приложение не попадает. */
 .agent-runtime {
   display: grid;
   min-width: 0;
   gap: 6px;
-  border-top: 1px solid hsl(var(--border));
-  padding-top: 8px;
+  border-top: 1px solid var(--dna-border-soft);
+  padding-top: 10px;
   font-size: 11px;
 }
-
 .agent-runtime .ok {
-  color: hsl(var(--foreground));
+  color: var(--dna-text-2);
 }
-
 .agent-runtime .bad {
-  color: hsl(var(--muted-foreground));
+  color: var(--dna-muted);
 }
-
 .agent-runtime-hint {
   margin: 0;
   overflow-wrap: anywhere;
-  color: hsl(var(--muted-foreground));
+  color: var(--dna-muted);
   line-height: 1.45;
 }
-
+.agent-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.agent-timeline {
+  flex: 1;
+  overflow: auto;
+  padding: 26px;
+}
+.agent-welcome {
+  display: grid;
+  height: 100%;
+  place-content: center;
+  gap: 6px;
+  text-align: center;
+  color: var(--dna-muted);
+}
+.agent-welcome h2 {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--dna-text);
+}
+.agent-welcome p {
+  max-width: 62ch;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.agent-message,
+.agent-event {
+  max-width: 900px;
+  margin: 0 auto 12px;
+  border: 1px solid var(--dna-border);
+  border-radius: 12px;
+  padding: 14px;
+  background: var(--dna-node);
+}
+.agent-message > span {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dna-dim);
+}
+.agent-message > div {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.agent-tool-message {
+  opacity: 0.85;
+  font-size: 12px;
+}
+.agent-tool-message div {
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.agent-event header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+.agent-event code {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.agent-event pre,
+.agent-modal pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+}
+.agent-composer {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid var(--dna-border-soft);
+  padding: 14px;
+  background: var(--dna-panel);
+}
+.agent-composer textarea {
+  min-height: 74px;
+  flex: 1;
+  resize: none;
+  border: 1px solid var(--dna-border);
+  border-radius: 10px;
+  background: var(--dna-sunken);
+  color: var(--dna-text);
+  padding: 12px;
+  font: 500 13px/1.5 "Manrope Variable", Manrope, sans-serif;
+  outline: none;
+}
+.agent-composer textarea:focus-visible {
+  border-color: var(--dna-text-2);
+}
+.agent-error {
+  margin: 14px 14px 0;
+  border: 1px solid color-mix(in srgb, var(--dna-danger), transparent 60%);
+  border-radius: 8px;
+  padding: 9px 12px;
+  background: color-mix(in srgb, var(--dna-danger), transparent 90%);
+  color: var(--dna-danger-text);
+  font-size: 12px;
+}
+.agent-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.66);
+  padding: 24px;
+}
+.agent-modal > div {
+  width: min(620px, 100%);
+  border: 1px solid var(--dna-border);
+  border-radius: 14px;
+  background: var(--dna-panel);
+  padding: 20px;
+  box-shadow: var(--shadow-panel);
+}
+.agent-modal h2 {
+  margin: 5px 0;
+  font-size: 18px;
+  font-weight: 800;
+}
+.agent-modal p {
+  white-space: pre-wrap;
+  color: var(--dna-muted);
+  font-size: 12px;
+}
+.agent-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.agent-empty {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: var(--dna-muted);
+}
 @media (max-width: 900px) {
   .agent-shell {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(260px, 45vh) minmax(0, 1fr);
   }
-
   .agent-sidebar {
     display: flex;
     border-right: 0;
-    border-bottom: 1px solid hsl(var(--border));
+    border-bottom: 1px solid var(--dna-border-soft);
   }
 }

@@ -5,7 +5,7 @@
   import { cn } from "../lib/utils";
   import { kindClass } from "./portKind";
 
-  /* Выходные порты — строки справа (зеркало .port-row.out) */
+  /* Выходные порты — точки на правой кромке, выровнены по верху как входы. */
   let { type, data = undefined }: { type: NodeType; data?: AnyNodeData } = $props();
 
   let ports = $derived(portsOfNode({ type, data }).out);
@@ -16,7 +16,7 @@
     class="port-row dna-port out"
     data-port={p.name}
     data-kind={p.kind}
-    style={`bottom: ${21 + index * 24}px`}
+    style={`top: ${44 + index * 22}px`}
   >
     <span class="plabel">{p.label}</span>
     <Handle

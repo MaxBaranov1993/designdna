@@ -23,11 +23,17 @@
   let mcpStatus = $state<Array<Record<string, any>>>([]);
   let tools = $state<Array<Record<string, any>>>([]);
   let providerState = $state<Record<string, any>>({});
-  let openaiKey = $state("");
   let openrouterKey = $state("");
   /* Claude подключается своим CLI (`claude` → /login): приложение только
    * читает статус, секрет к нам не попадает. */
   let claudeStatus = $state<{ installed: boolean; loggedIn: boolean; hint: string | null } | null>(null);
+  /* GPT (Sol / Astra) — тоже только по подписке: Codex CLI app-server,
+   * вход через ChatGPT в браузере (`codex:login` → authUrl). Ключ OpenAI API
+   * в этом окне не запрашивается. */
+  type CodexStatus = { installed: boolean; loggedIn: boolean; mode: "chatgpt" | "apiKey" | null; email: string | null; hint: string | null };
+  let codexStatus = $state<CodexStatus | null>(null);
+  let codexLoginActive = $state(false);
+  let codexLoginError = $state("");
   let agentModel = $state("gpt-5.6-sol");
   const modelLabel = (model: string) => model === "opus" ? "Claude Opus" : model === "gpt-6-astra" ? "GPT-6 Astra" : "GPT-5.6 Sol";
   let agentEffort = $state<"medium" | "high" | "max">("medium");
@@ -43,6 +49,7 @@
     void desktop.mcp.tools().then((list) => (tools = list)).catch(() => undefined);
     void desktop.providers.status().then((state) => (providerState = state));
     void refreshClaude();
+    void refreshCodex();
     const offMcp = desktop.mcp.onApproval((request: Record<string, any>) => (mcpApproval = request));
     return () => { offMcp(); };
   });
@@ -84,14 +91,17 @@
     const question = prompt.trim();
     prompt = "";
     const correlationId = generateId();
-    const selectedBackend = agentModel === "opus" ? "claude" as const : "openai" as const;
+    // Оба бэкенда — подписки через локальные CLI: Codex (GPT) и Claude Code.
+    const selectedBackend = agentModel === "opus" ? "claude" as const : "codex" as const;
     const selectedEffort = agentEffort;
     const selectedModel = agentModel;
     activeCorrelationId = correlationId;
     agentHistory.push({ role: "user", content: question });
     agentHistory = [...agentHistory];
     try {
-      const toolDefs = selectedBackend === "openai" ? toolDefinitions() : [];
+      // CLI-транспорты отвечают текстом; вызов MCP-инструментов из этого чата
+      // пока не поддерживается (toolDefinitions остаётся для API-бэкенда).
+      const toolDefs: ReturnType<typeof toolDefinitions> = [];
       for (let round = 0; round < 8; round++) {
         if (activeCorrelationId !== correlationId) return; // cancelled before this round
         const envelope = {
@@ -220,11 +230,53 @@
     }
   }
 
-  async function saveKey(provider: "openai" | "openrouter", value: string) {
+  /* Статус Codex: account/read отдаёт { account: {type: "chatgpt"|"apiKey", email?} | null }.
+   * Ошибка запроса — CLI не установлен или app-server не поднялся. */
+  async function refreshCodex(): Promise<CodexStatus | null> {
+    if (!desktop?.codex) return null;
+    try {
+      const result = await desktop.codex.account();
+      const account = (result?.account ?? result?.data?.account ?? null) as { type?: string; email?: string } | null;
+      const mode = account?.type === "chatgpt" ? "chatgpt" : account?.type === "apiKey" ? "apiKey" : null;
+      codexStatus = {
+        installed: true,
+        loggedIn: mode === "chatgpt",
+        mode,
+        email: account?.email || null,
+        hint: mode === "apiKey" ? "Codex вошёл по API-ключу — переподключите по подписке ChatGPT." : mode ? null : "Войдите в ChatGPT, чтобы GPT работал по подписке.",
+      };
+    } catch (reason) {
+      codexStatus = { installed: false, loggedIn: false, mode: null, email: null, hint: reason instanceof Error ? reason.message : "Codex CLI не найден в PATH." };
+    }
+    return codexStatus;
+  }
+
+  /* Вход GPT по подписке: Codex открывает страницу ChatGPT в браузере, мы
+   * опрашиваем account/read, пока CLI не сохранит креды (до 3 минут). */
+  async function startCodexLogin() {
+    if (!desktop?.codex?.login || codexLoginActive) return;
+    codexLoginError = "";
+    codexLoginActive = true;
+    try {
+      await desktop.codex.login("chatgpt");
+      const deadline = Date.now() + 180_000;
+      while (Date.now() < deadline && codexLoginActive) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const status = await refreshCodex();
+        if (status?.loggedIn) break;
+      }
+      if (!codexStatus?.loggedIn) codexLoginError = "Вход не подтверждён. Завершите вход в браузере и нажмите «Проверить GPT».";
+    } catch (reason) {
+      codexLoginError = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      codexLoginActive = false;
+    }
+  }
+
+  async function saveKey(provider: "openrouter", value: string) {
     if (!desktop || !value.trim()) return;
     await desktop.providers.setCredential(provider, value.trim());
-    if (provider === "openai") openaiKey = "";
-    else openrouterKey = "";
+    openrouterKey = "";
     providerState = await desktop.providers.status();
   }
 
@@ -235,15 +287,19 @@
 {:else}
   <section class="agent-shell">
     <aside class="agent-sidebar">
-      <div><span class="agent-eyebrow">AI workspace</span><h1>Агент + MCP</h1><p>Sol, Astra и Claude · три уровня усилия.</p></div>
+      <div><span class="agent-eyebrow">AI workspace</span><h1>Агент + MCP</h1><p>GPT и Claude по подписке · три уровня усилия.</p></div>
       <label>Модель
         <select bind:value={agentModel} disabled={busy || agentRunning} aria-label="Модель агента">
-          <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
-          <option value="gpt-6-astra">GPT-6 Astra</option>
-          <option value="opus">Claude Opus</option>
+          <option value="gpt-5.6-sol">GPT-5.6 Sol · Codex</option>
+          <option value="gpt-6-astra">GPT-6 Astra · Codex</option>
+          <option value="opus">Claude Opus · Claude Code</option>
         </select>
       </label>
-      {#if agentModel === "opus"}<p>Claude работает в режиме чата. Для вызова MCP-инструментов выберите GPT.</p>{/if}
+      {#if agentModel !== "opus" && codexStatus && !codexStatus.loggedIn}
+        <p>GPT работает по подписке ChatGPT через Codex CLI — подключите его ниже.</p>
+      {:else if agentModel === "opus" && claudeStatus && !claudeStatus.loggedIn}
+        <p>Claude работает по подписке через Claude Code — подключите его ниже.</p>
+      {/if}
       <div class="agent-backend">
         <button class:active={agentEffort === "medium"} onclick={() => (agentEffort = "medium")} disabled={busy || agentRunning}>Среднее</button>
         <button class:active={agentEffort === "high"} onclick={() => (agentEffort = "high")} disabled={busy || agentRunning}>Высокое</button>
@@ -252,10 +308,30 @@
       <Button variant="outline" onclick={() => { agentHistory = []; }} disabled={busy || agentRunning}>Новая сессия</Button>
       <div class="agent-connections">
         <h2>Подключения</h2>
-        <label><span>Ключ OpenAI API {providerState.credentials?.openai ? "· сохранён" : ""}</span><input type="password" bind:value={openaiKey} placeholder="sk-…" /></label>
-        <Button variant="outline" onclick={() => void saveKey("openai", openaiKey)}>Сохранить ключ OpenAI</Button>
-        <label><span>Ключ OpenRouter (видео) {providerState.credentials?.openrouter ? "· сохранён" : ""}</span><input type="password" bind:value={openrouterKey} placeholder="sk-or-v1-…" /></label>
-        <Button variant="outline" onclick={() => void saveKey("openrouter", openrouterKey)}>Сохранить ключ OpenRouter</Button>
+        <div class="agent-runtime" data-provider="codex">
+          <span class={codexStatus?.loggedIn ? "ok" : "bad"}>
+            GPT · Codex CLI: {codexStatus === null
+              ? "проверяю…"
+              : codexStatus.loggedIn
+                ? `подключён по подписке${codexStatus.email ? ` · ${codexStatus.email}` : ""}`
+                : codexStatus.mode === "apiKey"
+                  ? "вошёл по API-ключу"
+                  : codexStatus.installed
+                    ? "не выполнен вход"
+                    : "CLI не установлен"}
+          </span>
+          {#if codexStatus && !codexStatus.loggedIn && codexStatus.hint}
+            <p class="agent-runtime-hint">{codexStatus.hint}</p>
+          {/if}
+          {#if codexLoginActive}
+            <p class="agent-runtime-hint">Открыта страница входа ChatGPT в браузере — завершите вход там. Статус обновится сам.</p>
+            <Button variant="outline" onclick={() => { codexLoginActive = false; }}>Отменить ожидание</Button>
+          {:else if codexStatus && codexStatus.installed && !codexStatus.loggedIn}
+            <Button variant="outline" onclick={() => void startCodexLogin()}>Подключить GPT по подписке</Button>
+          {/if}
+          {#if codexLoginError}<p class="agent-runtime-hint">{codexLoginError}</p>{/if}
+          <Button variant="outline" onclick={() => void refreshCodex()}>Проверить GPT</Button>
+        </div>
         <div class="agent-runtime" data-provider="claude">
           <span class={claudeStatus?.loggedIn ? "ok" : "bad"}>
             Claude Opus: {claudeStatus === null
@@ -277,6 +353,8 @@
           {#if claudeLoginError}<p class="agent-runtime-hint">{claudeLoginError}</p>{/if}
           <Button variant="outline" onclick={() => void refreshClaude()}>Проверить Claude</Button>
         </div>
+        <label><span>Ключ OpenRouter (только видео Seedance) {providerState.credentials?.openrouter ? "· сохранён" : ""}</span><input type="password" bind:value={openrouterKey} placeholder="sk-or-v1-…" /></label>
+        <Button variant="outline" onclick={() => void saveKey("openrouter", openrouterKey)}>Сохранить ключ OpenRouter</Button>
       </div>
       <h2>MCP-серверы</h2>
       <textarea class="agent-config" bind:value={mcpConfig} spellcheck="false"></textarea>

@@ -98,7 +98,8 @@ def test_run_keeps_rejected_master_on_review_with_defects():
         return json.dumps({"approved": False, "score": 70, "summary": "Строка цены переносится",
                            "defects": [{"severity": "major", "what": "price wraps", "where": "bottom"}]})
 
-    updated, results = master_review.run(doc, chat_vision=fake_vision, render=lambda page, comp, vp: _png())
+    updated, results = master_review.run(doc, chat_vision=fake_vision, chat_repair=lambda images, prompt: '{"operations": []}',
+                                         render=lambda page, comp, vp: _png())
     assert not results[0]["approved"]
     comp = updated["reviewComponents"]["list-item-review"]
     assert comp["status"] == "needs-review"
@@ -116,3 +117,42 @@ def test_run_survives_provider_failure_per_component():
     updated, results = master_review.run(doc, chat_vision=broken, render=lambda page, comp, vp: _png())
     assert results[0].get("error", "").startswith("RuntimeError")
     assert "list-item-review" in updated["reviewComponents"]
+
+
+def test_review_prompt_does_not_attribute_inherited_block_offsets_to_component():
+    from design_system.master_review import build_prompt
+    comp = {"name": "Card", "fidelity": {"basis": "source-fidelity-harness",
+        "viewports": {"desktop": {"bboxP95": 12, "pixelSimilarity": 53.4}}},
+        "review": {"reasons": ["block bbox p95 12px"]}}
+    prompt = build_prompt(comp, "desktop")
+    assert "not measurements of this component" in prompt
+    assert "12px" not in prompt and "53.4" not in prompt
+    comp["fidelity"]["basis"] = "component-source-fidelity-harness"
+    prompt = build_prompt(comp, "desktop")
+    assert "12px" in prompt and "53.4" in prompt
+
+
+def test_fractional_source_bounds_use_same_pixel_edges_without_resizing_master():
+    import copy
+    comp = _document()["reviewComponents"]["list-item-review"]
+    comp["masterIr"]["tree"][0]["frame"].update(width=305.44, height=185)
+    comp["sourceRef"]["boundsByViewport"]["desktop"] = {"x": 261.83, "y": 3307.77, "width": 305.44, "height": 185}
+    original = copy.deepcopy(comp)
+    preview, width, height = master_review.proof_aligned_preview(comp, "desktop")
+    assert (width, height) == (306, 185)
+    root = preview["tree"][0]
+    assert root["frame"]["width"] == 306
+    assert abs(root["children"][0]["frame"]["x"] - .83) < 1e-6
+    assert abs(root["children"][0]["frame"]["y"] - .77) < 1e-6
+    assert root["children"][0]["frame"]["width"] == 305.44
+    assert preview["responsive"]["viewports"]["desktop"] == {"width": 306, "height": 185}
+    assert comp == original
+
+
+def test_capture_canvas_does_not_hide_a_resized_master_boundary():
+    comp = _document()["reviewComponents"]["list-item-review"]
+    comp["masterIr"]["tree"][0]["frame"].update(width=330, height=185)
+    comp["sourceRef"]["boundsByViewport"]["desktop"] = {"x": 261.83, "y": 3307.77, "width": 305.44, "height": 185}
+    preview, width, height = master_review.proof_aligned_preview(comp, "desktop")
+    assert width == 330 and width != 306
+    assert preview["tree"][0]["children"][0]["frame"]["width"] == 330

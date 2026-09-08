@@ -13,6 +13,7 @@ export const WIRE_COLORS: Record<PortKind, string> = {
   timeline: "#FF5F56",
   video: "#4F7CFF",
   ds: "#8B7CF6",
+  image: "#3FB950",
 };
 
 function localRenderArtifact(
@@ -70,11 +71,15 @@ function withSourcePreview(ir: unknown, preview?: string, viewport?: SourceViewp
 
 /* Зеркало outValue (nodes.js:923-932) — значение выходного порта ноды.
  * port нужен Source Import: у него выходы динамические, по именам зажжённых блоков. */
-export function outValue(n: FlowNode, port?: string): unknown {
+export function outValue(n: FlowNode, port?: string, nodes?: FlowNode[], edges?: FlowEdge[], visited = new Set<string>()): unknown {
   switch (n.type) {
     case "prompt":
       return n.data.text || "";
+    case "image":
+    case "removebackground":
+      return n.data.variants?.[n.data.active]?.png || null;
     case "reference":
+      if (port === "image") return n.data.image || (nodes && edges ? pullInput(nodes, edges, n, "image", visited) : null);
       return n.data.brief || (n.data.fileName ? "Референс: " + n.data.fileName : "");
     case "generator":
       return n.data.variants.length ? n.data.variants[n.data.active] || null : null;
@@ -169,11 +174,14 @@ export function pullInput(
   edges: FlowEdge[],
   n: FlowNode,
   port: string,
+  visited = new Set<string>(),
 ): unknown {
+  if (visited.has(n.id)) return null;
+  const next = new Set(visited).add(n.id);
   const e = edges.find((ed) => ed.target === n.id && ed.targetHandle === port);
   if (!e) return null;
   const src = nodes.find((x) => x.id === e.source);
-  return src ? outValue(src, e.sourceHandle ?? undefined) : null;
+  return src ? outValue(src, e.sourceHandle ?? undefined, nodes, edges, next) : null;
 }
 
 /* Зеркало edgeKind (nodes.js:988-993): kind провода наследуется от выходного порта источника */

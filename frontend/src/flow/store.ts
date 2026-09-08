@@ -1,6 +1,8 @@
 import { createStore } from "zustand/vanilla";
 
 import { api, apiGet } from "./api";
+import { imageDataUrl, isImageSource } from "./image-assets";
+import { flushNodeText, flushAllNodeText } from "./textcommit";
 import type {
   BlockParseJobResp,
   BlockParseResp,
@@ -12,6 +14,7 @@ import type {
 } from "./api";
 import { NODE_DEFS, defaultData, portsOfNode } from "./ports";
 import { deepClone, outValue, pullInput, reachable } from "./dataflow";
+import { generatorInputKey } from "./generator-inputs";
 import { inputFingerprint } from "./fingerprint";
 import { videoHistoryPatch, videoSourceCheckpoint } from "./video-history";
 import { videoPages } from "./video-inputs";
@@ -39,6 +42,9 @@ import type {
   FlowEdge,
   FlowNode,
   GeneratorNodeData,
+  ImageNodeData,
+  ImageVariant,
+  RemoveBackgroundNodeData,
   IRObject,
   LegacyEdgeEndpoint,
   LegacyGraphPayload,
@@ -115,7 +121,7 @@ type DesktopDsPreparation = {
   prepareId: string;
   documentHash: string;
   operation: DesignSystemAiOperation;
-  provider: "codex" | "claude";
+  provider: NodeProvider;
   reasoningEffort: NodeEffort;
   stage: string;
   tasks: Array<{ id: string; status: "ready" | "unsupported"; reason?: string | null;
@@ -185,7 +191,7 @@ export async function runDesktopDesignSystemAi(
     for (const chatId of activeChatIds) void window.designDNA?.providers.cancel?.(chatId).catch(() => undefined);
   };
   signal.addEventListener("abort", cancelChat);
-  get().setNodeData(nodeId, { _dsAiRun: runToken, busyAction: operation, lastError: "" });
+  get().setNodeData(nodeId, { _dsAiRun: runToken, _dsAiRetryable: false, busyAction: operation, lastError: "" });
   get().setBusy(nodeId, true);
   stage("running", `${PROVIDER_LABELS[provider]} · ${operation}: подготовка…`);
   const request = async <T>(path: string, body: unknown): Promise<T> => {
@@ -224,7 +230,7 @@ export async function runDesktopDesignSystemAi(
         else if (item.error || item.rejected?.length) warnings.push(String(item.error || item.rejected.join("; ")));
       }
     };
-    if (provider === "codex" || provider === "claude") {
+    if (window.designDNA?.providers?.chatRequest || provider === "codex" || provider === "claude") {
       const desktop = window.designDNA;
       if (!desktop?.providers?.chatRequest) throw new Error(`${PROVIDER_LABELS[provider]}: требуется подключённый desktop-аккаунт`);
       guard();
@@ -241,7 +247,7 @@ export async function runDesktopDesignSystemAi(
         stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}…`);
         const outputs = new Map<string, string>();
         let completed = 0;
-        const parallel = preparation.stage === "master-review" || preparation.stage === "master-verify" ? 2 : 1;
+        const parallel = preparation.stage.startsWith("master-") ? 2 : 1;
         const runTask = async (task: DesktopDsPreparation["tasks"][number], taskIndex: number, correction?: string) => {
           guard();
           stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: task ${taskIndex + 1}/${preparation.tasks.length} · ${correction ? "исправление формата 1/1" : `готово ${completed}`}…`);
@@ -251,13 +257,53 @@ export async function runDesktopDesignSystemAi(
           activeChatIds.add(chatId);
           const profile = preparation.stage === "master-repair" ? "quality_repair"
             : preparation.stage === "master-review" || preparation.stage === "master-verify" ? "quality_judge" : "editor";
+          // The subscription transport supports a real output schema; prompts alone
+          // let judges invent verdict/issue keys and non-contract severity values.
+          const responseFormat = profile === "quality_judge" && provider !== "claude" ? {
+            type: "json_schema" as const,
+            jsonSchema: { name: "design_system_verdict", schema: {
+              type: "object", additionalProperties: false,
+              required: ["approved", "score", "summary", "defects"],
+              properties: {
+                approved: { type: "boolean" }, score: { type: "number", minimum: 0, maximum: 100 },
+                summary: { type: "string", minLength: 1 },
+                defects: { type: "array", maxItems: 12, items: {
+                  type: "object", additionalProperties: false, required: ["severity", "what", "where"],
+                  properties: { severity: { type: "string", enum: ["minor", "major", "critical"] },
+                    what: { type: "string", minLength: 1 }, where: { type: "string" } },
+                } },
+              },
+            } },
+          } : undefined;
           try {
             const messages = correction ? [...task.messages,
               { role: "assistant" as const, content: outputs.get(task.id)! },
               { role: "user" as const, content: `The server rejected your previous response format: ${correction}\nReturn the complete corrected JSON object only, matching the original task schema. Preserve the intended answer. No markdown or explanation. This is the only format-correction attempt.` }] : task.messages;
-            const answer = await desktop.providers.chatRequest({ ...chatRoute(provider, effort), id: chatId, profile, messages });
+            const chat = async () => {
+              for (let attempt = 0; attempt < 2; attempt++) {
+                guard();
+                const attemptId = attempt ? `${chatId}:retry-${attempt}` : chatId;
+                activeChatIds.add(attemptId);
+                try {
+                  return await desktop.providers.chatRequest({ ...chatRoute(provider, effort), id: attemptId, profile, messages,
+                    ...(responseFormat ? { responseFormat } : {}),
+                    timeoutMs: profile === "quality_repair" ? 360_000 : 180_000 });
+                } catch (error) {
+                  guard(); // Cancellation or changed Source must never restart a request.
+                  const message = error instanceof Error ? error.message : String(error);
+                  if (attempt || !/timed out|timeout|ECONNRESET|ETIMEDOUT|\b429\b|\b50[234]\b/i.test(message)) throw error;
+                  stage("running", `${PROVIDER_LABELS[provider]} · повтор временно прерванного запроса…`);
+                } finally { activeChatIds.delete(attemptId); }
+              }
+              throw new Error("AI-запрос не завершён");
+            };
+            const answer = await chat();
             guard();
-            if (answer.provider && answer.provider !== provider) throw new Error("AI ответил через другой провайдер");
+            // GPT subscriptions intentionally use Codex with the selected model.
+            const answeredProvider = answer.transport?.requestedProvider || answer.provider;
+            if (answeredProvider && answeredProvider !== provider
+              && !(provider === "astra" && answeredProvider === "openai" && answer.transport?.model === "gpt-6-astra"))
+              throw new Error("AI ответил через другой провайдер");
             outputs.set(task.id, answer.content);
             if (!correction) completed++;
             stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: готово ${completed}/${preparation.tasks.length}…`);
@@ -330,7 +376,7 @@ export async function runDesktopDesignSystemAi(
     options.beforeCommit?.();
     guard(); // beforeCommit is external code; recheck before saving node state.
     get().setNodeData(nodeId, { document: result.document, summary: result.summary, status: "draft", lastError: warnings.join("; ") });
-    stage(warnings.length ? "warning" : "success", warnings.length ? `${operation}: ${warnings.join("; ")}` : `${PROVIDER_LABELS[provider]} · ${operation}: завершено`);
+    stage(warnings.length ? "warning" : "success", warnings.length ? `Проверка не завершена: ${warnings.length} замечаний. Подробности в диагностике.` : `${PROVIDER_LABELS[provider]} · ${operation}: завершено`);
     get().propagate(nodeId);
     return result;
   } catch (error) {
@@ -345,7 +391,9 @@ export async function runDesktopDesignSystemAi(
       } catch { /* Stale identity/content must retain the newer local state. */ }
     }
     stage(error instanceof DOMException && error.name === "AbortError" ? "cancelled" : "failed", message);
-    if (ownsRun()) get().setNodeData(nodeId, { lastError: message });
+    if (ownsRun()) get().setNodeData(nodeId, { lastError: message,
+      _dsAiRetryable: (error as { detail?: { code?: string; retryable?: boolean } })?.detail?.code === "invalid-ai-output"
+        && (error as { detail?: { retryable?: boolean } }).detail?.retryable === true });
     return null;
   } finally {
     signal.removeEventListener("abort", cancelChat);
@@ -363,6 +411,19 @@ function chatRoute(provider: NodeProvider, effort: unknown) {
   const reasoning = { effort: nodeEffort(effort) };
   if (provider === "claude") return { provider, model: "opus", reasoning };
   return { provider, model: provider === "astra" ? "gpt-6-astra" : "gpt-5.6-sol", reasoning };
+}
+
+async function cancellableChat(request: Parameters<NonNullable<Window["designDNA"]>["providers"]["chatRequest"]>[0], signal?: AbortSignal) {
+  if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
+  const desktop = window.designDNA!;
+  const id = request.id || newRunId();
+  const cancel = () => { void desktop.providers.cancel(id).catch(() => undefined); };
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    const result = await desktop.providers.chatRequest({ ...request, id });
+    if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
+    return result;
+  } finally { signal?.removeEventListener("abort", cancel); }
 }
 
 /* Quality Pass — судья + починка + пересуд одного IR. Встроен в прогон
@@ -386,7 +447,9 @@ async function qualityPassCycle(
   const outputs: Partial<Record<"judge" | "repair" | "rejudge", string>> = {};
   const seen = new Set<string>();
   for (;;) {
+    if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
     const res = await api<QualityPassResp>("/api/quality-pass/codex-step", { ...request, outputs }, { signal });
+    if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
     const pending = res.pending;
     if (!pending) return res;
     if (seen.has(pending.stage) || seen.size >= 3) {
@@ -394,13 +457,13 @@ async function qualityPassCycle(
     }
     seen.add(pending.stage);
     onStage(pending.stage);
-    const answer = await desktop.providers.chatRequest({
+    const answer = await cancellableChat({
       // Усилие судьи наследует ноду: на CLI-провайдерах high — это минуты
       // thinking на каждый вариант, выбор скорости/строгости за пользователем.
       ...chatRoute(provider, effort),
       profile: pending.profile,
       messages: pending.messages,
-    });
+    }, signal);
     outputs[pending.stage] = answer.content;
   }
 }
@@ -920,6 +983,7 @@ export interface FlowStoreState {
   runSourceImport: (id: number) => Promise<void>;
   runDerive: (id: number) => Promise<void>;
   runReskin: (id: number) => Promise<void>;
+  runImage: (id: number) => Promise<void>;
   runQualityPass: (id: number) => Promise<void>;
   runRecorder: (id: number) => Promise<void>;
   runLiveRecorder: (id: number, actions: InteractionLiveAction[]) => Promise<boolean>;
@@ -940,7 +1004,7 @@ export interface FlowStoreState {
   addPageInput: (id: number) => void;
   removePageInput: (id: number, name: string) => void;
   reorderPageInputs: (id: number, from: number, to: number) => void;
-  syncFromCanvas: (nodes: FlowNode[], edges: FlowEdge[]) => void;
+  syncFromCanvas: (nodes: FlowNode[], edges: FlowEdge[], pageId?: string) => void;
   commitNodeDrag: (pageId: string, updates: { id: string; position: { x: number; y: number } }[], selectedIds: string[]) => void;
   loadGraph: (payload: LegacyGraphPayload) => void;
   clearGraph: () => void;
@@ -966,6 +1030,7 @@ export interface FlowStoreState {
   rebuildDesignSystemFromSource: (nodeId: number) => Promise<boolean>;
   saveDesignSystemDocument: (nodeId: number, document: Record<string, unknown>) => Promise<boolean>;
   runDesktopDesignSystemAi: typeof runDesktopDesignSystemAi;
+  finishDesignSystem: (nodeId: number) => Promise<boolean>;
   runDesignSystemAi: (nodeId: number, operation: DesignSystemAiOperation, viewport?: string) => Promise<DesignSystemAiResult | null>;
   restorePublishedDesignSystem: (nodeId: number, ref?: { systemId?: string; revision?: number }) => Promise<boolean>;
   applyDesignSystemToEditor: (nodeId: number, componentKey: string) => { editNodeId: number; previousIr: IRObject | null } | null;
@@ -1213,6 +1278,61 @@ function resyncAfterGraphRestore(before: FlowEdge[], after: FlowEdge[]): void {
 /* AbortController идущих fetch-запросов нод (браузерный режим): отмена
  * обрывает ожидание на клиенте, сервер дорабатывает запрос в фоне. */
 const runAborts = new Map<number, AbortController>();
+let graphEpoch = 0;
+const nodeLifetimes = new Map<number, number>();
+function leaveGraph(): void {
+  flushAllNodeText();
+  graphEpoch += 1;
+  for (const controller of runAborts.values()) controller.abort();
+  runAborts.clear();
+  for (const runId of runIds.values()) void api(`/api/runs/${runId}/cancel`, {}).catch(() => undefined);
+  runIds.clear();
+}
+
+/** Numeric node IDs are local to a sheet. A task must never write into a new
+ * sheet, a replacement graph, or a deleted/recreated node with the same ID. */
+export function captureNodeScope(get: () => FlowStoreState, id: number) {
+  const initial = get(), epoch = graphEpoch, lifetime = nodeLifetimes.get(id);
+  const type = initial.nodes.find(node => Number(node.id) === id)?.type;
+  const owns = () => graphEpoch === epoch && nodeLifetimes.get(id) === lifetime
+    && get().activePageId === initial.activePageId
+    && get().nodes.some(node => Number(node.id) === id && node.type === type);
+  let inputCurrent = () => true;
+  const check = () => {
+    if (!owns()) throw new DOMException("Лист или нода изменились", "AbortError");
+    if (!inputCurrent()) throw new DOMException("Входные данные изменились. Запустите ноду заново.", "AbortError");
+  };
+  return { owns, check, watchInputs(test: () => boolean) { inputCurrent = test; }, async wait<T>(promise: Promise<T>): Promise<T> {
+    const value = await promise;
+    check();
+    return value;
+  } };
+}
+
+
+
+// Compare only request inputs: progress, selection and saved results are not inputs.
+// Recheck both the wire identity and its current value at every asynchronous boundary.
+function watchNodeInputs(scope: ReturnType<typeof captureNodeScope>, get: () => FlowStoreState, id: number, fields: string[]) {
+  const snapshot = () => {
+    const state = get(), node = state.nodes.find(item => Number(item.id) === id);
+    if (!node) return null;
+    return inputFingerprint({
+      data: Object.fromEntries(fields.map(key => [key, (node.data as Record<string, unknown>)[key]])),
+      designSystem: node.type === "derive" || node.type === "reskin"
+        ? pinnedDesignSystemRef(node.data as Record<string, unknown>, state.designSystems, state.designSystemPicker) : null,
+      inputs: portsOfNode(node).in.map(port => ({
+        port: port.name,
+        edges: state.edges.filter(edge => edge.target === node.id && edge.targetHandle === port.name)
+          .map(edge => [edge.source, edge.sourceHandle]),
+        value: pullInput(state.nodes, state.edges, node, port.name),
+      })),
+    });
+  };
+  const initial = snapshot();
+  scope.watchInputs(() => snapshot() === initial);
+}
+
 
 function beginRunAbort(id: number): AbortSignal {
   runAborts.get(id)?.abort();
@@ -1430,6 +1550,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   /* Зеркало removeNode (nodes.js:298-311): вместе с нодой снимаются её рёбра.
    * Без подтверждения: удаление обратимо через undoGraph, тост даёт «Вернуть». */
   deleteNode: (id) => {
+    flushAllNodeText();
+    nodeLifetimes.set(id, (nodeLifetimes.get(id) || 0) + 1);
+    runAborts.get(id)?.abort();
     const sid = String(id);
     if (!get().nodes.some((node) => node.id === sid)) return;
     const targets = [...new Set(get().edges.filter((edge) => edge.source === sid).map((edge) => Number(edge.target)))];
@@ -1605,18 +1728,25 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   cancelRun: async (id) => {
+    const scope = captureNodeScope(get, id);
     // Сначала серверу: кооперативная отмена не даст начать следующую стадию
     // (следующий LLM-вызов), затем обрываем ожидание на клиенте.
     const runId = runIds.get(id);
     if (runId) void api(`/api/runs/${runId}/cancel`, {}).catch(() => undefined);
     const controller = runAborts.get(id);
     controller?.abort();
+    const cancellingNode = get().nodes.find(node => Number(node.id) === id);
+    if (["image", "removebackground", "generator", "qualitypass"].includes(cancellingNode?.type || "")) {
+      // Image runs cancel their own provider request; never restart another worker.
+      if (controller) get().setStatus(id, "Отменено", "err");
+      return;
+    }
     // Десктоп: с известным runId main.mjs шлёт воркеру адресный cancel
     // (cancel_token, кооперативно между стадиями); без него — прежний рестарт
     // long-воркера как последний рубеж.
     const desktopCancel = window.designDNA?.api?.cancel;
     if (desktopCancel) await desktopCancel("long", runId).catch(() => undefined);
-    if (controller || desktopCancel) get().setStatus(id, "Отменено", "err");
+    if (scope.owns() && (controller || desktopCancel)) get().setStatus(id, "Отменено", "err");
   },
 
   undoGraph: () => {
@@ -1761,6 +1891,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   /* Диспетчер run-based нод (кнопки ▶ и GraphDev.run) */
   runNode: (id) => {
+    flushAllNodeText();
     const n = get().nodes.find((x) => Number(x.id) === id);
     if (!n) return;
     if (n.type === "generator") void get().runGenerator(id);
@@ -1769,6 +1900,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     else if (n.type === "sourceimport") void get().runSourceImport(id);
     else if (n.type === "derive") void get().runDerive(id);
     else if (n.type === "reskin") void get().runReskin(id);
+    else if (n.type === "image" || n.type === "removebackground") void get().runImage(id);
     else if (n.type === "qualitypass") void get().runQualityPass(id);
     else if (n.type === "recorder") void get().runRecorder(id);
     else if (n.type === "motion") void get().runMotion(id);
@@ -1782,15 +1914,24 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
    * provider, styleHint, tokens?}. Результат — variants + active=0,
    * propagate проталкивает clones[active] в edit/reference ниже по графу. */
   runGenerator: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
     if (!n || n.type !== "generator" || st.busy[id]) return;
     const data = n.data as GeneratorNodeData;
+    let inputKey = generatorInputKey(st.nodes, st.edges, n, st.designSystemPicker);
+    const nonDsKey = generatorInputKey(st.nodes, st.edges, n, st.designSystemPicker, true);
+    let publishingDs = false;
+    scope.watchInputs(() => {
+      const state = get(), node = state.nodes.find(node => node.id === n.id);
+      return !!node && generatorInputKey(state.nodes, state.edges, node, state.designSystemPicker, publishingDs) === (publishingDs ? nonDsKey : inputKey);
+    });
     const brief = String(
       pullInput(st.nodes, st.edges, n, "prompt") || data.ownPrompt || "",
     ).trim();
     if (!brief) {
-      get().setStatus(id, "Нет промта: подключите провод или заполните поле", "err");
+      if (scope.owns()) get().setStatus(id, "Нет промта: подключите провод или заполните поле", "err");
       return;
     }
     const designSystemInput = pullInput(st.nodes, st.edges, n, "designSystem");
@@ -1812,16 +1953,17 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const providerLabel = provider === "codex"
       ? PROVIDER_LABELS.codex
       : `${PROVIDER_LABELS[provider]} · ${effort}`;
-    get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
+    if (scope.owns()) get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
     const signal = beginRunAbort(id);
+    get().setNodeData(id, { qualityScores: [], qualityReviews: [] });
     let stopPoll: () => void = () => {};
-    get().setBusy(id, true);
+    if (scope.owns()) get().setBusy(id, true);
     const startedAt = Date.now();
     const progressLabel = `Генерация · ${providerLabel}`;
     let designSystemRef: Record<string, unknown> | null = null;
     // Стадии честные: клиент знает только «ждём модель» и «Quality Pass»,
     // процента у синхронного POST нет — NodeShell показывает indeterminate.
-    get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Готовлю промпт" });
+    if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Готовлю промпт" });
     try {
       // ДС по проводу приоритетнее глобального выбора проекта: граф говорит,
       // от какой системы генерировать. Черновик не годится — strict-контекст
@@ -1830,24 +1972,27 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         { systemId?: string; revision?: number; contentHash?: string; status?: string; name?: string } | null;
       if (wiredDs && wiredDs.systemId) {
         if (wiredDs.status === "draft") {
-          get().setStatus(id, "Публикую ДС…");
-          const published = await get().publishDesignSystem(Number((wiredDs as { nodeId?: number }).nodeId));
+          if (scope.owns()) get().setStatus(id, "Публикую ДС…");
+          publishingDs = true;
+          const published = await scope.wait(get().publishDesignSystem(Number((wiredDs as { nodeId?: number }).nodeId)));
           if (!published) {
             const dsNode = get().nodes.find((node) => Number(node.id) === Number((wiredDs as { nodeId?: number }).nodeId));
             const reason = String((dsNode?.data as DesignSystemNodeData | undefined)?.lastError || "публикация заблокирована");
-            get().setStatus(id, `Не удалось опубликовать ДС: ${reason}. Откройте ноду ДС → AI-ревью`, "err");
-            get().setBusy(id, false);
-            get().setProgress(id, null);
+            if (scope.owns()) get().setStatus(id, `Не удалось опубликовать ДС: ${reason}. Откройте ноду ДС → AI-ревью`, "err");
+            if (scope.owns()) get().setBusy(id, false);
+            if (scope.owns()) get().setProgress(id, null);
             return;
           }
           const fresh = get();
           const freshGenerator = fresh.nodes.find((node) => Number(node.id) === id)!;
           wiredDs = pullInput(fresh.nodes, fresh.edges, freshGenerator, "designSystem") as typeof wiredDs;
+          inputKey = generatorInputKey(fresh.nodes, fresh.edges, freshGenerator, fresh.designSystemPicker);
+          publishingDs = false;
         }
         if (wiredDs?.status !== "published") {
-          get().setStatus(id, `ДС «${wiredDs?.name || wiredDs?.systemId}» не опубликована. Откройте ноду ДС → AI-ревью`, "err");
-          get().setBusy(id, false);
-          get().setProgress(id, null);
+          if (scope.owns()) get().setStatus(id, `ДС «${wiredDs?.name || wiredDs?.systemId}» не опубликована. Откройте ноду ДС → AI-ревью`, "err");
+          if (scope.owns()) get().setBusy(id, false);
+          if (scope.owns()) get().setProgress(id, null);
           return;
         }
         const picker = get().designSystemPicker;
@@ -1895,15 +2040,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       let res: GenerateResp;
       if (!desktop) {
         const runId = newRunId();
-        get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Модель генерирует IR" });
+        if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Модель генерирует IR" });
         stopPoll = watchRunStages(id, runId, 90_000, progressLabel);
         try {
-          res = await api<GenerateResp>("/api/generate", { ...request, runId }, { signal, runId });
+          res = await scope.wait(api<GenerateResp>("/api/generate", { ...request, runId }, { signal, runId }));
         } finally {
           stopPoll();
         }
       } else {
-        const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true }, { signal });
+        const prepared = await scope.wait(api<GenerateResp>("/api/generate", { ...request, prepareOnly: true }, { signal }));
         if (!prepared.prompts?.length && Array.isArray(prepared.variants) && prepared.variants.length) {
           // strict + пиннутый мастер, который не влезает в промпт: сервер уже
           // материализовал точную копию мастера, модель не нужна.
@@ -1913,26 +2058,27 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           const rawOutputs: string[] = [];
           for (let i = 0; i < prepared.prompts.length; i += 1) {
             const many = prepared.prompts.length > 1 ? ` ${i + 1}/${prepared.prompts.length}` : "";
-            get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: `Модель генерирует IR${many}` });
-            const answer = await desktop.providers.chatRequest({
+            if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: `Модель генерирует IR${many}` });
+            const answer = await scope.wait(cancellableChat({
               ...chatRoute(provider, effort),
               messages: prepared.prompts[i].messages,
-            });
+            }, signal));
             if (signal.aborted) throw new DOMException("cancelled", "AbortError");
             rawOutputs.push(answer.content);
           }
-          get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Проверка схемы и автофиксы" });
-          res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId }, { signal });
+          if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Проверка схемы и автофиксы" });
+          res = await scope.wait(api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId }, { signal }));
         }
       }
       const directionResponse = res as GenerateDirectionResp;
-      const variants = Array.isArray(res.variants) ? res.variants : [];
+      const variants = Array.isArray(res.variants) ? [...res.variants] : [];
+      const generationContext = { inputKey, pageId: st.activePageId, brief, startedAt };
       const directions = generatorDirections(directionResponse);
       const variantDirections = generatorVariantDirections(directionResponse, variants, directions);
       const directionPatch = { directions };
       const generationLog = (res as unknown as Record<string, unknown>).generationLog;
       const logPatch = generationLog && typeof generationLog === "object" ? { generationLog: generationLog as Record<string, unknown> } : {};
-      get().setNodeData(id, { variants, active: 0, variantDirections, ...directionPatch, ...logPatch } as unknown as Partial<GeneratorNodeData>);
+      if (scope.owns()) get().setNodeData(id, { variants, active: 0, qualityScores: [], qualityReviews: [], generationContext, variantDirections, ...directionPatch, ...logPatch } as unknown as Partial<GeneratorNodeData>);
       // Quality Pass встроен: судья + починка каждого варианта тем же
       // провайдером. Провал судьи не теряет вариант — он остаётся как есть
       // с прочерком в статусе.
@@ -1941,16 +2087,17 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       let repairedCount = 0;
       for (let i = 0; i < variants.length; i += 1) {
         const label = variants.length > 1 ? ` ${i + 1}/${variants.length}` : "";
-        get().setStatus(id, `Quality Pass${label}: судья…`);
-        get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage: "Судья оценивает" });
+        if (scope.owns()) get().setStatus(id, `Quality Pass${label}: судья…`);
+        if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage: "Судья оценивает" });
         const qpRunId = newRunId();
         const stopQpPoll = desktop ? () => {} : watchRunStages(id, qpRunId, 60_000, `Quality Pass${label}`);
         try {
-          const qp = await qualityPassCycle(variants[i], brief, provider, effort, (stage) => {
-            get().setStatus(id, `Quality Pass${label}: ${stage}…`);
-            get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage });
+          const qp = await scope.wait(qualityPassCycle(variants[i], brief, provider, effort, (stage) => {
+            scope.check();
+            if (scope.owns()) get().setStatus(id, `Quality Pass${label}: ${stage}…`);
+            if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage });
           }, { signal, runId: qpRunId, surface: res.designPolicy?.surface || data.surface || "auto", visualReview: true,
-            designSystem: designSystemRef ? { ...designSystemRef, ...((res.designSystem?.ref || {}) as Record<string, unknown>) } : null });
+            designSystem: designSystemRef ? { ...designSystemRef, ...((res.designSystem?.ref || {}) as Record<string, unknown>) } : null }));
           if (qp.ir) variants[i] = qp.ir;
           const rawScore = qp.scorecard?.score;
           const score = rawScore == null || !Number.isFinite(Number(rawScore)) ? null : Number(rawScore);
@@ -1965,6 +2112,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           });
           if (qp.repair?.applied) repairedCount += 1;
         } catch (qpError) {
+      if (!scope.owns()) return;
           if (isAbortError(qpError) || signal.aborted) throw qpError;
           console.warn("Quality Pass: вариант оставлен без оценки", qpError);
           qualityScores.push(null);
@@ -1973,7 +2121,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           stopQpPoll();
         }
       }
-      get().setNodeData(id, { variants, active: 0, qualityScores, qualityReviews, variantDirections, ...directionPatch } as unknown as Partial<GeneratorNodeData>);
+      if (scope.owns()) get().setNodeData(id, { variants: [...variants], active: 0, qualityScores, qualityReviews, generationContext, variantDirections, ...directionPatch } as unknown as Partial<GeneratorNodeData>);
       const errNote = res.errors && res.errors.length ? `, ошибок: ${res.errors.length}` : "";
       const fixedCount = (res.qa || []).reduce((s, q) => s + (q.fixed || 0), 0);
       const qaNote = fixedCount ? `, автофиксов QA: ${fixedCount}` : "";
@@ -1987,25 +2135,26 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         .filter(({ review }) => review.passed === false || (review.score != null && review.score < 80));
       const strictFallback = String((generationLog as Record<string, unknown> | undefined)?.strictFallback || "");
       if (strictFallback === "extend") {
-        get().setStatus(id, "strict: мастера не использованы, результат принят в режиме extend", "err");
+        if (scope.owns()) get().setStatus(id, "strict: мастера не использованы, результат принят в режиме extend", "err");
       } else if (needsRevision.length) {
         const reasons = needsRevision.flatMap(({ review }) => review.reasons).slice(0, 3);
         const reasonNote = reasons.length ? `: ${reasons.join("; ")}` : "";
-        get().setStatus(id, `Нужна доработка${reasonNote}`, "err");
+        if (scope.owns()) get().setStatus(id, `Нужна доработка${reasonNote}`, "err");
       } else if (!variants.length || qualityReviews.some((review) => review.passed == null)) {
-        get().setStatus(id, "Предпросмотр создан · проверка не завершена", "err");
+        if (scope.owns()) get().setStatus(id, "Предпросмотр создан · проверка не завершена", "err");
       } else {
-        get().setStatus(id, `Предпросмотр проверен: вариантов ${variants.length}${errNote}${qaNote}${designNote}${qpNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
+        if (scope.owns()) get().setStatus(id, `Предпросмотр проверен: вариантов ${variants.length}${errNote}${qaNote}${designNote}${qpNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
       }
-      get().propagate(id);
+      if (scope.owns()) get().propagate(id);
     } catch (e) {
+      if (!scope.owns()) return;
       if (isAbortError(e) || signal.aborted) {
-        get().setStatus(id, `Отменено · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "err");
+        if (scope.owns()) get().setStatus(id, e instanceof Error && e.message.startsWith("Входные") ? e.message : `Отменено · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "err");
       } else {
         const msg = friendlyProviderError(e);
         const strictFailure = String(designSystemRef?.usageMode || "") === "strict"
           && /Design System Strict|Strict.*мастер|strict.*master/i.test(msg);
-        get().setStatus(id, strictFailure
+        if (scope.owns()) get().setStatus(id, strictFailure
           ? `Strict не смог использовать мастер: ${msg}. Проверьте референс или переключите режим ДС на extend.`
           : "Ошибка: " + msg, "err");
         toast("Генератор: " + msg, "error");
@@ -2013,14 +2162,17 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     } finally {
       stopPoll();
       endRunAbort(id, signal);
-      get().setProgress(id, null);
-      get().setBusy(id, false);
+      if (scope.owns()) get().setProgress(id, null);
+      if (scope.owns()) get().setBusy(id, false);
     }
   },
 
   /* Зеркало runMix (nodes.js:815-836): IR тянем из подключённых входов (pull),
    * веса нормируются 0..1; payload {irs, weights}. */
   runMix: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
+    watchNodeInputs(scope, get, id, ["inputs", "weights", "variants"]);
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
     if (!n || n.type !== "mix" || st.busy[id]) return;
@@ -2037,11 +2189,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       }
     }
     if (irs.length < 2) {
-      get().setStatus(id, "Нужно минимум 2 подключённых IR-входа", "err");
+      if (scope.owns()) get().setStatus(id, "Нужно минимум 2 подключённых IR-входа", "err");
       return;
     }
-    get().setStatus(id, "Смешиваю…");
-    get().setBusy(id, true);
+    if (scope.owns()) get().setStatus(id, "Смешиваю…");
+    if (scope.owns()) get().setBusy(id, true);
     try {
       // Счётчик вариантов (хендофф): вариант 0 — точные веса, дальше акцент
       // детерминированно ротируется по входам (/api/mix даёт один результат за вызов).
@@ -2056,19 +2208,20 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         const sum = boosted.reduce((s, w) => s + w, 0) || 1;
         runs.push(boosted.map((w) => w / sum));
       }
-      const results = await Promise.all(
+      const results = await scope.wait(Promise.all(
         runs.map((run) => api<MixResp>("/api/mix", { irs, weights: run })),
-      );
+      ));
       const mixVariants = results.map((res) => res.ir).filter((ir): ir is IRObject => !!ir);
-      get().setNodeData(id, { mixVariants, mixActive: 0, ir: mixVariants[0] || null });
-      get().setStatus(id, `${irs.length} вх → ${mixVariants.length} вар · ` + labels.join(" + "), "ok");
-      get().propagate(id);
+      if (scope.owns()) get().setNodeData(id, { mixVariants, mixActive: 0, ir: mixVariants[0] || null });
+      if (scope.owns()) get().setStatus(id, `${irs.length} вх → ${mixVariants.length} вар · ` + labels.join(" + "), "ok");
+      if (scope.owns()) get().propagate(id);
     } catch (e) {
+      if (!scope.owns()) return;
       const msg = e instanceof Error ? e.message : String(e);
-      get().setStatus(id, "Ошибка: " + msg, "err");
+      if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Микс: " + msg, "error");
     } finally {
-      get().setBusy(id, false);
+      if (scope.owns()) get().setBusy(id, false);
     }
   },
 
@@ -2118,6 +2271,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     get().propagate(id);
   },
   runSourceImport: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
     if (!n || n.type !== "sourceimport" || st.busy[id]) return;
@@ -2131,7 +2286,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       authenticatedSession: value.authenticatedSession, kit: sourceKitFingerprint(value),
     });
     let inputAtStart = sourceInput(data);
-    get().setNodeData(id, { _sourceRun: sourceRun });
+    if (scope.owns()) get().setNodeData(id, { _sourceRun: sourceRun });
     const ownsRun = () => get().activePageId === st.activePageId && runAborts.get(id)?.signal === signal
       && get().nodes.some((node) => Number(node.id) === id && node.type === "sourceimport"
         && (node.data as unknown as Record<string, unknown>)._sourceRun === sourceRun);
@@ -2144,20 +2299,20 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const recordStage = (name: string, status: AiPipelineStage["status"], message: string) => {
       if (!ownsRun()) return;
       stages[name] = { status, message, provider, updatedAt: new Date().toISOString() };
-      get().setNodeData(id, { pipelineStatus: { ...stages } });
+      if (scope.owns()) get().setNodeData(id, { pipelineStatus: { ...stages } });
     };
     const warnings = () => Object.values(stages).filter((stage) => ["failed", "warning", "cancelled"].includes(stage.status)).map((stage) => stage.message);
     const finishStatus = (message: string, failed = false) => {
       const notes = warnings();
-      get().setStatus(id, `${message}${notes.length ? ` · ${notes.join("; ")}` : ""}`, failed || notes.length ? "err" : "ok");
+      if (scope.owns()) get().setStatus(id, `${message}${notes.length ? ` · ${notes.join("; ")}` : ""}`, failed || notes.length ? "err" : "ok");
     };
-    get().setBusy(id, true);
+    if (scope.owns()) get().setBusy(id, true);
     const startedAt = Date.now();
-    get().setProgress(id, { expectedMs: 90_000, label: data.mode === "screenshot" ? "Скриншот → IR" : "Импорт Source" });
+    if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: data.mode === "screenshot" ? "Скриншот → IR" : "Импорт Source" });
     try {
       if (data.mode === "screenshot") {
         if (!data.image) {
-          get().setStatus(id, "Загрузите скриншот элемента", "err");
+          if (scope.owns()) get().setStatus(id, "Загрузите скриншот элемента", "err");
           return;
         }
         // Сначала — сегментация компонентов агентом (Claude/GPT по выбору на
@@ -2169,11 +2324,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         if (window.designDNA) {
           try {
             recordStage("segmentation", "running", "AI-сегментация…");
-            segmented = await segmentScreenshotWithAi(
-              data.image, provider, get().setStatus, id, effort, guard);
+            segmented = await scope.wait(segmentScreenshotWithAi(
+              data.image, provider, get().setStatus, id, effort, guard));
             guard();
             recordStage("segmentation", segmented ? "success" : "warning", segmented ? "Компоненты размечены" : "AI-сегментация не вернула компоненты");
           } catch (error) {
+      if (!scope.owns()) return;
             guard();
             recordStage("segmentation", "failed", `Сегментация: ${friendlyProviderError(error)}`);
           }
@@ -2181,7 +2337,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         if (segmented?.block) {
           guard();
           const block = { ...segmented.block, lit: true };
-          get().setNodeData(id, {
+          if (scope.owns()) get().setNodeData(id, {
             blocks: [block],
             tokens: (segmented.tokens || (block.ir as IRObject | undefined)?.tokens || null) as Record<string, unknown> | null,
             sourceArtifact: segmented.sourceArtifact || null,
@@ -2189,17 +2345,17 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
           recordStage("import", "success", "Скриншот импортирован");
           finishStatus(`${segmented.regions.length} компонент(ов) из скриншота · ${secs}с`);
-          get().propagate(id);
+          if (scope.owns()) get().propagate(id);
           return;
         }
-        get().setStatus(id, "Скриншот → pixel capture через подключённый аккаунт…");
+        if (scope.owns()) get().setStatus(id, "Скриншот → pixel capture через подключённый аккаунт…");
         guard();
         if (provider === "codex" || provider === "claude") throw new Error("AI-сегментация не завершена; API fallback для выбранного desktop-аккаунта отключён");
-        const res = await api<ReproduceResp>("/api/reproduce", {
+        const res = await scope.wait(api<ReproduceResp>("/api/reproduce", {
           image: data.image,
           url: "",
           provider,
-        });
+        }));
         guard();
         const ir = res.ir || null;
         const dna = extractStyleDna(ir, null);
@@ -2213,7 +2369,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
               lit: true,
             }]
           : [];
-        get().setNodeData(id, { blocks, tokens: dna.tokens, sourceArtifact: null });
+        if (scope.owns()) get().setNodeData(id, { blocks, tokens: dna.tokens, sourceArtifact: null });
         const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
         recordStage("import", ir ? "success" : "failed", ir ? "Скриншот импортирован" : "Не удалось получить IR из скриншота");
         finishStatus(`capture + Style DNA · ${secs}с`, !ir);
@@ -2223,11 +2379,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           ? rawUrl.startsWith("//") ? `https:${rawUrl}` : `https://${rawUrl}`
           : rawUrl;
         if (!url) {
-          get().setStatus(id, "Введите URL сайта", "err");
+          if (scope.owns()) get().setStatus(id, "Введите URL сайта", "err");
           return;
         }
         if (!data.mine) {
-          get().setStatus(id, "Отметьте «это мой сайт/есть право»", "err");
+          if (scope.owns()) get().setStatus(id, "Отметьте «это мой сайт/есть право»", "err");
           return;
         }
         if (data.importedUrl === url && data.blocks.length > 0) {
@@ -2235,12 +2391,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           finishStatus(`Уже загружено локально · ${data.blocks.length} блоков`);
           return;
         }
-        if (url !== data.url) get().setNodeData(id, { url });
+        if (url !== data.url) if (scope.owns()) get().setNodeData(id, { url });
         inputAtStart = sourceInput(get().nodes.find((node) => Number(node.id) === id)!.data as SourceImportNodeData);
         recordStage("import", "running", "Source Import…");
-        get().setStatus(id, `Импортирую ${url.slice(0, 30)}…`);
+        if (scope.owns()) get().setStatus(id, `Импортирую ${url.slice(0, 30)}…`);
         const desktop = window.designDNA;
-        const initial = await api<BlockParseResp | BlockParseJobResp>("/api/block-parse", {
+        const initial = await scope.wait(api<BlockParseResp | BlockParseJobResp>("/api/block-parse", {
           url,
           asyncJob: true,
           fullResolutionEvidence: !!desktop,
@@ -2250,7 +2406,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             { name: "tablet", width: 768, height: 1024 },
             { name: "mobile", width: 390, height: 844 },
           ],
-        });
+        }));
         guard();
         let res: BlockParseResp;
         if ("jobId" in initial) {
@@ -2259,21 +2415,21 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           const deadline = started + 12 * 60_000;
           while (job.status === "queued" || job.status === "running") {
             guard();
-            get().setProgress(id, {
+            if (scope.owns()) get().setProgress(id, {
               expectedMs: 90_000,
               label: job.stageLabel || "Source Import",
               percent: job.progress,
             });
-            get().setStatus(id, `${job.stageLabel || "Source Import"} · ${Math.round(job.progress)}%`);
+            if (scope.owns()) get().setStatus(id, `${job.stageLabel || "Source Import"} · ${Math.round(job.progress)}%`);
             if (Date.now() >= deadline) throw new Error("Source Import превысил лимит 12 минут");
             // Бэкофф: первые 10 с опрашиваем часто (стадии сменяются быстро),
             // дальше реже — импорт идёт минутами, а каждый опрос это полный
             // IPC → stdio → ASGI round-trip.
             const elapsed = Date.now() - started;
             const delay = elapsed < 10_000 ? 400 : elapsed < 60_000 ? 1_000 : 2_000;
-            await new Promise((resolve) => setTimeout(resolve, delay));
+            await scope.wait(new Promise((resolve) => setTimeout(resolve, delay)));
             guard();
-            job = await apiGet<BlockParseJobResp>(`/api/block-parse/job/${encodeURIComponent(job.jobId)}`);
+            job = await scope.wait(apiGet<BlockParseJobResp>(`/api/block-parse/job/${encodeURIComponent(job.jobId)}`));
             guard();
           }
           if (job.status === "error") throw new Error(job.error || "Source Import завершился с ошибкой");
@@ -2287,7 +2443,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         // large editable IR enters state; the generic autosave traversal is
         // intentionally time-boxed and may otherwise reach these fields too
         // late, leaving Compare empty after a restart.
-        await offloadSourceEvidenceInPlace(res.blocks || []);
+        await scope.wait(offloadSourceEvidenceInPlace(res.blocks || []));
         guard();
         recordStage("import", "success", "Source захвачен");
         recordStage("refine", "skipped", "AI-уточнение не требуется или отключено");
@@ -2297,13 +2453,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         if (data.aiRefine && res.ambiguities?.length && window.designDNA) {
           try {
             recordStage("refine", "running", "AI-уточнение…");
-            const refined = await refineSourceWithAi(
+            const refined = await scope.wait(refineSourceWithAi(
               res, provider, get().setStatus, id, effort, guard,
-            );
+            ));
             guard();
             if (refined) res = refined;
             recordStage("refine", "success", refined ? "AI-уточнение применено" : "AI-уточнение: без изменений");
           } catch (error) {
+      if (!scope.owns()) return;
             guard();
             // Уточнение опционально: детерминированный результат остаётся в силе.
             recordStage("refine", "failed", `AI-уточнение: ${friendlyProviderError(error)}`);
@@ -2317,14 +2474,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         if (window.designDNA && needsRepair) {
           try {
             recordStage("repair", "running", "AI-починка…");
-            const repaired = await repairSourceWithAi(
+            const repaired = await scope.wait(repairSourceWithAi(
               res, provider, data.activeViewport || "desktop",
               get().setStatus, id, effort, guard, (message) => recordStage("repair", "failed", message),
-            );
+            ));
             guard();
             if (repaired) res = repaired;
             if (stages.repair.status !== "failed") recordStage("repair", repaired ? "success" : "warning", repaired ? "AI-починка применена" : "AI-починка: улучшений не найдено");
           } catch (error) {
+      if (!scope.owns()) return;
             guard();
             recordStage("repair", "failed", `AI-починка: ${friendlyProviderError(error)}`);
           }
@@ -2350,7 +2508,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         }));
         const timingsMs = res.diagnostics?.timingsMs || {};
         const measuredTotalMs = Number(timingsMs.total);
-        get().setNodeData(id, {
+        if (scope.owns()) get().setNodeData(id, {
           blocks,
           tokens: res.tokens || null,
           sourceArtifact: res.sourceArtifact || null,
@@ -2378,20 +2536,24 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         recordStage("import", errCount ? "warning" : "success", errCount ? `Source Import: ошибок ${errCount}` : "Source импортирован");
         finishStatus(`${blocks.length} блоков (${errCount} ошибок) · Source Import${cacheNote}${authNote} · ${secs}с`, !!errCount);
       }
-      get().propagate(id);
+      if (scope.owns()) get().propagate(id);
     } catch (e) {
+      if (!scope.owns()) return;
       if (!ownsRun()) return;
       const msg = e instanceof Error ? e.message : String(e);
       for (const [name, stage] of Object.entries(stages)) if (stage.status === "running") recordStage(name, signal.aborted || (e instanceof DOMException && e.name === "AbortError") ? "cancelled" : "failed", msg);
-      get().setStatus(id, "Ошибка: " + msg, "err");
+      if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Source Import: " + msg, "error");
     } finally {
-      if (ownsRun()) { get().setProgress(id, null); get().setBusy(id, false); get().setNodeData(id, { _sourceRun: null }); }
+      if (ownsRun()) { if (scope.owns()) get().setProgress(id, null); if (scope.owns()) get().setBusy(id, false); if (scope.owns()) get().setNodeData(id, { _sourceRun: null }); }
       endRunAbort(id, signal);
     }
   },
 
   runDerive: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
+    watchNodeInputs(scope, get, id, ["prompt", "count", "provider", "effort", "designSystem"]);
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
     if (!n || n.type !== "derive" || st.busy[id]) return;
@@ -2402,15 +2564,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const reference = pullInput(st.nodes, st.edges, n, "reference");
     const tokens = pullInput(st.nodes, st.edges, n, "tokens");
     if (!prompt) {
-      get().setStatus(id, "Опишите, какой компонент получить", "err");
+      if (scope.owns()) get().setStatus(id, "Опишите, какой компонент получить", "err");
       return;
     }
     const styleHint = [
       tokens ? "Style DNA:\n" + JSON.stringify(tokens) : "",
       reference ? "Reference IR:\n" + JSON.stringify(reference).slice(0, 9000) : "",
     ].filter(Boolean).join("\n\n");
-    get().setStatus(id, `Derive: ${data.count} вариант(а) через подключённый аккаунт…`);
-    get().setBusy(id, true);
+    if (scope.owns()) get().setStatus(id, `Derive: ${data.count} вариант(а) через подключённый аккаунт…`);
+    if (scope.owns()) get().setBusy(id, true);
     try {
       const request = {
         brief: prompt,
@@ -2428,32 +2590,33 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       let res: GenerateResp;
       const desktop = window.designDNA;
       if (!desktop) {
-        res = await api<GenerateResp>("/api/generate", request);
+        res = await scope.wait(api<GenerateResp>("/api/generate", request));
       } else {
         // тот же transport-контракт, что у Generator: сервер готовит промпты,
         // LLM отвечает через подключённый аккаунт, сервер валидирует и чинит
-        const prepared = await api<GenerateResp>("/api/generate", { ...request, prepareOnly: true });
+        const prepared = await scope.wait(api<GenerateResp>("/api/generate", { ...request, prepareOnly: true }));
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы Derive");
         const rawOutputs: string[] = [];
         for (const p of prepared.prompts) {
-          const answer = await desktop.providers.chatRequest({
+          const answer = await scope.wait(desktop.providers.chatRequest({
             ...chatRoute(provider, effort),
             messages: p.messages,
-          });
+          }));
           rawOutputs.push(answer.content);
         }
-        res = await api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId });
+        res = await scope.wait(api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId }));
       }
       const variants = Array.isArray(res.variants) ? res.variants : [];
-      get().setNodeData(id, { variants, active: 0 });
-      get().setStatus(id, `Готово: вариантов ${variants.length}`, "ok");
-      get().propagate(id);
+      if (scope.owns()) get().setNodeData(id, { variants, active: 0 });
+      if (scope.owns()) get().setStatus(id, `Готово: вариантов ${variants.length}`, "ok");
+      if (scope.owns()) get().propagate(id);
     } catch (e) {
+      if (!scope.owns()) return;
       const msg = e instanceof Error ? e.message : String(e);
-      get().setStatus(id, "Ошибка: " + msg, "err");
+      if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Derive: " + msg, "error");
     } finally {
-      get().setBusy(id, false);
+      if (scope.owns()) get().setBusy(id, false);
     }
   },
 
@@ -2462,22 +2625,25 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
    * не запускается (бэкенд вернул бы IR без изменений). Ответ: {ir, log} —
    * log (журнал merge-back) показывается свёрнутым блоком в ноде. */
   runReskin: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
+    watchNodeInputs(scope, get, id, ["prompt", "mask", "provider", "effort", "designSystem"]);
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
     if (!n || n.type !== "reskin" || st.busy[id]) return;
     const data = n.data as ReskinNodeData;
     if (!Object.values(data.mask).some(Boolean)) {
-      get().setStatus(id, "Пустая маска: отметьте, что разрешено менять", "err");
+      if (scope.owns()) get().setStatus(id, "Пустая маска: отметьте, что разрешено менять", "err");
       return;
     }
     const ir = pullInput(st.nodes, st.edges, n, "ir") as IRObject | null;
     if (!ir) {
-      get().setStatus(id, "Подключите IR ко входу (например, из Source Import)", "err");
+      if (scope.owns()) get().setStatus(id, "Подключите IR ко входу (например, из Source Import)", "err");
       return;
     }
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
-    get().setStatus(id, "Рестайл: LLM + merge-back… 20–120 сек");
-    get().setBusy(id, true);
+    if (scope.owns()) get().setStatus(id, "Рестайл: LLM + merge-back… 20–120 сек");
+    if (scope.owns()) get().setBusy(id, true);
     try {
       const payload: Record<string, unknown> = {
         ir,
@@ -2495,31 +2661,135 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       let res: ReskinResp;
       const desktop = window.designDNA;
       if (!desktop) {
-        res = await api<ReskinResp>("/api/reskin", payload);
+        res = await scope.wait(api<ReskinResp>("/api/reskin", payload));
       } else {
         // desktop: сервер готовит reskin-промпт, аккаунт отвечает, сервер
         // делает merge-back/валидацию — креденшелы не покидают main-процесс
-        const prepared = await api<{ prompts: Array<{ messages: import("./api").ApiChatMessage[] }> }>(
+        const prepared = await scope.wait(api<{ prompts: Array<{ messages: import("./api").ApiChatMessage[] }> }>(
           "/api/reskin", { ...payload, prepareOnly: true },
-        );
+        ));
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить промпт рестайла");
         const effort = ["medium", "high", "max"].includes(data.effort) ? data.effort : "medium";
-        const answer = await desktop.providers.chatRequest({
+        const answer = await scope.wait(desktop.providers.chatRequest({
           ...chatRoute(nodeProvider(data.provider), effort),
           messages: prepared.prompts[0].messages,
-        });
-        res = await api<ReskinResp>("/api/reskin", { ...payload, rawOutput: answer.content });
+        }));
+        res = await scope.wait(api<ReskinResp>("/api/reskin", { ...payload, rawOutput: answer.content }));
       }
       const log = Array.isArray(res.log) ? res.log : [];
-      get().setNodeData(id, { ir: res.ir || null, log });
-      get().setStatus(id, `Готово · журнал merge-back: ${log.length}`, "ok");
-      get().propagate(id);
+      if (scope.owns()) get().setNodeData(id, { ir: res.ir || null, log });
+      if (scope.owns()) get().setStatus(id, `Готово · журнал merge-back: ${log.length}`, "ok");
+      if (scope.owns()) get().propagate(id);
     } catch (e) {
+      if (!scope.owns()) return;
       const msg = e instanceof Error ? e.message : String(e);
-      get().setStatus(id, "Ошибка: " + msg, "err");
+      if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Reskin: " + msg, "error");
     } finally {
-      get().setBusy(id, false);
+      if (scope.owns()) get().setBusy(id, false);
+    }
+  },
+
+  /* Raster generation and background removal share cancellation, blob loading,
+   * validated output and history. Legacy SVG nodes keep their original route. */
+  runImage: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
+    flushNodeText(`image:${id}:prompt`);
+    flushNodeText(`removebackground:${id}:prompt`);
+    const st = get();
+    const n = st.nodes.find((x) => Number(x.id) === id);
+    if (!n || (n.type !== "image" && n.type !== "removebackground") || st.busy[id]) return;
+    const removeBackground = n.type === "removebackground";
+    const data = n.data;
+    const imageOptions = n.data as ImageNodeData;
+    const cutoutOptions = n.data as RemoveBackgroundNodeData;
+    const wired = pullInput(st.nodes, st.edges, n, "prompt");
+    const prompt = removeBackground ? (data.prompt.trim() || "Выделите главный объект полностью")
+      : String((typeof wired === "string" && wired.trim()) || data.prompt || "").trim();
+    if (!prompt) {
+      if (scope.owns()) get().setStatus(id, "Опишите изображение в инспекторе или подключите ноду Промпт", "err");
+      return;
+    }
+    const refRaw = pullInput(st.nodes, st.edges, n, removeBackground ? "image" : "reference")
+      || (removeBackground ? cutoutOptions.image : null);
+    if (removeBackground && !isImageSource(refRaw)) {
+      if (scope.owns()) get().setStatus(id, "Подключите изображение или загрузите файл", "err");
+      return;
+    }
+    const raster = removeBackground || imageOptions.engine === "raster";
+    const signal = beginRunAbort(id);
+    const requestId = `image-${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const desktop = window.designDNA;
+    const cancel = () => { void desktop?.providers?.cancel(requestId).catch(() => {}); };
+    signal.addEventListener("abort", cancel, { once: true });
+    const ownsRun = () => get().activePageId === st.activePageId && runAborts.get(id)?.signal === signal
+      && get().nodes.some(node => node.id === n.id && node.type === n.type);
+    const stillCurrent = () => {
+      const current = get();
+      const target = current.nodes.find(node => node.id === n.id);
+      return ownsRun() && !signal.aborted && target?.data === data
+        && pullInput(current.nodes, current.edges, target, "prompt") === wired
+        && (pullInput(current.nodes, current.edges, target, removeBackground ? "image" : "reference")
+          || (removeBackground ? cutoutOptions.image : null)) === refRaw;
+    };
+    if (scope.owns()) get().setStatus(id, removeBackground ? "GPT Image · удаляем фон…" : raster ? "GPT Image · создаём изображение…" : "SVG · создаём изображение…");
+    if (scope.owns()) get().setBusy(id, true);
+    try {
+      const referenceImage = isImageSource(refRaw) ? await scope.wait(imageDataUrl(refRaw)) : null;
+      if (!stillCurrent()) return;
+      type ImageResp = Omit<ImageVariant, "createdAt">;
+      let res: ImageResp;
+      if (raster) {
+        if (!desktop?.providers?.imageRequest) throw new Error("Для GPT Image нужен обновлённый десктоп и подключённый аккаунт Codex");
+        const generated = await scope.wait(desktop.providers.imageRequest({ id: requestId, referenceImage, removeBackground,
+          ...(!removeBackground && imageOptions.rasterModel ? { model: imageOptions.rasterModel } : {}),
+          prompt: removeBackground ? prompt : `${prompt}\nRequested canvas: ${imageOptions.width}×${imageOptions.height}. ${imageOptions.tileable ? "Make a seamless tileable texture, opposite edges must match." : ""}` }));
+        if (!stillCurrent()) return;
+        res = removeBackground
+          ? await scope.wait(api<ImageResp>("/api/image/remove-background", { image: referenceImage, mask: generated.image }, { signal, runId: requestId }))
+          : await scope.wait(api<ImageResp>("/api/image/convert", { image: generated.image,
+              outputFormat: imageOptions.outputFormat || "png" }, { signal, runId: requestId }));
+      } else {
+        const provider = nodeProvider(imageOptions.provider);
+        const payload = { prompt, style: imageOptions.style || "vector", width: imageOptions.width, height: imageOptions.height,
+          tileable: !!imageOptions.tileable, model: imageOptions.model || null, provider, effort: nodeEffort(imageOptions.effort), referenceImage };
+        if (!desktop) {
+          res = await scope.wait(api<ImageResp>("/api/image/generate", payload, { signal }));
+        } else {
+          const prepared = await scope.wait(api<{ prompts: Array<{ messages: import("./api").ApiChatMessage[] }> }>(
+            "/api/image/generate", { ...payload, prepareOnly: true }, { signal, runId: requestId }));
+          if (!stillCurrent()) return;
+          if (!prepared.prompts?.length) throw new Error("Не удалось подготовить промпт изображения");
+          const answer = await scope.wait(desktop.providers.chatRequest({ ...chatRoute(provider, payload.effort), id: requestId,
+            ...(imageOptions.model ? { model: imageOptions.model } : {}),
+            profile: "graphics", messages: prepared.prompts[0].messages }));
+          if (!stillCurrent()) return;
+          res = await scope.wait(api<ImageResp>("/api/image/generate", { ...payload, rawOutput: answer.content }, { signal, runId: requestId }));
+        }
+        if (!stillCurrent()) return;
+        if (imageOptions.outputFormat === "jpeg") {
+          const converted = await scope.wait(api<ImageResp>("/api/image/convert", { image: res.png, outputFormat: "jpeg" }, { signal, runId: requestId }));
+          res = { ...res, ...converted };
+        }
+      }
+      if (!stillCurrent()) return;
+      const variant = { ...res, createdAt: Date.now() };
+      const variants = [...(data.variants || []), variant].slice(-4);
+      if (scope.owns()) get().setNodeData(id, { variants, active: variants.length - 1 });
+      if (scope.owns()) get().setStatus(id, `Готово · ${res.width}×${res.height}${removeBackground ? " · прозрачный PNG" : ""}`, "ok");
+      if (scope.owns()) get().propagate(id);
+    } catch (e) {
+      if (!scope.owns()) return;
+      if (!ownsRun()) return;
+      if (signal.aborted) { if (scope.owns()) get().setStatus(id, "Отменено", "err"); return; }
+      const msg = friendlyProviderError(e);
+      if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
+      toast("Изображение: " + msg, "error");
+    } finally {
+      if (ownsRun()) if (scope.owns()) get().setBusy(id, false);
+      signal.removeEventListener("abort", cancel);
+      endRunAbort(id, signal);
     }
   },
 
@@ -2527,124 +2797,139 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
    * judge/repair/rejudge run through whichever account is explicitly connected;
    * standalone web keeps the server-side provider compatibility path. */
   runQualityPass: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
+    watchNodeInputs(scope, get, id, ["brief", "minScore", "repair", "provider", "ir"]);
     const st = get();
     const n = st.nodes.find((x) => Number(x.id) === id);
     if (!n || n.type !== "qualitypass" || st.busy[id]) return;
     const data = n.data as QualityPassNodeData;
     const ir = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
     if (!ir) {
-      get().setStatus(id, "Подключите IR ко входу", "err");
+      if (scope.owns()) get().setStatus(id, "Подключите IR ко входу", "err");
       return;
     }
-    get().setStatus(id, "Quality Pass: judge + проверка правил… 30–120 сек");
+    if (scope.owns()) get().setStatus(id, "Quality Pass: judge + проверка правил… 30–120 сек");
     const signal = beginRunAbort(id);
-    get().setBusy(id, true);
-    get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage: "Судья оценивает" });
+    if (scope.owns()) get().setBusy(id, true);
+    if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage: "Судья оценивает" });
     const runId = newRunId();
     const stopPoll = window.designDNA ? () => {} : watchRunStages(id, runId, 60_000, "Quality Pass");
     try {
       // Общий цикл с генератором: судья/починка идут выбранным на ноде
       // провайдером (раньше нода была прибита к Sol).
       const provider = nodeProvider(data.provider);
-      const res = await qualityPassCycle(ir, data.brief, provider, "high",
+      const res = await scope.wait(qualityPassCycle(ir, data.brief, provider, "high",
         (stage) => {
-          get().setStatus(id, `Quality Pass: ${stage} через подключённый аккаунт…`);
-          get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage });
+          if (scope.owns()) get().setStatus(id, `Quality Pass: ${stage} через подключённый аккаунт…`);
+          if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage });
         },
-        { minScore: data.minScore, repair: data.repair, signal, runId });
+        { minScore: data.minScore, repair: data.repair, signal, runId }));
       const score = Number(res.scorecard?.score ?? 0);
       const passed = Boolean(res.passed);
       const repairNote = res.repair?.applied ? " · repair применён" : "";
-      get().setNodeData(id, { ir: res.ir || ir, result: res });
-      get().setStatus(id, `${passed ? "Готово" : "Нужна проверка"}: ${score}/100${repairNote}`, passed ? "ok" : "err");
-      get().propagate(id);
+      if (scope.owns()) get().setNodeData(id, { ir: res.ir || ir, result: res });
+      if (scope.owns()) get().setStatus(id, `${passed ? "Готово" : "Нужна проверка"}: ${score}/100${repairNote}`, passed ? "ok" : "err");
+      if (scope.owns()) get().propagate(id);
     } catch (e) {
+      if (!scope.owns()) return;
       if (isAbortError(e) || signal.aborted) {
-        get().setStatus(id, "Отменено", "err");
+        if (scope.owns()) get().setStatus(id, "Отменено", "err");
       } else {
         const msg = e instanceof Error ? e.message : String(e);
-        get().setStatus(id, "Ошибка: " + msg, "err");
+        if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
         toast("Quality Pass: " + msg, "error");
       }
     } finally {
       stopPoll();
       endRunAbort(id, signal);
-      get().setProgress(id, null);
-      get().setBusy(id, false);
+      if (scope.owns()) get().setProgress(id, null);
+      if (scope.owns()) get().setBusy(id, false);
     }
   },
 
   runRecorder: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
+    watchNodeInputs(scope, get, id, ["ir", "draftScenes", "draftEvents"]);
     const st = get();
     const n = st.nodes.find((node) => Number(node.id) === id);
     if (!n || n.type !== "recorder" || st.busy[id]) return;
     const data = n.data as RecorderNodeData;
     const baseIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
     if (!baseIr) {
-      get().setStatus(id, "Connect Design IR before recording", "err");
+      if (scope.owns()) get().setStatus(id, "Connect Design IR before recording", "err");
       return;
     }
-    get().setBusy(id, true);
-    get().setStatus(id, "Sanitizing Interaction IR...");
+    if (scope.owns()) get().setBusy(id, true);
+    if (scope.owns()) get().setStatus(id, "Sanitizing Interaction IR...");
     try {
-      const response = await api<{ interaction?: IRObject }>("/api/interaction/build", {
+      const response = await scope.wait(api<{ interaction?: IRObject }>("/api/interaction/build", {
         base_ir: baseIr,
         source: { kind: "design-ir", url: "" },
         scenes: data.draftScenes,
         events: data.draftEvents,
         variables: {},
-      });
+      }));
       const interaction = response.interaction || null;
-      get().setNodeData(id, { ir: deepClone(baseIr), interaction, recording: false });
+      if (scope.owns()) get().setNodeData(id, { ir: deepClone(baseIr), interaction, recording: false });
       const report = interaction?.privacyReport as Record<string, unknown> | undefined;
-      get().setStatus(id, `Interaction IR ready · ${data.draftEvents.length} events · ${Number(report?.sanitizedCount || 0)} redactions`, "ok");
-      get().propagate(id);
+      if (scope.owns()) get().setStatus(id, `Interaction IR ready · ${data.draftEvents.length} events · ${Number(report?.sanitizedCount || 0)} redactions`, "ok");
+      if (scope.owns()) get().propagate(id);
     } catch (error) {
+      if (!scope.owns()) return;
       const message = error instanceof Error ? error.message : String(error);
-      get().setStatus(id, "Recorder: " + message, "err");
+      if (scope.owns()) get().setStatus(id, "Recorder: " + message, "err");
       toast("Recorder: " + message, "error");
     } finally {
-      get().setBusy(id, false);
+      if (scope.owns()) get().setBusy(id, false);
     }
   },
 
   runLiveRecorder: async (id, actions) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
+    watchNodeInputs(scope, get, id, ["ir", "liveUrl", "mine", "liveViewport"]);
     const st = get();
     const n = st.nodes.find((node) => Number(node.id) === id);
     if (!n || n.type !== "recorder" || st.busy[id]) return false;
     const data = n.data as RecorderNodeData;
     const baseIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
     if (!baseIr || !data.liveUrl.trim() || !data.mine || !actions.length) {
-      get().setStatus(id, "Live capture needs Design IR, URL, ownership confirmation and actions", "err");
+      if (scope.owns()) get().setStatus(id, "Live capture needs Design IR, URL, ownership confirmation and actions", "err");
       return false;
     }
-    get().setBusy(id, true);
-    get().setStatus(id, `Replaying ${actions.length} actions in Chromium...`);
+    if (scope.owns()) get().setBusy(id, true);
+    if (scope.owns()) get().setStatus(id, `Replaying ${actions.length} actions in Chromium...`);
     try {
-      const response = await api<{ interaction?: IRObject }>("/api/interaction/capture", {
+      const response = await scope.wait(api<{ interaction?: IRObject }>("/api/interaction/capture", {
         base_ir: baseIr,
         url: data.liveUrl.trim(),
         mine: data.mine,
         viewport: data.liveViewport || "desktop",
         actions,
-      });
+      }));
       const interaction = response.interaction || null;
-      get().setNodeData(id, { ir: deepClone(baseIr), interaction, recording: false });
+      if (scope.owns()) get().setNodeData(id, { ir: deepClone(baseIr), interaction, recording: false });
       const report = interaction?.privacyReport as Record<string, unknown> | undefined;
-      get().setStatus(id, `Live Interaction IR ready · ${actions.length} actions · ${Number(report?.sanitizedCount || 0)} redactions`, "ok");
-      get().propagate(id);
+      if (scope.owns()) get().setStatus(id, `Live Interaction IR ready · ${actions.length} actions · ${Number(report?.sanitizedCount || 0)} redactions`, "ok");
+      if (scope.owns()) get().propagate(id);
       return true;
     } catch (error) {
+      if (!scope.owns()) return false;
       const message = error instanceof Error ? error.message : String(error);
-      get().setStatus(id, "Live capture: " + message, "err");
+      if (scope.owns()) get().setStatus(id, "Live capture: " + message, "err");
       toast("Live capture: " + message, "error");
       return false;
     } finally {
-      get().setBusy(id, false);
+      if (scope.owns()) get().setBusy(id, false);
     }
   },
 
   runMotion: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
+    watchNodeInputs(scope, get, id, ["ir", "interaction", "scenes", "composition", "sceneSettings", "renderSettings"]);
     const st = get();
     const n = st.nodes.find((node) => Number(node.id) === id);
     if (!n || n.type !== "motion" || st.busy[id]) return;
@@ -2652,13 +2937,13 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const designIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
     let interaction = (pullInput(st.nodes, st.edges, n, "interaction") || data.interaction) as IRObject | null;
     if (!designIr) {
-      get().setStatus(id, "Подключите Design IR", "err");
+      if (scope.owns()) get().setStatus(id, "Подключите Design IR", "err");
       return;
     }
     const sourceRevision = get().getNodeIrRevision(id);
     const stillCurrent = () => get().activePageId === st.activePageId && get().getNodeIrRevision(id) === sourceRevision;
-    get().setBusy(id, true);
-    get().setStatus(id, "Building editable motion timeline...");
+    if (scope.owns()) get().setBusy(id, true);
+    if (scope.owns()) get().setStatus(id, "Building editable motion timeline...");
     try {
       if (!interaction) {
         // Recorder исключён из хендоффа: сцены композиции авторятся прямо в
@@ -2666,46 +2951,50 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         const draftScenes = Array.isArray(data.scenes) && data.scenes.length
           ? data.scenes
           : [{ id: "scene-0", viewport: "desktop", patch: [] }];
-        const built = await api<{ interaction?: IRObject }>("/api/interaction/build", {
+        const built = await scope.wait(api<{ interaction?: IRObject }>("/api/interaction/build", {
           base_ir: designIr,
           source: { kind: "design-ir", url: "" },
           scenes: draftScenes,
           events: [],
           variables: {},
-        });
+        }));
         interaction = built.interaction || null;
         if (!interaction) throw new Error("Не удалось построить Interaction IR из Design IR");
       }
-      const response = await api<{ motion?: IRObject; sceneIrs?: MotionNodeData["sceneIrs"] }>("/api/motion/build", {
+      const response = await scope.wait(api<{ motion?: IRObject; sceneIrs?: MotionNodeData["sceneIrs"] }>("/api/motion/build", {
         base_ir: designIr,
         interaction,
         composition: data.composition,
         scene_settings: data.sceneSettings,
         render_settings: data.renderSettings || { format: "mp4", quality: "high" },
-      });
+      }));
       if (!stillCurrent()) return;
       const motion = response.motion || null;
       if (!motion || !Array.isArray(motion.scenes) || !motion.scenes.length) throw new Error("Сервер вернул пустое движение");
       const sceneIrs = response.sceneIrs || [];
       const scenes = Array.isArray(motion?.scenes) ? motion.scenes : [];
-      get().setNodeData(id, {
+      if (scope.owns()) get().setNodeData(id, {
         ir: deepClone(designIr), interaction: deepClone(interaction), motion, sceneIrs, renderJob: null,
         selectedScene: Math.min(data.selectedScene || 0, Math.max(0, scenes.length - 1)),
       });
       const composition = motion?.composition as Record<string, unknown> | undefined;
-      get().setStatus(id, `Motion IR ready · ${scenes.length} scenes · ${(Number(composition?.duration || 0) / 1000).toFixed(1)}s`, "ok");
-      get().propagate(id);
+      if (scope.owns()) get().setStatus(id, `Motion IR ready · ${scenes.length} scenes · ${(Number(composition?.duration || 0) / 1000).toFixed(1)}s`, "ok");
+      if (scope.owns()) get().propagate(id);
     } catch (error) {
+      if (!scope.owns()) return;
       if (!stillCurrent()) return;
       const message = error instanceof Error ? error.message : String(error);
-      get().setStatus(id, "Motion: " + message, "err");
+      if (scope.owns()) get().setStatus(id, "Motion: " + message, "err");
       toast("Motion: " + message, "error");
     } finally {
-      if (get().activePageId === st.activePageId) get().setBusy(id, false);
+      if (get().activePageId === st.activePageId) if (scope.owns()) get().setBusy(id, false);
     }
   },
 
   planMotionDesign: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
+    watchNodeInputs(scope, get, id, ["prompt", "inputMode", "planner", "effort", "settings", "sourceVideo", "sourceMotion", "sourceTimeline"]);
     const st = get();
     const n = st.nodes.find((node) => Number(node.id) === id);
     if (!n || n.type !== "motiondesign" || st.busy[id]) return null;
@@ -2721,16 +3010,16 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const useReference = data.inputMode !== "prompt";
 
     if (data.inputMode === "reference" && !sourceVideo) {
-      get().setStatus(id, "Режим reference требует готовое видео из Motion/Video Editor", "err");
+      if (scope.owns()) get().setStatus(id, "Режим reference требует готовое видео из Motion/Video Editor", "err");
       return null;
     }
     if (!brief && !sourceVideo && !sourceMotion && !sourceTimeline) {
-      get().setStatus(id, "Введите prompt или подключите Motion/Timeline/video", "err");
+      if (scope.owns()) get().setStatus(id, "Введите prompt или подключите Motion/Timeline/video", "err");
       return null;
     }
 
-    get().setBusy(id, true);
-    get().setStatus(id, data.planner === "direct" ? "Собираем Seedance prompt…" : `Планировщик ${PROVIDER_LABELS[data.planner]} готовит prompt…`);
+    if (scope.owns()) get().setBusy(id, true);
+    if (scope.owns()) get().setStatus(id, data.planner === "direct" ? "Собираем Seedance prompt…" : `Планировщик ${PROVIDER_LABELS[data.planner]} готовит prompt…`);
     try {
       let planned = directMotionDesignPrompt(brief, useReference ? sourceVideo : null);
       if (!planned && (sourceMotion || sourceTimeline)) {
@@ -2744,7 +3033,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           useReference ? sourceTimeline : null,
           useReference ? sourceVideo : null,
         );
-        const answer = await desktop.providers.chatRequest({
+        const answer = await scope.wait(desktop.providers.chatRequest({
           ...chatRoute(data.planner, data.effort),
           messages: [
             {
@@ -2768,7 +3057,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             },
           ],
           maxOutputTokens: 700,
-        });
+        }));
         planned = String(answer.content || "")
           .trim()
           .replace(/^```(?:text)?\s*/i, "")
@@ -2778,27 +3067,30 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       }
       if (!planned) throw new Error("Планировщик вернул пустой prompt");
       if (planned.length > 5_000) planned = planned.slice(0, 5_000);
-      get().setNodeData(id, {
+      if (scope.owns()) get().setNodeData(id, {
         plannedPrompt: planned,
         sourceMotion: sourceMotion ? deepClone(sourceMotion) : null,
         sourceTimeline: sourceTimeline ? deepClone(sourceTimeline) : null,
         sourceVideo: sourceVideo ? deepClone(sourceVideo) : null,
       });
-      get().setStatus(id, `${data.planner === "direct" ? "Direct" : PROVIDER_LABELS[data.planner]} prompt готов · ${planned.length} chars`, "ok");
+      if (scope.owns()) get().setStatus(id, `${data.planner === "direct" ? "Direct" : PROVIDER_LABELS[data.planner]} prompt готов · ${planned.length} chars`, "ok");
       return planned;
     } catch (error) {
+      if (!scope.owns()) return null;
       const message = friendlyProviderError(error);
-      get().setStatus(id, "Motion Design planner: " + message, "err");
+      if (scope.owns()) get().setStatus(id, "Motion Design planner: " + message, "err");
       toast("Motion Design planner: " + message, "error");
       return null;
     } finally {
-      get().setBusy(id, false);
+      if (scope.owns()) get().setBusy(id, false);
     }
   },
 
   runMotionDesign: async (id, confirmedPaid) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
     if (!confirmedPaid) {
-      get().setStatus(id, "Подтвердите платный запрос Seedance 2.5", "err");
+      if (scope.owns()) get().setStatus(id, "Подтвердите платный запрос Seedance 2.5", "err");
       return;
     }
     let st = get();
@@ -2807,7 +3099,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     let data = n.data as MotionDesignNodeData;
     let planned = String(data.plannedPrompt || "").trim();
     if (!planned) {
-      planned = String(await get().planMotionDesign(id) || "").trim();
+      try { planned = String(await scope.wait(get().planMotionDesign(id)) || "").trim(); }
+      catch (error) { if (isAbortError(error)) return; throw error; }
       if (!planned) return;
       st = get();
       n = st.nodes.find((node) => Number(node.id) === id);
@@ -2818,24 +3111,24 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const connectedVideo = pullInput(st.nodes, st.edges, n, "video") as VideoArtifact | null;
     const sourceVideo = connectedVideo || data.sourceVideo;
     if (data.inputMode === "reference" && !sourceVideo) {
-      get().setStatus(id, "Режим reference требует готовое видео", "err");
+      if (scope.owns()) get().setStatus(id, "Режим reference требует готовое видео", "err");
       return;
     }
 
-    get().setBusy(id, true);
+    if (scope.owns()) get().setBusy(id, true);
     try {
-      const config = await apiGet<{ configured?: boolean; model?: string }>("/api/video/seedance/config");
+      const config = await scope.wait(apiGet<{ configured?: boolean; model?: string }>("/api/video/seedance/config"));
       if (!config.configured) throw new Error("OpenRouter key не подключён. Откройте Agents → Connections.");
       const references: Array<Record<string, unknown>> = [];
       if (sourceVideo && data.inputMode !== "prompt") {
-        get().setStatus(id, "Подготавливаем готовое видео как Seedance reference…");
+        if (scope.owns()) get().setStatus(id, "Подготавливаем готовое видео как Seedance reference…");
         references.push({
           type: "video_url",
-          video_url: { url: await videoReferenceUrl(sourceVideo) },
+          video_url: { url: await scope.wait(videoReferenceUrl(sourceVideo)) },
         });
       }
-      get().setStatus(id, `Отправляем подтверждённый запрос в ${config.model || "Seedance 2.5"}…`);
-      const response = await api<SeedanceVideoJob>("/api/video/seedance/submit", {
+      if (scope.owns()) get().setStatus(id, `Отправляем подтверждённый запрос в ${config.model || "Seedance 2.5"}…`);
+      const response = await scope.wait(api<SeedanceVideoJob>("/api/video/seedance/submit", {
         prompt: planned,
         duration: data.settings.duration,
         aspect_ratio: data.settings.aspectRatio,
@@ -2844,31 +3137,34 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         seed: data.settings.seed,
         input_references: references,
         confirmed_paid: true,
-      });
+      }));
       const job = { ...response, model: "bytedance/seedance-2.5" as const };
-      get().setNodeData(id, { job, video: null, sourceVideo: sourceVideo ? deepClone(sourceVideo) : null });
-      get().setStatus(id, `Seedance job ${job.id} · ${job.status}`, "ok");
+      if (scope.owns()) get().setNodeData(id, { job, video: null, sourceVideo: sourceVideo ? deepClone(sourceVideo) : null });
+      if (scope.owns()) get().setStatus(id, `Seedance job ${job.id} · ${job.status}`, "ok");
       const oldTimer = motionDesignPollTimers.get(id);
       if (oldTimer) clearTimeout(oldTimer);
       scheduleMotionDesignPoll(id, () => void get().refreshMotionDesign(id));
     } catch (error) {
+      if (!scope.owns()) return;
       const message = error instanceof Error ? error.message : String(error);
-      get().setStatus(id, "Seedance: " + message, "err");
+      if (scope.owns()) get().setStatus(id, "Seedance: " + message, "err");
       toast("Seedance: " + message, "error");
     } finally {
-      get().setBusy(id, false);
+      if (scope.owns()) get().setBusy(id, false);
     }
   },
 
   refreshMotionDesign: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
     const st = get();
     const n = st.nodes.find((node) => Number(node.id) === id);
     if (!n || n.type !== "motiondesign" || st.busy[id]) return;
     const data = n.data as MotionDesignNodeData;
     if (!data.job?.id || (MOTION_DESIGN_TERMINAL.has(data.job.status) && data.video)) return;
-    get().setBusy(id, true);
+    if (scope.owns()) get().setBusy(id, true);
     try {
-      const response = await apiGet<SeedanceVideoJob>(`/api/video/seedance/${encodeURIComponent(data.job.id)}`);
+      const response = await scope.wait(apiGet<SeedanceVideoJob>(`/api/video/seedance/${encodeURIComponent(data.job.id)}`));
       const job = { ...data.job, ...response, id: data.job.id, model: "bytedance/seedance-2.5" as const };
       if (job.status === "completed") {
         const cost = Number(job.usage?.cost);
@@ -2887,33 +3183,37 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             sourceOrigin: data.sourceVideo?.origin || null,
           },
         };
-        get().setNodeData(id, { job, video });
-        get().setStatus(id, `Seedance video готов${Number.isFinite(cost) ? ` · cost ${cost}` : ""}`, "ok");
-        get().propagate(id);
+        if (scope.owns()) get().setNodeData(id, { job, video });
+        if (scope.owns()) get().setStatus(id, `Seedance video готов${Number.isFinite(cost) ? ` · cost ${cost}` : ""}`, "ok");
+        if (scope.owns()) get().propagate(id);
       } else if (MOTION_DESIGN_TERMINAL.has(job.status)) {
-        get().setNodeData(id, { job });
-        get().setStatus(id, `Seedance ${job.status}: ${String(job.error || "job завершён без видео")}`, "err");
+        if (scope.owns()) get().setNodeData(id, { job });
+        if (scope.owns()) get().setStatus(id, `Seedance ${job.status}: ${String(job.error || "job завершён без видео")}`, "err");
       } else {
-        get().setNodeData(id, { job });
-        get().setStatus(id, `Seedance job ${job.id} · ${job.status}`);
+        if (scope.owns()) get().setNodeData(id, { job });
+        if (scope.owns()) get().setStatus(id, `Seedance job ${job.id} · ${job.status}`);
         const oldTimer = motionDesignPollTimers.get(id);
         if (oldTimer) clearTimeout(oldTimer);
         scheduleMotionDesignPoll(id, () => void get().refreshMotionDesign(id));
       }
     } catch (error) {
+      if (!scope.owns()) return;
       // A failed poll must never resubmit the paid generation. Keep the job id
       // and retry status later, as recommended by OpenRouter's async contract.
       const message = error instanceof Error ? error.message : String(error);
-      get().setStatus(id, `Seedance status: ${message} · job сохранён`, "err");
+      if (scope.owns()) get().setStatus(id, `Seedance status: ${message} · job сохранён`, "err");
       const oldTimer = motionDesignPollTimers.get(id);
       if (oldTimer) clearTimeout(oldTimer);
       scheduleMotionDesignPoll(id, () => void get().refreshMotionDesign(id));
     } finally {
-      get().setBusy(id, false);
+      if (scope.owns()) get().setBusy(id, false);
     }
   },
 
   runTimeline: async (id) => {
+    flushAllNodeText();
+    const scope = captureNodeScope(get, id);
+    watchNodeInputs(scope, get, id, ["ir", "sourcePages", "inputs", "settings"]);
     const st = get();
     const n = st.nodes.find((node) => Number(node.id) === id);
     if (!n || n.type !== "timeline" || st.busy[id]) return;
@@ -2921,39 +3221,40 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const sourcePages = videoPages(st.nodes, st.edges, n, true);
     const designIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
     if (!designIr) {
-      get().setStatus(id, "Подключите Design IR (страница или компонент)", "err");
+      if (scope.owns()) get().setStatus(id, "Подключите Design IR (страница или компонент)", "err");
       return;
     }
     if (sourcePages.length !== (data.inputs || ["ir"]).length) {
-      get().setStatus(id, "Подключите все страницы или удалите пустой вход", "err");
+      if (scope.owns()) get().setStatus(id, "Подключите все страницы или удалите пустой вход", "err");
       return;
     }
     const sourceRevision = get().getNodeIrRevision(id);
     const stillCurrent = () => get().activePageId === st.activePageId && get().getNodeIrRevision(id) === sourceRevision;
-    get().setBusy(id, true);
-    get().setStatus(id, "Сборка таймлайна: слои и группы из компонентов...");
+    if (scope.owns()) get().setBusy(id, true);
+    if (scope.owns()) get().setStatus(id, "Сборка таймлайна: слои и группы из компонентов...");
     try {
-      const response = await api<{ timeline?: IRObject }>("/api/timeline/build", {
+      const response = await scope.wait(api<{ timeline?: IRObject }>("/api/timeline/build", {
         ir: designIr,
         settings: data.settings,
         pages: sourcePages,
-      });
+      }));
       if (!stillCurrent()) return;
       const timeline = response.timeline || null;
       if (!timeline || !Array.isArray(timeline.layers) || !timeline.layers.length) throw new Error("Сервер вернул пустой таймлайн");
-      get().setNodeData(id, { ir: deepClone(designIr), sourcePages: deepClone(sourcePages), timeline, renderJob: null });
+      if (scope.owns()) get().setNodeData(id, { ir: deepClone(designIr), sourcePages: deepClone(sourcePages), timeline, renderJob: null });
       const layers = Array.isArray((timeline as { layers?: unknown[] } | null)?.layers)
         ? ((timeline as { layers: unknown[] }).layers).length : 0;
       const composition = (timeline as { composition?: { duration?: number } } | null)?.composition;
-      get().setStatus(id, `Таймлайн готов · ${layers} слоёв · ${((Number(composition?.duration || 0)) / 1000).toFixed(1)}s`, "ok");
-      get().propagate(id);
+      if (scope.owns()) get().setStatus(id, `Таймлайн готов · ${layers} слоёв · ${((Number(composition?.duration || 0)) / 1000).toFixed(1)}s`, "ok");
+      if (scope.owns()) get().propagate(id);
     } catch (error) {
+      if (!scope.owns()) return;
       if (!stillCurrent()) return;
       const message = error instanceof Error ? error.message : String(error);
-      get().setStatus(id, "Timeline: " + message, "err");
+      if (scope.owns()) get().setStatus(id, "Timeline: " + message, "err");
       toast("Timeline: " + message, "error");
     } finally {
-      if (get().activePageId === st.activePageId) get().setBusy(id, false);
+      if (get().activePageId === st.activePageId) if (scope.owns()) get().setBusy(id, false);
     }
   },
 
@@ -3182,7 +3483,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
    * сама применяет drag/select/remove к массивам). Удаления ведём через
    * deleteNode/deleteEdge — та же зачистка рёбер/статусов, что в legacy
    * onNodesChange; округление позиции на dragend — в moveNode из onnodedragstop. */
-  syncFromCanvas: (nextNodes, nextEdges) => {
+  syncFromCanvas: (nextNodes, nextEdges, pageId) => {
+    if (pageId && pageId !== get().activePageId) return;
     const removedNodes = get().nodes.filter((n) => !nextNodes.some((x) => x.id === n.id));
     const removedEdges = get().edges.filter((e) => !nextEdges.some((x) => x.id === e.id));
     if (removedNodes.length || removedEdges.length) {
@@ -3209,13 +3511,16 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   /* Зеркало load() (nodes.js:1202-1219): полная замена графа из payload */
   loadGraph: (payload) => {
+    leaveGraph();
     const graph = payloadToRf(payload);
     set((state) => ({
       ...graph,
+      busy: {},
       pages: state.pages.map((page) =>
         page.id === state.activePageId ? { ...page, ...graph } : page,
       ),
       statuses: {},
+      statusLog: {},
       progresses: {},
       graphHistory: EMPTY_GRAPH_HISTORY,
     }));
@@ -3229,21 +3534,22 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   /* Создание Design System из Source (ТЗ §7.1): нода рядом с Source,
    * сборка draft на сервере, карточка заполняется summary. */
   createDesignSystemFromSource: async (sourceId, options) => {
+    const scope = captureNodeScope(get, sourceId);
     const st = get();
     const source = st.nodes.find((n) => Number(n.id) === Number(sourceId));
     if (!source || source.type !== "sourceimport") return null;
     const data = source.data as SourceImportNodeData;
     if (!data.blocks?.length) {
-      get().setStatus(sourceId, "Source не содержит блоков — сначала импорт", "err");
+      if (scope.owns()) get().setStatus(sourceId, "Source не содержит блоков — сначала импорт", "err");
       return null;
     }
     const node = get().addNode("designsystem", source.position.x + 380, source.position.y);
     const dsId = Number(node.id);
     get().connect({ node: sourceId, port: "artifact" }, { node: dsId, port: "artifact" });
-    get().setStatus(dsId, "Собираю UI Kit из Source…");
-    get().setBusy(dsId, true);
+    if (scope.owns()) get().setStatus(dsId, "Собираю UI Kit из Source…");
+    if (scope.owns()) get().setBusy(dsId, true);
     try {
-      const resp = await fetch("/api/design-system/build", {
+      const resp = await scope.wait(fetch("/api/design-system/build", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3253,104 +3559,107 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           name: options?.name || `UI Kit · ${data.url || "Source"}`,
           capturedAt: String((data as SourceImportNodeData & { capturedAt?: string }).capturedAt || ""),
         }),
-      });
-      const result = await resp.json();
+      }));
+      const result = await scope.wait(resp.json());
       if (result.error) {
-        get().setStatus(dsId, "Ошибка: " + result.error, "err");
+        if (scope.owns()) get().setStatus(dsId, "Ошибка: " + result.error, "err");
         get().deleteNode(dsId);
         return null;
       }
-      get().setNodeData(dsId, {
+      if (scope.owns()) get().setNodeData(dsId, {
         systemId: result.document.id, name: result.document.name, status: "draft",
         revision: 0, summary: result.summary, sourceNodeId: sourceId,
         defaultSet: false, sourceUpdate: false,
         document: result.document, autoPublish: true, _sourceFingerprint: sourceKitFingerprint(data),
       } as unknown as Partial<DesignSystemNodeData>);
-      const reviewMasters = Number(result.summary?.reviewMasters || 0);
-      if (reviewMasters) get().setStatus(dsId, `Черновик: ${reviewMasters} мастеров ждут ревью`, "ok");
-      else if ((get().nodes.find((x) => Number(x.id) === dsId)?.data as DesignSystemNodeData | undefined)?.autoPublish !== false) {
-        await get().publishDesignSystem(dsId);
-      } else get().setStatus(dsId, `Черновик готов: ${result.summary.components} компонентов · ${result.summary.variants} вариантов`, "ok");
+      if (scope.owns()) {
+        get().setBusy(dsId, false);
+        await scope.wait(get().finishDesignSystem(dsId));
+      }
       return dsId;
     } catch (e) {
-      get().setStatus(dsId, "Ошибка: " + (e instanceof Error ? e.message : String(e)), "err");
+      if (!scope.owns()) return null;
+      if (scope.owns()) get().setStatus(dsId, "Ошибка: " + (e instanceof Error ? e.message : String(e)), "err");
       return null;
     } finally {
-      get().setBusy(dsId, false);
+      if (scope.owns()) get().setBusy(dsId, false);
     }
   },
 
   importDesignSystemDocument: async (nodeId, payload, fileName) => {
+    const scope = captureNodeScope(get, nodeId);
     const node = get().nodes.find((n) => Number(n.id) === Number(nodeId));
     if (!node || node.type !== "designsystem") return false;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      get().setStatus(nodeId, "Файл не JSON-объект: нужен документ DesignDNA, W3C/Tokens Studio JSON или карта токенов", "err");
+      if (scope.owns()) get().setStatus(nodeId, "Файл не JSON-объект: нужен документ DesignDNA, W3C/Tokens Studio JSON или карта токенов", "err");
       return false;
     }
-    get().setStatus(nodeId, `Загружаю дизайн-систему из ${fileName || "файла"}…`);
-    get().setBusy(nodeId, true);
+    if (scope.owns()) get().setStatus(nodeId, `Загружаю дизайн-систему из ${fileName || "файла"}…`);
+    if (scope.owns()) get().setBusy(nodeId, true);
     try {
-      const resp = await fetch("/api/design-system/import", {
+      const resp = await scope.wait(fetch("/api/design-system/import", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ payload, fileName, name: "" }),
-      });
-      const result = await resp.json();
+      }));
+      const result = await scope.wait(resp.json());
       if (!resp.ok || result.error || !result.document) throw new Error(result.error || `HTTP ${resp.status}`);
-      get().setNodeData(nodeId, {
+      if (scope.owns()) get().setNodeData(nodeId, {
         systemId: result.document.id, name: result.document.name, status: "draft",
         revision: 0, summary: result.summary, sourceNodeId: null,
         defaultSet: false, sourceUpdate: false, document: result.document, lastError: "",
       } as unknown as Partial<DesignSystemNodeData>);
       const count = Number(result.summary?.components || 0);
       const reviewMasters = Number(result.summary?.reviewMasters || 0);
-      if (reviewMasters) get().setStatus(nodeId, `Черновик: ${reviewMasters} мастеров ждут ревью`, "ok");
+      if (reviewMasters) if (scope.owns()) get().setStatus(nodeId, `Черновик: ${reviewMasters} мастеров ждут ревью`, "ok");
       else if ((get().nodes.find((x) => Number(x.id) === Number(nodeId))?.data as DesignSystemNodeData | undefined)?.autoPublish !== false) {
-        await get().publishDesignSystem(nodeId);
-      } else get().setStatus(nodeId, `ДС загружена (${result.format}): ${count} компонентов`, "ok");
-      await get().refreshDesignSystems();
+        await scope.wait(get().publishDesignSystem(nodeId));
+      } else if (scope.owns()) get().setStatus(nodeId, `ДС загружена (${result.format}): ${count} компонентов`, "ok");
+      await scope.wait(get().refreshDesignSystems());
       return true;
     } catch (e) {
+      if (!scope.owns()) return false;
       const message = e instanceof Error ? e.message : String(e);
-      get().setNodeData(nodeId, { lastError: message });
-      get().setStatus(nodeId, "Ошибка импорта: " + message, "err");
+      if (scope.owns()) get().setNodeData(nodeId, { lastError: message });
+      if (scope.owns()) get().setStatus(nodeId, "Ошибка импорта: " + message, "err");
       return false;
     } finally {
-      get().setBusy(nodeId, false);
+      if (scope.owns()) get().setBusy(nodeId, false);
     }
   },
 
   promoteVariantToDesignSystem: async (generatorId) => {
+    const scope = captureNodeScope(get, generatorId);
     const source = get().nodes.find((node) => Number(node.id) === Number(generatorId));
     if (!source || source.type !== "generator") return null;
     const data = source.data as GeneratorNodeData;
     const active = data.variants?.[data.active];
     if (!active) {
-      get().setStatus(generatorId, "Нет активного варианта для закрепления", "err");
+      if (scope.owns()) get().setStatus(generatorId, "Нет активного варианта для закрепления", "err");
       return null;
     }
-    get().setBusy(generatorId, true);
-    get().setStatus(generatorId, "Закрепляю identity как Design System…");
+    if (scope.owns()) get().setBusy(generatorId, true);
+    if (scope.owns()) get().setStatus(generatorId, "Закрепляю identity как Design System…");
     let createdId: number | null = null;
     try {
-      const resp = await fetch("/api/design-system/identity/promote", {
+      const resp = await scope.wait(fetch("/api/design-system/identity/promote", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: `Style · ${String(data.ownPrompt || "Generator").trim().slice(0, 48)}`,
           sourceNodeId: String(generatorId), ir: active, visualReferences: [],
         }),
-      });
-      const result = await resp.json();
+      }));
+      const result = await scope.wait(resp.json());
       if (!resp.ok || result.error || !result.document) throw new Error(result.error || `HTTP ${resp.status}`);
       const node = get().addNode("designsystem", source.position.x + 380, source.position.y + 120);
       createdId = Number(node.id);
-      get().setNodeData(createdId, {
+      if (scope.owns()) get().setNodeData(createdId, {
         systemId: result.document.id, name: result.document.name, status: "draft",
         revision: 0, summary: result.summary, sourceNodeId: generatorId,
         defaultSet: false, sourceUpdate: false, document: result.document,
       } as unknown as Partial<DesignSystemNodeData>);
-      get().setStatus(createdId, `Identity закреплена · ${result.summary.identitySignatures || 0} signatures · ${result.summary.identityTests || 0} tests`, "ok");
+      if (scope.owns()) get().setStatus(createdId, `Identity закреплена · ${result.summary.identitySignatures || 0} signatures · ${result.summary.identityTests || 0} tests`, "ok");
       const meta = (active as Record<string, any>).meta || {};
-      await fetch("/api/project/taste/outcome", {
+      await scope.wait(fetch("/api/project/taste/outcome", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kind: "promoted", payload: {
           systemId: result.document.id,
@@ -3358,17 +3667,18 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           archetypeId: meta.archetypeId || "",
           ruleIds: (result.document.identity?.signatures || []).map((item: any) => item.id),
         }}),
-      });
-      get().setStatus(generatorId, "Стиль закреплён в черновик Design System", "ok");
+      }));
+      if (scope.owns()) get().setStatus(generatorId, "Стиль закреплён в черновик Design System", "ok");
       return createdId;
     } catch (error) {
+      if (!scope.owns()) return null;
       if (createdId != null) get().deleteNode(createdId);
       const message = error instanceof Error ? error.message : String(error);
-      get().setStatus(generatorId, "Не удалось закрепить стиль: " + message, "err");
+      if (scope.owns()) get().setStatus(generatorId, "Не удалось закрепить стиль: " + message, "err");
       toast("Design Identity: " + message, "error");
       return null;
     } finally {
-      get().setBusy(generatorId, false);
+      if (scope.owns()) get().setBusy(generatorId, false);
     }
   },
 
@@ -3403,39 +3713,40 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   publishDesignSystem: async (nodeId) => {
+    const scope = captureNodeScope(get, nodeId);
     const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
     if (!n || n.type !== "designsystem") return false;
     const data = n.data as DesignSystemNodeData;
-    get().setBusy(nodeId, true);
-    get().setNodeData(nodeId, { busyAction: "publish", lastError: "" });
-    get().setStatus(nodeId, "Публикация ревизии…");
+    if (scope.owns()) get().setBusy(nodeId, true);
+    if (scope.owns()) get().setNodeData(nodeId, { busyAction: "publish", lastError: "" });
+    if (scope.owns()) get().setStatus(nodeId, "Публикация ревизии…");
     try {
       let document = (data.document || null) as Record<string, unknown> | null;
       if (!document && data.systemId) {
-        const resp = await fetch("/api/design-system/get", {
+        const resp = await scope.wait(fetch("/api/design-system/get", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ systemId: data.systemId, revision: 0 }),
-        });
-        const got = await resp.json();
+        }));
+        const got = await scope.wait(resp.json());
         document = got.document || null;
       }
       if (!document) {
-        get().setStatus(nodeId, "Нет документа для публикации", "err");
-        get().setNodeData(nodeId, { lastError: "Нет документа для публикации" });
+        if (scope.owns()) get().setStatus(nodeId, "Нет документа для публикации", "err");
+        if (scope.owns()) get().setNodeData(nodeId, { lastError: "Нет документа для публикации" });
         return false;
       }
-      const pub = await fetch("/api/design-system/publish", {
+      const pub = await scope.wait(fetch("/api/design-system/publish", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ document }),
-      });
-      const result = await pub.json();
+      }));
+      const result = await scope.wait(pub.json());
       if (result.errors?.length || result.error) {
         const message = result.errors?.[0]?.message || result.error || "публикация блокирована";
-        get().setStatus(nodeId, `Публикация блокирована: ${message}`, "err");
-        get().setNodeData(nodeId, { lastError: message });
+        if (scope.owns()) get().setStatus(nodeId, `Публикация блокирована: ${message}`, "err");
+        if (scope.owns()) get().setNodeData(nodeId, { lastError: message });
         return false;
       }
-      get().setNodeData(nodeId, {
+      if (scope.owns()) get().setNodeData(nodeId, {
         status: "published",
         revision: result.document.revision,
         summary: result.summary,
@@ -3448,38 +3759,40 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         document: null,
         lastError: "",
       });
-      get().setStatus(nodeId, `Опубликовано v${result.document.revision}${result.duplicate ? " (без изменений)" : ""}`, "ok");
-      get().propagate(nodeId);
-      await get().refreshDesignSystems();
+      if (scope.owns()) get().setStatus(nodeId, `Опубликовано v${result.document.revision}${result.duplicate ? " (без изменений)" : ""}`, "ok");
+      if (scope.owns()) get().propagate(nodeId);
+      await scope.wait(get().refreshDesignSystems());
       return true;
     } catch (e) {
+      if (!scope.owns()) return false;
       const message = e instanceof Error ? e.message : String(e);
-      get().setStatus(nodeId, "Ошибка: " + message, "err");
-      get().setNodeData(nodeId, { lastError: message });
+      if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + message, "err");
+      if (scope.owns()) get().setNodeData(nodeId, { lastError: message });
       return false;
     } finally {
-      get().setBusy(nodeId, false);
-      get().setNodeData(nodeId, { busyAction: "" });
+      if (scope.owns()) get().setBusy(nodeId, false);
+      if (scope.owns()) get().setNodeData(nodeId, { busyAction: "" });
     }
   },
 
   setDefaultDesignSystem: async (nodeId) => {
+    const scope = captureNodeScope(get, nodeId);
     const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
     if (!n || n.type !== "designsystem") return false;
     const data = n.data as DesignSystemNodeData;
     if (!data.systemId) return false;
-    get().setBusy(nodeId, true);
-    get().setNodeData(nodeId, { busyAction: "default", lastError: "" });
-    get().setStatus(nodeId, "Назначаю системой проекта…");
+    if (scope.owns()) get().setBusy(nodeId, true);
+    if (scope.owns()) get().setNodeData(nodeId, { busyAction: "default", lastError: "" });
+    if (scope.owns()) get().setStatus(nodeId, "Назначаю системой проекта…");
     try {
-      const resp = await fetch("/api/design-system/default", {
+      const resp = await scope.wait(fetch("/api/design-system/default", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ systemId: data.systemId }),
-      });
-      const result = await resp.json();
+      }));
+      const result = await scope.wait(resp.json());
       if (result.error) {
-        get().setStatus(nodeId, "Ошибка: " + result.error, "err");
-        get().setNodeData(nodeId, { lastError: result.error });
+        if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + result.error, "err");
+        if (scope.owns()) get().setNodeData(nodeId, { lastError: result.error });
         return false;
       }
       const selectedId = Number(nodeId);
@@ -3497,17 +3810,18 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           } as FlowNode;
         }),
       }));
-      await get().refreshDesignSystems();
-      get().setStatus(nodeId, "Назначена системой проекта по умолчанию", "ok");
+      await scope.wait(get().refreshDesignSystems());
+      if (scope.owns()) get().setStatus(nodeId, "Назначена системой проекта по умолчанию", "ok");
       return true;
     } catch (e) {
+      if (!scope.owns()) return false;
       const message = e instanceof Error ? e.message : String(e);
-      get().setStatus(nodeId, "Ошибка: " + message, "err");
-      get().setNodeData(nodeId, { lastError: message });
+      if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + message, "err");
+      if (scope.owns()) get().setNodeData(nodeId, { lastError: message });
       return false;
     } finally {
-      get().setBusy(nodeId, false);
-      get().setNodeData(nodeId, { busyAction: "" });
+      if (scope.owns()) get().setBusy(nodeId, false);
+      if (scope.owns()) get().setNodeData(nodeId, { busyAction: "" });
     }
   },
 
@@ -3592,8 +3906,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         document: result.document,
         lastError: "",
       });
-      buildStage("success", "Черновик пересобран из Source — проверьте и опубликуйте", true);
+      buildStage("success", "Черновик пересобран из Source", true);
       get().propagate(nodeId);
+      if (window.designDNA?.providers?.chatRequest) {
+        get().setBusy(nodeId, false);
+        get().setNodeData(nodeId, { busyAction: "" });
+        endRunAbort(nodeId, signal);
+        return await get().finishDesignSystem(nodeId);
+      }
       return true;
     } catch (e) {
       if (!ownsBuild()) return false;
@@ -3606,6 +3926,57 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         get().setBusy(nodeId, false);
         get().setNodeData(nodeId, { busyAction: "" });
       }
+    }
+  },
+
+  finishDesignSystem: async (nodeId) => {
+    const initial = get();
+    const node = initial.nodes.find((n) => Number(n.id) === nodeId);
+    if (!node || node.type !== "designsystem" || initial.busy[nodeId] || node.data._dsFinishing) return false;
+    if (node.data.sourceUpdate) return await get().rebuildDesignSystemFromSource(nodeId);
+    const selectedProvider = resolveDesignSystemAiProvider(initial.nodes, initial.edges, node);
+    const pageId = initial.activePageId;
+    const systemId = node.data.systemId;
+    const source = connectedDesignSystemSource(initial.nodes, initial.edges, node);
+    const fingerprint = source ? sourceKitFingerprint(source.data) : null;
+    const token = newRunId();
+    const current = () => get().nodes.find((n) => Number(n.id) === nodeId && n.type === "designsystem") as typeof node | undefined;
+    const owns = () => get().activePageId === pageId && current()?.data._dsFinishing === token;
+    const fresh = () => {
+      const live = current();
+      if (!owns() || !live || live.data.systemId !== systemId || live.data.sourceUpdate
+        || resolveDesignSystemAiProvider(get().nodes, get().edges, live) !== selectedProvider) return false;
+      const connected = connectedDesignSystemSource(get().nodes, get().edges, live);
+      return connected?.id === source?.id && (connected ? sourceKitFingerprint(connected.data) : null) === fingerprint;
+    };
+    get().setNodeData(nodeId, { _dsFinishing: token });
+    try {
+      for (const operation of ["organize", "style-review", "master-review"] as const) {
+        if (!fresh()) return false;
+        if (operation !== "master-review" && current()?.data.pipelineStatus?.[operation]?.status === "success") continue;
+        // Each pass reviews, safely repairs and verifies all visible viewports.
+        // Accepted masters leave the review pool and remain pinned on later passes.
+        const attempts = operation === "master-review" ? 3 : 2;
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          const result = await get().runDesignSystemAi(nodeId, operation);
+          if (!fresh()) return false;
+          if (!result) {
+            if (current()?.data._dsAiRetryable && attempt + 1 < attempts) continue;
+            return false;
+          }
+          if (current()?.data.pipelineStatus?.[operation]?.status === "success") break;
+          if (operation !== "master-review" || result.results?.some((item) => item.supported === false || item.error)) return false;
+        }
+        if (current()?.data.pipelineStatus?.[operation]?.status !== "success") return false;
+      }
+      if (!fresh()) return false;
+      const data = current()!.data;
+      if (Number(data.summary?.reviewMasters || 0) || Object.keys(data.document?.reviewComponents || {}).length) return false;
+      if (data.autoPublish !== false) return await get().publishDesignSystem(nodeId);
+      get().setStatus(nodeId, "UI Kit готов · проверки пройдены", "ok");
+      return true;
+    } finally {
+      if (owns()) get().setNodeData(nodeId, { _dsFinishing: null });
     }
   },
 
@@ -3659,27 +4030,28 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   restorePublishedDesignSystem: async (nodeId, ref) => {
+    const scope = captureNodeScope(get, nodeId);
     const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
     if (!n || n.type !== "designsystem") return false;
     const data = n.data as DesignSystemNodeData;
     const systemId = String(ref?.systemId || data.systemId || "");
     const revision = Number(ref?.revision || data.revision || 0);
     if (!systemId) {
-      get().setNodeData(nodeId, { lastError: "Нет опубликованной ревизии для восстановления" });
+      if (scope.owns()) get().setNodeData(nodeId, { lastError: "Нет опубликованной ревизии для восстановления" });
       return false;
     }
     try {
-      const resp = await fetch("/api/design-system/restore-published", {
+      const resp = await scope.wait(fetch("/api/design-system/restore-published", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ systemId, revision }),
-      });
-      const result = await resp.json();
+      }));
+      const result = await scope.wait(resp.json());
       if (result.error || !result.document) {
-        get().setNodeData(nodeId, { lastError: result.error || "Не удалось восстановить опубликованную ревизию" });
-        get().setStatus(nodeId, "Ошибка: " + (result.error || "restore failed"), "err");
+        if (scope.owns()) get().setNodeData(nodeId, { lastError: result.error || "Не удалось восстановить опубликованную ревизию" });
+        if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + (result.error || "restore failed"), "err");
         return false;
       }
-      get().setNodeData(nodeId, {
+      if (scope.owns()) get().setNodeData(nodeId, {
         document: null,
         resolvedTokens: outValue({ ...n, data: { ...data, document: result.document } } as FlowNode, "tokens"),
         contentHash: result.document.contentHash || "",
@@ -3688,13 +4060,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         revision: result.document.revision,
         lastError: "",
       });
-      get().propagate(nodeId);
-      await get().refreshDesignSystems();
+      if (scope.owns()) get().propagate(nodeId);
+      await scope.wait(get().refreshDesignSystems());
       return true;
     } catch (e) {
+      if (!scope.owns()) return false;
       const message = e instanceof Error ? e.message : String(e);
-      get().setNodeData(nodeId, { lastError: message });
-      get().setStatus(nodeId, "Ошибка: " + message, "err");
+      if (scope.owns()) get().setNodeData(nodeId, { lastError: message });
+      if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + message, "err");
       return false;
     }
   },
@@ -3746,6 +4119,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   createPage: (name) => {
+    leaveGraph();
     const st = get();
     const id = pageId();
     const nextIndex = st.pages.length + 1;
@@ -3765,6 +4139,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       view: page.view,
       nextId: page.nextId,
       statuses: {},
+      statusLog: {},
       busy: {},
       progresses: {},
       graphHistory: EMPTY_GRAPH_HISTORY,
@@ -3774,6 +4149,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   /* Start an isolated video workspace from the selected assembled page.
    * A snapshot preserves the original graph; no import, generation or paid job starts. */
   addVideoChainPage: (options) => {
+    leaveGraph();
     const assembled = get().nodes.filter((node) => node.type === "page" && node.data.ir);
     const selected = assembled.filter((node) => node.selected);
     const source = selected.length === 1 ? selected[0] : assembled.length === 1 ? assembled[0] : null;
@@ -3806,6 +4182,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       view: page.view,
       nextId: page.nextId,
       statuses: {},
+      statusLog: {},
       busy: {},
       progresses: {},
       graphHistory: EMPTY_GRAPH_HISTORY,
@@ -3817,8 +4194,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   switchPage: (id) => {
     const st = get();
-    if (id === st.activePageId) return;
-    const pages = withCurrentPageSaved(st);
+    if (id === st.activePageId || !st.pages.some(page => page.id === id)) return;
+    leaveGraph();
+    const pages = withCurrentPageSaved(get());
     const page = pages.find((p) => p.id === id);
     if (!page) return;
     set({
@@ -3829,6 +4207,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       view: page.view,
       nextId: page.nextId,
       statuses: {},
+      statusLog: {},
       busy: {},
       progresses: {},
       graphHistory: EMPTY_GRAPH_HISTORY,
@@ -3850,8 +4229,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   deletePage: (id) => {
     const st = get();
-    if (st.pages.length <= 1) return;
-    const pages = withCurrentPageSaved(st).filter((page) => page.id !== id);
+    if (st.pages.length <= 1 || !st.pages.some(page => page.id === id)) return;
+    leaveGraph();
+    const pages = withCurrentPageSaved(get()).filter((page) => page.id !== id);
     const next = pages.find((page) => page.id === st.activePageId) || pages[0];
     set({
       pages,
@@ -3861,6 +4241,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       view: next.view,
       nextId: next.nextId,
       statuses: {},
+      statusLog: {},
       busy: {},
       progresses: {},
       graphHistory: EMPTY_GRAPH_HISTORY,
@@ -3901,6 +4282,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       nextId: activePage.nextId,
       channels: project.channels,
       statuses: {},
+      statusLog: {},
       busy: {},
       progresses: {},
       graphHistory: EMPTY_GRAPH_HISTORY,
@@ -3940,7 +4322,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         // Preserve runtime ownership only for this exact DS revision and Source.
         preserved.add(Number(incoming.id));
         return { ...incoming, data: { ...b, document: a.document ?? b.document,
-          _dsAiRun: a._dsAiRun, _dsSave: a._dsSave, busyAction: a.busyAction,
+          _dsAiRun: a._dsAiRun, _dsAiRetryable: a._dsAiRetryable, _dsSave: a._dsSave, _dsFinishing: a._dsFinishing, busyAction: a.busyAction,
           pipelineStatus: a.pipelineStatus, lastError: a.lastError, sourceUpdate: a.sourceUpdate } } as FlowNode;
       }
       if (live.type === "sourceimport" && incoming.type === "sourceimport"
@@ -3952,6 +4334,13 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       }
       return incoming;
     });
+    for (const node of current.nodes) {
+      const id = Number(node.id);
+      if (!preserved.has(id)) {
+        nodeLifetimes.set(id, (nodeLifetimes.get(id) || 0) + 1);
+        runAborts.get(id)?.abort();
+      }
+    }
     const keepRuntime = <T>(values: Record<number, T>) => Object.fromEntries(Object.entries(values).filter(([id]) => preserved.has(Number(id))));
     set({
       pages: project.pages.map((page) => page.id === activePage.id ? { ...page, nodes } : page),
@@ -3962,6 +4351,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       nextId: activePage.nextId,
       channels: project.channels,
       statuses: keepRuntime(current.statuses),
+      statusLog: keepRuntime(current.statusLog),
       busy: keepRuntime(current.busy),
       progresses: keepRuntime(current.progresses),
       graphHistory: EMPTY_GRAPH_HISTORY,
@@ -4022,3 +4412,19 @@ useFlowStore.subscribe((state, prev) => {
 
 // AI-ассист редактора читает registry дизайн-систем отсюда (§16.2)
 if (typeof window !== "undefined") (window as unknown as { __flowStore?: unknown }).__flowStore = useFlowStore;
+
+// FileReader callbacks outlive inspectors and sheets. Capture the target at selection
+// time and let the most recently selected file win even if reads finish out of order.
+const nodeUploadTokens = new Map<number, symbol>();
+export function captureNodeUpload(id: number) {
+  const scope = captureNodeScope(useFlowStore.getState, id);
+  const token = Symbol('node-upload');
+  nodeUploadTokens.set(id, token);
+  return (patch: Record<string, unknown>) => {
+    if (!scope.owns() || nodeUploadTokens.get(id) !== token) return false;
+    nodeUploadTokens.delete(id);
+    useFlowStore.getState().setNodeData(id, patch);
+    useFlowStore.getState().propagate(id);
+    return true;
+  };
+}

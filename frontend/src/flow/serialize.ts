@@ -44,6 +44,8 @@ export const NODE_TYPES: NodeType[] = [
   "timeline",
   "pagebridge",
   "designsystem",
+  "image",
+  "removebackground",
 ];
 
 /* Р—РµСЂРєР°Р»Рѕ stripHeavy (nodes.js:1161-1172): РїСЂРё РєРІРѕС‚Рµ РІС‹РєРёРґС‹РІР°РµРј base64/data-URL
@@ -414,7 +416,7 @@ export function makeRfEdge(
 
 function dataForStorage(type: NodeType, data: AnyNodeData): AnyNodeData {
   if (type === "designsystem") {
-    const { document, busyAction: _busy, _dsAiRun: _run, _dsSave: _save, ...persistent } = data as DesignSystemNodeData;
+    const { document, busyAction: _busy, _dsAiRun: _run, _dsSave: _save, _dsFinishing: _finish, _dsAiRetryable: _retryable, ...persistent } = data as DesignSystemNodeData;
     // The DS backend owns canonical documents and their master/source pins.
     // Project migration must see only the reference, never nested master IR.
     // Retain a never-saved local document until it has a backend systemId.
@@ -436,6 +438,8 @@ function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
   const defaults = defaultData(type) as Record<string, unknown>;
   const saved = data as Record<string, unknown>;
   const merged = { ...defaults, ...saved };
+  // Existing image nodes were SVG-only; do not change their generation engine.
+  if (type === "image" && saved.engine == null) merged.engine = "svg";
   // Older documents can contain only part of a node or its settings.
   for (const key of ["settings", "composition", "renderSettings", "mask"]) {
     if (defaults[key] && typeof defaults[key] === "object") {
@@ -472,7 +476,10 @@ function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
     if (!("importedUrl" in (data as object)) && source.blocks.length > 0) source.importedUrl = source.url;
     return source;
   }
-  if (type === "designsystem") return { ...defaultData("designsystem"), ...data } as AnyNodeData;
+  if (type === "designsystem") {
+    const { _dsFinishing: _finish, _dsAiRetryable: _retryable, ...persistent } = data as DesignSystemNodeData;
+    return { ...defaultData("designsystem"), ...persistent } as AnyNodeData;
+  }
   return data;
 }
 

@@ -382,7 +382,7 @@ def _render_block_png_impl(page, ir: dict, viewport_name: str, width: int, heigh
         page.add_style_tag(content=inline_fonts)
     page.evaluate(
         "(args) => { const container = document.querySelector('#preview');"
-        " window.IRRenderer.renderIR(container, args.ir, {viewport: args.viewport, fit: false});"
+        " window.IRRenderer.renderIR(container, args.ir, {viewport: args.viewport, fit: false, offline: true});"
         " window.IRRenderer.fitPreview(container); }",
         {"ir": ir, "viewport": viewport_name})
     page.wait_for_selector('[data-ir-sec="0"]', timeout=5000)

@@ -54,6 +54,7 @@ test("provider router migrates a retired selection to Sol medium", async () => {
   let passed;
   const result = await chatWithProvider({
     provider: "glm",
+    gptTransport: "openai",
     messages: [{ role: "user", content: "hello" }],
     credentials,
     openaiChat: async ({ envelope }) => {

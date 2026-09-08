@@ -1,7 +1,7 @@
 """Server-owned, staged DS prompts for subscription desktop chat; no LLM calls.
 
 Include ``router`` in the application once. POST prepare accepts document,
-operation (organize/style-review/master-review), provider (codex/claude),
+operation (organize/style-review/master-review), selected desktop provider,
 reasoningEffort and repair. Send every ready task's messages to desktop chat.
 POST apply accepts prepareId, documentHash, the current document and responses
 [{taskId, output: raw JSON string}]. It saves a draft and returns document,
@@ -47,7 +47,7 @@ class PrepareRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     document: dict
     operation: Literal["organize", "style-review", "master-review"]
-    provider: Literal["codex", "claude"]
+    provider: Literal["codex", "claude", "openai", "astra"]
     reasoningEffort: Literal["medium", "high", "max"] = "high"
     repair: bool = True
 
@@ -410,7 +410,7 @@ def _visual_tasks(document: dict, stage: str, components: dict, *, render=None, 
                             ])
                     else:
                         messages = _vision_messages(master_review.REVIEW_SYSTEM,
-                            master_review.build_prompt(comp, viewport), original, png)
+                            master_review.build_prompt(comp, viewport, include_capture_metrics=False), original, png)
                     task.update(status="ready", messages=messages, reason=None)
                 except Exception as exc:
                     task["reason"] = f"{type(exc).__name__}: {str(exc)[:240]}"
@@ -495,8 +495,12 @@ def _apply_verdict(document: dict, key: str, verdict: dict, provider: str) -> No
         return
     if verdict["approved"] and key in (document.get("components") or {}):
         raise ValueError(f"Promotion would overwrite existing component {key}")
+    previous = (comp.get("fidelity") or {}).get("aiReview") or {}
+    rejected = previous.get("rejected") or previous.get("previousRepairRejections") or []
     master_review.apply_verdict(document, key, verdict, provider=provider, viewport="all")
     comp["fidelity"]["aiReview"].update(viewports=copy.deepcopy(verdict["viewports"]), transport="desktop-chat")
+    if rejected and not verdict["approved"]:
+        comp["fidelity"]["aiReview"]["previousRepairRejections"] = [str(reason)[:400] for reason in rejected[:8]]
 
 
 def _safe_candidate(document: dict, comp: dict, operations: list[dict], render=None, *, renderer_context=None) -> dict:
@@ -542,6 +546,22 @@ def _task_output(state: dict, task: dict, raw: str):
         comp = state["document"]["reviewComponents"][task["componentKey"]]
         clean = master_repair.validate_operations(value, comp["masterIr"])
         if len(clean) != len(raw_ops):
+            seen = set()
+            for index, op in enumerate(raw_ops):
+                signature = (op["sourceKey"], op["property"])
+                valid = master_repair.validate_operations({"operations": [op]}, comp["masterIr"])
+                if signature in seen or not valid:
+                    node = next((n for n in master_repair._walk(comp["masterIr"].get("tree", []))
+                                 if n.get("sourceKey") == op["sourceKey"]), {})
+                    frame = node.get("frame") or {}
+                    measured = {k: frame[k] for k in ("x", "y", "width", "height", "gap", "padding") if k in frame}
+                    reason = "duplicate" if signature in seen else "unsupported or out-of-bounds"
+                    raise ValueError(
+                        f"operations[{index}] is {reason}: sourceKey={str(op['sourceKey'])[:70]}, "
+                        f"property={op['property']}, value={json.dumps(op['value'])[:60]}. "
+                        f"Current frame: {json.dumps(measured)}. "
+                        "Correct this operation within the supplied bounds, or omit it; return the complete operations array.")
+                seen.add(signature)
             raise ValueError("Repair contains unsupported, duplicate or out-of-bounds operations")
         return clean
     return value

@@ -287,3 +287,28 @@ def _render_document(
                     context.close()
             finally:
                 browser.close()
+
+
+def render_svg_png(svg: str, width: int, height: int) -> bytes:
+    """PNG из самодостаточного SVG (нода «Изображение»). Сеть закрыта: внешние
+    ресурсы SVG не нужны и не разрешены; фон прозрачный (иконки)."""
+    html = (
+        "<!doctype html><html><head><meta charset='utf-8'><style>html,body{margin:0;background:transparent}"
+        f"svg{{display:block;width:{int(width)}px;height:{int(height)}px}}</style></head><body>{svg}</body></html>"
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(
+                viewport={"width": int(width), "height": int(height)}, device_scale_factor=1,
+                java_script_enabled=False, service_workers="block")
+            context.route("**/*", lambda route: route.abort())
+            page = context.new_page()
+            page.set_content(html, wait_until="load")
+            page.wait_for_timeout(150)
+            return page.screenshot(
+                type="png", omit_background=True, animations="disabled",
+                clip={"x": 0, "y": 0, "width": int(width), "height": int(height)},
+            )
+        finally:
+            browser.close()

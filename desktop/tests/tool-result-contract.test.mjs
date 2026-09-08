@@ -72,7 +72,7 @@ test("AgentWorkspace keeps every provider and connection control inside the desk
   const { readFileSync } = await import("node:fs");
   const css = readFileSync(new URL("../../frontend/src/desktop/agent-workspace.css", import.meta.url), "utf-8");
   assert.match(css, /\.agent-sidebar\s*\{[^}]*overflow-x:\s*hidden/s, "the sidebar must never hide controls behind horizontal scrolling");
-  assert.match(css, /\.agent-backend\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s, "provider controls must wrap into a bounded grid");
+  assert.match(css, /\.agent-backend\s*\{[^}]*grid-template-columns:\s*repeat\([23],\s*minmax\(0,\s*1fr\)\)/s, "provider controls must wrap into a bounded grid");
   assert.match(css, /\.agent-connections\s*\{[^}]*display:\s*grid/s, "connection fields must use a one-dimensional form layout");
   assert.match(css, /\.agent-connections input,[\s\S]*?width:\s*100%/s, "credential inputs must stay within the sidebar width");
   assert.match(css, /@media \(max-width:\s*900px\)[\s\S]*?\.agent-sidebar\s*\{[^}]*display:\s*flex/s, "small desktop windows must keep the agent settings reachable");

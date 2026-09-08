@@ -1,0 +1,206 @@
+"""Playwright-тест выделения нод на канвасе Svelte Flow и клавиатурного удаления.
+
+Регрессия: клик (и drag) по ноде не давал ей класс `selected` — эффект
+«zustand → канвас» в FlowCanvas.svelte реактивно читал связанный массив и
+откатывал его к массиву стора раньше зеркала «канвас → zustand». Из-за этого
+deleteKey (Delete/Backspace) не имел цели, а путь syncFromCanvas → undoGraph
+был недостижим с клавиатуры.
+
+Проверяет: клик → selected (DOM и стор); Delete → нода и её рёбра удалены;
+Ctrl+Z → вернулись; Backspace → удалена; клик по пустому канвасу снимает
+выделение; выделение переживает drag; Backspace в textarea ноды не удаляет её.
+
+Нужен запущенный сервер: .venv/Scripts/python app/server.py (порт 8420)
+Запуск: .venv/Scripts/python app/ui_flow_selection_test.py
+"""
+from __future__ import annotations
+
+import sys
+import time
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+from playwright.sync_api import sync_playwright
+
+BASE = "http://127.0.0.1:8420"
+FAILS: list[str] = []
+
+
+def check(name: str, ok: bool, detail: str = "") -> None:
+    print(("[OK ] " if ok else "[FAIL] ") + name + (f" — {detail}" if detail and not ok else ""))
+    if not ok:
+        FAILS.append(name)
+
+
+def node_sel(node_id: int) -> str:
+    return f'.svelte-flow__node[data-id="{node_id}"]'
+
+
+def dom_selected(pg, node_id: int) -> bool:
+    return bool(pg.evaluate(
+        "sel => !!document.querySelector(sel)?.classList.contains('selected')", node_sel(node_id),
+    ))
+
+
+def store_selected(pg, node_id: int):
+    return pg.evaluate(
+        "id => window.__flowStore.getState().nodes.find(n => n.id === String(id))?.selected ?? null",
+        node_id,
+    )
+
+
+def graph_counts(pg) -> tuple[int, int]:
+    st = pg.evaluate("window.GraphDev.state()")
+    return len(st["nodes"]), len(st["edges"])
+
+
+def head_center(pg, node_id: int) -> tuple[float, float]:
+    box = pg.locator(node_sel(node_id) + " .node-head").bounding_box()
+    assert box, f"node {node_id} not rendered"
+    return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+
+def click_node(pg, node_id: int) -> None:
+    x, y = head_center(pg, node_id)
+    pg.mouse.click(x, y)
+    pg.wait_for_timeout(150)
+
+
+def empty_pane_point(pg) -> tuple[float, float]:
+    """Точка, где под курсором сама подложка канваса (не нода, не MiniMap/панели):
+    Svelte Flow снимает выделение только если event.target === pane."""
+    pane = pg.locator(".svelte-flow__pane").bounding_box()
+    assert pane
+    for fx, fy in ((0.5, 0.9), (0.15, 0.9), (0.85, 0.15), (0.5, 0.5), (0.1, 0.5), (0.9, 0.5)):
+        x, y = pane["x"] + pane["width"] * fx, pane["y"] + pane["height"] * fy
+        hit = pg.evaluate(
+            "([x, y]) => document.elementFromPoint(x, y)?.classList.contains('svelte-flow__pane') === true",
+            [x, y],
+        )
+        if hit:
+            return x, y
+    raise AssertionError("no empty pane point found")
+
+
+def main() -> None:
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        pg = browser.new_page(viewport={"width": 1600, "height": 950})
+        pg.route(
+            "**/api/project/load",
+            lambda route: route.fulfill(status=200, content_type="application/json",
+                                        body='{"project":null,"updated_at":null}'),
+        )
+        pg.route(
+            "**/api/project/save",
+            lambda route: route.fulfill(status=200, content_type="application/json", body='{"ok":true}'),
+        )
+        errors: list[str] = []
+        pg.on("pageerror", lambda error: errors.append(str(error)))
+        for _ in range(30):
+            try:
+                pg.goto(BASE + "/flow", timeout=2000)
+                break
+            except Exception:
+                time.sleep(1)
+        else:
+            print("server not ready")
+            sys.exit(1)
+        pg.wait_for_selector(".svelte-flow__pane")
+        pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")
+        pg.evaluate("window.GraphDev.clear()")
+        pg.wait_for_timeout(200)
+
+        # ---------- клик → selected ----------
+        gen_id = pg.evaluate("window.GraphDev.add('generator', 560, 120).id")
+        prompt_id = pg.evaluate("window.GraphDev.add('prompt', 120, 120).id")
+        pg.evaluate("([a, b]) => window.GraphDev.connect(a, 'out', b, 'prompt')", [prompt_id, gen_id])
+        pg.wait_for_selector(node_sel(gen_id))
+        pg.wait_for_selector(node_sel(prompt_id))
+        pg.wait_for_timeout(300)
+        check("граф собран: 2 ноды, 1 ребро", graph_counts(pg) == (2, 1), str(graph_counts(pg)))
+        check("до клика нода не выделена", not dom_selected(pg, gen_id))
+
+        click_node(pg, gen_id)
+        check("клик → .svelte-flow__node.selected", dom_selected(pg, gen_id))
+        check("клик → node.selected === true в сторе", store_selected(pg, gen_id) is True)
+        check("другая нода не выделена", not dom_selected(pg, prompt_id))
+
+        # ---------- Delete → удалена, Ctrl+Z → вернулась ----------
+        pg.keyboard.press("Delete")
+        pg.wait_for_timeout(250)
+        check("Delete удалил выделенную ноду и её ребро", graph_counts(pg) == (1, 0), str(graph_counts(pg)))
+        check("DOM ноды исчез", pg.locator(node_sel(gen_id)).count() == 0)
+
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(250)
+        check("Ctrl+Z вернул ноду и ребро", graph_counts(pg) == (2, 1), str(graph_counts(pg)))
+        pg.wait_for_selector(node_sel(gen_id))
+        check("DOM ноды вернулся", pg.locator(node_sel(gen_id)).count() == 1)
+
+        # ---------- Backspace тоже удаляет ----------
+        click_node(pg, gen_id)
+        check("повторный клик → selected", dom_selected(pg, gen_id))
+        pg.keyboard.press("Backspace")
+        pg.wait_for_timeout(250)
+        check("Backspace удалил выделенную ноду", graph_counts(pg) == (1, 0), str(graph_counts(pg)))
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(250)
+        check("Ctrl+Z после Backspace вернул граф", graph_counts(pg) == (2, 1), str(graph_counts(pg)))
+        pg.wait_for_selector(node_sel(gen_id))
+
+        # ---------- клик по пустому канвасу снимает выделение ----------
+        click_node(pg, gen_id)
+        check("выделено перед кликом по канвасу", dom_selected(pg, gen_id))
+        pg.mouse.click(*empty_pane_point(pg))
+        pg.wait_for_timeout(200)
+        check("клик по пустому канвасу снял выделение (DOM)", not dom_selected(pg, gen_id))
+        check("клик по пустому канвасу снял выделение (стор)", store_selected(pg, gen_id) is not True)
+        pg.keyboard.press("Delete")
+        pg.wait_for_timeout(200)
+        check("Delete без выделения ничего не удаляет", graph_counts(pg) == (2, 1), str(graph_counts(pg)))
+
+        # ---------- drag: нода остаётся выделенной после dragstop ----------
+        before = pg.evaluate("id => window.GraphDev.node(id)", gen_id)
+        x, y = head_center(pg, gen_id)
+        pg.mouse.move(x, y)
+        pg.mouse.down()
+        pg.mouse.move(x + 120, y + 60, steps=12)
+        pg.mouse.up()
+        pg.wait_for_timeout(300)
+        after = pg.evaluate("id => window.GraphDev.node(id)", gen_id)
+        check("drag сместил ноду в сторе", (after["x"], after["y"]) != (before["x"], before["y"]),
+              f"{before} -> {after}")
+        check("после drag нода остаётся выделенной (DOM)", dom_selected(pg, gen_id))
+        check("после drag нода выделена в сторе", store_selected(pg, gen_id) is True)
+        pg.keyboard.press("Delete")
+        pg.wait_for_timeout(250)
+        check("Delete после drag удаляет ноду", graph_counts(pg) == (1, 0), str(graph_counts(pg)))
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(250)
+        check("Ctrl+Z после удаления перетащенной ноды", graph_counts(pg) == (2, 1), str(graph_counts(pg)))
+        pg.wait_for_selector(node_sel(gen_id))
+
+        # ---------- Backspace в поле ввода ноды не удаляет ноду ----------
+        click_node(pg, prompt_id)
+        check("промпт-нода выделена", dom_selected(pg, prompt_id))
+        pg.fill(".n-prompt .f-text", "abc")
+        pg.locator(".n-prompt .f-text").press("Backspace")
+        pg.wait_for_timeout(200)
+        check("Backspace в textarea не удаляет ноду", graph_counts(pg) == (2, 1), str(graph_counts(pg)))
+        check("текст в textarea отредактирован", pg.input_value(".n-prompt .f-text") == "ab")
+
+        check("нет ошибок страницы", not errors, "; ".join(errors)[:300])
+        browser.close()
+
+    if FAILS:
+        print(f"\nFAILED: {len(FAILS)}")
+        for name in FAILS:
+            print(" -", name)
+        sys.exit(1)
+    print("\nFLOW SELECTION PASSED")
+
+
+if __name__ == "__main__":
+    main()

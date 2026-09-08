@@ -6,25 +6,25 @@
   /* Дизайн-токены shadcn/ui, перенастроенные на палитру дизайн-хендоффа
    * design_handoff_node_editor (тёмная тема Rsale Design System). */
   :root {
-    --background: 240 9% 4.3%; /* #0A0A0C */
-    --foreground: 240 5% 96.3%; /* #F5F5F6 */
-    --card: 240 9% 8.2%; /* #131317 */
-    --card-foreground: 240 5% 96.3%;
-    --popover: 240 8% 7%;
-    --popover-foreground: 240 5% 96.3%;
+    --background: 240 4% 8.6%; /* #151517 */
+    --foreground: 240 7% 93%; /* #ECECEF */
+    --card: 240 6% 13.7%; /* #212125 */
+    --card-foreground: 240 7% 93%;
+    --popover: 240 5% 11%; /* #1B1B1E */
+    --popover-foreground: 240 7% 93%;
     --primary: 22 100% 56%; /* #FF691D */
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 8% 10%; /* #17171B */
-    --secondary-foreground: 240 5% 96.3%;
-    --muted: 240 8% 10%;
-    --muted-foreground: 240 4% 63%; /* #9A9AA3 */
-    --accent: 240 10% 14%;
-    --accent-foreground: 240 5% 96.3%;
-    --destructive: 343 76% 55%; /* #E5305C */
+    --secondary: 240 5% 11%;
+    --secondary-foreground: 240 7% 93%;
+    --muted: 240 5% 11%;
+    --muted-foreground: 240 4% 58%; /* #8F8F99 */
+    --accent: 240 6% 18%;
+    --accent-foreground: 240 7% 93%;
+    --destructive: 347 90% 60%; /* #F43F5E */
     --destructive-foreground: 0 0% 98%;
-    --border: 245 8% 16.3%; /* #26262D */
-    --input: 245 8% 16.3%;
-    --ring: 263 100% 68%; /* #9B5CFF */
+    --border: 240 7% 18%; /* #2A2A30 */
+    --input: 240 7% 18%;
+    --ring: 240 7% 93%; /* белое кольцо фокуса вместо фиолетового */
     --radius: 0.5rem;
   }
 
@@ -38,75 +38,119 @@
     height: 100%;
   }
 
+  html {
+    /* Нативные контролы (select, date, скроллбары) и их выпадающие списки —
+     * в тёмной схеме, иначе Chromium рисует белый список с тёмным текстом. */
+    color-scheme: dark;
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     font-family: "Manrope Variable", Manrope, "Inter", sans-serif;
     font-weight: 500;
   }
+
+  /* Базовый вид select/input там, где компонент не задал свой: тёмное поле,
+   * читаемый текст. Специфичные стили (.fnode, .dna-insp, редакторы) выше. */
+  select,
+  input[type="text"],
+  input[type="number"],
+  input[type="url"],
+  input[type="password"],
+  input[type="search"],
+  textarea {
+    color: var(--dna-text, #ececef);
+    background-color: var(--dna-sunken, #121214);
+    border: 1px solid var(--dna-border, #2a2a30);
+    border-radius: 8px;
+    padding: 6px 9px;
+    font-family: inherit;
+    font-size: 12px;
+  }
+  select option {
+    color: var(--dna-text, #ececef);
+    background-color: var(--dna-panel, #1b1b1e);
+  }
 }
 
-/* ---------- палитра дизайн-хендоффа ---------- */
+/* ---------- палитра: нейтральная база (Weavy), цвет только у типов данных ---------- */
 :root {
-  --dna-bg: #0a0a0c;
-  --dna-panel: #0d0d10;
-  --dna-panel-2: #101013;
-  --dna-node: #131317;
-  --dna-sunken: #0e0e11;
-  --dna-elevated: #17171b;
-  --dna-hover: #1f1f26;
-  --dna-hover-2: #212127;
-  --dna-border: #26262d;
-  --dna-border-soft: #1f1f26;
-  --dna-border-strong: #33333c;
-  --dna-text: #f5f5f6;
-  --dna-text-2: #c9c9d0;
-  --dna-text-3: #d5d5da;
-  --dna-muted: #9a9aa3;
-  --dna-muted-2: #a0a0a8;
-  --dna-dim: #8a8a93;
-  --dna-faint: #7e7e88;
-  --dna-faint-2: #6e6e78;
+  --dna-bg: #151517;
+  --dna-panel: #1b1b1e;
+  --dna-panel-2: #18181b;
+  --dna-node: #212125;
+  --dna-sunken: #121214;
+  --dna-elevated: #26262b;
+  --dna-hover: #2b2b31;
+  --dna-hover-2: #313138;
+  --dna-border: #2a2a30;
+  --dna-border-soft: #232328;
+  --dna-border-strong: #36363e;
+  --dna-text: #ececef;
+  --dna-text-2: #b9b9c2;
+  --dna-text-3: #cfcfd6;
+  --dna-muted: #8f8f99;
+  --dna-muted-2: #9a9aa3;
+  --dna-dim: #6b6b75;
+  --dna-faint: #5c5c66;
+  --dna-faint-2: #52525c;
+  /* Единственный акцент интерфейса — primary-кнопка «Запустить» */
   --dna-action: #ff691d;
-  --dna-action-h: #ff864d;
+  --dna-action-h: #ff7d3b;
   --dna-action-text: #ffb183;
-  --dna-violet: #7018e6;
+  /* Фиолетовый остаётся цветом типа IR, а не цветом интерфейса */
+  --dna-violet: #7c3aed;
   --dna-violet-l: #9b5cff;
   --dna-violet-text: #c7a6ff;
   --dna-violet-text-2: #b98cff;
-  --dna-success: #22c55e;
-  --dna-success-text: #7ee2a4;
+  --dna-success: #4ade80;
+  --dna-success-text: #86efac;
   --dna-amber: #f5a623;
-  --dna-danger: #e5305c;
-  --dna-danger-text: #f58ba5;
+  --dna-danger: #f43f5e;
+  --dna-danger-text: #fb7185;
   --dna-motion: #e05fb0;
-  --dna-motion-text: #f191ce;
   --dna-artifact: #35b8a0;
   --dna-interaction: #2fbf9f;
+  /* Активное состояние (док, вкладки, сегменты) — белая плитка */
+  --dna-active-bg: #ececef;
+  --dna-active-fg: #151517;
+  /* Форма, тень, движение */
+  --r-node: 12px;
+  --r-panel: 14px;
+  --r-ctl: 8px;
+  --shadow-node: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 12px 32px rgba(0, 0, 0, 0.45);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur: 140ms;
 
-  /* Легаси-переменные нодового графа — переведены на новую палитру, чтобы
-   * старые классы (recorder, reskin, quality pass, bp-*) перекрасились сами. */
-  --flow-panel: #131317;
-  --flow-panel-2: #0e0e11;
-  --flow-panel-3: #17171b;
-  --flow-border: #26262d;
-  --flow-border-soft: #1f1f26;
-  --flow-text: #f5f5f6;
-  --flow-muted: #9a9aa3;
-  --flow-accent: #9b5cff;
-  --flow-accent-h: #b98cff;
-  --flow-ok: #7ee2a4;
-  --flow-err: #f58ba5;
+  /* Легаси-переменные нодового графа — на новую палитру, чтобы старые
+   * классы (recorder, reskin, quality pass, bp-*) перекрасились сами. */
+  --flow-panel: var(--dna-node);
+  --flow-panel-2: var(--dna-sunken);
+  --flow-panel-3: var(--dna-elevated);
+  --flow-surface-2: var(--dna-sunken);
+  --flow-border: var(--dna-border);
+  --flow-border-soft: var(--dna-border-soft);
+  --flow-text: var(--dna-text);
+  --flow-muted: var(--dna-muted);
+  --flow-accent: var(--dna-text);
+  --flow-accent-h: var(--dna-text-2);
+  --flow-ok: var(--dna-success-text);
+  --flow-err: var(--dna-danger-text);
   --flow-wire-text: #8a8a93;
   --flow-wire-tokens: #ff691d;
 }
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur: 0ms; }
+}
 
-/* глобальный скроллбар — зеркало прототипа */
+/* глобальный скроллбар */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2e2e37;
+  background: var(--dna-border-strong);
   border-radius: 999px;
 }
 ::-webkit-scrollbar-track {
@@ -121,14 +165,13 @@
 @keyframes dnaPulse {
   0%,
   100% {
-    opacity: 0.35;
+    opacity: 0.45;
   }
   50% {
     opacity: 1;
   }
 }
 
-/* React Flow: attribution не должен спорить с тёмной темой */
 .svelte-flow__attribution {
   background: transparent;
 }
@@ -136,109 +179,518 @@
   color: var(--dna-faint);
 }
 
-/* ---------- каркас приложения: топбар 56px + полоса контекста 52px ---------- */
+/* ---------- каркас: канвас на весь экран, рельса 56px, плавающие карточки ---------- */
 .dna-app {
+  --tb: 0px;
+  position: relative;
   height: 100%;
-  min-width: 1180px;
-  display: flex;
-  flex-direction: column;
+  min-width: 960px;
   background: var(--dna-bg);
   color: var(--dna-text);
   user-select: none;
+  overflow: hidden;
 }
-.dna-scroll {
-  height: 100%;
-  overflow: auto;
+/* Десктоп: своя полоса заголовка 36px (системная скрыта, кнопки окна — overlay ОС) */
+.dna-app.desktop {
+  --tb: 36px;
 }
-
-.dna-topbar {
-  height: 56px;
-  flex: none;
+.dna-titlebar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 26;
+  height: var(--tb);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
-  background: var(--dna-panel-2);
+  gap: 8px;
+  padding: 0 140px 0 16px; /* справа — место под кнопки окна */
+  background: var(--dna-panel);
   border-bottom: 1px solid var(--dna-border-soft);
+  -webkit-app-region: drag;
+  app-region: drag;
 }
-.dna-topbar-group {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  white-space: nowrap;
+.dna-titlebar .tb-name {
+  font: 700 12px/1 "Manrope Variable", Manrope, sans-serif;
+  letter-spacing: -0.01em;
+  color: var(--dna-text-2);
 }
-.dna-logo-badge {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: linear-gradient(140deg, #ff691d, #7018e6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
-  color: #fff;
-}
-.dna-logo-name {
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-.dna-version-pill {
-  margin-left: 6px;
-  padding: 3px 9px;
+.dna-titlebar .tb-badge {
+  padding: 2px 7px;
   border-radius: 999px;
-  background: var(--dna-elevated);
   border: 1px solid var(--dna-border);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--dna-dim);
 }
-.dna-seg {
+/* Оверлеи редакторов рендерятся в body (portal) — сдвигаем под полосу */
+html[data-desktop] .dna-editor,
+html[data-desktop] .tlw-root,
+html[data-desktop] .motion-workspace {
+  top: 36px !important;
+}
+.dna-scroll {
+  height: 100%;
+  overflow: hidden;
+}
+.dna-canvas {
+  position: absolute;
+  inset: var(--tb) 0 0 56px;
+  background: var(--dna-bg);
+}
+/* Project Map / Agents — поверхности справа от рельсы */
+.dna-surface {
+  position: absolute;
+  inset: var(--tb) 0 0 56px;
+  overflow: auto;
+  background: var(--dna-bg);
+}
+
+/* рельса */
+.dna-rail {
+  position: absolute;
+  left: 0;
+  top: var(--tb);
+  bottom: 0;
+  z-index: 20;
+  width: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 0 8px;
+  background: var(--dna-panel);
+  border-right: 1px solid var(--dna-border-soft);
+}
+.rail-logo {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: var(--dna-text);
+  color: var(--dna-bg);
+  display: grid;
+  place-items: center;
+  font: 800 13px/1 "Manrope Variable", Manrope, sans-serif;
+  flex: none;
+}
+.rail-btn {
+  position: relative;
+  width: 52px;
+  height: 50px;
   flex: none;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 4px;
-  padding: 4px;
-  background: var(--dna-elevated);
-  border: 1px solid var(--dna-border);
-  border-radius: 999px;
-  white-space: nowrap;
-}
-.dna-seg button {
-  padding: 7px 18px;
-  border-radius: 999px;
   border: 0;
+  border-radius: 8px;
   background: transparent;
   color: var(--dna-muted);
-  font-size: 13px;
-  font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  font: 600 9.5px/1 "Manrope Variable", Manrope, sans-serif;
+  letter-spacing: 0.01em;
+  transition: color var(--dur) var(--ease);
 }
-.dna-seg button:hover {
-  background: var(--dna-hover-2);
+.rail-btn .rail-ic {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.rail-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.rail-btn:hover {
   color: var(--dna-text);
 }
-.dna-seg button.active {
+.rail-btn:hover .rail-ic {
+  background: var(--dna-hover);
+}
+.rail-btn.active {
+  color: var(--dna-text);
+}
+.rail-btn.active .rail-ic {
+  background: var(--dna-active-bg);
+  color: var(--dna-active-fg);
+}
+.rail-btn:focus-visible {
+  outline: 2px solid var(--dna-text);
+  outline-offset: -2px;
+}
+.rail-btn kbd {
+  position: absolute;
+  right: 6px;
+  top: 5px;
+  font: 600 8px/1 "Manrope Variable", Manrope, sans-serif;
+  color: var(--dna-faint);
+}
+.rail-sep {
+  width: 28px;
+  height: 1px;
+  margin: 6px 0;
+  flex: none;
+  background: var(--dna-border-strong);
+}
+.rail-spacer {
+  flex: 1;
+}
+.rail-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--dna-elevated);
+  border: 1px solid var(--dna-border-strong);
+  color: var(--dna-text-2);
+  display: grid;
+  place-items: center;
+  font: 700 11px/1 "Manrope Variable", Manrope, sans-serif;
+  margin-top: 6px;
+}
+
+/* плавающие карточки */
+.float-card {
+  position: absolute;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--r-panel);
+  background: var(--dna-panel);
+  border: 1px solid var(--dna-border);
+  box-shadow: var(--shadow-panel);
+  white-space: nowrap;
+}
+.float-card.tl {
+  left: 70px;
+  top: calc(var(--tb) + 14px);
+}
+.float-card.tr {
+  right: 14px;
+  top: calc(var(--tb) + 14px);
+}
+.pc-name {
+  padding: 4px 4px 4px 6px;
+  font: 700 13px/1.2 "Manrope Variable", Manrope, sans-serif;
+  letter-spacing: -0.01em;
+  color: var(--dna-text);
+}
+.pc-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--dna-sunken);
+  border: 1px solid var(--dna-border);
+  color: var(--dna-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.pc-vsep {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--dna-border);
+}
+.pc-page {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dna-text-2);
+  font: 600 12px/1.2 "Manrope Variable", Manrope, sans-serif;
+  cursor: pointer;
+  max-width: 260px;
+}
+.pc-page:hover,
+.pc-page[aria-expanded="true"] {
+  background: var(--dna-hover);
+  color: var(--dna-text);
+}
+.pc-page .pc-page-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pc-page .count {
+  color: var(--dna-dim);
+  font-variant-numeric: tabular-nums;
+}
+.pc-page .chev {
+  color: var(--dna-dim);
+  font-size: 9px;
+}
+.pc-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  min-width: 250px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--dna-panel);
+  border: 1px solid var(--dna-border);
+  box-shadow: var(--shadow-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: normal;
+}
+.pc-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dna-text-2);
+  font: 600 12px/1.2 "Manrope Variable", Manrope, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.pc-item:hover,
+.pc-item:focus-visible {
+  background: var(--dna-hover);
+  color: var(--dna-text);
+  outline: none;
+}
+.pc-item.active {
+  color: var(--dna-text);
+}
+.pc-item .dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 2px;
+  background: var(--dna-border-strong);
+}
+.pc-item.active .dot {
   background: var(--dna-text);
+}
+.pc-item .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-item .count {
+  color: var(--dna-dim);
+  font-variant-numeric: tabular-nums;
+}
+.pc-item .x {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dna-dim);
+  opacity: 0;
+  cursor: pointer;
+  font-size: 11px;
+}
+.pc-item:hover .x {
+  opacity: 1;
+}
+.pc-item .x:hover {
+  color: var(--dna-danger-text);
+  background: color-mix(in srgb, var(--dna-danger), transparent 88%);
+}
+.pc-item .x:disabled {
+  visibility: hidden;
+}
+.pc-item input {
+  flex: 1;
+  min-width: 0;
+  background: var(--dna-sunken);
+  border: 1px solid var(--dna-border-strong);
+  border-radius: 6px;
+  color: var(--dna-text);
+  padding: 3px 6px;
+  font: inherit;
+  outline: none;
+}
+.pc-item.add {
+  color: var(--dna-muted);
+}
+.pc-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--dna-border-soft);
+}
+.pc-save {
+  position: absolute;
+  left: 76px;
+  top: calc(var(--tb) + 60px);
+  z-index: 14;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--dna-dim);
+  white-space: nowrap;
+}
+
+/* правая карточка: статус движка, экспорт, очередь задач */
+.sc-btn {
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--dna-border);
+  background: transparent;
+  color: var(--dna-text-2);
+  font: 600 12px/1.2 "Manrope Variable", Manrope, sans-serif;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.sc-btn:hover {
+  background: var(--dna-hover);
+  color: var(--dna-text);
+}
+.sc-btn.primary {
+  background: var(--dna-text);
+  border-color: var(--dna-text);
   color: var(--dna-bg);
   font-weight: 700;
 }
-.dna-avatar {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  background: linear-gradient(140deg, #7018e6, #ff691d);
-  font-size: 12px;
-  font-weight: 700;
+.sc-btn.primary:hover {
+  background: #fff;
+}
+.sc-btn:focus-visible {
+  outline: 2px solid var(--dna-text);
+  outline-offset: 2px;
+}
+.sc-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--dna-panel);
+  border: 1px solid var(--dna-border);
+  box-shadow: var(--shadow-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sc-tasks {
+  position: absolute;
+  right: 14px;
+  top: calc(var(--tb) + 60px);
+  z-index: 15;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+.sc-tasks-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: #fff;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dna-muted);
+  font: 600 11.5px/1.2 "Manrope Variable", Manrope, sans-serif;
+  cursor: pointer;
+}
+.sc-tasks-head:hover {
+  color: var(--dna-text);
+  background: var(--dna-panel);
+}
+.sc-tasks-head .n {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dna-action), transparent 84%);
+  color: var(--dna-action-text);
+  font-variant-numeric: tabular-nums;
+}
+.sc-tasks-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.task-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 3px 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--dna-panel);
+  border: 1px solid var(--dna-border);
+  box-shadow: var(--shadow-panel);
+}
+.task-row b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 700 12px/1.2 "Manrope Variable", Manrope, sans-serif;
+}
+.task-row span {
+  grid-column: 1;
+  color: var(--dna-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-row .task-bar {
+  grid-column: 1 / -1;
+  height: 2px;
+  margin-top: 3px;
+  border-radius: 999px;
+  background: var(--dna-sunken);
+  overflow: hidden;
+  position: relative;
+}
+.task-row .task-bar i {
+  display: block;
+  height: 100%;
+  background: var(--dna-action);
+  transition: width 0.45s ease;
+}
+.task-row .task-bar.indeterminate i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  animation: n-progress-slide 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.task-x {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dna-dim);
+  cursor: pointer;
+}
+.task-x:hover {
+  color: var(--dna-danger-text);
+  background: color-mix(in srgb, var(--dna-danger), transparent 88%);
 }
 
-/* Badge (зеркало Rsale Badge): tone задаётся инлайном через --badge-tone */
+/* Badge (tone задаётся инлайном через --badge-tone) */
 .dna-badge {
   --badge-tone: #8a8a93;
   display: inline-flex;
@@ -259,176 +711,37 @@
   padding: 4px 11px;
   font-size: 11.5px;
 }
-
-/* полоса контекста */
-.dna-strip {
-  height: 52px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
-  background: var(--dna-panel);
-  border-bottom: 1px solid var(--dna-border-soft);
-}
-.dna-strip-left {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-.dna-strip-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.dna-collapse {
-  width: 28px;
-  height: 28px;
-  flex: none;
-  border-radius: 8px;
-  background: #151519;
-  border: 1px solid var(--dna-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
+.dna-panel-cap {
+  font-size: 10px;
   font-weight: 700;
-  color: var(--dna-muted);
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.dna-collapse:hover {
-  background: var(--dna-hover);
-  color: var(--dna-text);
-}
-.dna-strip-title {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-.dna-vsep {
-  width: 1px;
-  height: 18px;
-  background: var(--dna-border);
-}
-.dna-hints {
-  flex: none;
-  display: flex;
-  gap: 6px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dna-dim);
   white-space: nowrap;
-}
-.dna-hint-chip {
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: #151519;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--dna-faint);
-}
-.dna-cache-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(255, 105, 29, 0.1);
-  border: 1px solid rgba(255, 105, 29, 0.22);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--dna-action-text);
-  white-space: nowrap;
-}
-.dna-zoom {
-  display: flex;
-  align-items: center;
-  background: #151519;
-  border: 1px solid var(--dna-border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.dna-zoom button {
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
-.dna-zoom .dna-zoom-step {
-  width: 30px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--dna-muted);
-  font-size: 16px;
-  font-weight: 700;
-}
-.dna-zoom .dna-zoom-step:hover {
-  background: var(--dna-hover);
-  color: #fff;
-}
-.dna-zoom-pct {
-  min-width: 52px;
-  text-align: center;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--dna-text-3);
-  font-variant-numeric: tabular-nums;
-}
-.dna-zoom .dna-zoom-fit {
-  padding: 0 12px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  border-left: 1px solid var(--dna-border);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--dna-muted);
-}
-.dna-zoom .dna-zoom-fit:hover {
-  background: var(--dna-hover);
-  color: #fff;
-}
-.dna-tools {
-  display: flex;
-  gap: 6px;
-}
-.dna-tool-btn {
-  padding: 8px 14px;
-  border-radius: 8px;
-  background: #151519;
-  border: 1px solid var(--dna-border);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--dna-text-2);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s ease;
-}
-.dna-tool-btn:hover {
-  background: var(--dna-hover);
 }
 
-/* primary CTA — Rsale Button primary */
+/* кнопки */
 .dna-btn-primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 9px 16px;
+  padding: 8px 14px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--r-ctl);
   background: var(--dna-action);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
   color: #fff;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s ease;
+  transition: background var(--dur) var(--ease);
 }
 .dna-btn-primary:hover {
   background: var(--dna-action-h);
 }
 .dna-btn-primary:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: default;
 }
 .dna-btn-ghost {
@@ -436,306 +749,77 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 9px 16px;
-  border-radius: 9px;
-  background: var(--dna-elevated);
+  padding: 8px 14px;
+  border-radius: var(--r-ctl);
+  background: transparent;
   border: 1px solid var(--dna-border);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--dna-text-2);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s ease;
+  transition: background var(--dur) var(--ease);
 }
 .dna-btn-ghost:hover {
-  background: var(--dna-hover-2);
+  background: var(--dna-hover);
+  color: var(--dna-text);
 }
 .dna-btn-ghost:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
-/* Button variant sell — фиолетовый (Rsale) */
 .dna-btn-sell {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 9px 16px;
+  padding: 8px 14px;
   border: 0;
-  border-radius: 9px;
-  background: var(--dna-violet);
-  font-size: 12.5px;
+  border-radius: var(--r-ctl);
+  background: var(--dna-text);
+  font-size: 12px;
   font-weight: 700;
-  color: #fff;
+  color: var(--dna-bg);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s ease, filter 0.15s ease;
+  transition: filter var(--dur) var(--ease);
 }
 .dna-btn-sell:hover {
-  filter: brightness(1.15);
+  filter: brightness(1.08);
 }
 
-.dna-body {
-  flex: 1;
+/* ---------- плавающий инспектор 300px — только при выделении ---------- */
+.dna-insp {
+  position: absolute;
+  z-index: 14;
+  right: 14px;
+  top: calc(var(--tb) + 74px);
+  max-height: calc(100% - var(--tb) - 74px - 84px);
+  width: 300px;
   display: flex;
-  min-height: 0;
-}
-
-/* ---------- левая панель: страницы, bridge channels, Design IR ---------- */
-.dna-left {
-  width: 264px;
-  flex: none;
+  flex-direction: column;
+  border-radius: var(--r-panel);
   background: var(--dna-panel);
-  border-right: 1px solid var(--dna-border-soft);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-  transition: width 0.18s ease;
-}
-.dna-left.closed {
-  width: 0;
-  border-right: none;
+  border: 1px solid var(--dna-border);
+  box-shadow: var(--shadow-panel);
   overflow: hidden;
+  user-select: text;
 }
-.dna-left-head {
-  padding: 18px 16px 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.dna-panel-cap {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--dna-faint);
-  white-space: nowrap;
-}
-.dna-left-cap {
-  padding: 22px 16px 10px;
-}
-.dna-chip-sm {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--dna-elevated);
-  border: 1px solid var(--dna-border);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--dna-text-2);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s ease;
-}
-.dna-chip-sm:hover {
-  background: var(--dna-hover-2);
-}
-.dna-left-list {
-  padding: 0 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.dna-page-card {
-  position: relative;
-  padding: 11px 12px;
-  border-radius: 10px;
-  background: var(--dna-elevated);
-  border: 1px solid var(--dna-border);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  transition: background 0.15s ease;
-}
-.dna-page-card:hover {
-  background: #1d1d22;
-}
-.dna-page-card.active {
-  background: rgba(112, 24, 230, 0.14);
-  border-color: rgba(155, 92, 255, 0.4);
-}
-.dna-page-main {
-  min-width: 0;
-  flex: 1;
+.dna-insp-head {
   display: flex;
   align-items: center;
   gap: 9px;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  text-align: left;
-}
-.dna-page-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 2px;
-  background: #4a4a55;
-}
-.dna-page-card.active .dna-page-dot {
-  background: var(--dna-violet-l);
-}
-.dna-page-name {
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--dna-text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dna-page-card.active .dna-page-name {
-  font-weight: 700;
-  color: var(--dna-text);
-}
-.dna-page-count {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--dna-faint-2);
-  flex: none;
-}
-.dna-page-card.active .dna-page-count {
-  font-weight: 700;
-  color: var(--dna-violet-text-2);
-}
-.dna-page-x {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: transparent;
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-}
-.dna-page-card:hover .dna-page-x {
-  color: var(--dna-faint);
-}
-.dna-page-x:hover {
-  color: var(--dna-danger-text);
-  background: rgba(229, 48, 92, 0.12);
-}
-.dna-page-x:disabled {
-  visibility: hidden;
-}
-.dna-page-rename {
-  width: 100%;
-  min-width: 0;
-  border: 1px solid rgba(155, 92, 255, 0.4);
-  border-radius: 6px;
-  background: var(--dna-sunken);
-  color: var(--dna-text);
-  padding: 2px 6px;
-  font-size: 13px;
-  font-weight: 600;
-  outline: none;
-}
-.dna-bridge-row {
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: #121216;
-  border: 1px solid var(--dna-border-soft);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.dna-bridge-main {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.dna-bridge-ic {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  border-radius: 4px;
-  font-size: 9px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dna-bridge-ic.send {
-  background: rgba(255, 105, 29, 0.18);
-  color: #ff9a5e;
-}
-.dna-bridge-ic.recv {
-  background: rgba(155, 92, 255, 0.18);
-  color: var(--dna-violet-text-2);
-}
-.dna-bridge-name {
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--dna-text-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dna-bridge-empty {
-  padding: 2px 4px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--dna-dim);
-  line-height: 1.5;
-  text-wrap: pretty;
-}
-.dna-ir-card {
-  margin: auto 12px 14px;
-  padding: 13px 14px;
-  border-radius: 12px;
-  background: linear-gradient(150deg, rgba(112, 24, 230, 0.2), rgba(255, 105, 29, 0.1));
-  border: 1px solid #2a2233;
-}
-.dna-ir-card strong {
-  display: block;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--dna-text);
-  margin-bottom: 5px;
-}
-.dna-ir-card p {
-  margin: 0;
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--dna-muted);
-  line-height: 1.5;
-  text-wrap: pretty;
-}
-
-/* ---------- инспектор справа 312px ---------- */
-.dna-insp {
-  width: 312px;
-  flex: none;
-  background: var(--dna-panel);
-  border-left: 1px solid var(--dna-border-soft);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-}
-.dna-insp-head {
-  padding: 16px 16px 13px;
+  padding: 12px 10px 10px 14px;
   border-bottom: 1px solid var(--dna-border-soft);
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 .dna-insp-icon {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   flex: none;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border-radius: 6px;
+  font: 800 11px/1 "Manrope Variable", Manrope, sans-serif;
+  display: grid;
+  place-items: center;
 }
 .dna-insp-title {
   flex: 1;
@@ -743,7 +827,7 @@
 }
 .dna-insp-title strong {
   display: block;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: -0.01em;
   white-space: nowrap;
@@ -752,65 +836,113 @@
 }
 .dna-insp-title small {
   display: block;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
-  color: var(--dna-faint-2);
+  color: var(--dna-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.dna-insp-close {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dna-dim);
+  cursor: pointer;
+  font-size: 12px;
+}
+.dna-insp-close:hover {
+  background: var(--dna-hover);
+  color: var(--dna-text);
+}
+.n-badge {
+  flex: none;
+  max-width: 110px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--dna-sunken);
+  color: var(--dna-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.n-badge.run {
+  background: color-mix(in srgb, var(--dna-action), transparent 86%);
+  color: var(--dna-action-text);
+  animation: dnaPulse 2s ease-in-out infinite;
+}
+.n-badge.ok {
+  background: color-mix(in srgb, var(--dna-success), transparent 86%);
+  color: var(--dna-success-text);
+}
+.n-badge.err {
+  background: color-mix(in srgb, var(--dna-danger), transparent 86%);
+  color: var(--dna-danger-text);
+}
 .dna-insp-tabs {
   display: flex;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: 2px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--dna-border-soft);
 }
 .dna-insp-tab {
   flex: 1;
-  text-align: center;
-  padding: 6px 0;
+  padding: 5px 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   font-size: 11.5px;
   font-weight: 600;
-  color: var(--dna-faint);
+  color: var(--dna-muted);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .dna-insp-tab:hover {
-  background: var(--dna-elevated);
-}
-.dna-insp-tab.active {
-  background: #1d1d22;
-  font-weight: 700;
+  background: var(--dna-hover);
   color: var(--dna-text);
 }
+.dna-insp-tab.active {
+  background: var(--dna-active-bg);
+  color: var(--dna-active-fg);
+  font-weight: 700;
+}
+.dna-insp-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .dna-insp-fields {
-  padding: 14px 16px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 .dna-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
+  min-width: 0;
 }
 .dna-field-cap {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--dna-dim);
 }
 .dna-field-value {
-  padding: 9px 11px;
-  border-radius: 8px;
-  background: #121216;
+  padding: 8px 10px;
+  border-radius: var(--r-ctl);
+  background: var(--dna-sunken);
   border: 1px solid var(--dna-border);
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--dna-text-3);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dna-text-2);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -822,66 +954,109 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dna-field-chevron {
-  color: var(--dna-dim);
-  font-size: 10px;
-  flex: none;
-}
-.dna-lastrun {
-  margin: 0 16px 14px;
-  padding: 13px 14px;
-  border-radius: 12px;
-  background: #121216;
-  border: 1px solid var(--dna-border-soft);
-}
-.dna-lastrun-cap {
+.dna-field-hint {
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
   color: var(--dna-dim);
-  margin-bottom: 9px;
+  line-height: 1.45;
 }
-.dna-lastrun-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
+.dna-insp select,
+.dna-insp input[type="text"],
+.dna-insp input[type="number"],
+.dna-insp input[type="url"],
+.dna-insp textarea {
+  width: 100%;
+  min-width: 0;
+  background: var(--dna-sunken);
+  border: 1px solid var(--dna-border);
+  color: var(--dna-text);
+  border-radius: var(--r-ctl);
+  padding: 7px 9px;
+  font: 500 12px "Manrope Variable", Manrope, sans-serif;
+  outline: none;
+  box-shadow: none;
 }
-.dna-lastrun-row {
+.dna-insp textarea {
+  min-height: 72px;
+  resize: vertical;
+  line-height: 1.45;
+}
+.dna-insp select:focus-visible,
+.dna-insp input:focus-visible,
+.dna-insp textarea:focus-visible {
+  border-color: var(--dna-text-2);
+}
+.dna-insp-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.dna-insp-row.three {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+.dna-insp-check {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--dna-text-2);
+  cursor: pointer;
 }
-.dna-lastrun-row > span:first-child {
-  color: var(--dna-dim);
+.dna-insp-check input {
+  accent-color: var(--dna-text);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
 }
-.dna-lastrun-row .good {
-  color: var(--dna-success-text);
+.dna-insp-seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--dna-border);
+  border-radius: 9px;
+  background: var(--dna-sunken);
+}
+.dna-insp-seg button {
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 6px;
+  background: transparent;
+  color: var(--dna-muted);
+  font: 600 11.5px "Manrope Variable", Manrope, sans-serif;
+  cursor: pointer;
+}
+.dna-insp-seg button:hover {
+  color: var(--dna-text);
+}
+.dna-insp-seg button.active {
+  background: var(--dna-active-bg);
+  color: var(--dna-active-fg);
+  font-weight: 700;
 }
 .dna-insp-actions {
-  margin-top: auto;
-  padding: 14px 16px;
+  padding: 10px 12px;
   border-top: 1px solid var(--dna-border-soft);
   display: flex;
   gap: 8px;
 }
 .dna-insp-actions > * {
   flex: 1;
-  padding: 11px 0;
+  padding: 9px 0;
 }
 .dna-insp-empty {
-  padding: 24px 16px;
+  padding: 20px 14px;
   font-size: 12px;
   font-weight: 500;
   color: var(--dna-dim);
-  line-height: 1.55;
+  line-height: 1.5;
   text-wrap: pretty;
 }
 .dna-insp-log {
-  padding: 9px 11px;
-  border-radius: 8px;
-  background: #121216;
+  padding: 8px 10px;
+  border-radius: var(--r-ctl);
+  background: var(--dna-sunken);
   border: 1px solid var(--dna-border);
   font-size: 11.5px;
   font-weight: 500;
@@ -890,22 +1065,29 @@
   overflow-wrap: anywhere;
 }
 .dna-insp-log.err {
-  border-color: rgba(229, 48, 92, 0.28);
-  background: rgba(229, 48, 92, 0.1);
+  border-color: color-mix(in srgb, var(--dna-danger), transparent 70%);
+  background: color-mix(in srgb, var(--dna-danger), transparent 90%);
   color: var(--dna-danger-text);
+}
+.dna-insp-log-time {
+  display: inline-block;
+  min-width: 62px;
+  margin-right: 6px;
+  color: var(--dna-faint);
+  font-variant-numeric: tabular-nums;
 }
 .dna-out-row {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 9px 11px;
-  border-radius: 8px;
-  background: #121216;
+  padding: 8px 10px;
+  border-radius: var(--r-ctl);
+  background: var(--dna-sunken);
   border: 1px solid var(--dna-border);
 }
 .dna-out-dot {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   flex: none;
   border-radius: 999px;
 }
@@ -914,7 +1096,7 @@
   min-width: 0;
   font-size: 12px;
   font-weight: 600;
-  color: var(--dna-text-3);
+  color: var(--dna-text-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -922,61 +1104,90 @@
 .dna-out-kind {
   font-size: 10px;
   font-weight: 700;
-  color: var(--dna-faint);
+  color: var(--dna-dim);
+}
+.dna-lastrun {
+  margin: 0 14px 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--dna-sunken);
+  border: 1px solid var(--dna-border-soft);
+}
+.dna-lastrun-cap {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dna-dim);
+  margin-bottom: 7px;
+}
+.dna-lastrun-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.dna-lastrun-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.dna-lastrun-row > span:first-child {
+  color: var(--dna-dim);
+}
+.dna-lastrun-row .good {
+  color: var(--dna-success-text);
+}
+/* мультивыделение: компактная строка вместо панели */
+.dna-insp-multi {
+  position: absolute;
+  z-index: 14;
+  right: 14px;
+  top: calc(var(--tb) + 74px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-radius: var(--r-panel);
+  background: var(--dna-panel);
+  border: 1px solid var(--dna-border);
+  box-shadow: var(--shadow-panel);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dna-text-2);
 }
 
 /* ---------- канвас ---------- */
-.dna-canvas {
-  flex: 1;
-  min-width: 0;
-  position: relative;
-  background: var(--dna-bg);
-}
 .svelte-flow {
   background: var(--dna-bg) !important;
 }
-
-/* минимап 190×120 — правый нижний угол */
 .svelte-flow__minimap {
   width: 190px;
   border-radius: 12px;
   border: 1px solid var(--dna-border);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-panel);
   overflow: hidden;
-  margin: 0 16px 16px 0;
-}
-.dna-minimap-label {
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
-  width: 190px;
-  height: 120px;
-  border-radius: 12px;
-  pointer-events: none;
-  z-index: 6;
-}
-.dna-minimap-label::after {
-  content: "MINIMAP";
-  position: absolute;
-  left: 8px;
-  bottom: 6px;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--dna-faint);
+  margin: 0 14px 14px 0;
 }
 
-/* провода: сплошная дуга + бегущий пунктир */
+/* провода: тонкая дуга, цвет типа; пунктир бежит только пока источник занят */
 .dna-wire-solid {
   fill: none;
-  stroke-width: 1.8;
+  stroke-width: 1.5;
   stroke-linecap: round;
-  opacity: 0.75;
+  opacity: 0.55;
   vector-effect: non-scaling-stroke;
+  transition: opacity var(--dur) var(--ease), stroke-width var(--dur) var(--ease);
+}
+.svelte-flow__edge:hover .dna-wire-solid,
+.svelte-flow__edge.selected .dna-wire-solid {
+  stroke-width: 2;
+  opacity: 1;
 }
 .dna-wire-dash {
   fill: none;
-  stroke-width: 2.4;
+  stroke-width: 2.2;
   stroke-dasharray: 3 21;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
@@ -986,7 +1197,6 @@
   opacity: 1;
   animation: dnaFlow 1.2s linear infinite;
 }
-
 @media (prefers-reduced-motion: reduce) {
   .dna-wire-dash.wire-active {
     animation: none;
@@ -994,34 +1204,41 @@
   }
 }
 
-/* ---------- нода ---------- */
+/* ---------- нода: шапка 36px, тело-превью, футер ---------- */
 .fnode {
   --n-accent: #9b5cff;
   position: relative;
   background: var(--dna-node);
   border: 1px solid var(--dna-border);
-  border-radius: 14px;
-  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.42);
+  border-radius: var(--r-node);
+  box-shadow: var(--shadow-node);
   color: var(--dna-text);
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  transition: box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.fnode:hover {
+  border-color: var(--dna-border-strong);
 }
 .fnode.selected {
   border-color: var(--n-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-accent), transparent 85%), 0 14px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-accent), transparent 85%), var(--shadow-node);
 }
 .fnode.snap-target {
   border-color: var(--n-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-accent), transparent 78%), 0 14px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-accent), transparent 78%), var(--shadow-node);
 }
 .svelte-flow__node.dragging {
   will-change: transform;
 }
 .flow-hand-active .svelte-flow__pane,
 .flow-hand-active .svelte-flow__node,
-.flow-hand-active .node-head { cursor: grab; }
-.flow-hand-active .svelte-flow__pane.dragging { cursor: grabbing; }
+.flow-hand-active .node-head {
+  cursor: grab;
+}
+.flow-hand-active .svelte-flow__pane.dragging {
+  cursor: grabbing;
+}
 .svelte-flow__node.dragging .fnode {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.34);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   transition: none;
 }
 .flow-drag-active .svelte-flow__node:not(.dragging) .fnode {
@@ -1033,10 +1250,11 @@
 .node-head {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 12px 13px;
+  gap: 8px;
+  height: 36px;
+  padding: 0 6px 0 12px;
   border-bottom: 1px solid var(--dna-border-soft);
-  border-radius: 14px 14px 0 0;
+  border-radius: var(--r-node) var(--r-node) 0 0;
   background: transparent;
   cursor: grab;
 }
@@ -1044,100 +1262,324 @@
   cursor: grabbing;
 }
 .n-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--n-accent), transparent 86%);
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--n-accent), transparent 84%);
   border: 0;
   color: var(--n-accent);
-  font-size: 13px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
+  font: 800 10px/1 "Manrope Variable", Manrope, sans-serif;
+  display: inline-grid;
+  place-items: center;
   box-shadow: none;
 }
 .n-icon.wide {
-  font-size: 8.5px;
+  font-size: 7px;
   letter-spacing: 0.02em;
 }
 .n-head-main {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 .n-title {
   display: block;
+  min-width: 0;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
   letter-spacing: -0.01em;
   color: var(--dna-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* подзаголовок из NODE_DEFS остаётся в DOM (title/тултип), но не занимает место */
 .n-sub {
-  display: block;
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--dna-faint-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: none;
 }
-/* статус-бейдж в шапке: run — оранжевый, ok — зелёный, err — розовый, idle — серый */
-.n-badge {
+.n-dot {
+  width: 7px;
+  height: 7px;
   flex: none;
-  max-width: 96px;
-  padding: 3px 9px;
   border-radius: 999px;
-  background: var(--dna-elevated);
-  color: var(--dna-dim);
-  font-size: 10.5px;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  background: var(--dna-border-strong);
+  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
-.n-badge.run {
-  background: rgba(255, 105, 29, 0.14);
-  color: var(--dna-action-text);
-  animation: dnaPulse 2s ease-in-out infinite;
+.n-dot.ok {
+  background: var(--dna-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dna-success), transparent 82%);
 }
-.n-badge.ok {
-  background: rgba(34, 197, 94, 0.14);
-  color: var(--dna-success-text);
+.n-dot.err {
+  background: var(--dna-danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dna-danger), transparent 82%);
 }
-.n-badge.err {
-  background: rgba(229, 48, 92, 0.14);
-  color: var(--dna-danger-text);
+.n-dot.run {
+  background: var(--dna-action);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dna-action), transparent 82%);
+  animation: dnaPulse 1.6s ease-in-out infinite;
 }
 .n-x {
   flex: none;
-  border: none;
-  background: none;
-  color: var(--dna-faint);
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dna-dim);
   cursor: pointer;
   font-size: 11px;
-  padding: 2px 4px;
-  border-radius: 5px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.fnode:hover .n-x,
+.fnode.selected .n-x,
+.n-x:focus-visible {
+  opacity: 1;
 }
 .n-x:hover {
   color: var(--dna-danger-text);
-  background: rgba(229, 48, 92, 0.12);
+  background: color-mix(in srgb, var(--dna-danger), transparent 88%);
+}
+.n-more {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dna-muted);
+  cursor: pointer;
+  font: 700 14px/1 "Manrope Variable", Manrope, sans-serif;
+  letter-spacing: 1px;
+  padding: 0 0 4px;
+}
+.n-more:hover,
+.n-more[aria-expanded="true"] {
+  background: var(--dna-hover);
+  color: var(--dna-text);
 }
 .node-body {
-  padding: 12px 13px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+}
+.node-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--dna-border-soft);
+}
+.node-foot .foot-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dna-muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.node-foot .foot-left > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-foot .foot-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
 }
 
-/* типизированные строки тела ноды (дизайн-хендофф) */
+/* превью-герой: занимает тело, всё остальное подстраивается */
+.n-hero {
+  position: relative;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--dna-border);
+  background: var(--dna-sunken);
+  overflow: hidden;
+}
+.n-hero .ir-preview {
+  border-radius: 0;
+}
+.n-hero img,
+.n-hero video {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  background: #0d0d0f;
+}
+.n-hero-empty {
+  display: grid;
+  place-items: center;
+  min-height: 96px;
+  padding: 14px;
+  color: var(--dna-dim);
+  font-size: 11.5px;
+  font-weight: 500;
+  text-align: center;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.n-hero-tag {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(10, 10, 12, 0.72);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.n-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dna-muted);
+  font-variant-numeric: tabular-nums;
+}
+.n-meta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* переключатель вариантов / сцен / режимов — белая активная плитка */
+.n-seg {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.n-seg button {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid var(--dna-border);
+  background: transparent;
+  color: var(--dna-muted);
+  font: 700 11px "Manrope Variable", Manrope, sans-serif;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.n-seg button:hover {
+  background: var(--dna-hover);
+  color: var(--dna-text);
+}
+.n-seg button.active {
+  background: var(--dna-active-bg);
+  border-color: var(--dna-active-bg);
+  color: var(--dna-active-fg);
+}
+.n-seg.grow button {
+  flex: 1;
+}
+/* строка-уведомление (статус запуска, подтверждение, ошибка) */
+.n-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: var(--dna-sunken);
+  border: 1px solid var(--dna-border);
+}
+.n-status-row:has(.n-status:empty):not(:has(.n-cancel)) {
+  display: none;
+}
+.n-status-row .n-status {
+  flex: 1;
+  min-width: 0;
+}
+.n-status {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dna-muted);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.n-status.err {
+  color: var(--dna-danger-text);
+}
+.n-status.ok {
+  color: var(--dna-success-text);
+}
+.n-cancel {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  border-radius: 5px;
+  border: 1px solid var(--dna-border);
+  background: transparent;
+  color: var(--dna-muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+.n-cancel:hover {
+  color: var(--dna-danger-text);
+  border-color: color-mix(in srgb, var(--dna-danger), transparent 55%);
+}
+/* свёрнутые настройки внутри ноды (Задача и направление, Журнал решений) */
+.n-details {
+  border: 1px solid var(--dna-border);
+  border-radius: var(--r-ctl);
+  background: var(--dna-sunken);
+  font-size: 11px;
+}
+.n-details > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  cursor: pointer;
+  color: var(--dna-muted);
+  font-weight: 700;
+  font-size: 10.5px;
+}
+.n-details > summary::-webkit-details-marker {
+  display: none;
+}
+.n-details > summary::after {
+  content: "▾";
+  color: var(--dna-dim);
+  font-size: 10px;
+}
+.n-details[open] > summary::after {
+  content: "▴";
+}
+.n-details > summary:hover {
+  color: var(--dna-text);
+}
+.n-details > :not(summary) {
+  padding: 0 9px 9px;
+}
+
+/* типизированные строки тела ноды */
 .nrow-cap {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--dna-dim);
 }
 .nrow {
@@ -1147,7 +1589,7 @@
 }
 .nrow-value {
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-ctl);
   background: var(--dna-sunken);
   border: 1px solid var(--dna-border);
   font-size: 12px;
@@ -1165,23 +1607,23 @@
 .dna-chip {
   padding: 4px 10px;
   border-radius: 999px;
-  background: #141418;
+  background: transparent;
   border: 1px solid var(--dna-border);
   font-size: 11px;
   font-weight: 600;
-  color: var(--dna-dim);
+  color: var(--dna-muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .dna-chip:hover {
-  background: #1d1d22;
-  color: var(--dna-text-3);
+  background: var(--dna-hover);
+  color: var(--dna-text);
 }
 .dna-chip.on {
-  background: rgba(155, 92, 255, 0.18);
-  border-color: rgba(155, 92, 255, 0.45);
+  background: var(--dna-active-bg);
+  border-color: var(--dna-active-bg);
   font-weight: 700;
-  color: var(--dna-violet-text);
+  color: var(--dna-active-fg);
 }
 .nrow-stats {
   display: grid;
@@ -1189,14 +1631,14 @@
   gap: 6px;
 }
 .nrow-stat {
-  padding: 8px 9px;
-  border-radius: 8px;
+  padding: 7px 9px;
+  border-radius: var(--r-ctl);
   background: var(--dna-sunken);
   border: 1px solid var(--dna-border-soft);
 }
 .nrow-stat strong {
   display: block;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--dna-text);
@@ -1216,13 +1658,13 @@
   text-overflow: ellipsis;
 }
 .nrow-preview {
-  border-radius: 10px;
-  border: 1px solid var(--dna-border-soft);
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--dna-border);
   background: var(--dna-sunken);
   overflow: hidden;
 }
 .nrow-preview-meta {
-  padding: 8px 10px;
+  padding: 7px 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1241,25 +1683,25 @@
 .nrow-preview-meta > span:last-child {
   font-size: 10px;
   font-weight: 700;
-  color: var(--dna-faint-2);
+  color: var(--dna-dim);
   flex: none;
 }
 .nrow-note2 {
-  padding: 9px 11px;
-  border-radius: 8px;
-  background: rgba(155, 92, 255, 0.1);
-  border: 1px solid rgba(155, 92, 255, 0.26);
+  padding: 8px 10px;
+  border-radius: var(--r-ctl);
+  background: var(--dna-sunken);
+  border: 1px solid var(--dna-border);
   font-size: 11px;
-  font-weight: 600;
-  color: var(--dna-violet-text);
+  font-weight: 500;
+  color: var(--dna-muted);
   line-height: 1.45;
   text-wrap: pretty;
 }
 .nrow-note {
-  padding: 9px 11px;
-  border-radius: 8px;
-  background: rgba(229, 48, 92, 0.1);
-  border: 1px solid rgba(229, 48, 92, 0.28);
+  padding: 8px 10px;
+  border-radius: var(--r-ctl);
+  background: color-mix(in srgb, var(--dna-danger), transparent 90%);
+  border: 1px solid color-mix(in srgb, var(--dna-danger), transparent 72%);
   font-size: 11px;
   font-weight: 600;
   color: var(--dna-danger-text);
@@ -1273,9 +1715,9 @@
 .merge-row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 9px;
-  border-radius: 8px;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
   background: var(--dna-sunken);
   border: 1px solid var(--dna-border-soft);
 }
@@ -1284,20 +1726,21 @@
   height: 18px;
   flex: none;
   border-radius: 5px;
-  background: rgba(34, 197, 94, 0.16);
-  color: var(--dna-success-text);
+  background: var(--dna-elevated);
+  color: var(--dna-text-2);
   font-size: 10px;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-variant-numeric: tabular-nums;
 }
 .merge-name {
   flex: 1;
   min-width: 0;
   font-size: 11.5px;
-  font-weight: 700;
-  color: var(--dna-text-3);
+  font-weight: 600;
+  color: var(--dna-text-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1305,7 +1748,7 @@
 .merge-src {
   font-size: 10px;
   font-weight: 600;
-  color: var(--dna-faint);
+  color: var(--dna-dim);
   white-space: nowrap;
 }
 .merge-ctl {
@@ -1316,7 +1759,7 @@
 .merge-ctl button {
   border: none;
   background: none;
-  color: var(--dna-faint);
+  color: var(--dna-dim);
   cursor: pointer;
   font-size: 11px;
   padding: 0 2px;
@@ -1333,15 +1776,15 @@
 .nrow-weights {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 .w-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 .w-label {
-  width: 52px;
+  width: 44px;
   flex: none;
   font-size: 11px;
   font-weight: 600;
@@ -1353,9 +1796,9 @@
 .w-track {
   position: relative;
   flex: 1;
-  height: 6px;
+  height: 4px;
   border-radius: 999px;
-  background: #1b1b21;
+  background: var(--dna-border);
   overflow: hidden;
 }
 .w-fill {
@@ -1364,10 +1807,10 @@
   top: 0;
   bottom: 0;
   border-radius: 999px;
-  background: linear-gradient(90deg, #9b5cff, #7018e6);
+  background: var(--dna-text-2);
 }
 .w-pct {
-  width: 34px;
+  width: 32px;
   flex: none;
   text-align: right;
   font-size: 11px;
@@ -1379,8 +1822,8 @@
   height: 20px;
   flex: none;
   border-radius: 6px;
-  background: var(--dna-sunken);
-  border: 1px solid var(--dna-border-strong);
+  background: transparent;
+  border: 1px solid var(--dna-border);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1391,13 +1834,13 @@
   padding: 0;
 }
 .w-step:hover {
-  background: #1d1d22;
+  background: var(--dna-hover);
 }
 .w-x {
   flex: none;
   border: none;
   background: none;
-  color: var(--dna-faint);
+  color: var(--dna-dim);
   cursor: pointer;
   font-size: 11px;
   padding: 0 2px;
@@ -1410,9 +1853,9 @@
 .nrow-variants {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 10px;
-  border-radius: 9px;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: var(--r-ctl);
   background: var(--dna-sunken);
   border: 1px solid var(--dna-border);
 }
@@ -1423,12 +1866,12 @@
   color: var(--dna-muted);
 }
 .v-step {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   flex: none;
-  border-radius: 7px;
-  background: #151519;
-  border: 1px solid var(--dna-border-strong);
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid var(--dna-border);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1442,9 +1885,9 @@
   background: var(--dna-hover);
 }
 .v-count {
-  min-width: 20px;
+  min-width: 18px;
   text-align: center;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -1458,39 +1901,40 @@
 }
 .mix-variant-tabs button,
 .motion-node-scenes button {
-  min-width: 24px;
+  min-width: 26px;
   height: 24px;
-  padding: 0 6px;
+  padding: 0 8px;
   border-radius: 7px;
-  border: 1px solid var(--dna-border-strong);
-  background: var(--dna-sunken);
-  color: var(--dna-text-2);
+  border: 1px solid var(--dna-border);
+  background: transparent;
+  color: var(--dna-muted);
   font-size: 11px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .mix-variant-tabs button:hover,
 .motion-node-scenes button:hover {
   background: var(--dna-hover);
+  color: var(--dna-text);
 }
 .mix-variant-tabs button.active,
 .motion-node-scenes button.active {
-  background: rgba(155, 92, 255, 0.18);
-  border-color: rgba(155, 92, 255, 0.45);
-  color: var(--dna-violet-text);
+  background: var(--dna-active-bg);
+  border-color: var(--dna-active-bg);
+  color: var(--dna-active-fg);
 }
 
-/* превью Motion-ноды: кадр + строка сцен/длительности */
+/* превью Motion-ноды */
 .motion-node-preview {
-  border-radius: 10px;
-  border: 1px solid var(--dna-border-soft);
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--dna-border);
   background: var(--dna-sunken);
   overflow: hidden;
 }
 .motion-node-preview > div {
-  padding: 8px 10px;
+  padding: 7px 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1502,31 +1946,29 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* прогресс в теле ноды (NodeShell) */
+/* прогресс: линия 2px под шапкой + подпись стадии */
 .n-progress {
-  padding: 0 13px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
 }
 .n-progress-track {
-  height: 5px;
-  border-radius: 999px;
-  background: #1b1b21;
+  height: 2px;
+  background: var(--dna-sunken);
   overflow: hidden;
   position: relative;
 }
 .n-progress-fill {
   height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--n-accent), color-mix(in srgb, var(--n-accent), transparent 33%));
+  background: var(--dna-action);
   transition: width 0.45s ease;
 }
 .n-progress-caption {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 11px;
+  padding: 5px 12px 0;
+  font-size: 10.5px;
   line-height: 1.2;
   font-weight: 600;
   color: var(--dna-muted);
@@ -1534,14 +1976,15 @@
 }
 .n-progress-caption > span:last-child {
   font-weight: 700;
-  color: var(--dna-text-3);
+  color: var(--dna-text-2);
+  flex: none;
 }
 .n-progress-label {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Без измеренного процента — бегущий сегмент вместо «застывших 97%» */
 .n-progress.indeterminate .n-progress-fill {
   position: absolute;
   inset: 0 auto 0 0;
@@ -1562,10 +2005,14 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .n-progress.indeterminate .n-progress-fill {
+  .n-progress.indeterminate .n-progress-fill,
+  .task-row .task-bar.indeterminate i {
     animation: none;
     width: 100%;
     opacity: 0.45;
+  }
+  .n-dot.run {
+    animation: none;
   }
 }
 .dna-undo-btn {
@@ -1579,18 +2026,18 @@
   cursor: default;
 }
 
-/* ---------- порты: вход — на левой кромке (подпись снаружи), выход — на правой ---------- */
+/* ---------- порты: точки на кромке, подписи по наведению ---------- */
 .dna-port {
   position: absolute;
   height: 10px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   z-index: 5;
   pointer-events: none;
 }
 .dna-port.in {
-  right: calc(100% - 5px);
+  right: calc(100% - 4px);
   justify-content: flex-end;
 }
 .dna-port.out {
@@ -1600,11 +2047,28 @@
 .dna-port .plabel {
   font-size: 10px;
   font-weight: 600;
-  color: var(--dna-dim);
+  color: var(--dna-muted);
   white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--dna-panel);
+  border: 1px solid var(--dna-border);
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
 }
 .dna-port.out .plabel {
-  color: var(--dna-faint-2);
+  transform: translateX(-4px);
+}
+.fnode:hover .dna-port .plabel,
+.fnode.selected .dna-port .plabel,
+.flow-connecting .dna-port.in.port-can-drop .plabel,
+.dna-port.port-labels-on .plabel {
+  opacity: 1;
+  transform: none;
+}
+.flow-drag-active .dna-port .plabel {
+  opacity: 0;
 }
 .port-dot.svelte-flow__handle {
   position: relative;
@@ -1612,76 +2076,76 @@
   left: auto;
   right: auto;
   transform: none;
-  width: 10px;
-  height: 10px;
-  min-width: 10px;
-  min-height: 10px;
+  width: 9px;
+  height: 9px;
+  min-width: 9px;
+  min-height: 9px;
   border-radius: 999px;
   flex: none;
   cursor: crosshair;
-  transition: box-shadow 0.12s ease;
+  transition: box-shadow var(--dur) var(--ease);
   pointer-events: all;
-  /* вход: тёмная точка с цветным кольцом (перекрашивается kind-классом) */
-  background: var(--dna-bg);
-  border: 2px solid var(--dna-dim);
+  /* вход: тёмная точка с кольцом цвета типа */
+  background: var(--dna-node);
+  border: 2px solid var(--port-color, var(--dna-dim));
+  box-shadow: none;
 }
 .dna-port.out .port-dot.svelte-flow__handle {
-  /* выход: залит цветом kind + мягкое свечение */
+  /* выход: заливка цветом типа */
   background: var(--port-color, var(--dna-dim));
-  border: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--port-color, var(--dna-dim)), transparent 87%);
+  border-color: var(--port-color, var(--dna-dim));
+}
+.port-dot.port-text.svelte-flow__handle {
+  --port-color: #9a9aa3;
 }
 .port-dot.port-ir.svelte-flow__handle {
   --port-color: #9b5cff;
-  border-color: #9b5cff;
 }
 .port-dot.port-tokens.svelte-flow__handle {
   --port-color: #ff691d;
-  border-color: #ff691d;
 }
 .port-dot.port-artifact.svelte-flow__handle {
   --port-color: #35b8a0;
-  border-color: #35b8a0;
 }
 .port-dot.port-ds.svelte-flow__handle {
   --port-color: #8b7cf6;
-  border-color: #8b7cf6;
 }
 .port-dot.port-interaction.svelte-flow__handle {
   --port-color: #2fbf9f;
-  border-color: #2fbf9f;
 }
 .port-dot.port-motion.svelte-flow__handle {
   --port-color: #e05fb0;
-  border-color: #e05fb0;
 }
 .port-dot.port-timeline.svelte-flow__handle {
   --port-color: #ff5f56;
-  border-color: #ff5f56;
 }
 .port-dot.port-video.svelte-flow__handle {
   --port-color: #4f7cff;
-  border-color: #4f7cff;
+}
+.port-dot.port-image.svelte-flow__handle {
+  --port-color: #3fb950;
 }
 .port-dot.svelte-flow__handle:hover {
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--port-color, #ffffff), transparent 70%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--port-color, #ffffff), transparent 72%);
 }
 .dna-port.in.port-cannot-drop {
-  opacity: .35;
+  opacity: 0.3;
 }
 .dna-port.in.port-can-drop .plabel {
-  color: var(--dna-text-2);
+  color: var(--dna-text);
 }
 .dna-port.in.port-can-drop .port-dot.svelte-flow__handle {
   border-color: var(--drop-color);
   animation: port-can-drop-pulse 1.05s ease-in-out infinite;
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--drop-color), transparent 68%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--drop-color), transparent 70%);
 }
 .dna-port.in.port-can-drop .port-dot.svelte-flow__handle:hover {
-  box-shadow: 0 0 0 6px color-mix(in srgb, var(--drop-color), transparent 48%), 0 0 15px var(--drop-color);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--drop-color), transparent 50%), 0 0 14px var(--drop-color);
 }
 @keyframes port-can-drop-pulse {
-  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--drop-color), transparent 84%); }
+  50% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--drop-color), transparent 84%);
+  }
 }
 .fnode.snap-target .port-dot.svelte-flow__handle {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--n-accent), transparent 70%);
@@ -1711,8 +2175,8 @@
 .fnode textarea:focus,
 .fnode select:focus,
 .fnode input[type="text"]:focus {
-  border-color: rgba(155, 92, 255, 0.45);
-  box-shadow: 0 0 0 1px rgba(155, 92, 255, 0.3);
+  border-color: var(--dna-border-strong);
+  box-shadow: 0 0 0 1px var(--dna-border-strong);
 }
 .fnode textarea {
   min-height: 56px;
@@ -1748,20 +2212,20 @@
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--dna-border);
-  background: #141418;
+  background: transparent;
   color: var(--dna-dim);
   font: 600 11px "Manrope Variable", Manrope, sans-serif;
   cursor: pointer;
   transition: 0.15s;
 }
 .f-preset:hover {
-  background: #1d1d22;
-  color: var(--dna-text-3);
+  background: var(--dna-hover);
+  color: var(--dna-text);
 }
 .f-preset.on {
-  background: rgba(155, 92, 255, 0.18);
-  border-color: rgba(155, 92, 255, 0.45);
-  color: var(--dna-violet-text);
+  background: var(--dna-active-bg);
+  border-color: var(--dna-active-bg);
+  color: var(--dna-active-fg);
   font-weight: 700;
 }
 
@@ -1787,18 +2251,20 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 7px 14px;
-  border-radius: 8px;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 7px;
   border: 1px solid var(--dna-border);
-  background: var(--dna-elevated);
+  background: transparent;
   color: var(--dna-text-2);
   font: 600 11.5px "Manrope Variable", Manrope, sans-serif;
   cursor: pointer;
-  transition: 0.15s;
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .btn-node:hover {
-  background: var(--dna-hover-2);
+  background: var(--dna-hover);
+  color: var(--dna-text);
 }
 .btn-node.primary {
   background: var(--dna-action);
@@ -1812,8 +2278,8 @@
   border-color: var(--dna-action-h);
 }
 .btn-node.small {
-  padding: 6px 11px;
-  font-size: 11.5px;
+  padding: 5px 10px;
+  font-size: 11px;
 }
 /* «+ Вход» — пунктирная кнопка с фиолетовым ховером */
 .btn-node.add-input {
@@ -1823,8 +2289,8 @@
   font-weight: 700;
 }
 .btn-node.add-input:hover {
-  border-color: var(--dna-violet-l);
-  color: var(--dna-violet-text);
+  border-color: var(--dna-text-2);
+  color: var(--dna-text);
   background: var(--dna-sunken);
 }
 
@@ -1847,8 +2313,8 @@
   transition: 0.15s;
 }
 .ref-drop:hover {
-  border-color: var(--dna-violet-l);
-  background: #131318;
+  border-color: var(--dna-text-2);
+  background: var(--dna-sunken);
   color: var(--dna-text);
 }
 .ref-decompose {
@@ -1889,8 +2355,8 @@
   color: var(--dna-text);
 }
 .seg-btn.active {
-  background: #2a2a32;
-  color: var(--dna-text);
+  background: var(--dna-active-bg);
+  color: var(--dna-active-fg);
   font-weight: 700;
 }
 .dna-summary {
@@ -1976,8 +2442,8 @@
   cursor: pointer;
 }
 .recorder-mode button.active {
-  color: var(--dna-text);
-  background: #2a2a32;
+  color: var(--dna-active-fg);
+  background: var(--dna-active-bg);
   font-weight: 700;
   box-shadow: none;
 }
@@ -2042,7 +2508,7 @@
   min-width: 0;
   padding: 4px 9px;
   border-radius: 8px;
-  border-left: 2px solid var(--dna-violet-l);
+  border-left: 2px solid var(--dna-border-strong);
   color: var(--dna-muted);
   background: var(--dna-sunken);
   font-size: 11px;
@@ -2050,13 +2516,19 @@
 .generator-model-row .f-provider-select,
 .generator-model-row .f-effort-select {
   min-width: 0;
-  height: 24px;
+  height: 26px;
+  padding: 0 6px;
   border: 0;
+  border-radius: 6px;
   background: transparent;
-  color: var(--dna-muted);
+  color: var(--dna-text-2);
   font-size: 11px;
   font-weight: 650;
   box-shadow: none;
+}
+.generator-model-row .f-provider-select:hover,
+.generator-model-row .f-effort-select:hover {
+  background: var(--dna-hover);
 }
 .gen-ds-row {
   display: flex;
@@ -2065,7 +2537,7 @@
   min-width: 0;
   padding: 3px 9px;
   border-radius: 8px;
-  border-left: 2px solid var(--dna-violet-l);
+  border-left: 2px solid var(--dna-border-strong);
   color: var(--dna-muted);
   background: var(--dna-sunken);
   font-size: 11px;
@@ -2192,15 +2664,15 @@
   overflow: hidden;
   cursor: pointer;
   background: #fff;
-  height: 96px;
-  transition: 0.12s;
+  height: 74px;
+  transition: border-color var(--dur) var(--ease);
 }
 .thumb:hover {
   border-color: var(--dna-muted);
 }
 .thumb.active {
-  border-color: var(--dna-violet-l);
-  box-shadow: 0 0 0 3px rgba(155, 92, 255, 0.16);
+  border-color: var(--dna-text);
+  box-shadow: 0 0 0 2px rgba(236, 236, 239, 0.18);
 }
 .thumb .ir-preview {
   pointer-events: none;
@@ -2346,8 +2818,8 @@
   min-width: 0;
   border: 1px solid var(--dna-border);
   border-radius: 999px;
-  padding: 4px 10px;
-  background: #141418;
+  padding: 3px 9px;
+  background: transparent;
   color: var(--dna-dim);
   font-size: 11px;
   font-weight: 600;
@@ -2355,13 +2827,13 @@
   transition: background 0.15s ease, color 0.15s ease;
 }
 .source-viewport:hover {
-  background: #1d1d22;
-  color: var(--dna-text-3);
+  background: var(--dna-hover);
+  color: var(--dna-text);
 }
 .source-viewport.active {
-  background: rgba(155, 92, 255, 0.18);
-  border-color: rgba(155, 92, 255, 0.45);
-  color: var(--dna-violet-text);
+  background: var(--dna-active-bg);
+  border-color: var(--dna-active-bg);
+  color: var(--dna-active-fg);
   font-weight: 700;
   box-shadow: none;
 }
@@ -2412,8 +2884,8 @@
   cursor: pointer;
 }
 .source-preview-mode button.active {
-  color: #fff;
-  background: var(--dna-violet-l);
+  color: var(--dna-active-fg);
+  background: var(--dna-active-bg);
 }
 .source-reference-preview {
   height: 72px;
@@ -2483,14 +2955,14 @@
 #ctx-menu {
   position: fixed;
   z-index: 100;
-  width: min(330px, calc(100vw - 24px));
+  width: min(320px, calc(100vw - 24px));
   max-height: calc(100vh - 24px);
   display: flex;
   flex-direction: column;
-  background: rgba(16, 16, 20, 0.97);
-  border: 1px solid #2a2a33;
-  border-radius: 14px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  background: color-mix(in srgb, var(--dna-panel) 97%, transparent);
+  border: 1px solid var(--dna-border);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-panel);
   backdrop-filter: blur(12px);
   overflow: hidden;
 }
@@ -2556,8 +3028,9 @@
   transition: background 0.12s ease;
 }
 #ctx-menu .ctx-item:hover,
-#ctx-menu .ctx-item:focus-visible {
-  background: #1b1b21;
+#ctx-menu .ctx-item:focus-visible,
+#ctx-menu .ctx-item.hl {
+  background: var(--dna-hover);
   outline: none;
 }
 #ctx-menu .ctx-item .ci {
@@ -2634,15 +3107,23 @@
   gap: 10px;
   border: 0;
   background: transparent;
-  padding: 10px 12px;
-  color: #ff9b8f;
+  padding: 8px 10px;
+  color: var(--dna-text-2);
   text-align: left;
   cursor: pointer;
 }
 #node-ctx-menu > button:hover:not(:disabled),
 #node-ctx-menu > button:focus-visible {
   outline: none;
-  background: rgba(255, 95, 86, 0.11);
+  background: var(--dna-hover);
+  color: var(--dna-text);
+}
+#node-ctx-menu > button.danger {
+  color: var(--dna-danger-text);
+}
+#node-ctx-menu > button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dna-danger), transparent 88%);
+  color: var(--dna-danger-text);
 }
 #node-ctx-menu > button:disabled {
   color: var(--dna-dim);
@@ -2650,13 +3131,38 @@
 }
 #node-ctx-menu > button > span:first-child {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   flex: none;
   place-items: center;
-  border-radius: 8px;
-  background: rgba(255, 95, 86, 0.12);
-  font-size: 17px;
+  border-radius: 7px;
+  background: var(--dna-sunken);
+  font-size: 13px;
+}
+/* чипы стадий в меню создания */
+.ctx-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 13px 6px;
+}
+.ctx-group-chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--dna-border);
+  background: transparent;
+  color: var(--dna-muted);
+  font: 600 10.5px "Manrope Variable", Manrope, sans-serif;
+  cursor: pointer;
+}
+.ctx-group-chip:hover {
+  background: var(--dna-hover);
+  color: var(--dna-text);
+}
+.ctx-group-chip.active {
+  background: var(--dna-active-bg);
+  border-color: var(--dna-active-bg);
+  color: var(--dna-active-fg);
 }
 #node-ctx-menu > button > span:last-child {
   display: grid;
@@ -2742,24 +3248,26 @@
 /* тосты */
 #toasts {
   position: fixed;
-  bottom: 18px;
-  right: 18px;
+  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 200;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  align-items: center;
+  gap: 8px;
 }
 .toast {
-  background: rgba(16, 16, 20, 0.97);
+  background: color-mix(in srgb, var(--dna-panel) 97%, transparent);
   border: 1px solid var(--dna-border);
-  border-left: 3px solid var(--dna-violet-l);
-  border-radius: 9px;
+  border-left: 3px solid var(--dna-text-2);
+  border-radius: 10px;
   padding: 10px 14px;
   font-size: 12.5px;
   font-weight: 600;
-  max-width: 340px;
+  max-width: 360px;
   color: var(--dna-text);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-panel);
   backdrop-filter: blur(12px);
   animation: toast-slidein 0.18s;
 }
@@ -2771,7 +3279,7 @@
 }
 @keyframes toast-slidein {
   from {
-    transform: translateX(26px);
+    transform: translateY(10px);
     opacity: 0;
   }
 }
@@ -2838,8 +3346,8 @@
   cursor: pointer;
 }
 .bridge-mode button.active {
-  color: var(--dna-text);
-  background: #2a2a32;
+  color: var(--dna-active-fg);
+  background: var(--dna-active-bg);
   font-weight: 700;
 }
 .bridge-chip {
@@ -2855,63 +3363,11 @@
   letter-spacing: 0.04em;
 }
 
-.n-status-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.n-status-row .n-status {
-  flex: 1;
-  min-width: 0;
-}
-.n-status {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--dna-muted);
-  min-height: 14px;
-  overflow-wrap: anywhere;
-}
-.n-status.err {
-  color: var(--dna-danger-text);
-}
-.n-status.ok {
-  color: var(--dna-success-text);
-}
-.n-cancel {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  line-height: 1;
-  border-radius: 6px;
-  border: 1px solid var(--dna-border);
-  background: transparent;
-  color: var(--dna-muted);
-  cursor: pointer;
-  font-size: 10px;
-}
-.n-cancel:hover {
-  color: var(--dna-danger-text);
-  border-color: rgba(229, 48, 92, 0.45);
-}
 
 /* ---------- Доступность: видимый фокус (план 3.6) ---------- */
 /* Контекстное меню создания ноды: клавиатурная навигация по пунктам */
 #ctx-menu .ctx-item:focus-visible {
-  outline: 2px solid var(--dna-violet-l);
+  outline: 2px solid var(--dna-text);
   outline-offset: -2px;
-  background: #1b1b21;
-}
-/* Кнопки инструментов полосы контекста */
-.dna-tool-btn:focus-visible {
-  outline: 2px solid var(--dna-violet-l);
-  outline-offset: 2px;
-}
-
-/* Журнал статусов в инспекторе графа: время слева, моноширинно */
-.dna-insp-log-time {
-  display: inline-block;
-  min-width: 62px;
-  margin-right: 6px;
-  color: var(--dna-faint);
-  font-variant-numeric: tabular-nums;
+  background: var(--dna-hover);
 }

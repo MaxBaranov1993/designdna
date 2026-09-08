@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
-import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, session, shell } from "electron";
 import { JsonlProcess } from "./lib/jsonl-process.mjs";
 import { isAllowedRendererUrl } from "./lib/renderer-policy.mjs";
 import { pythonWorkerEnvironment, pythonWorkerSpec } from "./lib/runtime-paths.mjs";
@@ -11,9 +11,9 @@ import { CredentialStore } from "./services/credential-store.mjs";
 import { SettingsStore } from "./services/settings-store.mjs";
 import { getProviderStatus } from "./services/provider-status.mjs";
 import { chatWithProvider, prepareProviderRequest } from "./services/provider-router.mjs";
-import { ClaudeAgentServer } from "./services/claude-agent-server.mjs";
+import { ClaudeAgentServer, claudeProcessSpec } from "./services/claude-agent-server.mjs";
 import { EnvelopeValidationError, redactForLog, UnsupportedCapabilityError } from "./services/provider-envelope.mjs";
-import { CodexAppServer } from "./services/codex-app-server.mjs";
+import { CodexAppServer, codexProcessSpec } from "./services/codex-app-server.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
 import { canonicalMcpSpec, createMcpActivationApprover } from "./services/mcp-activation-approval.mjs";
 import { ApiScheduler } from "./services/api-scheduler.mjs";
@@ -547,6 +547,24 @@ function createLiveCommandRegistry() {
   return registry;
 }
 
+/* Python-движок ищет CLI подписок сам (app/cli_llm.py: DESIGNDNA_CLAUDE /
+ * DESIGNDNA_CODEX или PATH). Claude Code ставится в ~/.local/bin, которого в
+ * PATH десктопа нет, поэтому серверные вызовы (сценарий видео, судья) отвечали
+ * «Claude Code не найден», хотя Agents показывал подписку подключённой.
+ * Отдаём воркерам бинарники, уже найденные Node-стороной. */
+function cliBinaryEnvironment() {
+  const env = {};
+  if (!process.env.DESIGNDNA_CLAUDE) {
+    const spec = claudeProcessSpec();
+    if (spec.resolved) env.DESIGNDNA_CLAUDE = spec.command;
+  }
+  if (!process.env.DESIGNDNA_CODEX) {
+    const spec = codexProcessSpec();
+    if (spec.command && spec.command !== "codex" && !/cmd\.exe$/i.test(spec.command)) env.DESIGNDNA_CODEX = spec.command;
+  }
+  return env;
+}
+
 function createWorkers() {
   const python = pythonWorkerSpec({
     isPackaged: app.isPackaged,
@@ -555,12 +573,16 @@ function createWorkers() {
     sourceRoot,
     pythonOverride: process.env.DESIGNDNA_PYTHON,
   });
+  const workerEnv = () => ({
+    ...pythonWorkerEnvironment({ isPackaged: app.isPackaged, runtimeRoot, userDataPath: app.getPath("userData") }),
+    ...cliBinaryEnvironment(),
+  });
   pythonWorker = new JsonlProcess({
     name: "DesignDNA Python runtime",
     command: python.command,
     args: python.args,
     cwd: repositoryRoot,
-    env: pythonWorkerEnvironment({ isPackaged: app.isPackaged, runtimeRoot, userDataPath: app.getPath("userData") }),
+    env: workerEnv(),
     timeoutMs: 120_000,
   });
   // Editor Assist has a short prepare/finalize round-trip around the external
@@ -571,7 +593,7 @@ function createWorkers() {
     command: python.command,
     args: python.args,
     cwd: repositoryRoot,
-    env: pythonWorkerEnvironment({ isPackaged: app.isPackaged, runtimeRoot, userDataPath: app.getPath("userData") }),
+    env: workerEnv(),
     timeoutMs: 120_000,
     // Интерактивные вызовы короткие: таймаут = мёртвый канал. Авто-респаун
     // вместо «перезапустите приложение» (симптом: все /api/generate и
@@ -917,6 +939,18 @@ function registerIpc() {
     providerChats.delete(id);
     return { cancelled: true, requestId: id };
   });
+  handleTrusted("providers:image-request", async (_event, payload = {}) => {
+    const id = String(payload.id || "");
+    if (!/^[A-Za-z0-9-]{1,64}$/.test(id) || providerChats.has(id)) throw new Error("Invalid or duplicate image request id");
+    const abort = new AbortController();
+    providerChats.set(id, abort);
+    try {
+      return await codex.generateImage({ prompt: payload.prompt, referenceImage: payload.referenceImage, model: payload.model,
+        removeBackground: payload.removeBackground === true }, { signal: abort.signal });
+    } finally {
+      if (providerChats.get(id) === abort) providerChats.delete(id);
+    }
+  });
   handleTrusted("claude:status", () => claude.account());
   // Вход Claude из приложения: открываем окно терминала с `claude /login`
   // (OAuth и сохранение кредов ведёт сам CLI), затем ждём валидные креды.
@@ -986,15 +1020,27 @@ function registerIpc() {
   });
 }
 
+/* Шапка окна в стиле приложения: системная полоса заголовка скрыта, кнопки
+ * свернуть/развернуть/закрыть рисует ОС поверх нашей полосы (Window Controls
+ * Overlay) в цветах палитры; зону перетаскивания даёт .dna-titlebar в
+ * рендерере. Стандартное меню File/Edit/View/Window убрано целиком —
+ * DevTools по DESIGNDNA_DEVTOOLS=1, редактирование текста работает нативно. */
+const TITLEBAR_HEIGHT = 36;
+const TITLEBAR_COLOR = "#1b1b1e";
+const TITLEBAR_SYMBOL_COLOR = "#ececef";
+
 function createWindow() {
+  Menu.setApplicationMenu(null);
   const window = new BrowserWindow({
     width: 1500,
     height: 960,
     minWidth: 1080,
     minHeight: 700,
     title: "DesignDNA",
-    backgroundColor: "#09090b",
+    backgroundColor: "#151517",
     show: false,
+    titleBarStyle: "hidden",
+    titleBarOverlay: { color: TITLEBAR_COLOR, symbolColor: TITLEBAR_SYMBOL_COLOR, height: TITLEBAR_HEIGHT },
     webPreferences: {
       preload,
       contextIsolation: true,

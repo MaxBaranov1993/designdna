@@ -16,8 +16,10 @@
   import { useFlowStore } from "./flow/store";
   import { setReactFlowInstance } from "./flow/graphdev";
   import { reachable, WIRE_COLORS } from "./flow/dataflow";
-  import type { FlowEdge, FlowNode, NodeType } from "./flow/types";
-  import { OPEN_NODE_MENU_EVENT } from "./flow/ui";
+  import type { AnyNodeData, FlowEdge, FlowNode, NodeType } from "./flow/types";
+  import { OPEN_NODE_ACTIONS_EVENT, OPEN_NODE_MENU_EVENT, type NodeActionsRequest, type NodeMenuRequest } from "./flow/ui";
+  import { loadEditorController } from "./editor/runtime";
+  import { toast } from "./flow/toast";
   import { selectReadable } from "./lib/zustand";
   import EmptyState from "./flow/EmptyState.svelte";
   import CanvasToolbar from "./flow/CanvasToolbar.svelte";
@@ -39,6 +41,8 @@
   import MotionDesignNode from "./nodes/MotionDesignNode.svelte";
   import TimelineNode from "./nodes/TimelineNode.svelte";
   import PageBridgeNode from "./nodes/PageBridgeNode.svelte";
+  import ImageNode from "./nodes/ImageNode.svelte";
+  import RemoveBackgroundNode from "./nodes/RemoveBackgroundNode.svelte";
   import DnaEdge from "./flow/DnaEdge.svelte";
 
   /* Реестр кастомных нод — вне компонента, ключи = legacy type (конвертация данных не нужна) */
@@ -60,6 +64,8 @@
     motiondesign: MotionDesignNode,
     timeline: TimelineNode,
     pagebridge: PageBridgeNode,
+    image: ImageNode,
+    removebackground: RemoveBackgroundNode,
   };
   const edgeTypes = { default: DnaEdge };
 
@@ -75,6 +81,11 @@
   let nodeMenu = $state<NodeMenuState | null>(null);
   let pendingConnection = $state<{ nodeId: string; handleId: string } | null>(null);
   let menuSearch = $state("");
+  /* Фильтр меню по стадии (клик по категории в рельсе) и «провод в пустоту»:
+   * меню показывает только ноды, принимающие тип отпущенного выхода, и
+   * созданная нода сразу соединяется. */
+  let menuGroup = $state<string | null>(null);
+  let menuWire = $state<{ nodeId: string; handleId: string; kind: string } | null>(null);
   let canvasHost: HTMLDivElement | null = null;
   let snapNodeId: string | null = null;
   let didConnect = false;
@@ -92,6 +103,7 @@
   const rf = useSvelteFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   let measuredNodeIds = "";
+  let canvasPageId = $state<string | null>(null);
 
   // Пустое состояние: страница без нод, и проект уже гидратирован (иначе на
   // desktop-профиле подсказка мигнёт, пока SQLite-снимок едет по IPC).
@@ -112,19 +124,32 @@
 
   onMount(() => {
     setReactFlowInstance(rf);
-    const openNodeMenu = () => {
+    const openNodeMenu = (event: Event) => {
       if (!canvasHost) return;
+      const detail = ((event as CustomEvent<NodeMenuRequest>).detail || {}) as NodeMenuRequest;
       const rect = canvasHost.getBoundingClientRect();
-      const x = rect.left + Math.min(rect.width * 0.56, rect.width - 190);
-      const y = rect.top + Math.min(rect.height * 0.34, rect.height - 260);
-      const point = rf.screenToFlowPosition({ x, y });
+      // Нода, созданная из рельсы или Ctrl+K, встаёт в центр видимой части канваса
+      const center = rf.screenToFlowPosition({ x: rect.left + rect.width * 0.45, y: rect.top + rect.height * 0.4 });
+      const x = detail.x ?? rect.left + Math.min(rect.width * 0.45, rect.width - 190);
+      const y = detail.y ?? rect.top + Math.min(rect.height * 0.3, rect.height - 260);
       menuSearch = "";
+      menuGroup = detail.group || null;
+      menuWire = null;
       nodeMenu = null;
-      menu = { x, y, flowX: point.x, flowY: point.y };
+      menu = { x, y, flowX: center.x, flowY: center.y };
+    };
+    const openNodeActions = (event: Event) => {
+      const detail = (event as CustomEvent<NodeActionsRequest>).detail;
+      if (!detail) return;
+      menu = null;
+      menuSearch = "";
+      nodeMenu = { x: detail.x - 240, y: detail.y, nodeId: detail.nodeId };
     };
     window.addEventListener(OPEN_NODE_MENU_EVENT, openNodeMenu);
+    window.addEventListener(OPEN_NODE_ACTIONS_EVENT, openNodeActions);
     return () => {
       window.removeEventListener(OPEN_NODE_MENU_EVENT, openNodeMenu);
+      window.removeEventListener(OPEN_NODE_ACTIONS_EVENT, openNodeActions);
       setReactFlowInstance(null);
     };
   });
@@ -135,6 +160,7 @@
     // During a drag the bound Svelte Flow array is the presentation state.
     // Pulling the older persisted array back here would pin the node in place.
     if (nodeDragActive) return;
+    const pageId = $flowActivePageId;
     const nextNodes = $flowNodes;
     const nextEdges = $flowEdges;
     // bind-массивы читаем без подписки: иначе любое изменение из Svelte Flow
@@ -145,6 +171,7 @@
     const currentEdges = untrack(() => edges);
     if (currentNodes !== nextNodes) nodes = nextNodes;
     if (currentEdges !== nextEdges) edges = nextEdges;
+    canvasPageId = pageId;
   });
 
   // канвас → zustand (drag/select/remove применены библиотекой к массивам)
@@ -158,7 +185,7 @@
     // canonical SQLite snapshot loads over IPC.
     if (!$flowHydrated) return;
     const st = useFlowStore.getState();
-    if (st.nodes !== currentNodes || st.edges !== currentEdges) st.syncFromCanvas(currentNodes, currentEdges);
+    if (st.nodes !== currentNodes || st.edges !== currentEdges) st.syncFromCanvas(currentNodes, currentEdges, canvasPageId || undefined);
   });
 
   // Custom Svelte Flow nodes need one explicit post-DOM measurement when the
@@ -325,22 +352,97 @@
     menu = null;
     nodeMenu = null;
     menuSearch = "";
+    menuGroup = null;
+    menuWire = null;
   };
 
   const connectionCount = (nodeId: string) =>
     edges.filter((edge) => edge.source === nodeId || edge.target === nodeId).length;
 
+  /* Принимает ли тип ноды провод данного kind хотя бы одним входом */
+  const acceptsKind = (type: NodeType, kind: string) =>
+    portsOfNode({ type, data: defaultDataOf(type) }).in.some((p) => (p.kinds || [p.kind]).includes(kind as never));
+  const defaultDataCache = new Map<NodeType, AnyNodeData>();
+  function defaultDataOf(type: NodeType): AnyNodeData {
+    let data = defaultDataCache.get(type);
+    if (!data) {
+      data = useFlowStore.getState().nodes.find((n) => n.type === type)?.data ?? (undefined as unknown as AnyNodeData);
+      // portsOfNode терпит undefined data — динамические входы тогда берутся по умолчанию
+      defaultDataCache.set(type, data);
+    }
+    return data;
+  }
+
   let visibleGroups = $derived.by(() => {
     const query = menuSearch.trim().toLocaleLowerCase("ru");
-    if (!query) return CTX_GROUPS;
-    return CTX_GROUPS.map((group) => ({
-      ...group,
-      items: group.items.filter((item) => {
-        const def = NODE_DEFS[item.type];
-        return `${def.title} ${def.sub} ${item.note}`.toLocaleLowerCase("ru").includes(query);
-      }),
-    })).filter((group) => group.items.length);
+    const wire = menuWire;
+    const group = query ? null : menuGroup;
+    return CTX_GROUPS
+      .filter((g) => !group || g.label === group)
+      .map((g) => ({
+        ...g,
+        items: g.items.filter((item) => {
+          const def = NODE_DEFS[item.type];
+          if (wire && !acceptsKind(item.type, wire.kind)) return false;
+          if (!query) return true;
+          return `${def.title} ${def.sub} ${item.note}`.toLocaleLowerCase("ru").includes(query);
+        }),
+      }))
+      .filter((g) => g.items.length);
   });
+
+  /* Создать ноду из меню; при «проводе в пустоту» — сразу соединить с первым
+   * совместимым входом (главный ускоритель сборки цепочек у Weavy). */
+  const addFromMenu = (type: NodeType) => {
+    if (!menu) return;
+    const st = useFlowStore.getState();
+    const created = st.addNode(type, menu.flowX, menu.flowY);
+    if (menuWire) {
+      const input = portsOfNode({ type, data: created.data as AnyNodeData }).in
+        .find((p) => (p.kinds || [p.kind]).includes(menuWire!.kind as never));
+      if (input) st.connect({ node: Number(menuWire.nodeId), port: menuWire.handleId }, { node: created.id, port: input.name });
+    }
+    closeMenu();
+  };
+
+  /* Меню, открытое на mouseup (провод в пустоту), не должно закрываться
+   * синтетическим click по пейну, который браузер шлёт сразу после. */
+  let menuOpenedAt = 0;
+  const openMenuAt = (clientX: number, clientY: number, wire: typeof menuWire = null) => {
+    const pt = rf.screenToFlowPosition({ x: clientX, y: clientY });
+    nodeMenu = null;
+    menuSearch = "";
+    menuGroup = null;
+    menuWire = wire;
+    menuOpenedAt = Date.now();
+    menu = { x: clientX, y: clientY, flowX: pt.x, flowY: pt.y };
+  };
+  const onPaneClick = () => {
+    if (menu && Date.now() - menuOpenedAt < 350) return;
+    closeMenu();
+  };
+
+  const openNodeEditor = async (node: FlowNode | undefined) => {
+    if (!node) return;
+    const nodeId = Number(node.id);
+    if (node.type === "designsystem") {
+      window.dispatchEvent(new CustomEvent("designdna:open-ds-editor", { detail: { nodeId } }));
+      return;
+    }
+    if (node.type !== "edit") return;
+    if (!(node.data as Record<string, unknown>).ir) {
+      toast("Сначала подключите IR к входу ноды", "error");
+      return;
+    }
+    window.dispatchEvent(new Event("designdna:ensure-editor"));
+    try {
+      await loadEditorController();
+      const { useEditorStore } = await import("./editor/store");
+      useEditorStore.getState().openEditor(nodeId);
+    } catch (error) {
+      toast(`Не удалось открыть редактор: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  };
 </script>
 
 <svelte:window
@@ -351,6 +453,11 @@
     const target = e.target as HTMLElement | null;
     if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
     if (document.querySelector('[role="dialog"][aria-modal="true"], .dna-editor[data-editor-open="true"]')) return;
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key.toLowerCase() === "k" || e.key.toLowerCase() === "л")) {
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent(OPEN_NODE_MENU_EVENT, { detail: {} }));
+      return;
+    }
     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
       if (e.code === "Space") {
         if (target?.closest('button, a, [role="button"]')) return;
@@ -384,9 +491,14 @@
   class="relative h-full w-full"
   class:flow-drag-active={nodeDragActive}
   class:flow-hand-active={handActive}
+  class:flow-connecting={!!pendingConnection}
   role="presentation"
   onmousemove={(e) => updateSnapTarget(e.clientX, e.clientY)}
   onmouseleave={clearSnapTarget}
+  ondblclick={(e) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.classList.contains("svelte-flow__pane")) openMenuAt(e.clientX, e.clientY);
+  }}
 >
   <SvelteFlow
     bind:nodes
@@ -445,6 +557,11 @@
             { node: Number(pendingConnection.nodeId), port: pendingConnection.handleId },
             { node: Number(targetId), port: input.name },
           );
+        } else if (!targetId && el?.closest(".svelte-flow__pane")) {
+          // Провод отпущен в пустоту: меню только с совместимыми нодами
+          const src = useFlowStore.getState().nodes.find((n) => n.id === pendingConnection!.nodeId);
+          const out = src && portsOfNode(src).out.find((p) => p.name === pendingConnection!.handleId);
+          if (out) openMenuAt(point.clientX, point.clientY, { nodeId: pendingConnection.nodeId, handleId: pendingConnection.handleId, kind: out.kind });
         }
       }
       pendingConnection = null;
@@ -469,7 +586,7 @@
     }}
     {initialViewport}
     onmoveend={(_event, vp) => useFlowStore.getState().setView(vp)}
-    onpaneclick={closeMenu}
+    onpaneclick={onPaneClick}
     onnodecontextmenu={({ event, node }) => {
       event.preventDefault();
       event.stopPropagation();
@@ -479,21 +596,19 @@
     }}
     onpanecontextmenu={({ event }) => {
       event.preventDefault();
-      const pt = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      nodeMenu = null;
-      menu = { x: event.clientX, y: event.clientY, flowX: pt.x, flowY: pt.y };
+      openMenuAt(event.clientX, event.clientY);
     }}
     /* SF сам гасит клавиши в полях ввода (isInputDOMNode) — зеркало гарда nodes.js:1147-1151 */
     deleteKey={["Delete", "Backspace"]}
     selectionKey={["Shift"]}
-    connectionLineStyle="stroke: #d4d4d8; stroke-width: 2; stroke-dasharray: 5 4;"
+    connectionLineStyle="stroke: #b9b9c2; stroke-width: 1.5; stroke-dasharray: 5 4;"
   >
-    <Background variant={BackgroundVariant.Dots} gap={26} size={1} patternColor="#1B1B22" />
+    <Background variant={BackgroundVariant.Dots} gap={26} size={1} patternColor="#1f1f23" />
     {#if showMinimap}<MiniMap
       pannable
       zoomable
-      maskColor="rgba(10,10,12,.72)"
-      bgColor="#101013"
+      maskColor="rgba(21,21,23,.72)"
+      bgColor="#1b1b1e"
       nodeColor={(node) => node.type ? NODE_DEFS[node.type as NodeType].accent : "#9B5CFF"}
     />{/if}
     <CanvasToolbar bind:tool bind:showMinimap {handActive} selectedCount={nodes.filter((node) => node.selected).length} />
@@ -507,7 +622,10 @@
       id="ctx-menu"
       style="display: block; left: {Math.max(12, Math.min(menu.x, window.innerWidth - 312))}px; top: {Math.max(12, Math.min(menu.y, window.innerHeight - 480))}px;"
     >
-      <div class="ctx-head"><div class="ctx-cap">СОЗДАТЬ НОДУ</div><span class="ctx-esc">ESC</span></div>
+      <div class="ctx-head">
+        <div class="ctx-cap">{menuWire ? `ПРИНИМАЕТ · ${menuWire.kind}` : "СОЗДАТЬ НОДУ"}</div>
+        <span class="ctx-esc">ESC</span>
+      </div>
       <div class="ctx-search-wrap">
         <input
           class="ctx-search"
@@ -515,8 +633,23 @@
           use:focusOnMount
           placeholder="Найти тип ноды…"
           aria-label="Найти тип ноды"
+          onkeydown={(event) => {
+            if (event.key !== "Enter") return;
+            const first = visibleGroups[0]?.items[0];
+            if (first) { event.preventDefault(); addFromMenu(first.type); }
+          }}
         />
       </div>
+      {#if !menuSearch && !menuWire}
+        <div class="ctx-groups" role="tablist" aria-label="Стадии">
+          <button class="ctx-group-chip" class:active={!menuGroup} role="tab" aria-selected={!menuGroup} onclick={() => (menuGroup = null)}>Все</button>
+          {#each CTX_GROUPS as group (group.label)}
+            <button class="ctx-group-chip" class:active={menuGroup === group.label} role="tab" aria-selected={menuGroup === group.label} onclick={() => (menuGroup = menuGroup === group.label ? null : group.label)}>
+              {group.label.charAt(0) + group.label.slice(1).toLocaleLowerCase("ru")}
+            </button>
+          {/each}
+        </div>
+      {/if}
       <div class="ctx-list">
         {#each visibleGroups as group (group.label)}
           <div class="ctx-group-cap" style="color: {group.color}">{group.label}</div>
@@ -529,13 +662,9 @@
               onkeydown={(event) => {
                 if (event.key !== "Enter" && event.key !== " ") return;
                 event.preventDefault();
-                $flow.addNode(item.type, menu!.flowX, menu!.flowY);
-                closeMenu();
+                addFromMenu(item.type);
               }}
-              onclick={() => {
-                $flow.addNode(item.type, menu!.flowX, menu!.flowY);
-                closeMenu();
-              }}
+              onclick={() => addFromMenu(item.type)}
             >
               <span class:wide={NODE_DEFS[item.type].icon.length > 2} class="ci" style="background: color-mix(in srgb, {NODE_DEFS[item.type].accent}, transparent 86%); color: {NODE_DEFS[item.type].accent}">
                 {NODE_DEFS[item.type].icon}
@@ -562,6 +691,31 @@
       </div>
       <button
         type="button"
+        data-act="run-node"
+        onclick={() => {
+          $flow.runNode(Number(nodeMenu!.nodeId));
+          closeMenu();
+        }}
+      >
+        <span aria-hidden="true">▶</span>
+        <span><strong>Запустить</strong><small>Выполнить с текущими входами</small></span>
+      </button>
+      {#if selectedNode?.type === "edit" || selectedNode?.type === "designsystem"}
+        <button
+          type="button"
+          data-act="open-node"
+          onclick={() => {
+            const node = selectedNode;
+            closeMenu();
+            void openNodeEditor(node);
+          }}
+        >
+          <span aria-hidden="true">⬚</span>
+          <span><strong>Открыть редактор</strong><small>{selectedNode.type === "edit" ? "DNA-редактор" : "Панель дизайн-системы"}</small></span>
+        </button>
+      {/if}
+      <button
+        type="button"
         data-act="disconnect-node"
         disabled={!links}
         onclick={() => {
@@ -571,6 +725,18 @@
       >
         <span aria-hidden="true">⌁</span>
         <span><strong>Разорвать связи</strong><small>Нода и её данные сохранятся</small></span>
+      </button>
+      <button
+        type="button"
+        class="danger"
+        data-act="delete-node"
+        onclick={() => {
+          $flow.deleteNode(Number(nodeMenu!.nodeId));
+          closeMenu();
+        }}
+      >
+        <span aria-hidden="true">✕</span>
+        <span><strong>Удалить</strong><small>Ctrl+Z вернёт</small></span>
       </button>
     </div>
   {/if}

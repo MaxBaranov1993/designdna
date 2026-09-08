@@ -5,7 +5,7 @@ import type { Edge, Node } from "@xyflow/svelte";
 
 /* kind tokens: design-токены из Source Import/Style DNA в Reskin/Derive. */
 /* ds — ссылка на опубликованную дизайн-систему (systemId@revision), чтобы ДС шла в Генератор проводом, а не «из воздуха» */
-export type PortKind = "text" | "ir" | "tokens" | "artifact" | "interaction" | "motion" | "timeline" | "video" | "ds";
+export type PortKind = "text" | "ir" | "tokens" | "artifact" | "interaction" | "motion" | "timeline" | "video" | "ds" | "image";
 export type PortDecl = { name: string; label: string; kind: PortKind; kinds: PortKind[] };
 
 export type NodeType =
@@ -25,7 +25,9 @@ export type NodeType =
   | "motiondesign"
   | "pagebridge"
   | "designsystem"
-  | "timeline";
+  | "timeline"
+  | "image"
+  | "removebackground";
 
 export type IRObject = Record<string, unknown>;
 export type SourceViewport = "desktop" | "tablet" | "mobile";
@@ -96,6 +98,7 @@ export type GeneratorNodeData = {
   active: number;
   /** Оценки встроенного Quality Pass по вариантам (null — судья не ответил). */
   qualityScores?: (number | null)[];
+  generationContext?: { inputKey: string; pageId: string; brief: string; startedAt: number };
   /** Режим использования ДС для этой ноды: strict | extend | style-only (иначе — из пикера проекта). */
   designSystemUsageMode?: string;
   /** Журнал решений последней генерации: ДС, мастера в контексте, линт, автофиксы. */
@@ -554,6 +557,33 @@ export type MotionDesignNodeData = {
   video: VideoArtifact | null;
 };
 
+/* `png` is the legacy asset field: a PNG/JPEG data URL or desktop blob URL. */
+export type ImageStyle = "vector" | "texture" | "icon";
+export type ImageVariant = { png: string; svg?: string; width: number; height: number; createdAt: number; format?: "png" | "jpeg"; transparent?: boolean };
+export type ImageNodeData = {
+  engine: "raster" | "svg";
+  model?: string;
+  rasterModel?: string;
+  outputFormat: "png" | "jpeg";
+  prompt: string;
+  style: ImageStyle;
+  width: number;
+  height: number;
+  tileable: boolean;
+  provider: NodeProvider;
+  effort: string;
+  variants: ImageVariant[];
+  active: number;
+};
+
+export type RemoveBackgroundNodeData = {
+  image: string | null;
+  fileName: string;
+  prompt: string;
+  variants: ImageVariant[];
+  active: number;
+};
+
 export type AnyNodeData =
   | PromptNodeData
   | ReferenceNodeData
@@ -571,7 +601,9 @@ export type AnyNodeData =
   | MotionDesignNodeData
   | TimelineNodeData
   | PageBridgeNodeData
-  | DesignSystemNodeData;
+  | DesignSystemNodeData
+  | ImageNodeData
+  | RemoveBackgroundNodeData;
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
 export type ReferenceFlowNode = Node<ReferenceNodeData, "reference">;
@@ -591,6 +623,9 @@ export type TimelineFlowNode = Node<TimelineNodeData, "timeline">;
 export type PageBridgeFlowNode = Node<PageBridgeNodeData, "pagebridge">;
 export type DesignSystemFlowNode = Node<DesignSystemNodeData, "designsystem">;
 
+export type ImageFlowNode = Node<ImageNodeData, "image">;
+export type RemoveBackgroundFlowNode = Node<RemoveBackgroundNodeData, "removebackground">;
+
 export type FlowNode =
   | PromptFlowNode
   | ReferenceFlowNode
@@ -608,7 +643,9 @@ export type FlowNode =
   | MotionDesignFlowNode
   | TimelineFlowNode
   | PageBridgeFlowNode
-  | DesignSystemFlowNode;
+  | DesignSystemFlowNode
+  | ImageFlowNode
+  | RemoveBackgroundFlowNode;
 
 /* Ребро RF: id строится по формату из спеки — e<from.node>:<from.port>-<to.node>:<to.port> */
 export type FlowEdge = Edge;

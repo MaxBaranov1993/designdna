@@ -1,22 +1,20 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import { flow, flowBusy, flowNodes, flowEdges } from "../flow/state";
-  import type { DesignSystemFlowNode, DesignSystemAiProvider, SourceArtifact } from "../flow/types";
-  import { resolveDesignSystemAiProvider } from "../flow/store";
+  import type { DesignSystemFlowNode, SourceArtifact } from "../flow/types";
   import InPorts from "./InPorts.svelte";
   import OutPorts from "./OutPorts.svelte";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
   import { designSystemIdleStatus } from './designSystemStatus';
 
+  /* Дизайн-система — результат-первый: имя системы в шапке, воронка
+   * «источник → система» и метрики как содержимое, футер «Собрать» / «Открыть».
+   * Загрузка JSON, автопубликация и AI-аккаунт — в инспекторе. */
   let { id, data, selected }: NodeProps<DesignSystemFlowNode> = $props();
 
   let summary = $derived((data.summary || {}) as Record<string, any>);
   let lastError = $derived(String(data.lastError || ""));
-  let resolvedProvider = $derived.by(() => {
-    const node = $flowNodes.find((n) => n.id === id);
-    return node ? resolveDesignSystemAiProvider($flowNodes, $flowEdges, node) : "openai";
-  });
   let sourceArtifact = $derived.by((): SourceArtifact | null => {
     const wire = $flowEdges.find((edge) => edge.target === id && edge.targetHandle === "artifact");
     const source = $flowNodes.find((node) => node.id === wire?.source);
@@ -25,9 +23,7 @@
     return document.sourceArtifact || null;
   });
   /* Обе стороны воронки считают одно и то же — компоненты каталога против
-   * принятых мастеров. Прежний фолбэк на sourceArtifact.componentSetCount
-   * подставлял ЧИСЛО БЛОКОВ страницы, поэтому воронка всегда выглядела
-   * дырявой. Пока каталог не построен, показываем «—», а не чужую метрику. */
+   * принятых мастеров. Пока каталог не построен, показываем «—». */
   let detectedComponents = $derived(
     summary.catalogComponents == null ? null : Number(summary.catalogComponents));
   let detectedVariants = $derived(
@@ -40,26 +36,8 @@
     const source = $flowNodes.find((n) => n.id === edge?.source);
     return source?.type === "sourceimport" && source.data.blocks.some((b) => !!b.ir && !b.error);
   });
-  let busy = $derived(!!$flowBusy[Number(id)]);
-  let fileInput: HTMLInputElement | null = $state(null);
-
-  /* Загруженная ДС: файл → /api/design-system/import → черновик в этой ноде.
-   * Документ DesignDNA переносится целиком (кит), токены Figma/Tokens Studio и
-   * shadcn-карта становятся foundations + irTokens — то, что лочит генератор. */
-  async function onFile(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
-    if (!file) return;
-    let payload: unknown;
-    try {
-      payload = JSON.parse(await file.text());
-    } catch {
-      $flow.setNodeData(Number(id), { lastError: `«${file.name}» не разбирается как JSON` });
-      return;
-    }
-    await $flow.importDesignSystemDocument(Number(id), payload, file.name);
-  }
+  let busy = $derived(!!$flowBusy[Number(id)] || !!data._dsFinishing);
+  let statusLabel = $derived(data.status === "published" ? `опубликована · v${data.revision}` : data.status === "draft" ? "черновик" : String(data.status));
 
   const openEditor = () => {
     if (!canOpen) return;
@@ -67,81 +45,55 @@
   };
 </script>
 
-<NodeShell {id} type="designsystem" {selected} idleStatus={designSystemIdleStatus(data)}>
-  <InPorts type="designsystem" />
-  <div class="ds-head">
-    <span class="ds-icon" aria-hidden="true">◈</span>
-    <div class="ds-title">
-      <strong>{data.name || "Design System / UI Kit"}</strong>
-      <small>
-        {data.status === "published" ? `Published · v${data.revision}` : data.status === "draft" ? "Draft" : data.status}
-        {data.defaultSet ? " · project default" : ""}
-      </small>
+<NodeShell {id} type="designsystem" {selected} title={data.name || undefined} idleStatus={designSystemIdleStatus(data)}>
+  {#snippet footer()}
+    <div class="foot-left"><span>{statusLabel}{data.defaultSet ? " · по умолчанию" : ""}</span></div>
+    <div class="foot-right">
+      {#if canOpen && data.status !== "published"}
+        <button type="button" class="btn-node primary small nodrag" data-ds-action="finish"
+          disabled={busy} onclick={() => $flow.finishDesignSystem(Number(id))}>{busy ? 'ИИ дорабатывает…' : 'Довести до готового'}</button>
+      {/if}
+      {#if !canOpen}
+        <button type="button" class="btn-node primary small nodrag" data-ds-action="build"
+          disabled={!canBuild || busy} onclick={() => $flow.rebuildDesignSystemFromSource(Number(id))}>Собрать из Source</button>
+      {/if}
+      <button type="button" class="btn-node small nodrag" class:primary={canOpen} data-ds-action="open"
+        aria-label="Открыть редактор Design System и Source UI" disabled={!canOpen} onclick={openEditor}>Открыть</button>
     </div>
-  </div>
+  {/snippet}
+  <InPorts type="designsystem" />
 
   {#if data.systemId}
     <div class="ds-funnel" aria-label="Source detected to system accepted">
       <div class="source-side">
-        <span>Source detected</span>
+        <span>В источнике</span>
         <strong>{detectedComponents ?? "—"}</strong>
-        <small>{detectedVariants ?? "—"} variants</small>
+        <small>{detectedVariants ?? "—"} вариантов</small>
       </div>
       <div class="funnel-arrow" aria-hidden="true"><i></i><b>→</b></div>
       <div class="system-side">
-        <span>System accepted</span>
+        <span>В системе</span>
         <strong>{acceptedMasters}</strong>
-        <small>{acceptedVariants} variants</small>
+        <small>{acceptedVariants} вариантов</small>
       </div>
     </div>
     <div class="ds-metrics">
-      <span>{sourceArtifact?.summary.screenCount ?? sourceArtifact?.screens?.length ?? 0} screens</span>
-      <span>{sourceArtifact?.summary.viewportCount ?? 0} viewports</span>
-      {#if Number(summary.reviewMasters || 0)}<span>{Number(summary.reviewMasters)} review</span>{/if}
-      <span>{Math.round(Number(summary.stateCoverage || 0))}% states</span>
-      <span>Quality {Math.round(Number(summary.qualityScore || 0))}/100</span>
+      <span>{sourceArtifact?.summary.screenCount ?? sourceArtifact?.screens?.length ?? 0} экранов</span>
+      <span>{sourceArtifact?.summary.viewportCount ?? 0} вьюпорта</span>
+      {#if Number(summary.reviewMasters || 0)}<span>{Number(summary.reviewMasters)} на ревью</span>{/if}
+      <span>{Math.round(Number(summary.stateCoverage || 0))}% состояний</span>
+      <span>Качество {Math.round(Number(summary.qualityScore || 0))}/100</span>
     </div>
   {:else}
-    <div class="ds-empty">Соберите кит из Source Import или загрузите JSON: документ DesignDNA, токены Figma / Tokens Studio, карту shadcn.</div>
+    <div class="n-hero-empty">Соберите кит из Source Import или загрузите JSON в инспекторе: документ DesignDNA, токены Figma / Tokens Studio, карту shadcn.</div>
   {/if}
 
   {#if data.sourceUpdate}
-    <div class="ds-update" role="status"><strong>Source changed.</strong> Review and Sync before publishing.</div>
+    <div class="ds-update" role="status"><strong>Источник изменился.</strong> Проверьте и синхронизируйте перед публикацией.</div>
   {/if}
   {#if lastError}
     <details class="ds-error nodrag"><summary>Последнее сообщение</summary><div>{lastError}</div></details>
   {/if}
-
-  <!-- Хендофф: на ноде только «Открыть» — Sync и публикация живут внутри
-       панели Design System, система активна по умолчанию. -->
-  <div class="ds-actions">
-    {#if !canOpen}
-      <button type="button" class="btn-node primary small nodrag" data-ds-action="build"
-        disabled={!canBuild || busy} onclick={() => $flow.rebuildDesignSystemFromSource(Number(id))}>Собрать из Source</button>
-    {/if}
-    <button type="button" class="btn-node primary small nodrag" data-ds-action="open"
-      aria-label="Открыть редактор Design System и Source UI" disabled={!canOpen} onclick={openEditor}>Открыть</button>
-    <input class="ds-file" type="file" accept=".json,application/json" hidden bind:this={fileInput} onchange={onFile} />
-    <button type="button" class="btn-node small nodrag" data-ds-action="import"
-      aria-label="Загрузить дизайн-систему из JSON-файла" title="Документ DesignDNA, W3C / Tokens Studio JSON или карта shadcn"
-      disabled={busy} onclick={() => fileInput?.click()}>Загрузить JSON</button>
-  </div>
-  <label class="ds-auto-publish nodrag">
-    <input type="checkbox" checked={data.autoPublish !== false}
-      onchange={(event) => $flow.setNodeData(Number(id), { autoPublish: event.currentTarget.checked })} />
-    <span>Автопубликация</span>
-  </label>
-  <label class="ds-auto-publish nodrag">
-    <span>AI для всех действий</span>
-    <select aria-label="AI провайдер Design System" data-ds-ai-provider value={data.aiProvider || "inherit"} disabled={busy}
-      onchange={(event) => $flow.setNodeData(Number(id), { aiProvider: event.currentTarget.value as DesignSystemAiProvider })}>
-      <option value="inherit">Из Source · {resolvedProvider}</option>
-      <option value="codex">Codex</option>
-      <option value="claude">Claude Opus</option>
-      <option value="openai">GPT-5.6 Sol</option>
-      <option value="astra">GPT-6 Astra</option>
-    </select>
-  </label>
   {#each Object.entries(data.pipelineStatus || {}) as [stage, result]}
     {#if result.status === "failed" || result.status === "warning" || result.status === "cancelled"}
       <details class="ds-error nodrag" data-ds-pipeline-stage={stage} data-status={result.status}>
@@ -155,42 +107,31 @@
 </NodeShell>
 
 <style>
-  .ds-head { display: flex; gap: 9px; align-items: center; }
-  .ds-icon { color: #8b7cf6; font-size: 18px; }
-  .ds-title { display: flex; min-width: 0; flex: 1; flex-direction: column; }
-  .ds-title strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-  .ds-title small { margin-top: 2px; color: #8b8fa3; font-size: 9px; }
   .ds-funnel {
     display: grid;
     grid-template-columns: 1fr 36px 1fr;
     align-items: stretch;
-    margin-top: 9px;
-    border: 1px solid var(--flow-border);
-    border-radius: 10px;
+    border: 1px solid var(--dna-border);
+    border-radius: var(--r-ctl);
     overflow: hidden;
-    background: color-mix(in srgb, var(--flow-surface-2), transparent 8%);
+    background: var(--dna-sunken);
   }
   .ds-funnel > div:not(.funnel-arrow) { padding: 8px 9px; }
-  .ds-funnel span, .ds-funnel small { display: block; font-size: 8px; }
-  .ds-funnel span { color: #9096a8; font-weight: 650; letter-spacing: .03em; }
-  .ds-funnel strong { display: block; margin: 2px 0 1px; font-size: 18px; line-height: 1; }
-  .ds-funnel small { color: #747b8d; }
-  .source-side { box-shadow: inset 2px 0 #32b6a0; }
-  .source-side strong { color: #58d1bc; }
+  .ds-funnel span, .ds-funnel small { display: block; font-size: 9.5px; }
+  .ds-funnel span { color: var(--dna-dim); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .ds-funnel strong { display: block; margin: 2px 0 1px; font-size: 18px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .ds-funnel small { color: var(--dna-muted); }
+  .source-side { box-shadow: inset 2px 0 var(--dna-artifact); }
+  .source-side strong { color: var(--dna-text); }
   .system-side { box-shadow: inset -2px 0 #8b7cf6; text-align: right; }
-  .system-side strong { color: #a99cff; }
-  .funnel-arrow { position: relative; display: grid; place-items: center; color: #777f91; }
-  .funnel-arrow i { position: absolute; width: 100%; height: 1px; background: linear-gradient(90deg, #32b6a0, #8b7cf6); opacity: .55; }
-  .funnel-arrow b { position: relative; padding: 0 3px; background: var(--flow-surface-2); font-size: 12px; }
-  .ds-metrics { display: flex; flex-wrap: wrap; gap: 4px 9px; margin-top: 7px; color: #9da3b3; font-size: 9px; }
-  .ds-empty { padding: 9px 0; color: #8b8fa3; font-size: 10px; }
-  .ds-update, .ds-error { margin-top: 7px; border-radius: 7px; padding: 6px 7px; font-size: 9px; }
-  .ds-update { background: color-mix(in srgb, #d9a441, transparent 87%); color: #e2b85e; }
-  .ds-error { background: color-mix(in srgb, #f87171, transparent 88%); color: #f87171; }
+  .system-side strong { color: var(--dna-text); }
+  .funnel-arrow { position: relative; display: grid; place-items: center; color: var(--dna-dim); }
+  .funnel-arrow i { position: absolute; width: 100%; height: 1px; background: linear-gradient(90deg, var(--dna-artifact), #8b7cf6); opacity: .45; }
+  .funnel-arrow b { position: relative; padding: 0 3px; background: var(--dna-sunken); font-size: 12px; }
+  .ds-metrics { display: flex; flex-wrap: wrap; gap: 4px 9px; color: var(--dna-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .ds-update, .ds-error { border-radius: 7px; padding: 6px 8px; font-size: 10px; }
+  .ds-update { background: color-mix(in srgb, var(--dna-amber), transparent 88%); color: var(--dna-amber); }
+  .ds-error { background: color-mix(in srgb, var(--dna-danger), transparent 90%); color: var(--dna-danger-text); }
   .ds-error summary { cursor: pointer; }
   .ds-error > div { max-height: 160px; overflow: auto; padding-top: 6px; white-space: pre-wrap; }
-  .ds-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-  .ds-actions button:disabled { cursor: not-allowed; opacity: .5; }
-  .ds-auto-publish { display: flex; align-items: center; gap: 6px; color: #9da3b3; font-size: 10px; }
-  .ds-auto-publish input { width: auto; margin: 0; }
 </style>

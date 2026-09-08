@@ -1787,6 +1787,10 @@
         "placeholder": {
           "type": "string"
         },
+        "inputType": {
+          "enum": ["text", "search", "email", "tel", "url", "password", "number", "textarea", "select", "checkbox"],
+          "description": "Input primitive control kind. Defaults to text."
+        },
         "items": {
           "type": "array",
           "items": {

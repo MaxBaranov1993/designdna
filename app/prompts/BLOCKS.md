@@ -266,6 +266,10 @@ Allowed child elements (the composition primitives):
 - `card` — плашка с фоном `surface`, рамкой и тенью. Это оформление, а не контейнер:
   для группировки без плашки берите `frame`.
 - `badge`, `icon`, `avatar`, `rating`, `stat`, `list`, `input`
+- `input`: `inputType` = `text` (default), `search`, `email`, `tel`, `url`, `password`,
+  `number`, `textarea`, `select`, or `checkbox`; `placeholder`, `label`, `value`.
+  For `select`, use `items` as an array of strings. Example search field:
+  `{"type":"input","inputType":"search","placeholder":"Поиск объявлений"}`.
 
 ## Изображения
 

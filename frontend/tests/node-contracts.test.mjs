@@ -36,7 +36,7 @@ const dsFixture = (provider = 'codex') => {
   reset(); const source = add('sourceimport'), ds = add('designsystem');
   patch(source, { aiProvider: provider, blocks: [{ name: 'hero', lit: true, ir: ir('Source') }] });
   connect(source, 'artifact', ds, 'artifact');
-  patch(ds, { systemId: 'kit', autoPublish: false, document: { id: 'kit', name: 'Kit', components: {} } });
+  patch(ds, { systemId: 'kit', sourceUpdate: false, autoPublish: false, document: { id: 'kit', name: 'Kit', components: {} } });
   return { source, ds };
 };
 const preparedDs = (operation, provider, stage = operation) => ({
@@ -54,7 +54,7 @@ test('autosave isolates live data, stores DS references only and preserves canon
     canonical.tree[0].props.image = svg;
     const document = { id: 'kit', schemaVersion: 'design-system/1.1', components: { hero: { masterIr: canonical, sourceRef: { masterHash: 'immutable-pin' } } }, styleGuide: { irTokens: { color: { primary: '#123456' } } } };
     patch(source, { blocks: [{ name: 'hero', ir: canonical, lit: true }], image: svg });
-    patch(ds, { document, aiProvider: 'inherit', pipelineStatus: { organize: { status: 'success', message: 'ready' } } });
+    patch(ds, { document, _dsFinishing: 'active-finish', aiProvider: 'inherit', pipelineStatus: { organize: { status: 'success', message: 'ready' } } });
     const originalSource = JSON.stringify(node(source).data), originalDs = JSON.stringify(node(ds).data);
     const storedName = 'a'.repeat(64) + '.svg'; let puts = 0;
     window.designDNA = { blobs: { put: async () => { puts++; return { name: storedName, sha256: 'a'.repeat(64) }; } } };
@@ -64,6 +64,7 @@ test('autosave isolates live data, stores DS references only and preserves canon
     const storedDs = nodes.find(n => n.id === ds).data, storedSource = nodes.find(n => n.id === source).data;
     assert.equal(JSON.stringify(node(source).data), originalSource);
     assert.equal(JSON.stringify(node(ds).data), originalDs);
+    assert.equal(storedDs._dsFinishing, undefined);
     assert.equal(storedDs.document, null); assert.equal(storedDs.systemId, 'kit');
     assert.equal(storedDs.aiProvider, 'inherit'); assert.equal(storedDs.pipelineStatus.organize.status, 'success');
     assert.deepEqual(storedDs.resolvedTokens, document.styleGuide.irTokens);
@@ -187,14 +188,15 @@ test('project-save echo through DB reload preserves running AI; a different DS h
   } finally { globalThis.fetch = previousFetch; window.designDNA = desktop; }
 });
 
-test('all DS AI actions route codex/claude via prepare-chat-apply with immutable selected provider', async () => {
+test('all DS AI actions route every desktop provider via prepare-chat-apply with immutable selected provider', async () => {
   const originalFetch = globalThis.fetch, originalDesktop = window.designDNA;
   try {
-    for (const provider of ['codex', 'claude']) for (const operation of ['organize', 'style-review', 'master-review']) {
+    for (const provider of ['codex', 'claude', 'openai', 'astra']) for (const operation of ['organize', 'style-review', 'master-review']) {
       const { source, ds } = dsFixture(provider); const calls = [], chats = [];
       window.designDNA = { providers: { chatRequest: async request => {
         chats.push(request); patch(source, { aiProvider: provider === 'codex' ? 'claude' : 'codex' }); patch(ds, { aiProvider: 'openai' });
-        return { content: '{"answer":true}', provider };
+        return { content: '{"answer":true}', provider: ['openai', 'astra'].includes(provider) ? 'codex' : provider,
+          transport: { requestedProvider: provider, model: provider === 'astra' ? 'gpt-6-astra' : 'gpt-5.6-sol' } };
       } } };
       globalThis.fetch = async (url, init) => {
         const body = JSON.parse(init.body); calls.push({ url, body });
@@ -457,6 +459,14 @@ test('master repair chain applies returned document/hash and only final approval
       const calls = []; let round = 0;
       window.designDNA = { providers: { chatRequest: async (request) => {
         assert.equal(request.profile, round === 1 ? 'quality_repair' : 'quality_judge');
+        if (round === 1) assert.equal(request.responseFormat, undefined);
+        else {
+          const schema = request.responseFormat.jsonSchema.schema;
+          assert.equal(request.responseFormat.type, 'json_schema');
+          assert.equal(schema.additionalProperties, false);
+          assert.deepEqual(schema.required, ['approved', 'score', 'summary', 'defects']);
+          assert.deepEqual(schema.properties.defects.items.properties.severity.enum, ['minor', 'major', 'critical']);
+        }
         return { content: '{}', provider: 'codex' };
       } } };
       globalThis.fetch = async (url, init) => {
@@ -671,9 +681,9 @@ test('published DS tokens survive document-cache eviction and graph save/load', 
   assert.deepEqual(outValue(restored.nodes[0], 'tokens'), tokens);
 });
 
-test('all 17 node types have unique ports and survive save/load with their defaults', () => {
+test('all registered node types have unique ports and survive save/load with their defaults', () => {
   reset();
-  assert.equal(Object.keys(NODE_DEFS).length, 17);
+  assert.ok(Object.hasOwn(NODE_DEFS, 'image') && Object.hasOwn(NODE_DEFS, 'removebackground'));
   for (const type of Object.keys(NODE_DEFS)) {
     const id = add(type);
     for (const ports of Object.values(portsOfNode(node(id)))) {
@@ -682,7 +692,7 @@ test('all 17 node types have unique ports and survive save/load with their defau
     }
   }
   const restored = payloadToRf(parseLegacyPayload(buildSavePayload(store.getState())));
-  assert.equal(restored.nodes.length, 17);
+  assert.equal(restored.nodes.length, Object.keys(NODE_DEFS).length);
   for (const n of restored.nodes) assert.deepEqual(n.data, defaultData(n.type), n.type);
 });
 
@@ -890,4 +900,104 @@ test('finished Motion/Timeline videos survive save-load; running jobs do not res
   patch(1,{renderJob:{id:'pending',status:'rendering'}});
   const pending=payloadToRf(parseLegacyPayload(buildSavePayload(store.getState())));
   assert.equal(pending.nodes[0].data.renderJob,null);
+});
+
+
+test('finish DS resumes failed stages, retries unresolved masters and publishes only after success', async () => {
+  const { ds } = dsFixture('openai');
+  patch(ds, { autoPublish: true, pipelineStatus: { organize: { status: 'success' }, 'style-review': { status: 'failed' } } });
+  const originalRun = store.getState().runDesignSystemAi, originalPublish = store.getState().publishDesignSystem;
+  const calls = []; let rounds = 0;
+  store.setState({ runDesignSystemAi: async (id, operation) => {
+    calls.push(operation);
+    const approved = operation !== 'master-review' || ++rounds === 2;
+    patch(id, { pipelineStatus: { ...node(id).data.pipelineStatus, [operation]: { status: approved ? 'success' : 'warning' } },
+      summary: { reviewMasters: approved ? 0 : 1 }, document: { id: 'kit', reviewComponents: approved ? {} : { hero: {} } } });
+    return { document: node(id).data.document, results: [{ key: 'hero', approved, supported: true }] };
+  }, publishDesignSystem: async () => { calls.push('publish'); return true; } });
+  try {
+    assert.equal(await store.getState().finishDesignSystem(ds), true);
+    assert.deepEqual(calls, ['style-review', 'master-review', 'master-review', 'publish']);
+    assert.equal(node(ds).data._dsFinishing, null);
+  } finally { store.setState({ runDesignSystemAi: originalRun, publishDesignSystem: originalPublish }); }
+});
+
+test('finish DS stops on cancellation, missing evidence or bounded failed verification without publication', async () => {
+  const originalRun = store.getState().runDesignSystemAi, originalPublish = store.getState().publishDesignSystem;
+  try {
+    for (const failure of ['cancel', 'unsupported', 'rejected', 'source-change']) {
+      const { source, ds } = dsFixture(); let reviews = 0, published = 0;
+      patch(ds, { autoPublish: true });
+      store.setState({ runDesignSystemAi: async (id, operation) => {
+        if (operation === 'master-review') {
+          reviews++;
+          if (failure === 'cancel') return null;
+          if (failure === 'source-change') patch(source, { blocks: [] });
+        }
+        patch(id, { pipelineStatus: { ...node(id).data.pipelineStatus, [operation]: { status: operation === 'master-review' ? 'warning' : 'success' } } });
+        return { document: node(id).data.document, results: [{ key: 'hero', approved: false, supported: failure !== 'unsupported' }] };
+      }, publishDesignSystem: async () => { published++; return true; } });
+      assert.equal(await store.getState().finishDesignSystem(ds), false, failure);
+      assert.equal(reviews, failure === 'rejected' ? 3 : 1, failure);
+      assert.equal(published, 0, failure);
+      assert.equal(node(ds).data._dsFinishing, null);
+    }
+  } finally { store.setState({ runDesignSystemAi: originalRun, publishDesignSystem: originalPublish }); }
+});
+
+
+test('finish DS rebuilds a changed Source before starting AI or publication', async () => {
+  const { ds } = dsFixture(); patch(ds, { sourceUpdate: true });
+  const original = store.getState().rebuildDesignSystemFromSource; let rebuilt = 0;
+  store.setState({ rebuildDesignSystemFromSource: async id => { assert.equal(id, ds); rebuilt++; return true; } });
+  try { assert.equal(await store.getState().finishDesignSystem(ds), true); assert.equal(rebuilt, 1); }
+  finally { store.setState({ rebuildDesignSystemFromSource: original }); }
+});
+
+
+test('finish DS recovers retryable AI output failure from the saved checkpoint', async () => {
+  const { ds } = dsFixture(); const originalRun = store.getState().runDesignSystemAi;
+  let reviews = 0;
+  store.setState({ runDesignSystemAi: async (id, operation) => {
+    if (operation === 'master-review' && ++reviews === 1) {
+      patch(id, { _dsAiRetryable: true, pipelineStatus: { ...node(id).data.pipelineStatus, [operation]: { status: 'failed' } } });
+      return null;
+    }
+    patch(id, { _dsAiRetryable: false, pipelineStatus: { ...node(id).data.pipelineStatus, [operation]: { status: 'success' } }, summary: { reviewMasters: 0 } });
+    return { document: node(id).data.document };
+  } });
+  try { assert.equal(await store.getState().finishDesignSystem(ds), true); assert.equal(reviews, 2); }
+  finally { store.setState({ runDesignSystemAi: originalRun }); }
+});
+
+
+test('desktop DS retries a timed-out chat once with a new cancellable id', async () => {
+  const previousFetch = globalThis.fetch, desktop = window.designDNA;
+  const { ds } = dsFixture('openai'); const requests = [];
+  window.designDNA = { providers: { chatRequest: async request => {
+    requests.push(request);
+    if (requests.length === 1) throw new Error('Codex generator timed out');
+    return { content: '{}', provider: 'codex', transport: { requestedProvider: 'openai' } };
+  } } };
+  globalThis.fetch = async (url, init) => url.endsWith('/prepare') ? jsonResponse(preparedDs('style-review', 'openai'))
+    : jsonResponse({ document: JSON.parse(init.body).document, complete: true });
+  try {
+    assert.ok(await store.getState().runDesignSystemAi(ds, 'style-review'));
+    assert.equal(requests.length, 2); assert.notEqual(requests[0].id, requests[1].id);
+    assert.equal(requests[0].model, requests[1].model); assert.deepEqual(requests[0].messages, requests[1].messages);
+  } finally { globalThis.fetch = previousFetch; window.designDNA = desktop; }
+});
+
+
+test('desktop DS bounds transient retries and never retries authentication failures', async () => {
+  const previousFetch = globalThis.fetch, desktop = window.designDNA;
+  try {
+    for (const [message, expected] of [['Codex generator timed out', 2], ['OpenAI API key missing', 1]]) {
+      const { ds } = dsFixture('openai'); let calls = 0, applies = 0;
+      window.designDNA = { providers: { chatRequest: async () => { calls++; throw new Error(message); } } };
+      globalThis.fetch = async url => { if (url.endsWith('/prepare')) return jsonResponse(preparedDs('style-review', 'openai')); applies++; throw new Error('must not apply'); };
+      assert.equal(await store.getState().runDesignSystemAi(ds, 'style-review'), null);
+      assert.equal(calls, expected); assert.equal(applies, 0);
+    }
+  } finally { globalThis.fetch = previousFetch; window.designDNA = desktop; }
 });

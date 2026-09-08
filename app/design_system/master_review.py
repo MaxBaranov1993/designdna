@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import math
 import re
 from typing import Any, Callable
 
@@ -62,29 +63,81 @@ def _preview_size(preview: dict, viewport: str) -> tuple[int, int]:
     return max(16, int(round(float(width)))), max(16, int(round(float(height))))
 
 
+def proof_aligned_preview(comp: dict, viewport: str) -> tuple[dict, int, int]:
+    """Match Source crop pixel edges without resizing evidence or the pinned master."""
+    preview = preview_ir_for_master(comp["masterIr"])
+    width, height = _preview_size(preview, viewport)
+    root = (preview.get("tree") or [{}])[0]
+    ref = comp.get("sourceRef") or {}
+    bounds = (ref.get("boundsByViewport") or {}).get(viewport) or ref.get("bounds") or {}
+    values = [bounds.get(key) for key in ("x", "y", "width", "height")]
+    if (root.get("id") != "ds-master-preview" or not root.get("children")
+            or any(type(v) not in (int, float) or not math.isfinite(v) for v in values)
+            or min(values[:2]) < 0 or min(values[2:]) <= 0):
+        return preview, width, height
+    x, y, w, h = values
+    child = root["children"][0]
+    child_frame = {**(child.get("frame") or {}),
+                   **(((child.get("responsive") or {}).get(viewport) or {}).get("frame") or {})}
+    # Never use the capture canvas to hide a changed master boundary. A resized
+    # candidate keeps its own extent, so the existing size gate still rejects it.
+    if any(type(child_frame.get(k)) not in (int, float) or abs(child_frame[k] - expected) > .001
+           for k, expected in (("width", w), ("height", h))):
+        return preview, width, height
+    # proof_crop uses int(left/top/right/bottom), not round(width/height).
+    # Preserve the fractional origin inside that pixel-aligned capture canvas.
+    width, height = max(1, int(x + w) - int(x)), max(1, int(y + h) - int(y))
+    root.setdefault("frame", {}).update(width=width, height=height)
+    root.setdefault("responsive", {}).setdefault(viewport, {}).setdefault("frame", {}).update(width=width, height=height)
+    preview.setdefault("responsive", {}).setdefault("viewports", {})[viewport] = {"width": width, "height": height}
+    child = root["children"][0]
+    offset = {"x": x - int(x), "y": y - int(y)}
+    child.setdefault("frame", {}).update(offset)
+    child.setdefault("responsive", {}).setdefault(viewport, {}).setdefault("frame", {}).update(offset)
+    return preview, width, height
+
+
 def render_master_png(page, comp: dict, viewport: str) -> bytes:
     """Рендер мастера тем же движком, что и fidelity harness (шрифты источника инлайнятся)."""
     import fidelity_harness
     import scraper
 
-    preview = preview_ir_for_master(comp["masterIr"])
+    preview, width, height = proof_aligned_preview(comp, viewport)
     resolved, errors = scraper.resolve_ir_blobs(preview)
     if errors:
         raise RuntimeError("blob resolve failed: " + "; ".join(errors[:3]))
-    width, height = _preview_size(preview, viewport)
     return fidelity_harness._render_block_png(page, resolved, viewport, width, height)
 
 
-def build_prompt(comp: dict, viewport: str) -> str:
+def build_prompt(comp: dict, viewport: str, *, include_capture_metrics: bool = True) -> str:
     reasons = list(((comp.get("review") or {}).get("reasons")) or [])
     fidelity = comp.get("fidelity") if isinstance(comp.get("fidelity"), dict) else {}
     metrics = (fidelity.get("viewports") or {}).get(viewport) or {}
+    if not include_capture_metrics:
+        context = (
+            "These are fresh, isolated renders of this component. Source capture metrics were measured "
+            "earlier inside the full page and are not measurements of these images. "
+            "Judge only visible differences in the supplied ORIGINAL and current RENDER for this viewport. "
+            "Do not infer a defect or an offset from historical capture diagnostics.\n"
+        )
+    elif fidelity.get("basis") == "component-source-fidelity-harness":
+        context = (
+            f"Component gate reasons: {'; '.join(reasons) or 'none'}.\n"
+            f"Historical Source capture: pixel similarity {metrics.get('pixelSimilarity')}, bbox p95 {metrics.get('bboxP95')}px, "
+            f"origin error {metrics.get('originError')}px, paint coverage {metrics.get('paintCoverage')}.\n"
+        )
+    else:
+        # Block/legacy metrics triggered review but cannot locate a defect in this crop.
+        # Passing them as component measurements makes the judge invent identical offsets.
+        context = (
+            "This candidate was flagged by Source block metrics, not measurements of this component. "
+            "Judge the two component images directly; do not infer a positional offset or a visual "
+            "defect from a block-level gate. Report only differences visible in this viewport.\n"
+        )
     return (
         f"Component: {comp.get('name') or comp.get('componentKey')} ({comp.get('category') or 'component'}), "
         f"viewport {viewport}.\n"
-        f"Deterministic gate reasons: {'; '.join(reasons) or 'none'}.\n"
-        f"Measured: pixel similarity {metrics.get('pixelSimilarity')}, bbox p95 {metrics.get('bboxP95')}px, "
-        f"origin error {metrics.get('originError')}px, paint coverage {metrics.get('paintCoverage')}.\n"
+        + context +
         "Image 1 = ORIGINAL crop from the site screenshot. Image 2 = RENDER of the reconstructed master. "
         "Decide whether the master reproduces the original faithfully enough to ship as an exact component."
     )

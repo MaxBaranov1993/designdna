@@ -285,3 +285,18 @@ def test_repair_failure_does_not_stop_other_components():
     assert results[1]["approved"] and results[1]["repaired"]
     assert "field-review" in updated["reviewComponents"]
     assert "field-2" in updated["components"]
+
+
+def test_repair_description_includes_measured_layout_and_full_caption_without_mutation():
+    import copy
+    ir = {"tree": [{"sourceKey": "caption", "type": "text", "text": "Full captured caption " * 4,
+        "frame": {"x": 20, "y": 78, "width": 212.5, "height": 63, "gap": 8, "padding": [4, 4, 4, 4]},
+        "responsive": {"mobile": {"frame": {"width": 180, "x": 16}}}}]}
+    before = copy.deepcopy(ir)
+    nodes = master_repair.describe_nodes(ir)
+    assert nodes[0]["frame"]["x"] == 20 and nodes[0]["frame"]["padding"] == [4, 4, 4, 4]
+    assert nodes[0]["responsive"]["mobile"]["frame"]["width"] == 180
+    assert nodes[0]["text"] == ir["tree"][0]["text"].strip()
+    nodes[0]["frame"]["padding"][0] = 99
+    nodes[0]["responsive"]["mobile"]["frame"]["width"] = 1
+    assert ir == before

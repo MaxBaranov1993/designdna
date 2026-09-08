@@ -119,7 +119,9 @@
 .fe-canvas { flex:1; position:relative; overflow:hidden; background:#0a0a0d;
   background-image:radial-gradient(circle, #27272c 1px, transparent 1px); background-size:20px 20px; }
 .fe-canvas-inner { position:absolute; top:0; left:0; transform-origin:0 0; }
-.fe-canvas-inner [class^="ir-"] { box-shadow:0 4px 40px rgba(0,0,0,.5); }
+/* Тень только у самого артборда (корень IR), а не у каждого вложенного
+ * ir-элемента — иначе карточки внутри страницы получали чужую тень 40px. */
+.fe-canvas-inner > [class^="ir-"] { box-shadow:0 12px 40px rgba(0,0,0,.45); }
 
 /* линейки 22px (штрихи/подписи рисует canvas — размер синхронен R в controller.drawRulers) */
 .fe-ruler-h { position:absolute; top:0; left:22px; right:0; height:22px; background:var(--fe-panel);

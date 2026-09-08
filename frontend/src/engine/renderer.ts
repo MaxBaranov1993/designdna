@@ -241,8 +241,18 @@ import { isLockedNode } from "./locked";
         addFontFamily(fams, f.family, f.weight);
       }
     }
-    collectStyleFonts(ir, fams);
-    if (!fams.size) return "";
+      collectStyleFonts(ir, fams);
+      // Captured families must keep the source's declared weights/subsets.
+      // Loading Google 500 alongside a captured 400 changes glyph metrics even
+      // though the source also requested 500 and resolved it to its 400 face.
+      const capturedFamilies = new Set((ir?.meta?.fontFaces || [])
+        .filter(face => face && typeof face.url === "string" && face.url.startsWith("/fonts/"))
+        .map(face => safeFontFamily(face.family).toLowerCase()));
+      for (const spec of fams) {
+        const family = String(spec).split(":")[0].replace(/\+/g, " ").toLowerCase();
+        if (capturedFamilies.has(family)) fams.delete(spec);
+      }
+      if (!fams.size) return "";
     return "https://fonts.googleapis.com/css2?" + [...fams].map(f => "family=" + f).join("&") + "&display=swap";
   }
 
@@ -724,7 +734,14 @@ import { isLockedNode } from "./locked";
           const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
           return `<div class="source-input"${path}${transformAttr(el.frame)}${css ? ` style="${css}"` : ""}>${kids}</div>`;
         }
-        return `<input class="input" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value || "")}">`;
+        if (el.inputType === "textarea") {
+          return `<textarea class="input" placeholder="${esc(el.placeholder || el.label || "")}">${esc(el.value ?? "")}</textarea>`;
+        }
+        if (el.inputType === "select") {
+          return `<select class="input" aria-label="${esc(el.label || el.placeholder || "")}">${(el.items || []).map(item =>
+            `<option${String(item) === String(el.value) ? " selected" : ""}>${esc(item)}</option>`).join("")}</select>`;
+        }
+        return `<input class="input" type="${["text", "search", "email", "tel", "url", "password", "number", "checkbox"].includes(el.inputType) ? el.inputType : "text"}" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value ?? "")}">`;
       /* Голый контейнер композиции: без карточной обводки/фона — только собственная
        * геометрия (auto-layout или free) и дети. Рендерится как card с role, но это
        * явный тип, чтобы модель не путала «фрейм» с «карточкой». */
@@ -1673,4 +1690,4 @@ export const IRRenderer = { renderIR, materializeResponsiveIR, fitPreview, getRe
 
 /** Чистые строковые инструменты рендерера для headless regression-тестов
  *  (frontend/tests/engine.regression.test.mjs) — без DOM. */
-export const IRRendererTest = { baseCss, frameCss, withFrame, renderElement, visualCss };
+export const IRRendererTest = { baseCss, frameCss, withFrame, renderElement, visualCss, fontsUrl };

@@ -328,7 +328,7 @@
   });
 
   const dirty = $derived(!!snapshot && memoJson(data.document) !== snapshot);
-  const busy = $derived(publishing || validating || applying || saving || organizing || reviewing || exportingKit || !!$flowBusy[Number(nodeId)]);
+  const busy = $derived(publishing || validating || applying || saving || organizing || reviewing || exportingKit || !!$flowBusy[Number(nodeId)] || !!data._dsFinishing);
 
   $effect(() => {
     if (activeTab === "components" && catalogEntries.length && !selectedComp) {

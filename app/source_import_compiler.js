@@ -1,4 +1,4 @@
-(blocks) => {
+async (blocks) => {
                   const num = (v) => Number.parseFloat(v) || 0;
                   const round2 = (v) => Math.round(Number(v || 0) * 100) / 100;
                   // ---- цвет: rgb/rgba, color(srgb|display-p3), oklch, oklab, lab, lch, color-mix ----
@@ -372,7 +372,7 @@
                     }
                     return frame;
                   };
-                  const collectFontFaces = () => {
+                  const collectFontFaces = async () => {
                     // Шрифты страницы как в html.to.design: читаем @font-face из
                     // доступных CSSOM-листов (same-origin и CORS-листы), абсолютизируем
                     // url — сервер скачает файлы и положит в базу /fonts.
@@ -403,38 +403,24 @@
                       let rules = null; try { rules = sheet.cssRules; } catch (_) {}
                       if (rules) walk(rules, sheet.href);
                     }
-                    // Cross-origin таблицы (CDN, Google Fonts) бросают на
-                    // cssRules — их @font-face выше не виден, и страница на
-                    // гротеске превращалась в антикву. Реально загруженные
-                    // файлы шрифтов доступны через resource timing независимо
-                    // от CORS: сопоставляем их с семействами из document.fonts.
-                    try {
-                      const loaded = [];
-                      for (const face of Array.from(document.fonts || [])) {
-                        if (face && face.status === 'loaded' && face.family) {
-                          loaded.push({
-                            family: String(face.family).replace(/["']/g, '').trim(),
-                            weight: String(face.weight || '400'),
-                            style: String(face.style || 'normal'),
-                            unicodeRange: String(face.unicodeRange || ''),
-                          });
-                        }
-                      }
-                      const fontUrls = (performance.getEntriesByType('resource') || [])
-                        .map(entry => String(entry.name || ''))
-                        .filter(name => /\.(woff2?|ttf|otf)(\?|$)/i.test(name));
-                      // Одно семейство — один файл: без src в FontFace точного
-                      // сопоставления нет, поэтому связываем по порядку загрузки
-                      // и не перетираем уже найденные из CSSOM.
-                      for (let i = 0; i < loaded.length && i < fontUrls.length; i++) {
-                        const face = loaded[i];
-                        const key = (face.family + '|' + face.weight + '|' + face.style + '|' + face.unicodeRange).toLowerCase();
-                        if (seen.has(key)) continue;
-                        seen.add(key);
-                        out.push({ ...face, urls: [abs(fontUrls[i])] });
-                      }
-                    } catch (_) { /* resource timing недоступен — остаёмся с CSSOM */ }
-                    return out.slice(0, 24);
+                    // FontFace iteration and resource timing have no shared order.
+                    // Read the actual CDN declarations; never assign an unrelated font
+                    // binary to a family merely because both loaded at the same index.
+                    for (const sheet of Array.from(document.styleSheets)) {
+                      try { if (sheet.cssRules) continue; } catch (_) {}
+                      if (!sheet.href) continue;
+                      try {
+                        const response = await fetch(sheet.href, {signal: AbortSignal.timeout(5000)});
+                        if (!response.ok) continue;
+                        const css = await response.text();
+                        if (css.length > 2000000) continue;
+                        const parsed = new CSSStyleSheet();
+                        parsed.replaceSync(css);
+                        walk(parsed.cssRules, response.url || sheet.href);
+                      } catch (_) { /* unavailable CSS has no proven font mapping */ }
+                    }
+                    // Preserve subsets/weights for server-side used-weight selection.
+                    return out.slice(0, 192);
                   };
                   const compileBlock = (block) => {
                     const root=document.querySelector(block.selector);
@@ -1334,7 +1320,7 @@
                       gap:Math.round(rootLayout.explicit?(rootLayout.direction==='row'?num(rcs.columnGap):num(rcs.rowGap)):(rootLayout.measuredGap||0)),
                       padding:paddingOf(rcs),justify:safeEnum(justify(rcs.justifyContent),['start','center','end','space-between','space-around'],'start'),
                       align:rootAlign,visited,emitted,dropped,extras,rasterRequests,assetRequests,paintRects,leafBoxes,paintCoverage,coverage,componentBoundaries,
-                      warnings:[...warnings],fontFaces:collectFontFaces()};
+                      warnings:[...warnings],fontFaces:capturedFontFaces};
                     // Chromium ignores clip offsets when a document screenshot
                     // starts at negative x/y. Preserve the original painted root
                     // and every child in a translated container; only the outer
@@ -1377,5 +1363,6 @@
                     }
                     return result;
                   };
+                  const capturedFontFaces = await collectFontFaces();
                   return blocks.map(compileBlock);
                 }

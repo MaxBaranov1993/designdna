@@ -19,12 +19,14 @@ test("Motion Design keeps planning separate from the confirmed paid Seedance cal
   assert.match(store, /type: "video_url"/);
   assert.match(store, /job сохранён/);
   assert.match(node, /Подтверждаю платный вызов/);
-  assert.match(node, /Claude Code/);
-  assert.match(node, /GPT-5\.6 Sol/);
+  const params = await readFile(new URL("../src/inspector/MotionDesignParams.svelte", import.meta.url), "utf-8");
+  assert.match(params, /Claude Code/);
+  assert.match(params, /GPT-5\.6 Sol/);
+  assert.match(params, /planMotionDesign\(id\)/);
 });
 
-test("PagesPanel exposes the video-branch button next to + Page", async () => {
-  const source = await readFile(new URL("../src/PagesPanel.svelte", import.meta.url), "utf-8");
+test("ProjectCard exposes the video-branch action", async () => {
+  const source = await readFile(new URL("../src/chrome/ProjectCard.svelte", import.meta.url), "utf-8");
   assert.match(source, /addVideoChainPage\(\)/);
 });
 

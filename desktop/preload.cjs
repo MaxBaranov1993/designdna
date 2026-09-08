@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld("designDNA", Object.freeze({
     refresh: (options = {}) => ipcRenderer.invoke("repo-canvas:refresh", options),
   }),
   providers: Object.freeze({
+    imageRequest: (request) => ipcRenderer.invoke("providers:image-request", request),
     status: () => ipcRenderer.invoke("providers:status"),
     credentials: () => ipcRenderer.invoke("providers:credentials"),
     setCredential: (provider, value) => ipcRenderer.invoke("providers:set-credential", { provider, value }),

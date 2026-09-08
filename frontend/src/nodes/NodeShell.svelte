@@ -4,45 +4,48 @@
   import { flow, flowBusy, flowProgresses, flowStatuses } from "../flow/state";
   import { subscribeTick } from "../flow/ticker";
   import type { NodeType } from "../flow/types";
+  import { requestNodeActions } from "../flow/ui";
   import { cn } from "../lib/utils";
 
-  /* Общий каркас ноды: шапка (иконка, название, ✕) и тело.
-   * Зеркало .node-head/.node-body legacy; классы n-<type>, f-* и data-id
-   * сохранены для тестов (dataset.id на .node — контракт buildNodeDom legacy). */
+  /* Каркас ноды по мотивам Weavy: шапка 36px (иконка, имя, точка статуса,
+   * «···»), опциональная линия прогресса, тело-превью и футер с одним
+   * главным действием. Классы n-<type>, f-*, data-id, .node-head, .n-x,
+   * .n-progress* сохранены — на них стоят Playwright-тесты. */
   let {
     id,
     type,
     selected = false,
     idleStatus,
+    title,
     children,
+    footer,
   }: {
     id: string;
     type: NodeType;
     selected?: boolean;
-    idleStatus?: {text:string; kind?:string | null};
+    idleStatus?: { text: string; kind?: string | null };
+    /** Переопределение имени в шапке (например, имя дизайн-системы). */
+    title?: string;
     children?: Snippet;
+    /** Футер: слева служебный текст / «+ вход», справа главное действие. */
+    footer?: Snippet;
   } = $props();
 
   let def = $derived(NODE_DEFS[type]);
   let busy = $derived(Boolean($flowBusy[Number(id)]));
   let status = $derived((!busy && idleStatus) || $flowStatuses[Number(id)] || null);
-  let badgeClass = $derived(busy ? "run" : status?.kind === "err" ? "err" : status?.kind === "ok" ? "ok" : "");
-  let badgeText = $derived(busy ? "выполняется" : status?.text || "готова");
+  let dotClass = $derived(busy ? "run" : status?.kind === "err" ? "err" : status?.kind === "ok" ? "ok" : "");
+  let dotText = $derived(busy ? "выполняется" : status?.text || "готова");
 
-  /* Source Import supplies measured backend stages; legacy operations retain
-   * the asymptotic elapsed-time fallback until they expose stage events. */
+  /* Измеренный прогресс приходит стадиями с бэкенда (Source Import); у
+   * остальных операций — indeterminate-линия и честная подсказка «до N мин». */
   let progress = $derived($flowProgresses[Number(id)]);
   let now = $state(Date.now());
-  // Подписка живёт только пока у ноды есть прогресс; сам интервал — один на все
-  // ноды приложения (см. flow/ticker.ts).
   $effect(() => {
     if (!progress) return;
     return subscribeTick((value) => (now = value));
   });
   const elapsedMs = $derived(progress ? Math.max(0, now - progress.startedAt) : 0);
-  /* Процент показываем только измеренный (Source Import отдаёт стадии с
-   * бэкенда). Синтетическая кривая от времени «висла на 97%» — вместо неё
-   * indeterminate-полоса, стадия и честная подсказка «обычно до N мин». */
   const measured = $derived(!!progress && Number.isFinite(progress.percent));
   const percent = $derived(measured ? Number(progress!.percent) : 0);
   const overdue = $derived(!!progress && elapsedMs > progress.expectedMs);
@@ -55,19 +58,25 @@
     const total = Math.floor(elapsedMs / 1000);
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
   })());
+
+  const openActions = (event: MouseEvent) => {
+    event.stopPropagation();
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    requestNodeActions({ nodeId: id, x: rect.right, y: rect.bottom + 4 });
+  };
 </script>
 
 <div class={cn("fnode node", "n-" + type, selected && "selected")} data-id={id} style="width: {def.w}px; --n-accent: {def.accent}">
-  <div class="node-head">
+  <div class="node-head" title={def.sub}>
     <span class:wide={def.icon.length > 2} class="n-icon">{def.icon}</span>
     <span class="n-head-main">
-      <span class="n-title">{def.title}</span>
+      <span class="n-title">{title || def.title}</span>
       <span class="n-sub">{def.sub}</span>
     </span>
-    <span class={`n-badge ${badgeClass}`} title={status?.text || badgeText}>{badgeText}</span>
-    <button class="n-x nodrag" title="Удалить ноду (Del)" onclick={() => $flow.deleteNode(Number(id))}>✕</button>
+    <span class={`n-dot ${dotClass}`} role="img" aria-label={dotText} title={status?.text || dotText}></span>
+    <button class="n-x nodrag" title="Удалить ноду (Del)" aria-label="Удалить ноду" onclick={() => $flow.deleteNode(Number(id))}>✕</button>
+    <button class="n-more nodrag" title="Действия ноды" aria-label="Действия ноды" aria-haspopup="menu" onclick={openActions}>···</button>
   </div>
-  <div class="node-body">{@render children?.()}</div>
   {#if progress}
     <div
       class={cn("n-progress", !measured && "indeterminate", overdue && "overdue")}
@@ -84,5 +93,9 @@
         <span>{measured ? `${Math.round(percent)}% · ${clock}` : `${clock} · ${expectedHint}`}</span>
       </div>
     </div>
+  {/if}
+  <div class="node-body">{@render children?.()}</div>
+  {#if footer}
+    <div class="node-foot nodrag">{@render footer()}</div>
   {/if}
 </div>

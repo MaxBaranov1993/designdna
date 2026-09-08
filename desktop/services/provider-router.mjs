@@ -5,12 +5,21 @@ import { openaiModel } from "./openai-models.mjs";
 
 
 const SOL_EFFORTS = new Set(["medium", "high", "max"]);
-/* Провайдеры, выбираемые пользователем в нодах. openai (Sol по API-ключу)
- * остаётся дефолтом: сохранённые проекты и ретро-выборы мигрируют на него,
- * чтобы включение выбора не сломало уже работающую генерацию. */
+/* Провайдеры, выбираемые пользователем в нодах. openai (Sol) остаётся
+ * дефолтом: сохранённые проекты и ретро-выборы мигрируют на него. */
 export const SELECTABLE_PROVIDERS = Object.freeze(["openai", "astra", "codex", "claude"]);
 const SUPPORTED_PROVIDERS = new Set(SELECTABLE_PROVIDERS);
 const DEFAULT_PROVIDER = "openai";
+
+/* GPT (Sol / Astra) работает только по подписке: запросы уходят в Codex CLI
+ * app-server с выбранной моделью, а не в OpenAI API по ключу. API-транспорт
+ * остаётся доступным лишь явно — параметром gptTransport: "openai" (тесты,
+ * DESIGNDNA_GPT_TRANSPORT=openai для отладки). */
+export const GPT_TRANSPORTS = Object.freeze(["codex", "openai"]);
+export const DEFAULT_GPT_TRANSPORT = GPT_TRANSPORTS.includes(process.env.DESIGNDNA_GPT_TRANSPORT)
+  ? process.env.DESIGNDNA_GPT_TRANSPORT
+  : "codex";
+const GPT_PROVIDERS = new Set(["openai", "astra"]);
 
 function solEffort(value) {
   const effort = typeof value === "string" ? value : value?.effort;
@@ -37,6 +46,37 @@ export function prepareProviderRequest(request, id) {
   return { provider, envelope };
 }
 
+async function chatViaCodex({ codex, source, messages, model, profile, signal, effort, requestedProvider, fallback }) {
+  if (source.responseFormat != null && (source.responseFormat.type !== "json_schema"
+    || !source.responseFormat.jsonSchema?.schema)) {
+    throw new Error("Codex structured output requires responseFormat.jsonSchema.schema with type json_schema");
+  }
+  const codexMessages = source.system
+    ? [{ role: "system", content: source.system }, ...(source.messages || messages || [])]
+    : source.messages || messages || [];
+  let responseMetadata = null;
+  const content = await codex.chat(codexMessages, {
+    profile, signal, model, effort,
+    ...(source.responseFormat ? { outputSchema: source.responseFormat.jsonSchema.schema } : {}),
+    onResponseMetadata: (metadata) => { responseMetadata = metadata; },
+    ...(source.timeoutMs != null ? { timeoutMs: source.timeoutMs } : {}),
+  });
+  return {
+    content,
+    toolCalls: [],
+    provider: "codex",
+    transport: { provider: "codex", model: responseMetadata?.model || null,
+      modelProvider: responseMetadata?.modelProvider || null,
+      authType: responseMetadata?.authType || null,
+      threadId: responseMetadata?.threadId || null,
+      turnId: responseMetadata?.turnId || null,
+      modelSource: responseMetadata?.modelSource || null,
+      completion: responseMetadata?.completion || null,
+      requestedProvider,
+      requestId: source.id || null, dropped: [], fallback },
+  };
+}
+
 export async function chatWithProvider({
   provider,
   messages,
@@ -49,6 +89,7 @@ export async function chatWithProvider({
   codex = null,
   claude = null,
   openaiChat = chatWithOpenAI,
+  gptTransport = DEFAULT_GPT_TRANSPORT,
 }) {
   const source = envelopeInput || { messages, temperature, tools, provider };
   const requestedProvider = String(source.provider || provider || DEFAULT_PROVIDER);
@@ -59,33 +100,7 @@ export async function chatWithProvider({
 
   if (resolved === "codex") {
     if (!codex) throw new Error("Codex не подключён. Откройте Agents → Connections.");
-    if (source.responseFormat != null && (source.responseFormat.type !== "json_schema"
-      || !source.responseFormat.jsonSchema?.schema)) {
-      throw new Error("Codex structured output requires responseFormat.jsonSchema.schema with type json_schema");
-    }
-    const codexMessages = source.system
-      ? [{ role: "system", content: source.system }, ...(source.messages || messages || [])]
-      : source.messages || messages || [];
-    let responseMetadata = null;
-    const content = await codex.chat(codexMessages, {
-      profile, signal, model: source.model, effort,
-      ...(source.responseFormat ? { outputSchema: source.responseFormat.jsonSchema.schema } : {}),
-      onResponseMetadata: (metadata) => { responseMetadata = metadata; },
-      ...(source.timeoutMs != null ? { timeoutMs: source.timeoutMs } : {}),
-    });
-    return {
-      content,
-      toolCalls: [],
-      provider: "codex",
-      transport: { provider: "codex", model: responseMetadata?.model || null,
-        modelProvider: responseMetadata?.modelProvider || null,
-        authType: responseMetadata?.authType || null,
-        threadId: responseMetadata?.threadId || null,
-        turnId: responseMetadata?.turnId || null,
-        modelSource: responseMetadata?.modelSource || null,
-        completion: responseMetadata?.completion || null,
-        requestId: source.id || null, dropped: [], fallback },
-    };
+    return chatViaCodex({ codex, source, messages, model: source.model, profile, signal, effort, requestedProvider: "codex", fallback });
   }
 
   if (resolved === "claude") {
@@ -103,6 +118,14 @@ export async function chatWithProvider({
       provider: "claude",
       transport: { provider: "claude", model: claudeResolvedModel, requestId: source.id || null, dropped: [], fallback },
     };
+  }
+
+  // GPT (Sol / Astra) по подписке: Codex CLI с явной моделью
+  if (GPT_PROVIDERS.has(resolved) && gptTransport !== "openai") {
+    if (!codex) {
+      throw new Error("GPT работает по подписке через Codex CLI, а Codex не подключён. Откройте Agents → Connections и войдите в ChatGPT.");
+    }
+    return chatViaCodex({ codex, source, messages, model, profile, signal, effort, requestedProvider: resolved, fallback });
   }
 
   if (!credentials.has("openai")) {
