@@ -49,6 +49,7 @@ npm run desktop:start
 ## Данные
 
 - Dev: `data/` в корне (gitignored): `projects.db`, `design_systems.db`, `cache.db`, `blobs/`, `fonts/`.
+- Пути и переменные окружения: [app/config/settings.py](app/config/settings.py) — `app_dir()`, `runtime_root()`, `data_dir()` и производные каталоги, таблица всех переменных в докстринге. Новый код не вычисляет `DESIGNDNA_DATA_DIR` сам; исключение — bootstrap в `server.py`, `desktop_worker.py` и `designdna_mcp_server.py` до настройки `sys.path`.
 - Все SQLite-базы открываются через [app/storage/db.py](app/storage/db.py): `connect()` с общими прагмами, `transaction()`, `ensure_schema()` с версией в таблице `schema_versions`. Новую таблицу или колонку добавлять шагом в `SCHEMA_MIGRATIONS` модуля-владельца, а не `ALTER` по месту. Состояние баз: `GET /api/storage/status`.
 - Упакованное приложение: `%APPDATA%\@designdna\desktop\data`, герметичные cwd для CLI в `%APPDATA%\@designdna\desktop\agent-cwd`.
 - Трасса вызовов моделей: `<data>/traces/llm-calls.electron.jsonl` и `llm-calls.python.jsonl`, только метаданные. Читать через `GET /api/agent/trace` или MCP-инструмент `designdna_llm_calls`, чтобы понять, какой провайдер, модель и усилие стояли за результатом ноды.

@@ -26,12 +26,12 @@ import sys
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from storage import db
+from config import settings
 
-ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
-DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data")
+ROOT = settings.runtime_root()
+DATA_ROOT = settings.data_dir()
 DB_PATH = DATA_ROOT / "cache.db"
 
 SCHEMA_VERSION = 2

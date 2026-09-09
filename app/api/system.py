@@ -12,7 +12,7 @@ import ir
 import llm_client as llm
 import llm_trace
 from storage import db as storage_db
-from config import FEATURE_FLAGS
+from config import FEATURE_FLAGS, settings
 from api.common import err
 
 router = APIRouter()
@@ -35,7 +35,7 @@ def agent_trace(limit: int = 50, source: str | None = None):
 @router.get("/api/storage/status")
 def storage_status(countRows: bool = True):
     """Базы SQLite приложения: пути, размеры, режим журнала, версии схем, число строк."""
-    return storage_db.status(count_rows=countRows)
+    return {**storage_db.status(count_rows=countRows), "paths": settings.describe()}
 
 
 @router.get("/api/config")

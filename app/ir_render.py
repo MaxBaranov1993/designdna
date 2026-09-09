@@ -1,8 +1,6 @@
 """Offline Design IR screenshot rendering for the vision quality judge."""
 from __future__ import annotations
 
-from pathlib import Path
-import os
 import re
 
 from playwright.sync_api import sync_playwright
@@ -17,9 +15,10 @@ from timeline_render import (
     _builtin_inter_faces,
     _design_needs_inter,
 )
+from config import settings
 
 
-APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
+APP_ROOT = settings.app_dir()
 RENDERER_JS = APP_ROOT / "static" / "flow" / "engine.js"
 RENDER_DOCUMENT_URL = "https://render.ir.invalid/document"
 RENDER_DOCUMENT_HTML = (

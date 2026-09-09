@@ -7,12 +7,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-from pathlib import Path
+from config import settings
 
 POLICY_VERSION = "generator-design/1.0"
-KNOWLEDGE_PATH = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent) / "prompts" / "generator-policy.json"
+KNOWLEDGE_PATH = settings.app_dir() / "prompts" / "generator-policy.json"
 SURFACES = ("auto", "landing", "catalog", "detail", "checkout", "dashboard", "form",
             "editor", "ai-workspace", "article", "feed", "component")
 STYLE_IDS = ("auto", "minimal", "enterprise", "marketplace", "editorial", "swiss",

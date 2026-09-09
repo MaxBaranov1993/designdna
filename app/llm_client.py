@@ -21,9 +21,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 import cancel_token
+from config import settings
 
 
-ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
+ROOT = settings.runtime_root()
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT_S", "120"))
 SOL_MODEL = "gpt-5.6-sol"
 ASTRA_MODEL = "gpt-6-astra"

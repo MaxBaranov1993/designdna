@@ -8,6 +8,7 @@ from pathlib import Path
 
 from . import document as dsdoc
 from storage import db
+from config import settings
 
 # RLock обязателен: list_systems держит лок и зовёт get_revision,
 # который берёт его повторно (обычный Lock здесь само-дедлочится)
@@ -15,8 +16,7 @@ _LOCK = threading.RLock()
 
 
 def _db_path() -> Path:
-    import os
-    root = Path(os.environ.get("DESIGNDNA_DATA_DIR") or Path(__file__).resolve().parent.parent.parent / "data")
+    root = settings.data_dir()
     return root / "design_systems.db"
 
 

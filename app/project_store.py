@@ -3,20 +3,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sqlite3
 import threading
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import ir
 from storage import db
+from config import settings
 
-ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
-DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data")
+ROOT = settings.runtime_root()
+DATA_ROOT = settings.data_dir()
 DB_PATH = DATA_ROOT / "projects.db"
 DEFAULT_USER_ID = "local-user"
 DEFAULT_PROJECT_ID = "default"

@@ -31,14 +31,14 @@ import base64
 import copy
 import html
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any
 
 from . import document as dsdoc
+from config import settings
 
-ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parents[2])
+ROOT = settings.runtime_root()
 ENGINE_JS = ROOT / "app" / "static" / "flow" / "engine.js"
 
 # Прозрачный 1×1 PNG — заменяет ассет, который не удалось встроить. Пропажа
@@ -63,7 +63,7 @@ _FONT_FILE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 def _fonts_dir() -> Path:
     """Путь читается в момент вызова: модульные константы scraper/harness
     снимают DESIGNDNA_DATA_DIR на импорте и в тестах с tmpdir дают чужой путь."""
-    return Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data") / "fonts"
+    return settings.fonts_dir()
 
 
 def _esc(value: Any) -> str:

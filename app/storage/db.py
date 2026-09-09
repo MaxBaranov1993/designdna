@@ -13,12 +13,12 @@ synchronous=NORMAL (достаточно для локальных данных 
 from __future__ import annotations
 
 import contextlib
-import os
 import sqlite3
 from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from config import settings
 
 BUSY_TIMEOUT_MS = 5_000
 SCHEMA_TABLE = "schema_versions"
@@ -152,5 +152,5 @@ def databases() -> dict[str, Path]:
 def status(*, count_rows: bool = True) -> dict[str, Any]:
     """Сводка по всем базам приложения плюс каталог данных."""
     entries = {name: describe(path, count_rows=count_rows) for name, path in databases().items()}
-    data_root = str(Path(os.environ.get("DESIGNDNA_DATA_DIR") or Path(__file__).resolve().parents[2] / "data"))
+    data_root = str(settings.data_dir())
     return {"dataRoot": data_root, "databases": entries}

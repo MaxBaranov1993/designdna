@@ -32,6 +32,7 @@ from bs4 import BeautifulSoup, Tag
 from PIL import Image
 
 from urlguard import fetch_public_bytes, install_playwright_url_guard, validate_public_url
+from config import settings
 
 # ---------- data ----------
 
@@ -659,7 +660,7 @@ def png_data_url(png: bytes) -> str:
 
 def blobs_dir() -> Path:
     """Immutable PNG objects live in DESIGNDNA_DATA_DIR/blobs (same dir Electron serves)."""
-    root = Path(os.environ.get("DESIGNDNA_DATA_DIR") or Path(__file__).resolve().parent.parent / "data")
+    root = settings.data_dir()
     return root / "blobs"
 
 
@@ -1868,7 +1869,7 @@ def _page_tokens_from_signals(signals: dict | None) -> dict | None:
 
 # ---------- база шрифтов сайтов (Source Import, по мотивам html.to.design) ----------
 
-_DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or Path(__file__).resolve().parent.parent / "data")
+_DATA_ROOT = settings.data_dir()
 _FONTS_DIR = _DATA_ROOT / "fonts"
 _FONT_MAGIC = ((b"wOF2", ".woff2"), (b"wOFF", ".woff"), (b"OTTO", ".otf"), (b"\x00\x01\x00\x00", ".ttf"))
 
@@ -2896,7 +2897,7 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
 
 # ---------- Fidelity: честное пиксельное сходство IR со скриншотом источника ----------
 
-_APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
+_APP_ROOT = settings.app_dir()
 _RENDERER_JS = _APP_ROOT / "static" / "flow" / "engine.js"
 
 

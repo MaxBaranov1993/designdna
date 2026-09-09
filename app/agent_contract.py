@@ -9,13 +9,13 @@ transport-метаданные ответов.
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from config import settings
 
-APP_DIR = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
+APP_DIR = settings.app_dir()
 DEFAULT_DIR = APP_DIR / "prompts" / "agent-contract"
 _VERSION_RE = re.compile(r"^agent-contract/\d+\.\d+$")
 _ROLE_RE = re.compile(r"^[a-z_]{1,32}$")

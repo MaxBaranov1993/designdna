@@ -15,12 +15,12 @@ vision-судьи — то есть проверяются, а не просто
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
+from config import settings
 
-APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
-ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or APP_ROOT.parent)
-DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data")
+APP_ROOT = settings.app_dir()
+ROOT = settings.runtime_root()
+DATA_ROOT = settings.data_dir()
 
 MAX_PROJECT_RULES = 20_000  # символов; больше — это уже документ, а не правила
 

@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import json
-import os
 from functools import lru_cache
-from pathlib import Path
+from config import settings
 
-ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent.parent)
+ROOT = settings.runtime_root()
 SCHEMA_DIR = ROOT / "schema"
 
 CURRENT_SCHEMA_VERSION = "1.1"

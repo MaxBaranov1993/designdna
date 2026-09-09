@@ -28,11 +28,11 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
+from config import settings
 
 # Крупные инлайн-ассеты недопустимы: ~150 КБ после base64 достаточно для
 # иконки/текстуры, остальное — в контент-адресные блобы.
@@ -65,7 +65,7 @@ ALLOWED_DATA_MIME_PREFIXES = ("image/", "font/", "application/")
 
 
 def _data_root() -> Path:
-    return Path(os.environ.get("DESIGNDNA_DATA_DIR") or Path(__file__).resolve().parent.parent / "data")
+    return settings.data_dir()
 
 
 @dataclass(frozen=True)

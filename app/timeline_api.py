@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import copy
 import json
-import os
 import re
 import uuid
 from pathlib import Path
@@ -41,12 +40,13 @@ from timeline_render import (
     submit_render,
     validate_timeline_render,
 )
+from config import settings
 
 router = APIRouter()
 
-_APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
-_ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or _APP_ROOT.parent)
-TIMELINE_RENDER_DIR = Path(os.environ.get("DESIGNDNA_DATA_DIR") or _ROOT / "data") / "renders"
+_APP_ROOT = settings.app_dir()
+_ROOT = settings.runtime_root()
+TIMELINE_RENDER_DIR = settings.renders_dir()
 
 PRESET_LABELS = {
     "fade-in": "Появление (прозрачность)",

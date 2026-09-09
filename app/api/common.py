@@ -5,8 +5,6 @@
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
 
 from fastapi.responses import JSONResponse
 
@@ -16,10 +14,11 @@ import json
 import ir
 import llm_client as llm
 import run_registry
+from config import settings
 
-APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent.parent)
-ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or APP_ROOT.parent)
-DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data")
+APP_ROOT = settings.app_dir()
+ROOT = settings.runtime_root()
+DATA_ROOT = settings.data_dir()
 
 
 def validate_ir(doc: dict) -> list[str]:

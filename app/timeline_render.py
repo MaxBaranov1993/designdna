@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import copy
-import os
 import math
 import re
 import subprocess
@@ -32,6 +31,7 @@ from timeline_assets import (
     materialize_render_assets,
     rewrite_local_asset_urls,
 )
+from config import settings
 
 MAX_RENDER_FRAMES = 10_800
 
@@ -48,7 +48,7 @@ RENDER_DOCUMENT_HTML = (
 # Детерминированный запасной Inter: мердж токенов по умолчанию всегда просит
 # Inter, поэтому офлайн-рендер материализует его из собранных ассетов
 # приложения (интер в продукте идёт из @fontsource/inter в статике билда).
-_APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
+_APP_ROOT = settings.app_dir()
 _APP_STATIC_ASSETS = _APP_ROOT / "static" / "flow" / "_app" / "immutable" / "assets"
 _INTER_FILE_RE = re.compile(r"^inter-(latin|cyrillic|latin-ext|cyrillic-ext)-(400|500|600)-normal\.[A-Za-z0-9_-]+\.woff2$")
 _INTER_SUBSET_RANGE = {

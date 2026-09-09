@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from config import settings
 
 APP_DIR = Path(__file__).resolve().parent
 ROOT = APP_DIR.parent
@@ -294,8 +295,7 @@ def _decode_data_url(data_url: str) -> bytes:
 
 
 def _fonts_dir() -> Path:
-    import os
-    return Path(os.environ.get("DESIGNDNA_DATA_DIR") or (ROOT / "data")) / "fonts"
+    return settings.fonts_dir()
 
 
 def _inline_font_face_css(ir: dict) -> str:

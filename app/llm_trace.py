@@ -15,9 +15,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from config import settings
 
-ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
-DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data")
+ROOT = settings.runtime_root()
+DATA_ROOT = settings.data_dir()
 TRACE_DIR_NAME = "traces"
 PYTHON_FILE = "llm-calls.python.jsonl"
 ELECTRON_FILE = "llm-calls.electron.jsonl"
