@@ -28,6 +28,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from storage import db
+
 ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
 DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data")
 DB_PATH = DATA_ROOT / "cache.db"
@@ -176,14 +178,9 @@ def _open(path: str) -> sqlite3.Connection:
     """Открытие соединения (раз на поток) целиком под _lock: переключение
     journal_mode в WAL берёт exclusive lock без busy-wait, а миграция —
     один раз на процесс."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    timeout = max(busy_timeout_ms() / 1000.0, 0.001)
     with _lock:
-        con = sqlite3.connect(path, timeout=timeout, isolation_level="DEFERRED")
+        con = db.connect(path, isolation_level="DEFERRED", busy_timeout_ms=busy_timeout_ms())
         try:
-            con.execute("PRAGMA journal_mode=WAL")
-            con.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms())}")
-            con.execute("PRAGMA synchronous=NORMAL")
             if path not in _migrated:
                 _migrate(con)
                 con.commit()

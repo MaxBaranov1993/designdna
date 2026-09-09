@@ -54,6 +54,7 @@ TOOL_NAMES = [
     "designdna_design_ir_validate",
     "designdna_project_summary",
     "designdna_llm_calls",
+    "designdna_storage_status",
     "designdna_live_command",
 ]
 
@@ -968,3 +969,21 @@ def test_llm_calls_tool_reads_traces_without_prompt_text(tmp_path, monkeypatch):
     bad = _dispatch_tool("designdna_llm_calls", {"source": "cloud"})
     assert isinstance(bad, tuple) and bad[1] is True
     assert _dispatch_tool("designdna_llm_calls", {"limit": "5"}).startswith("invalid-args:")
+
+
+def test_storage_status_tool_reports_databases(tmp_path, monkeypatch):
+    import cache_store
+
+    monkeypatch.setenv("DESIGNDNA_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(project_store, "DB_PATH", tmp_path / "projects.db")
+    monkeypatch.setattr(cache_store, "DB_PATH", tmp_path / "cache.db")
+    project_store.save_project({"pages": []})
+    payload, failed = _dispatch_tool("designdna_storage_status", {})
+    assert failed is False and payload["ok"] is True
+    assert payload["dataRoot"] == str(tmp_path)
+    assert payload["databases"]["projects"]["tables"]["projects"] == 1
+    assert payload["databases"]["projects"]["schemaVersions"] == {"projects": 1}
+    assert payload["databases"]["design_systems"]["exists"] is False
+    fast, _ = _dispatch_tool("designdna_storage_status", {"countRows": False})
+    assert fast["databases"]["projects"]["tables"]["projects"] is None
+    assert _dispatch_tool("designdna_storage_status", {"countRows": "yes"}).startswith("invalid-args:")

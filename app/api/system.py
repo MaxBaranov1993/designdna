@@ -11,6 +11,7 @@ import cli_llm
 import ir
 import llm_client as llm
 import llm_trace
+from storage import db as storage_db
 from config import FEATURE_FLAGS
 from api.common import err
 
@@ -29,6 +30,12 @@ def agent_trace(limit: int = 50, source: str | None = None):
     if source not in (None, "", "python", "electron"):
         return err(422, "source: python | electron")
     return {"calls": llm_trace.recent(limit=limit, source=source or None), "directory": str(llm_trace.trace_dir())}
+
+
+@router.get("/api/storage/status")
+def storage_status(countRows: bool = True):
+    """Базы SQLite приложения: пути, размеры, режим журнала, версии схем, число строк."""
+    return storage_db.status(count_rows=countRows)
 
 
 @router.get("/api/config")

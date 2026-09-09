@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 
 from . import document as dsdoc
+from storage import db
 
 # RLock обязателен: list_systems держит лок и зовёт get_revision,
 # который берёт его повторно (обычный Lock здесь само-дедлочится)
@@ -19,10 +20,8 @@ def _db_path() -> Path:
     return root / "design_systems.db"
 
 
-def _conn() -> sqlite3.Connection:
-    path = _db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(path)
+def _create_tables(con: sqlite3.Connection) -> None:
+    """Схема v1: реестр систем, неизменяемые ревизии и дефолт проекта."""
     con.execute(
         "CREATE TABLE IF NOT EXISTS design_systems ("
         "system_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL,"
@@ -36,6 +35,16 @@ def _conn() -> sqlite3.Connection:
     con.execute(
         "CREATE TABLE IF NOT EXISTS design_system_meta ("
         "project_id TEXT PRIMARY KEY, default_system_id TEXT, default_revision INTEGER)")
+
+
+SCHEMA_MIGRATIONS = [_create_tables]
+
+
+def _conn() -> sqlite3.Connection:
+    """Соединение с общими прагмами (WAL, busy_timeout); `with _conn() as con:`
+    фиксирует транзакцию. Раньше реестр открывался без прагм и без таймаута."""
+    con = db.connect(_db_path(), isolation_level="")
+    db.ensure_schema(con, "design_systems", SCHEMA_MIGRATIONS)
     _heal_legacy_registry(con)
     return con
 

@@ -38,6 +38,7 @@ Read `violations` and `journal`, inspect the optional `designSystem.errors` and 
 - `designdna_review`: `{ir, designSystem?: {systemId, revision?, usageMode}}`.
 - `designdna_rules_get`: `{}`.
 - `designdna_rules_set`: `{text}`.
+- `designdna_storage_status`: `{countRows?}`. Read-only status of the app's SQLite databases (paths, sizes, journal mode, schema versions, row counts). Use it to confirm the data directory and whether a project or design system exists before reading or writing.
 - `designdna_llm_calls`: `{limit?, source?: "python" | "electron"}`. Read-only metadata of recent model calls (provider, model, effort, agent-contract version, durations, sizes, errors); never prompt or answer text. Use it to explain which model and effort produced a result or why a call failed before retrying.
 
 The local DesignDNA server must be running. If a tool reports `DESIGNDNA_SERVER_UNAVAILABLE`, ask the user to start it or point `DESIGNDNA_SERVER_URL` at the correct local instance; do not fall back to hand-built IR and low-level project writes.

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import ir
+from storage import db
 
 ROOT = Path(os.environ.get("DESIGNDNA_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent)
 DATA_ROOT = Path(os.environ.get("DESIGNDNA_DATA_DIR") or ROOT / "data")
@@ -52,13 +53,9 @@ def payload_revision(payload: dict[str, Any] | None) -> str:
 EMPTY_REVISION = revision_of_raw(EMPTY_RAW)
 
 
-def _connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(
-        str(DB_PATH), timeout=BUSY_TIMEOUT_MS / 1000.0, isolation_level=None)
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_MS)}")
-    con.execute("PRAGMA synchronous=NORMAL")
+def _create_tables(con: sqlite3.Connection) -> None:
+    """Схема v1: проекты, вкусовые профили и события. CREATE IF NOT EXISTS —
+    базы, существовавшие до появления версий, только получают запись о версии."""
     con.execute(
         "CREATE TABLE IF NOT EXISTS projects ("
         "user_id TEXT NOT NULL, project_id TEXT NOT NULL, payload TEXT NOT NULL, "
@@ -77,6 +74,15 @@ def _connect() -> sqlite3.Connection:
         "kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, "
         "PRIMARY KEY (user_id, project_id, event_hash))"
     )
+
+
+SCHEMA_MIGRATIONS = [_create_tables]
+
+
+def _connect() -> sqlite3.Connection:
+    """Autocommit-соединение с общими прагмами; транзакции — явные BEGIN/COMMIT в _tx."""
+    con = db.connect(DB_PATH, isolation_level=None, busy_timeout_ms=BUSY_TIMEOUT_MS)
+    db.ensure_schema(con, "projects", SCHEMA_MIGRATIONS)
     return con
 
 

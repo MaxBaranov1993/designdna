@@ -30,6 +30,7 @@ if str(APP_DIR) not in sys.path:
 import ir  # noqa: E402
 import project_store  # noqa: E402
 import llm_trace  # noqa: E402
+from storage import db as storage_db  # noqa: E402
 from design_system import resolver as design_system_resolver  # noqa: E402
 from design_system import store as design_system_store  # noqa: E402
 
@@ -492,6 +493,16 @@ def _tool_defs() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True},
         },
         {
+            "name": "designdna_storage_status",
+            "description": "Read-only status of the app's SQLite databases (projects, design systems, cache): paths, sizes, journal mode, schema versions and row counts. Use it to confirm which data directory the app uses and whether a project or design system exists before reading it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"countRows": {"type": "boolean"}},
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True},
+        },
+        {
             "name": "designdna_live_command",
             "description": "Preview or apply a revision-safe command to the currently open DesignDNA editor. Requires the desktop app to be running; mutations use native approval and return only after CAS persistence.",
             "inputSchema": {
@@ -559,6 +570,11 @@ _TOOL_ARGS = {
         "allowed": {"limit", "source"},
         "required": set(),
         "types": {"limit": int, "source": str},
+    },
+    "designdna_storage_status": {
+        "allowed": {"countRows"},
+        "required": set(),
+        "types": {"countRows": bool},
     },
     "designdna_live_command": {
         "allowed": {"commandId", "idempotencyKey", "projectId", "pageId", "baseRevision", "intent", "scope", "action", "arguments", "mode", "correlationId", "timeoutMs"},
@@ -954,6 +970,9 @@ def _dispatch_tool(name: str, arguments: Any) -> tuple[dict[str, Any], bool] | s
             return {"ok": False, "errors": ["arguments.limit: 1..500"]}, True
         calls = llm_trace.recent(limit=int(limit or 50), source=source)
         return {"ok": True, "count": len(calls), "calls": calls, "directory": str(llm_trace.trace_dir())}, False
+    if name == "designdna_storage_status":
+        payload = storage_db.status(count_rows=bool(args.get("countRows", True)))
+        return {"ok": True, **payload}, False
     if name == "designdna_live_command":
         return _call_live(args)
     return {"ok": False, "errors": [f"unknown tool: {name}"]}, True
