@@ -64,6 +64,7 @@ npm run desktop:start
 | [docs/node-execution.md](docs/node-execution.md) | ноды, листы, жизненный цикл асинхронных задач |
 | [docs/all-nodes-review-2026-09-08.md](docs/all-nodes-review-2026-09-08.md) | ревью всех типов нод и результаты проверок |
 | [docs/generator-design-playbook/README.md](docs/generator-design-playbook/README.md) | дизайн-политика генератора |
+| [docs/design-system-prompt-2026-09-09.md](docs/design-system-prompt-2026-09-09.md) | что из дизайн-системы попадает в промпт генератора: бюджеты, порядок строк, сводки мастеров, декор-сигнатуры, референс-картинки |
 | [docs/image-nodes.md](docs/image-nodes.md) | ноды изображений |
 | [skills/designdna/SKILL.md](skills/designdna/SKILL.md) | MCP-инструменты и порядок работы внешнего агента |
 

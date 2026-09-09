@@ -629,7 +629,7 @@ def resolve_design_context(req: dict):
     compiled = resolver.compiled_context(
         context, brief=brief,
         archetype_id=str((req or {}).get("archetypeId") or ""),
-        token_budget=int((req or {}).get("tokenBudget") or 1200),
+        token_budget=int((req or {}).get("tokenBudget") or compiler.default_budget(usage)),
     )
     return {"context": context, **compiled}
 

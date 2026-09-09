@@ -52,7 +52,13 @@
   type GenerationLog = {
     policy?: { surfaceLabel?: string; effectiveMode?: string; version?: string };
     product?: string; tokensLocked?: boolean; projectRules?: boolean; referenceScreens?: number; strictFallback?: string;
-    designSystem?: { name?: string; usageMode?: string; componentsAvailable?: number; mastersInContext?: string[]; pinnedMaster?: string | null; strictReady?: boolean; errors?: number; warnings?: number; recovered?: unknown } | null;
+    designSystem?: {
+      name?: string; usageMode?: string; componentsAvailable?: number; mastersInContext?: string[];
+      summariesInContext?: string[]; decorSignatures?: string[]; archetypeSelection?: string;
+      estimatedTokens?: number; tokenBudget?: number;
+      referenceImages?: Array<{ kind?: string; componentKey?: string; label?: string; attached?: boolean; skipped?: string }>;
+      pinnedMaster?: string | null; strictReady?: boolean; errors?: number; warnings?: number; recovered?: unknown;
+    } | null;
     variants?: LogVariant[];
   };
   let generationLog = $derived((data.generationLog || null) as GenerationLog | null);
@@ -299,12 +305,19 @@
           {#if generationLog.designSystem}
             <dt>Дизайн-система</dt>
             <dd>{generationLog.designSystem.name || "—"} · {generationLog.designSystem.usageMode}
-              · мастеров доступно {generationLog.designSystem.componentsAvailable ?? 0}, в контексте {(generationLog.designSystem.mastersInContext || []).length}
+              · мастеров доступно {generationLog.designSystem.componentsAvailable ?? 0}, точных в контексте {(generationLog.designSystem.mastersInContext || []).length}
+              {#if (generationLog.designSystem.summariesInContext || []).length}· сводок {(generationLog.designSystem.summariesInContext || []).length}{/if}
+              {#if (generationLog.designSystem.decorSignatures || []).length}· декор-сигнатур {(generationLog.designSystem.decorSignatures || []).length}{/if}
+              {#if generationLog.designSystem.estimatedTokens}· контекст ≈{generationLog.designSystem.estimatedTokens}/{generationLog.designSystem.tokenBudget} ток.{/if}
               {#if generationLog.designSystem.errors}· отказов strict {generationLog.designSystem.errors}{/if}
               {#if generationLog.designSystem.recovered}· материализован точный мастер{/if}
             </dd>
             {#if (generationLog.designSystem.mastersInContext || []).length}
               <dt>Мастера в контексте</dt><dd>{(generationLog.designSystem.mastersInContext || []).join(", ")}</dd>
+            {/if}
+            {#if (generationLog.designSystem.referenceImages || []).length}
+              <dt>Референсы ДС</dt>
+              <dd>{(generationLog.designSystem.referenceImages || []).map((item) => `${item.attached === false ? "✗ " : ""}${item.label || item.componentKey || ""}${item.skipped ? ` (${item.skipped})` : ""}`).join("; ")}</dd>
             {/if}
             {#if generationLog.designSystem.pinnedMaster}
               <dt>Референс</dt><dd>пиннутый мастер: {generationLog.designSystem.pinnedMaster}</dd>

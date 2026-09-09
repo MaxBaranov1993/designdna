@@ -191,10 +191,11 @@ def resolve_context(document: dict, brief: str, *, usage_mode: str = "strict",
 
 
 def compiled_context(context: dict, *, brief: str = "", archetype_id: str = "",
-                     token_budget: int = 1200, pinned_keys=None) -> dict:
+                     token_budget: int = 1200, pinned_keys=None, surface: str = "") -> dict:
     return compile_profile(context, brief=brief, archetype_id=archetype_id,
                            token_budget=token_budget,
-                           pinned_keys=pinned_keys if pinned_keys is not None else context.get("pinnedKeys"))
+                           pinned_keys=pinned_keys if pinned_keys is not None else context.get("pinnedKeys"),
+                           surface=surface)
 
 
 def compact_prompt_block(context: dict) -> str:

@@ -528,7 +528,11 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
     ds_usage_mode = ""
     pinned_master_keys: list[str] = []
     ds_reference_instruction = ""
+    ds_reference_candidates: list[dict] = []
+    ds_reference_parts: list[dict] = []
+    ds_reference_note = ""
     if isinstance(req.designSystem, dict) and req.designSystem.get("systemId"):
+        from design_system import compiler as ds_compiler, reference_images as ds_reference_images
         from design_system import resolver as ds_resolver, store as ds_store
         ds_doc, ds_error = (resolved_document, None) if resolved_document is not None else ds_store.resolve_ref(req.designSystem)
         if ds_error:
@@ -539,14 +543,16 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             ds_doc, brief, usage_mode=ds_usage_mode, pinned_keys=pinned_master_keys)
         if ds_usage_mode == "strict" and not ds_context.get("components"):
             return err(422, "Design System Strict: нет опубликованных мастеров для этой задачи. Используйте Extend или добавьте мастер.")
-        # Strict обязан вместить exact master целой секции — на 4000 токенов
-        # он не помещался и генерация падала «не помещается в context budget».
-        provider_budget = 24_000 if ds_usage_mode == "strict" else 1200
+        # Strict обязан вместить exact master целой секции; extend/style-only —
+        # сводки всех мастеров, ревью с DO/DON'T и декоративные сигнатуры
+        # (на 1200 токенах всё это отрезалось, и модель рисовала общий шаблон).
+        provider_budget = ds_compiler.default_budget(ds_usage_mode)
         ds_compiled = ds_resolver.compiled_context(
             ds_context, brief=brief,
             archetype_id=str(req.designSystem.get("archetypeId") or ""),
             token_budget=int(req.designSystem.get("tokenBudget") or provider_budget),
             pinned_keys=pinned_master_keys,
+            surface=surface,
         )
         if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
             # Пиннутый мастер (референс = мастер ДС) не влезает в бюджет промпта —
@@ -652,6 +658,13 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             dna, complete_dna = ds_dna, ds_complete_dna
         ds_prompt_block += "\n\n" + ds_style_review.profile_prompt(ds_doc)
         ds_prompt_block += _embed_mode_block(ds_usage_mode)
+        # Визуальные референсы: блоки исходника, где живут релевантные мастера,
+        # и кроп самого мастера. Кандидаты логируются всегда, картинки
+        # декодируются только когда промпт действительно уходит модели.
+        ds_reference_candidates = ds_reference_images.select_candidates(ds_doc, ds_context, surface=surface)
+        if req.rawOutputs is None and ds_reference_candidates:
+            ds_reference_parts = ds_reference_images.render(ds_doc, ds_reference_candidates)
+            ds_reference_note = ds_reference_images.prompt_note(ds_reference_parts)
         if dna and dna.get("font"):
             pair = None
         if ds_usage_mode == "strict" and pinned_master_keys:
@@ -710,7 +723,8 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             return chosen_direction
         return directions[(n - 1) % len(directions)] if directions else None
 
-    def call_context_llm(user_content: str, direction: dict | None):
+    def call_context_llm(user_content, direction: dict | None):
+        """user_content — строка или части OpenAI-формата (текст + image_url референсы ДС)."""
         pending_chars = 0
 
         def on_delta(delta: str) -> None:
@@ -800,8 +814,12 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             user += "\n\n" + ds_reference_instruction
         if rules_block:
             user += "\n\n" + rules_block
+        if ds_reference_note:
+            user += "\n\n" + ds_reference_note
+        content = ([{"type": "text", "text": user}, *(item["part"] for item in ds_reference_parts)]
+                   if ds_reference_parts else user)
         if req.prepareOnly:
-            return user, None, None
+            return content, None, None
         if run_registry.is_cancelled(run_id):
             return None, "cancelled", None
         if req.rawOutputs is not None:
@@ -809,10 +827,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             ir, error = parse_ir_response(req.rawOutputs[n - 1])
         else:
             run_registry.stage(run_id, "llm", f"Модель генерирует IR ({count} вар.)" if count > 1 else "Модель генерирует IR")
-            if mode == "generate":
-                ir, error = call_context_llm(user, variant_direction)
-            else:
-                ir, error = call_context_llm(user, variant_direction)
+            ir, error = call_context_llm(content, variant_direction)
             run_registry.stage(run_id, "validate", "Проверка схемы и автофиксы")
         qa = None
         if ir is not None:
@@ -1026,6 +1041,14 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             "usageMode": ds_usage_mode,
             "componentsAvailable": len(ds_context.get("components") or []),
             "mastersInContext": list((ds_compiled or {}).get("includedMasterKeys") or []),
+            "summariesInContext": list((ds_compiled or {}).get("summarizedMasterKeys") or []),
+            "decorSignatures": list((ds_compiled or {}).get("decorSignatureIds") or []),
+            "archetypeSelection": (ds_compiled or {}).get("archetypeSelection"),
+            "archetypeIds": list((ds_compiled or {}).get("archetypeIds") or []),
+            "estimatedTokens": (ds_compiled or {}).get("estimatedTokens"),
+            "tokenBudget": (ds_compiled or {}).get("tokenBudget"),
+            "referenceImages": ds_reference_images.describe(
+                ds_reference_candidates, ds_reference_parts if req.rawOutputs is None else None),
             "pinnedMaster": pinned_master_keys[0] if pinned_master_keys else None,
             "strictReady": (ds_compiled or {}).get("strictReady"),
             "errors": len((design_system_report or {}).get("errors") or []),
@@ -1224,10 +1247,11 @@ def reskin(req: ReskinReq):
         ds_usage_mode = str(req.designSystem.get("usageMode") or "strict")
         ds_context = ds_resolver.resolve_context(
             ds_doc, req.prompt, usage_mode=ds_usage_mode)
+        from design_system import compiler as ds_compiler
         ds_compiled = ds_resolver.compiled_context(
             ds_context, brief=req.prompt,
             archetype_id=str(req.designSystem.get("archetypeId") or ""),
-            token_budget=int(req.designSystem.get("tokenBudget") or (24_000 if ds_usage_mode == "strict" else 1000)),
+            token_budget=int(req.designSystem.get("tokenBudget") or ds_compiler.default_budget(ds_usage_mode)),
         )
         if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
             return err(422, "Design System Strict: exact master не помещается в выбранный context budget. Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")

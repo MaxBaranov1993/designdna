@@ -551,11 +551,12 @@ def _messages(base: dict, req: AssistRequest) -> list[dict]:
         # помещался и КАЖДЫЙ AI-запрос в редакторе падал 422 (генератору этот
         # же бюджет уже подняли, см. server.generate).
         ds_mode = str(req.designSystem.get("usageMode") or "strict")
+        from design_system import compiler as ds_compiler
         compiled = ds_resolver.compiled_context(
             ds_ctx, brief=req.prompt,
             archetype_id=str(req.designSystem.get("archetypeId") or ""),
             token_budget=int(req.designSystem.get("tokenBudget")
-                             or (24_000 if ds_mode == "strict" else 4000)),
+                             or ds_compiler.default_budget(ds_mode)),
         )
         if str(req.designSystem.get("usageMode") or "strict") == "strict" and not compiled.get("strictReady"):
             raise ValueError("Design System Strict: exact master не помещается в выбранный context budget")
