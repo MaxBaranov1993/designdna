@@ -71,7 +71,8 @@ def test_screenshot_fallback_preserves_provider_and_separates_cache(monkeypatch,
         seen.update(options)
         raise RuntimeError("stop before image processing")
 
-    monkeypatch.setattr(server, "reproduce_pipeline", pipeline)
+    import api.reproduce as reproduce_api
+    monkeypatch.setattr(reproduce_api, "reproduce_pipeline", pipeline)
     response = server.reproduce(server.ReproduceReq(image="test-image", provider=provider))
     assert response.status_code == 502
     assert seen["provider"] == provider

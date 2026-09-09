@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 
 import server  # noqa: E402
+import api.source_import as source_import_api  # noqa: E402
+
 
 
 def test_source_import_job_publishes_real_stage_and_result(monkeypatch):
@@ -24,7 +26,7 @@ def test_source_import_job_publishes_real_stage_and_result(monkeypatch):
         on_stage("captureCompile", 12, {"captureCompile": 12})
         return result
 
-    monkeypatch.setattr(server, "_execute_block_parse", fake_execute)
+    monkeypatch.setattr(source_import_api, "_execute_block_parse", fake_execute)
     with server.SOURCE_IMPORT_JOBS_LOCK:
         server.SOURCE_IMPORT_JOBS[job_id] = {
             "jobId": job_id,

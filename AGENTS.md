@@ -6,7 +6,7 @@
 
 | Каталог | Что там | Как проверять |
 | --- | --- | --- |
-| `app/` | FastAPI-бэкенд: [server.py](app/server.py) собирает приложение и держит генератор, разбор источника, reskin и Quality Pass; самостоятельные группы маршрутов в `app/api/` (image, rules, project, system, runs, style, interaction, motion, pages) и роутеры `design_system/api.py`, `timeline_api.py`, `video_api.py`, `editor_assist.py`; IR (`app/ir/`), хранилища (`project_store.py`, `cache_store.py`, `design_system/store.py`), AI-транспорт (`llm_client.py`, `cli_llm.py`), MCP-сервер (`designdna_mcp_server.py`) | `.venv/Scripts/python -m pytest app/<файл>_test.py -q`; линт `.venv/Scripts/python -m ruff check app` |
+| `app/` | FastAPI-бэкенд: [server.py](app/server.py) только собирает приложение и реэкспортирует имена; маршруты по доменам в `app/api/`: `generate.py` (генератор, mix, clone, reskin), `source_import.py` (block-parse), `quality.py`, `reproduce.py`, `image.py`, `rules.py`, `project.py`, `system.py`, `runs.py`, `style.py`, `interaction.py`, `motion.py`, `pages.py`, общие помощники и пулы в `api/common.py`; роутеры `design_system/api.py`, `timeline_api.py`, `video_api.py`, `editor_assist.py`; IR (`app/ir/`), хранилища (`project_store.py`, `cache_store.py`, `design_system/store.py`), AI-транспорт (`llm_client.py`, `cli_llm.py`), MCP-сервер (`designdna_mcp_server.py`) | `.venv/Scripts/python -m pytest app/<файл>_test.py -q`; линт `.venv/Scripts/python -m ruff check app` |
 | `desktop/` | Electron: `main.mjs`, сервисы провайдеров (`services/claude-agent-server.mjs`, `codex-app-server.mjs`, `provider-router.mjs`), мост к Python-воркеру по JSONL (`lib/jsonl-process.mjs`) | `npm --prefix desktop test` |
 | `frontend/` | SvelteKit + Svelte Flow: граф нод (`src/flow/`), редактор (`src/editor/`), десктопный мост (`src/desktop/`) | `npm --prefix frontend run build:desktop`, `node --test frontend/tests/*.test.mjs` |
 | `schema/` | JSON-схемы Design IR, Design System, Motion, Timeline. Источник истины для контрактов | `app/*_schema*_test.py` |
@@ -32,7 +32,7 @@ npm run desktop:start
 ```
 
 - Быстрый Python-набор выше идёт 3–6 минут (908 тестов на 2026-09-09); десктопный и фронтендовый наборы — по несколько секунд. Конфигурация pytest и ruff в [pyproject.toml](pyproject.toml); ruff проверяет только реальные дефекты (синтаксис, неопределённые имена, неиспользуемые импорты), базовая линия — ноль ошибок.
-- Хендлеры и модели запросов, вынесенные в `app/api/`, реэкспортируются из `server.py`: в тестах допустимо и `server.project_load`, и `api.project.project_load`. Новые маршруты добавлять в `app/api/`, а не в `server.py`.
+- Хендлеры и модели запросов из `app/api/` реэкспортируются из `server.py`: вызывать можно и `server.project_load`, и `api.project.project_load`. Подменять функции в тестах нужно в модуле-владельце (`monkeypatch.setattr(api.quality, "render_png", …)`), подмена через `server.` до вынесенного кода не доходит. Модули-зависимости (`server.llm`, `server.cache_store`, `server.run_registry`) остаются доступны. Новые маршруты добавлять в `app/api/`, а не в `server.py`.
 - `app/ui_*_test.py` требуют собранный фронтенд, запущенный сервер и Playwright; список поддерживаемого набора в [app/ui_smoke.py](app/ui_smoke.py).
 - `*_live_test.py` делают платные вызовы AI. Не запускать без явной просьбы.
 - Полный CI: [.github/workflows/desktop.yml](.github/workflows/desktop.yml).

@@ -5,6 +5,8 @@ import copy
 import json
 
 import server
+import api.quality as quality_api
+
 from test_qualitygate import BASE_IR
 
 
@@ -20,7 +22,7 @@ def _score(score: int, verdict: str, issues: list | None = None) -> str:
 
 def test_quality_scorecard_sends_rendered_png_and_rubric_to_vision(monkeypatch):
     calls = []
-    monkeypatch.setattr(server, "render_png", lambda ir, width=1440, **_kw: b"\x89PNG\r\n")
+    monkeypatch.setattr(quality_api, "render_png", lambda ir, width=1440, **_kw: b"\x89PNG\r\n")
 
     def fake_vision(provider, image_data_url, text_prompt, system_prompt="", temperature=0.2,
                     timeout=None, role="vision", reasoning_effort=None):
@@ -50,7 +52,7 @@ def test_quality_scorecard_sends_rendered_png_and_rubric_to_vision(monkeypatch):
 def test_quality_pass_repair_rejudges_a_fresh_screenshot(monkeypatch):
     render_calls = []
     monkeypatch.setattr(
-        server, "render_png", lambda ir, width=1440, **_kw: render_calls.append(copy.deepcopy(ir)) or b"png",
+        quality_api, "render_png", lambda ir, width=1440, **_kw: render_calls.append(copy.deepcopy(ir)) or b"png",
     )
     answers = iter([
         _score(61, "needs_repair", [{
@@ -86,7 +88,7 @@ def test_quality_pass_default_threshold_is_80():
 def test_component_mode_uses_component_rubric_and_skips_page_rules(monkeypatch):
     component = copy.deepcopy(BASE_IR)
     component["tree"] = [{"type": "source-block", "children": [{"type": "text", "text": "Readable"}]}]
-    monkeypatch.setattr(server, "render_png", lambda *args, **kwargs: b"png")
+    monkeypatch.setattr(quality_api, "render_png", lambda *args, **kwargs: b"png")
     calls = []
     monkeypatch.setattr(server.llm, "chat_vision", lambda provider, images, prompt, system, *args, **kwargs:
                         calls.append((prompt, system)) or _score(80, "pass"))

@@ -8,6 +8,8 @@ from PIL import Image
 
 import generator_policy as policy
 import server
+import api.quality as quality_api
+
 from design_system import store
 from design_system_strict_fallback_test import _document, _fixture
 from generation_provider_test import art_directions
@@ -171,13 +173,13 @@ def test_major_issue_blocks_pass_and_text_only_remains_unverified():
 @pytest.mark.parametrize("provider", ["codex", "claude"])
 def test_desktop_vision_uses_real_viewport_mode_and_caches_images(monkeypatch, provider):
     calls = []
-    monkeypatch.setattr(server, "_quality_visual_key", lambda ir, brief: policy.digest([ir, brief]))
+    monkeypatch.setattr(quality_api, "_quality_visual_key", lambda ir, brief: policy.digest([ir, brief]))
     def render(_ir, width, **kwargs):
         calls.append((width, kwargs.get("viewport")))
         output = io.BytesIO()
         Image.new("RGB", (width, 100), "white").save(output, "PNG")
         return output.getvalue()
-    monkeypatch.setattr(server, "render_png", render)
+    monkeypatch.setattr(quality_api, "render_png", render)
     request = dict(ir=copy.deepcopy(BASE_IR), provider=provider, visualReview=True, repair=False)
     first = server.quality_pass_codex_step(server.QualityPassCodexReq(**request))
     content = first["pending"]["messages"][1]["content"]

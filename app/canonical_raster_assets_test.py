@@ -339,7 +339,8 @@ def test_repair_uses_render_copies_and_returns_canonical_state(monkeypatch, acce
         return False
     monkeypatch.setattr(fidelity_repair, "make_browser_measurer", make_measure)
     monkeypatch.setattr(fidelity_repair, "repair_block", repair)
-    monkeypatch.setattr(server, "_refresh_block_fidelity", refresh)
+    import api.source_import as source_import_api
+    monkeypatch.setattr(source_import_api, "_refresh_block_fidelity", refresh)
     req = server.FidelityRepairReq(blocks=[source], rawOutputs=[{"blockIndex": 0, "content": "{}"}])
     result = server.block_parse_repair(req)
     assert isinstance(result, dict), getattr(result, "body", None)
