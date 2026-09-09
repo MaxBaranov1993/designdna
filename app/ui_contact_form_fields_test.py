@@ -1,7 +1,6 @@
 """Acceptance: contact-form fields are groups with independently editable parts."""
 from __future__ import annotations
 
-import json
 import pathlib
 import sys
 import time

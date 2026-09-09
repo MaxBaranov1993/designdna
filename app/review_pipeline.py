@@ -7,7 +7,6 @@ LLM-вызовы идут в Sol по ключу или через консол�
     .venv/Scripts/python app/review_pipeline.py [git-range]   (по умолчанию 737478f..HEAD)
 """
 import json
-import os
 import re
 import subprocess
 import sys

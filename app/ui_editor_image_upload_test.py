@@ -10,8 +10,6 @@ undo (Ctrl+Z) откатывает вставку.
 """
 from __future__ import annotations
 
-import base64
-import io
 import struct
 import sys
 import time

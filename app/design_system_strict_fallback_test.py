@@ -144,7 +144,7 @@ def test_strict_materializes_pinned_master_when_it_exceeds_the_context_budget(mo
 
 def test_exact_copy_inside_component_ref_is_trusted_and_placement_does_not_mutate_shape() -> None:
     """Обёртка превью обнуляет x/y и несёт измеренные цвета мастера — копия остаётся exact."""
-    from design_system import compiler, document as dsdoc
+    from design_system import compiler
     master = _fixture()
     root = master["tree"][0]
     root.setdefault("frame", {}).update({"x": 120, "y": 80})

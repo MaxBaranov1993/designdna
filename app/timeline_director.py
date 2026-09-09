@@ -14,7 +14,6 @@ TimelineChangeSet (preview → atomic apply → undo).
 from __future__ import annotations
 
 import json
-import re
 
 import llm_client as llm
 from ir.timeline import (

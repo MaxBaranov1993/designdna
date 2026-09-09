@@ -22,7 +22,6 @@ import time
 from pathlib import Path
 
 import project_store
-import editor_assist
 from editor_assist import AssistRequest, _messages
 
 FIXTURE = Path(__file__).parent / "fixtures" / "frame-example.json"

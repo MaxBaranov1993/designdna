@@ -37,8 +37,8 @@
 | --- | --- | --- |
 | 1 | `AGENTS.md` + `CLAUDE.md` в корне, починить ссылки README | сделано 2026-09-08 |
 | 2 | Герметичный запуск подписочных CLI в обоих путях | сделано 2026-09-08, см. AGENT-CONTRACT |
-| 3 | `pyproject.toml` с `testpaths`, маркерами `ui`, `live`, `slow`, ruff | не начато |
-| 4 | Разрезать `server.py` на роутеры по доменам без изменения поведения | не начато |
+| 3 | `pyproject.toml` с `testpaths`, маркерами `ui`, `live`, `slow`, ruff | сделано 2026-09-09: pyproject.toml, ruff с правилами только на реальные дефекты, базовая линия 0; попутно найден и исправлен NameError в `clone()` |
+| 4 | Разрезать `server.py` на роутеры по доменам без изменения поведения | первый этап 2026-09-09: image, rules, project, system, runs, style, interaction, motion, pages вынесены в `app/api/` (3264 → 2587 строк); пулы пересоздаются после lifespan, набор тестов больше не зависит от порядка файлов. Осталось: generate/mix/clone/reskin, block-parse, quality, scrape/reproduce |
 | 5 | Пакет `storage/`: один `db.py`, прагмы, таблица версии схемы, миграции; один `settings.py` | не начато |
 | 6 | Персистентные `runs` и `llm_calls`, трассы промптов в `data/traces` | вызовы моделей пишутся в `data/traces/*.jsonl` с 2026-09-09; `runs` и сырые промпты не начаты |
 | 7 | `logging` в JSON-строки с `run_id`; наблюдательные инструменты MCP | MCP-инструмент `designdna_llm_calls` и `GET /api/agent/trace` есть; общий `logging` не начат |

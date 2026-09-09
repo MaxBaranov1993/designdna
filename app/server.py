@@ -4,7 +4,6 @@
 Запуск:  .venv/Scripts/python app/server.py   (порт 8420)
 """
 import base64
-import asyncio
 import concurrent.futures
 import contextlib
 import contextvars
@@ -31,12 +30,9 @@ mimetypes.add_type("font/woff", ".woff")
 
 from fastapi import FastAPI
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-from interaction_capture import capture_live_flow
-from motion_render import render_video, validate_render_input, validate_composition_layers, prepare_composition_layers
-from ir.motion_v2 import migrate_motion_v1_to_v2, validate_motion_v2
+from pydantic import BaseModel
 from quality_certification_adapter import certify_from_reports
 
 APP_ROOT = Path(os.environ.get("DESIGNDNA_APP_DIR") or Path(__file__).resolve().parent)
@@ -51,18 +47,16 @@ from reproduce import run_pipeline as reproduce_pipeline
 from urlguard import fetch_public_bytes, validate_public_url
 import cache_store
 import run_registry
-import cli_llm
 import blockparse
 import mergeback
 import qualitygate
 import rules as project_rules
-from ir_render import render_png, render_svg_png
+from ir_render import render_png
 import project_store
 import typography
 import designkb
 import generator_policy
 import agent_contract
-import llm_trace
 from editor_assist import router as editor_assist_router
 
 import ir
@@ -70,24 +64,36 @@ from ir import apply_tokens as apply_ir_tokens
 from ir import bind_element_styles as bind_ir_element_styles
 from ir import ensure_current as ensure_current_ir
 from ir import sanitize_generated_ir
-from config import FEATURE_FLAGS
+# Общие помощники роутеров и состояние рендера видео живут в пакете api/;
+# server.err / validate_ir / RENDER_* остаются доступны прежним именем.
+from config import FEATURE_FLAGS  # noqa: F401 — тесты подменяют server.FEATURE_FLAGS.is_enabled
+from api.common import err, validate_ir  # noqa: F401
+from api.motion import RENDER_DIR, RENDER_EXECUTOR, RENDER_JOBS, RENDER_JOBS_LOCK  # noqa: F401
 
 EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 SOURCE_IMPORT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-RENDER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 SOURCE_IMPORT_JOBS: dict[str, dict] = {}
 SOURCE_IMPORT_JOBS_LOCK = threading.Lock()
-RENDER_JOBS: dict[str, dict] = {}
-RENDER_JOBS_LOCK = threading.Lock()
-RENDER_DIR = DATA_ROOT / "renders"
+
+
+def _fresh_executors() -> None:
+    """Пулы создаются заново после остановки: TestClient с lifespan и прямые
+    вызовы хендлеров в одной сессии тестов не должны зависеть от порядка."""
+    global EXECUTOR, SOURCE_IMPORT_EXECUTOR
+    EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+    SOURCE_IMPORT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    if getattr(EXECUTOR, "_shutdown", False) or getattr(SOURCE_IMPORT_EXECUTOR, "_shutdown", False):
+        _fresh_executors()
     yield
     EXECUTOR.shutdown(wait=True)
     SOURCE_IMPORT_EXECUTOR.shutdown(wait=True)
-    RENDER_EXECUTOR.shutdown(wait=True)
+    # RENDER_EXECUTOR (api/motion.py) не останавливаем: его объект реэкспортируется
+    # и подменяется в тестах, а потоки пула дожидаются завершения при выходе интерпретатора.
+    _fresh_executors()
 
 
 app = FastAPI(title="DesignAI Web", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -105,6 +111,46 @@ app.include_router(timeline_router)
 
 from video_api import router as video_router  # noqa: E402
 app.include_router(video_router)
+
+# Самостоятельные группы маршрутов вынесены в app/api/* (см. docs/BACKEND-REVIEW-2026-09-08.md).
+from api.image import router as image_router  # noqa: E402
+from api.rules import router as rules_router  # noqa: E402
+from api.project import router as project_router  # noqa: E402
+from api.system import router as system_router  # noqa: E402
+from api.runs import router as runs_router  # noqa: E402
+from api.style import router as style_router  # noqa: E402
+from api.interaction import router as interaction_router  # noqa: E402
+from api.motion import router as motion_router  # noqa: E402
+from api.pages import router as pages_router  # noqa: E402
+for _router in (image_router, rules_router, project_router, system_router, runs_router,
+                style_router, interaction_router, motion_router, pages_router):
+    app.include_router(_router)
+
+# Реэкспорт: тесты и внешние вызовы обращаются к хендлерам и моделям как server.<имя>.
+from api.image import (  # noqa: E402,F401
+    ImageConvertReq, ImageGenReq, ImageMaskReq, _IMAGE_STYLE_HINTS, _extract_svg, _sanitize_svg,
+    image_convert, image_generate, image_remove_background,
+)
+from api.rules import ConstraintsCheckReq, ProjectRulesReq, constraints_check, get_rules, save_rules  # noqa: E402,F401
+from api.project import (  # noqa: E402,F401
+    ProjectLoadReq, ProjectSaveReq, TasteOutcomeReq, project_load, project_save, project_taste, project_taste_outcome,
+)
+from api.system import agent_trace, app_config, cache_stats  # noqa: E402,F401
+from api.runs import run_cancel, run_events, run_status  # noqa: E402,F401
+from api.style import (  # noqa: E402,F401
+    StyleDnaApplyReq, StyleDnaReq, StyleNormalizeReq, TailwindProjectionReq,
+    export_tailwind, style_dna_apply, style_dna_extract, style_normalize_preview,
+)
+from api.interaction import (  # noqa: E402,F401
+    InteractionBuildReq, InteractionCaptureReq, InteractionReplayReq, InteractionValidateReq,
+    interaction_build, interaction_capture, interaction_replay, interaction_validate,
+)
+from api.motion import (  # noqa: E402,F401
+    MotionBuildReq, MotionMigrateV2Req, MotionRenderReq, MotionValidateReq, _completed_render_on_disk,
+    _materialize_motion_scenes, _run_motion_render, motion_build, motion_migrate_v2, motion_render,
+    motion_render_download, motion_render_status, motion_validate,
+)
+from api.pages import FONTS_DIR, flow_page, nodes_page, root_page, serve_font  # noqa: E402,F401
 
 COLOR_TOKEN_KEYS = ["primary", "secondary", "accent", "background", "surface", "text", "textMuted", "border"]
 MAX_CLONE_HTML_BYTES = 2_000_000
@@ -167,11 +213,6 @@ def _locked_generation_dna(tokens: dict | None) -> tuple[dict | None, dict | Non
 
 # ---------- helpers ----------
 
-def validate_ir(doc: dict) -> list[str]:
-    """Список ошибок валидации IR по схеме (пустой = ок)."""
-    return ir.format_errors(ir.validate_ir(doc))
-
-
 def sanitize_font_face_weights(doc: dict) -> dict:
     """Variable-шрифты отдают диапазон весов («400 800»), а схема принимает один
     вес. IR, захваченные до нормализации на захвате (scraper._resolve_font_faces),
@@ -220,10 +261,6 @@ def call_llm_ir(provider: str, user_content: str, temperature: float = 0.8,
     finally:
         run_registry.add_received_chars(run_id, pending_chars)
     return parse_ir_response(raw)
-
-
-def err(status: int, message: str) -> JSONResponse:
-    return JSONResponse({"detail": message}, status_code=status)
 
 
 # 499 — клиент отменил запуск (кооперативная отмена через run_registry)
@@ -284,6 +321,7 @@ class CloneReq(BaseModel):
     url: str = ""
     component: str = ""
     provider: str = "openai"
+    effort: str = "medium"
 
 
 class BlockParseReq(BaseModel):
@@ -326,32 +364,6 @@ class ReskinReq(BaseModel):
     designSystem: dict | None = None
 
 
-class ImageGenReq(BaseModel):
-    """Нода «Изображение»: SVG от подписочной модели → PNG на сервере."""
-    prompt: str = ""
-    style: str = "vector"       # vector | texture | icon
-    width: int = 1024
-    height: int = 1024
-    tileable: bool = False
-    model: str | None = None
-    provider: str = "codex"
-    effort: str = "medium"
-    prepareOnly: bool = False     # desktop: вернуть промпт вместо LLM-вызова
-    rawOutput: str | None = None  # desktop: ответ подключённого аккаунта
-    referenceImage: str | None = None  # data:image/… — образец для модели (vision-вход)
-
-
-class ImageConvertReq(BaseModel):
-    image: str
-    outputFormat: str = "png"
-    requireTransparency: bool = False
-
-
-class ImageMaskReq(BaseModel):
-    image: str
-    mask: str
-
-
 class QualityGateReq(BaseModel):
     ir: dict
     fix: bool = True  # авто-доводка solver'ом (без LLM) того, что чинится
@@ -382,82 +394,6 @@ class QualityPassCodexReq(QualityPassReq):
     outputs: QualityPassCodexOutputs = QualityPassCodexOutputs()
 
 
-class ConstraintsCheckReq(BaseModel):
-    ir: dict
-    constraints: list  # [{path, lock?, min?, max?, enum?, max_len?}]
-
-
-class StyleDnaReq(BaseModel):
-    ir: dict
-
-
-class StyleDnaApplyReq(BaseModel):
-    ir: dict
-    tokens: dict
-
-
-class StyleNormalizeReq(BaseModel):
-    ir: dict
-    tolerance: float = 0.12
-
-
-class TailwindProjectionReq(BaseModel):
-    ir: dict
-    mode: str = "exact"
-
-
-class InteractionBuildReq(BaseModel):
-    base_ir: dict
-    source: dict = Field(default_factory=dict)
-    scenes: list[dict] = Field(default_factory=list)
-    events: list[dict] = Field(default_factory=list)
-    variables: dict = Field(default_factory=dict)
-
-
-class InteractionValidateReq(BaseModel):
-    interaction: dict
-
-
-class InteractionReplayReq(BaseModel):
-    base_ir: dict
-    interaction: dict
-    scene_id: str
-
-
-class InteractionCaptureReq(BaseModel):
-    base_ir: dict
-    url: str
-    mine: bool = False
-    viewport: str = "desktop"
-    actions: list[dict] = Field(default_factory=list)
-
-
-class MotionBuildReq(BaseModel):
-    base_ir: dict
-    interaction: dict
-    composition: dict = Field(default_factory=dict)
-    scene_settings: dict = Field(default_factory=dict)
-    render_settings: dict = Field(default_factory=dict)
-
-
-class MotionValidateReq(BaseModel):
-    motion: dict
-    interaction: dict | None = None
-
-
-class MotionMigrateV2Req(BaseModel):
-    motion: dict
-    project_revision: str
-    source_mapping: dict = Field(default_factory=dict)
-
-
-class MotionRenderReq(BaseModel):
-    base_ir: dict
-    interaction: dict
-    motion: dict
-    layers: list[dict] | None = None
-
-
 class ScrapeReq(BaseModel):
     url: str = ""
     use_playwright: bool = True
@@ -478,29 +414,6 @@ class SegmentReq(BaseModel):
     prepareOnly: bool = False
     rawOutputs: list = []  # [{tileIndex, content}]
 
-
-class ProjectSaveReq(BaseModel):
-    project: dict
-    # CAS-режим: SHA-256 ревизии с прошлого load/save (get.revision).
-    # Без поля — прежнее поведение last-write-wins (совместимость, beacon).
-    expectedRevision: str | None = None
-    user_id: str = project_store.DEFAULT_USER_ID
-    project_id: str = project_store.DEFAULT_PROJECT_ID
-
-
-class ProjectLoadReq(BaseModel):
-    user_id: str = project_store.DEFAULT_USER_ID
-    project_id: str = project_store.DEFAULT_PROJECT_ID
-
-
-class TasteOutcomeReq(BaseModel):
-    kind: str
-    payload: dict = Field(default_factory=dict)
-    user_id: str = project_store.DEFAULT_USER_ID
-    project_id: str = project_store.DEFAULT_PROJECT_ID
-
-
-# ---------- endpoints ----------
 
 @app.post("/api/generate")
 def generate(req: GenerateReq):
@@ -1384,25 +1297,6 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             **({"designSystem": design_system_report} if design_system_report else {})}
 
 
-class ProjectRulesReq(BaseModel):
-    text: str = ""
-
-
-@app.get("/api/rules")
-def get_rules():
-    """Правила, по которым работают генератор и судья: встроенные + правила проекта."""
-    return project_rules.payload()
-
-
-@app.post("/api/rules/project")
-def save_rules(req: ProjectRulesReq):
-    try:
-        project_rules.save_project_rules(req.text)
-    except ValueError as e:
-        return err(422, str(e))
-    return project_rules.payload()
-
-
 @app.post("/api/mix")
 def mix(req: MixReq):
     irs, weights = req.irs, [float(w) for w in req.weights]
@@ -1511,7 +1405,7 @@ def clone(req: CloneReq):
             raw2 = llm.chat(provider, [
                 {"role": "system", "content": llm.build_system_prompt("edit")},
                 {"role": "user", "content": repair},
-            ], 0.2, role="repair", reasoning_effort=effort)
+            ], 0.2, role="repair", reasoning_effort=req.effort if req.effort in ("medium", "high", "max") else "medium")
             ir2, _ = parse_ir_response(raw2)
             if ir2 and not validate_ir(ir2):
                 ir = ir2
@@ -1901,115 +1795,6 @@ def block_parse_repair(req: FidelityRepairReq):
     return {"ok": True, "viewport": viewport, "blocks": blocks, "results": results,
             "gatePassed": all(_block_gate_passed(block) for block in blocks),
             "totalGain": round(sum(float(r.get("gain") or 0) for r in results), 2)}
-
-
-_IMAGE_STYLE_HINTS = {
-    "vector": "Flat vector illustration: clean shapes, layered gradients, one consistent light direction, no text unless the prompt asks for it.",
-    "texture": "Seamless material texture: build it from <pattern> and <filter> noise (feTurbulence, feDisplacementMap, feDiffuseLighting), subtle lighting, fill the whole canvas edge to edge.",
-    "icon": "Single icon on a transparent background: bold silhouette, consistent 2px strokes, centered with 8% padding.",
-}
-
-
-def _extract_svg(raw: str) -> str | None:
-    match = re.search(r"<svg[\s\S]*?</svg>", raw or "", re.IGNORECASE)
-    return match.group(0) if match else None
-
-
-def _sanitize_svg(svg: str) -> str:
-    """Parse XML, allow static SVG only, and never execute returned markup."""
-    import xml.etree.ElementTree as ET
-    if len(svg.encode("utf-8")) > 100_000 or re.search(r"<!DOCTYPE|<!ENTITY", svg, re.I):
-        raise ValueError("SVG слишком большой или содержит запрещённые объявления")
-    root = ET.fromstring(svg)
-    local = lambda name: name.rsplit("}", 1)[-1]
-    allowed = set("svg g defs title desc path rect circle ellipse line polyline polygon text tspan linearGradient radialGradient stop pattern filter clipPath mask use feTurbulence feDisplacementMap feGaussianBlur feColorMatrix feComposite feDiffuseLighting feSpecularLighting feDistantLight fePointLight feSpotLight feBlend feFlood feMerge feMergeNode feOffset feMorphology feComponentTransfer feFuncR feFuncG feFuncB feFuncA".split())
-    if local(root.tag) != "svg":
-        raise ValueError("Ожидался SVG")
-    for parent in root.iter():
-        for child in list(parent):
-            if local(child.tag) not in allowed or ("}" in child.tag and not child.tag.startswith("{http://www.w3.org/2000/svg}")):
-                parent.remove(child)
-        for name, value in list(parent.attrib.items()):
-            key = local(name).lower()
-            if key.startswith("on") or (key == "href" and not value.startswith("#")) or key == "style":
-                del parent.attrib[name]
-            elif re.search(r"url\((?!['\"]?#)[^)]*\)", value, re.I):
-                del parent.attrib[name]
-    ET.register_namespace("", "http://www.w3.org/2000/svg")
-    return ET.tostring(root, encoding="unicode")
-
-
-@app.post("/api/image/convert")
-def image_convert(req: ImageConvertReq):
-    from image_output import convert_image
-    try:
-        return convert_image(req.image, req.outputFormat, req.requireTransparency)
-    except ValueError as exc:
-        return err(422, str(exc))
-
-
-@app.post("/api/image/remove-background")
-def image_remove_background(req: ImageMaskReq):
-    from image_output import apply_background_mask
-    try:
-        return apply_background_mask(req.image, req.mask)
-    except ValueError as exc:
-        return err(422, str(exc))
-
-
-@app.post("/api/image/generate")
-def image_generate(req: ImageGenReq):
-    """«Изображение»: подписочная модель (Codex / Claude) пишет самодостаточный
-    SVG по промпту, сервер санитизирует его и рендерит PNG через Playwright.
-    prepareOnly → промпт для аккаунта десктопа; rawOutput → ответ модели."""
-    prompt = (req.prompt or "").strip()
-    if not prompt:
-        return err(422, "Опишите изображение")
-    width = max(64, min(2048, int(req.width or 1024)))
-    height = max(64, min(2048, int(req.height or 1024)))
-    style = req.style if req.style in _IMAGE_STYLE_HINTS else "vector"
-    system = (
-        "You are a senior graphics engineer who draws with SVG only. Return exactly one self-contained "
-        "<svg> document and nothing else: no markdown, no explanations, no code fences.\n"
-        f"Canvas: width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\". Fill the whole canvas.\n"
-        "Allowed: shapes, paths, linear/radial gradients, <pattern>, <filter> (feTurbulence, feDisplacementMap, "
-        "feGaussianBlur, feColorMatrix, feComposite, feDiffuseLighting, feSpecularLighting), <clipPath>, <mask>, transforms. "
-        "Forbidden: <script>, <foreignObject>, <image>, external hrefs, web fonts. Keep the document under 40 KB.\n"
-        f"Style: {_IMAGE_STYLE_HINTS[style]}"
-        + ("\nTileable: the result must tile seamlessly. Build it from a <pattern> that repeats at least twice per axis "
-           "or make every edge continue exactly into the opposite edge. No vignette, no centered hero object." if req.tileable else "")
-    )
-    reference = (req.referenceImage or "").strip()
-    if reference and (not reference.startswith("data:image/") or len(reference) > 8_000_000):
-        return err(422, "Референс должен быть изображением (data:image/…) до 6 МБ")
-    if reference:
-        user_content = [
-            {"type": "text", "text": prompt + "\n\nA reference image is attached. Reproduce its palette, materials, "
-                                        "motif, proportions and level of detail in SVG; do not describe it, draw it."},
-            {"type": "image_url", "image_url": {"url": reference, "detail": "high"}},
-        ]
-    else:
-        user_content = prompt
-    messages = [{"role": "system", "content": system}, {"role": "user", "content": user_content}]
-    if req.prepareOnly:
-        return {"prompts": [{"messages": messages}]}
-    provider = req.provider if req.provider in ("astra", "codex", "claude") else "openai"
-    effort = req.effort if req.effort in ("medium", "high", "max") else "medium"
-    try:
-        raw = req.rawOutput if req.rawOutput is not None else llm.chat(
-            provider, messages, 0.8, role="graphics", reasoning_effort=effort, model=req.model)
-    except Exception as e:
-        return err(502, str(e))
-    svg = _extract_svg(raw)
-    if not svg:
-        return err(502, "Модель не вернула SVG — попробуйте переформулировать промпт")
-    try:
-        svg = _sanitize_svg(svg)
-        png = render_svg_png(svg, width, height)
-    except Exception as e:
-        return err(502, f"Не удалось отрисовать SVG: {e}")
-    return {"svg": svg, "png": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
-            "width": width, "height": height}
 
 
 @app.post("/api/reskin")
@@ -2569,16 +2354,6 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
     return _quality_finish(req, output_ir, initial, final, repair, visual=visual)
 
 
-@app.post("/api/constraints/check")
-def constraints_check(req: ConstraintsCheckReq):
-    """Проверка декларативных ограничений (локи полей по путям + диапазоны)."""
-    try:
-        violations = qualitygate.check_constraints(req.ir, req.constraints)
-    except ValueError as e:
-        return err(422, str(e))
-    return {"ok": not violations, "violations": violations}
-
-
 @app.post("/api/scrape")
 def scrape(req: ScrapeReq):
     """Полный анализ реального сайта: контент + стили + структура + скриншот."""
@@ -2801,464 +2576,7 @@ def reproduce_segment(req: SegmentReq):
     }
 
 
-@app.get("/api/cache/stats")
-def cache_stats():
-    """Наблюдаемость кэша: сколько LLM-вызовов сэкономлено повторами."""
-    return cache_store.stats()
-
-
-@app.get("/api/agent/trace")
-def agent_trace(limit: int = 50, source: str | None = None):
-    """Последние вызовы моделей из Electron и Python: метаданные без текста промптов."""
-    if source not in (None, "", "python", "electron"):
-        return err(422, "source: python | electron")
-    return {"calls": llm_trace.recent(limit=limit, source=source or None), "directory": str(llm_trace.trace_dir())}
-
-
-@app.post("/api/project/save")
-def project_save(req: ProjectSaveReq):
-    if req.expectedRevision:
-        result = project_store.commit_project(
-            req.project,
-            req.expectedRevision,
-            user_id=req.user_id,
-            project_id=req.project_id,
-        )
-        if result.get("stale"):
-            return JSONResponse(result, status_code=409)
-        return result
-    return project_store.save_project(req.project, req.user_id, req.project_id)
-
-
-@app.post("/api/project/load")
-def project_load(req: ProjectLoadReq):
-    record = project_store.inspect_project(req.user_id, req.project_id)
-    if record.get("status") == "corrupt":
-        return {"project": None, "updated_at": None, "revision": None}
-    if record.get("status") != "ok":
-        # пустой проект — валидная CAS-цель: commit с EMPTY_REVISION создаст строку
-        return {"project": None, "updated_at": None, "revision": project_store.EMPTY_REVISION}
-    return {
-        "project": record["payload"],
-        "updated_at": record["updated_at"],
-        "revision": record["revision"],
-    }
-
-
-@app.get("/api/runs/{run_id}")
-def run_status(run_id: str):
-    """Стадия длинного запуска (generate/quality-pass) — клиент поллит параллельно POST."""
-    run = run_registry.get(run_id)
-    if not run:
-        return err(404, "Запуск не найден")
-    return run
-
-
-@app.get("/api/runs/{run_id}/events")
-async def run_events(run_id: str):
-    """Push run stage changes to browser clients; polling remains a client fallback."""
-    async def events():
-        revision = 0
-        empty_waits = 0
-        while True:
-            run = await asyncio.to_thread(run_registry.wait_for_update, run_id, revision, 15.0)
-            if run is None:
-                empty_waits += 1
-                yield ": keep-alive\n\n"
-                if revision == 0 and empty_waits >= 2:
-                    break
-                continue
-            empty_waits = 0
-            revision = int(run.get("revision") or revision)
-            payload = json.dumps(run, ensure_ascii=False, separators=(",", ":"))
-            yield f"id: {revision}\ndata: {payload}\n\n"
-            if run.get("status") in {"complete", "error", "cancelled"}:
-                break
-
-    return StreamingResponse(
-        events(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-@app.post("/api/runs/{run_id}/cancel")
-def run_cancel(run_id: str):
-    """Кооперативная отмена: хендлер прервётся на следующей проверке между стадиями."""
-    return {"cancelled": run_registry.cancel(run_id), "runId": run_id}
-
-
-@app.get("/api/project/taste")
-def project_taste():
-    return project_store.load_taste_profile()
-
-
-@app.post("/api/project/taste/outcome")
-def project_taste_outcome(req: TasteOutcomeReq):
-    try:
-        return project_store.record_taste_outcome(
-            req.kind, req.payload, user_id=req.user_id, project_id=req.project_id)
-    except ValueError as exc:
-        return err(422, str(exc))
-
-
-@app.get("/api/config")
-def app_config():
-    """Runtime configuration and feature flags for the frontend."""
-    return {
-        "schemaVersion": ir.CURRENT_SCHEMA_VERSION,
-        "agentContract": agent_contract.load().summary(),
-        "flags": FEATURE_FLAGS.all(),
-        "models": {
-            "generator": llm.routing_models("generator")[0],
-            "motionDirector": llm.routing_models("motion_director")[0],
-        },
-        # Чем отвечает сервер без десктопа: ключ OpenAI или консольный аккаунт
-        "providers": {
-            "openaiKey": bool(os.environ.get("OPENAI_API_KEY")),
-            "codexCli": cli_llm.available("codex"),
-            "claudeCli": cli_llm.available("claude"),
-            "default": "openai" if os.environ.get("OPENAI_API_KEY") else (cli_llm.default_provider() or None),
-        },
-    }
-
-
-@app.post("/api/style-dna/extract")
-def style_dna_extract(req: StyleDnaReq):
-    """Extract primitives + semantic Style DNA from an IR document."""
-    current = ensure_current_ir(req.ir)
-    schema_errors = validate_ir(current)
-    if schema_errors:
-        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    return {"tokens": ir.build_style_dna(current)}
-
-
-@app.post("/api/style-dna/apply")
-def style_dna_apply(req: StyleDnaApplyReq):
-    """Apply a Style DNA token set to an IR document, updating bound styles.
-
-    First re-binds element styles to the new token set so semantic changes
-    propagate even to documents that did not yet carry styleBindings.
-    """
-    current = ensure_current_ir(req.ir)
-    schema_errors = validate_ir(current)
-    if schema_errors:
-        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    bound = ir.bind_element_styles(current, req.tokens)
-    updated = ir.apply_tokens(bound, req.tokens)
-    return {"ir": updated}
-
-
-@app.post("/api/style/normalize/preview")
-def style_normalize_preview(req: StyleNormalizeReq):
-    """Build an opt-in normalization patch without mutating the input IR."""
-    current = ensure_current_ir(req.ir)
-    schema_errors = validate_ir(current)
-    if schema_errors:
-        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    result = ir.preview_normalization(current, tolerance=req.tolerance)
-    normalized_errors = validate_ir(result["normalizedIr"])
-    if normalized_errors:
-        return err(500, "Normalize создал невалидный IR: " + "; ".join(normalized_errors[:5]))
-    return result
-
-
-@app.post("/api/export/tailwind")
-def export_tailwind(req: TailwindProjectionReq):
-    """Return a deterministic Tailwind projection derived from Design IR."""
-    if not FEATURE_FLAGS.is_enabled("tailwindProjection"):
-        return err(404, "Tailwind projection отключён feature flag.")
-    current = ensure_current_ir(req.ir)
-    schema_errors = validate_ir(current)
-    if schema_errors:
-        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    try:
-        return ir.project_tailwind(current, mode=req.mode)
-    except ValueError as exc:
-        return err(422, str(exc))
-
-
-@app.post("/api/interaction/build")
-def interaction_build(req: InteractionBuildReq):
-    """Build sanitized Interaction IR from event payloads and scene snapshots."""
-    if not FEATURE_FLAGS.is_enabled("interactionRecorder"):
-        return err(404, "Interaction Recorder отключён feature flag.")
-    base_ir = ensure_current_ir(req.base_ir)
-    schema_errors = validate_ir(base_ir)
-    if schema_errors:
-        return err(422, "Base IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    try:
-        interaction = ir.build_interaction(base_ir, req.source, req.scenes, req.events, req.variables)
-    except ValueError as exc:
-        return err(422, str(exc))
-    return {"interaction": interaction}
-
-
-@app.post("/api/interaction/validate")
-def interaction_validate(req: InteractionValidateReq):
-    errors = ir.validate_interaction(req.interaction)
-    return {"valid": not errors, "errors": errors}
-
-
-@app.post("/api/interaction/replay")
-def interaction_replay(req: InteractionReplayReq):
-    base_ir = ensure_current_ir(req.base_ir)
-    schema_errors = validate_ir(base_ir)
-    if schema_errors:
-        return err(422, "Base IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    try:
-        scene_ir = ir.replay_interaction(base_ir, req.interaction, req.scene_id)
-    except ValueError as exc:
-        return err(422, str(exc))
-    replay_errors = validate_ir(scene_ir)
-    if replay_errors:
-        return err(422, "Scene patch создаёт невалидный IR: " + "; ".join(replay_errors[:5]))
-    return {"ir": ensure_current_ir(scene_ir)}
-
-
-@app.post("/api/interaction/capture")
-def interaction_capture(req: InteractionCaptureReq):
-    """Replay a transient, same-origin action script against an owned site."""
-    if not FEATURE_FLAGS.is_enabled("interactionRecorder"):
-        return err(404, "Interaction Recorder отключён feature flag.")
-    if not req.mine:
-        return err(403, "Подтвердите, что сайт принадлежит вам или у вас есть разрешение на запись.")
-    base_ir = ensure_current_ir(req.base_ir)
-    schema_errors = validate_ir(base_ir)
-    if schema_errors:
-        return err(422, "Base IR не проходит schema: " + "; ".join(schema_errors[:5]))
-    try:
-        interaction = capture_live_flow(base_ir, req.url, req.actions, req.viewport)
-    except ValueError as exc:
-        return err(422, str(exc))
-    except Exception as exc:
-        return err(502, f"Hybrid capture failed: {exc}")
-    return {"interaction": interaction}
-
-
-@app.post("/api/motion/build")
-def motion_build(req: MotionBuildReq):
-    """Build Motion IR and materialize editable preview scenes."""
-    if not FEATURE_FLAGS.is_enabled("motionEditor"):
-        return err(404, "Motion Editor отключён feature flag.")
-    base_ir = ensure_current_ir(req.base_ir)
-    base_errors = validate_ir(base_ir)
-    interaction_errors = ir.validate_interaction(req.interaction)
-    if base_errors:
-        return err(422, "Base IR не проходит schema: " + "; ".join(base_errors[:5]))
-    if interaction_errors:
-        return err(422, "Interaction IR не проходит schema: " + "; ".join(interaction_errors[:5]))
-    try:
-        motion = ir.build_motion(req.interaction, req.composition, req.scene_settings, req.render_settings)
-        scene_irs = []
-        for scene in motion["scenes"]:
-            scene_ir = ir.replay_interaction(base_ir, req.interaction, scene["interactionSceneId"])
-            replay_errors = validate_ir(scene_ir)
-            if replay_errors:
-                raise ValueError("Motion scene создаёт невалидный IR: " + "; ".join(replay_errors[:5]))
-            scene_irs.append({"sceneId": scene["id"], "ir": ensure_current_ir(scene_ir)})
-    except ValueError as exc:
-        return err(422, str(exc))
-    return {"motion": motion, "sceneIrs": scene_irs}
-
-
-@app.post("/api/motion/validate")
-def motion_validate(req: MotionValidateReq):
-    version = str(req.motion.get("version") or "")
-    errors = validate_motion_v2(req.motion) if version == "2.0" else ir.validate_motion(req.motion, req.interaction)
-    return {"valid": not errors, "version": version or "1.0", "errors": errors}
-
-
-@app.post("/api/motion/migrate-v2")
-def motion_migrate_v2(req: MotionMigrateV2Req):
-    """Explicit, fail-closed migration; source linkage may never be inferred."""
-    try:
-        motion = migrate_motion_v1_to_v2(req.motion, req.project_revision, req.source_mapping)
-    except ValueError as exc:
-        return err(422, str(exc))
-    return {"motion": motion, "errors": []}
-
-
-def _materialize_motion_scenes(base_ir: dict, interaction: dict, motion: dict) -> list[dict]:
-    scene_irs = []
-    for scene in motion["scenes"]:
-        scene_ir = ir.replay_interaction(base_ir, interaction, scene["interactionSceneId"])
-        replay_errors = validate_ir(scene_ir)
-        if replay_errors:
-            raise ValueError("Motion scene produced invalid IR: " + "; ".join(replay_errors[:5]))
-        scene_irs.append({"sceneId": scene["id"], "ir": ensure_current_ir(scene_ir)})
-    return scene_irs
-
-
-def _run_motion_render(render_id: str, motion: dict, scene_irs: list[dict], output: Path, layers: list[dict] | None = None) -> None:
-    def progress(done: int, total: int) -> None:
-        with RENDER_JOBS_LOCK:
-            job = RENDER_JOBS.get(render_id)
-            if job:
-                job.update(status="rendering", progress=round(done * 100 / total), framesDone=done)
-
-    try:
-        with RENDER_JOBS_LOCK:
-            RENDER_JOBS[render_id].update(status="rendering", progress=0)
-        result = render_video(motion, scene_irs, output, progress, composition_layers=layers) if layers is not None else render_video(motion, scene_irs, output, progress)
-        with RENDER_JOBS_LOCK:
-            RENDER_JOBS[render_id].update(
-                status="complete",
-                progress=100,
-                result={key: value for key, value in result.items() if key != "path"},
-                downloadUrl=f"/api/motion/render/{render_id}/download",
-            )
-    except Exception as exc:
-        with RENDER_JOBS_LOCK:
-            job = RENDER_JOBS.get(render_id)
-            if job:
-                job.update(status="error", error=str(exc)[:500])
-
-
-@app.post("/api/motion/render")
-def motion_render(req: MotionRenderReq):
-    """Queue a deterministic local video render from validated Motion IR."""
-    if not FEATURE_FLAGS.is_enabled("videoRender"):
-        return err(404, "Video render is disabled by feature flag.")
-    base_ir = ensure_current_ir(req.base_ir)
-    base_errors = validate_ir(base_ir)
-    interaction_errors = ir.validate_interaction(req.interaction)
-    motion_errors = ir.validate_motion(req.motion, req.interaction)
-    if base_errors:
-        return err(422, "Base IR does not pass schema: " + "; ".join(base_errors[:5]))
-    if interaction_errors:
-        return err(422, "Interaction IR does not pass schema: " + "; ".join(interaction_errors[:5]))
-    if motion_errors:
-        return err(422, "Motion IR does not pass schema: " + "; ".join(motion_errors[:5]))
-    if req.motion["source"]["interactionHash"] != ir.content_hash(req.interaction):
-        return err(409, "Motion IR does not belong to the supplied Interaction IR.")
-    base_hash = base_ir.get("contentHash") or ir.content_hash(base_ir)
-    if req.motion["source"]["baseDesignIrHash"] != base_hash:
-        return err(409, "Motion IR does not belong to the supplied Design IR.")
-    try:
-        scene_irs = _materialize_motion_scenes(base_ir, req.interaction, req.motion)
-        total_frames, output_format = validate_render_input(req.motion, scene_irs)
-        layers = None
-        if req.layers is not None:
-            validate_composition_layers(req.layers, req.motion)
-            layers = prepare_composition_layers(req.layers)
-    except ValueError as exc:
-        return err(422, str(exc))
-
-    render_id = uuid.uuid4().hex
-    output = RENDER_DIR / f"{render_id}.{output_format}"
-    with RENDER_JOBS_LOCK:
-        RENDER_JOBS[render_id] = {
-            "id": render_id,
-            "status": "queued",
-            "progress": 0,
-            "framesDone": 0,
-            "framesTotal": total_frames,
-            "format": output_format,
-            "filename": f"designai-motion-{render_id[:8]}.{output_format}",
-            "output": output,
-        }
-    RENDER_EXECUTOR.submit(_run_motion_render, render_id, copy.deepcopy(req.motion), scene_irs, output, layers)
-    return {key: value for key, value in RENDER_JOBS[render_id].items() if key != "output"}
-
-
-def _completed_render_on_disk(render_id: str) -> Path | None:
-    """RENDER_JOBS живёт в памяти процесса, а артефакты — на диске. После
-    рестарта сервера сохранённые в проекте downloadUrl не должны ломаться."""
-    if not re.fullmatch(r"[0-9a-f]{32}", render_id):
-        return None
-    for suffix in (".mp4", ".webm"):
-        candidate = RENDER_DIR / f"{render_id}{suffix}"
-        if candidate.is_file():
-            return candidate
-    return None
-
-
-@app.get("/api/motion/render/{render_id}")
-def motion_render_status(render_id: str):
-    with RENDER_JOBS_LOCK:
-        job = RENDER_JOBS.get(render_id)
-        if job:
-            return {key: value for key, value in job.items() if key != "output"}
-    output = _completed_render_on_disk(render_id)
-    if output is None:
-        return err(404, "Render job not found.")
-    return {
-        "id": render_id,
-        "status": "complete",
-        "progress": 100,
-        "format": output.suffix.lstrip("."),
-        "filename": f"designai-motion-{render_id[:8]}{output.suffix}",
-        "downloadUrl": f"/api/motion/render/{render_id}/download",
-    }
-
-
-@app.get("/api/motion/render/{render_id}/download")
-def motion_render_download(render_id: str):
-    output: Path | None = None
-    filename = ""
-    with RENDER_JOBS_LOCK:
-        job = RENDER_JOBS.get(render_id)
-        if job:
-            if job["status"] != "complete":
-                return err(409, "Render is not complete.")
-            output = Path(job["output"])
-            filename = job["filename"]
-    if output is None:
-        output = _completed_render_on_disk(render_id)
-        if output is None:
-            return err(404, "Render job not found.")
-        filename = f"designai-motion-{render_id[:8]}{output.suffix}"
-    if not output.is_file() or output.parent.resolve() != RENDER_DIR.resolve():
-        return err(404, "Rendered artifact not found.")
-    media_type = "video/mp4" if output.suffix == ".mp4" else "video/webm"
-    return FileResponse(output, media_type=media_type, filename=filename)
-
-
-@app.get("/nodes")
-def nodes_page():
-    # Legacy-граф снят: старый адрес ведёт в единственную актуальную SPA.
-    return RedirectResponse(url="/flow", status_code=307)
-
-
-@app.get("/")
-def root_page():
-    # Корень не является отдельной поверхностью продукта: канонический UI только /flow.
-    return RedirectResponse(url="/flow", status_code=307)
-
-
-@app.get("/flow")
-@app.get("/flow/{rest:path}")
-def flow_page():
-    # Единственная актуальная SPA: новый нодовый редактор (React Flow, сборка из
-    # frontend/). Любой подпуть /flow отдаёт index.html, ассеты приходят через
-    # /static/flow/.
-    index_path = APP_ROOT / "static" / "flow" / "index.html"
-    html = index_path.read_text(encoding="utf-8")
-    # The static build must stay relative for Electron file://. For the HTTP
-    # surface, inject a literal base before SvelteKit's preload links so the
-    # browser preload scanner resolves them through the existing /static mount.
-    html = html.replace("<head>", '<head><base href="/static/flow/">', 1)
-    return HTMLResponse(html)
-
-
 app.mount("/static", StaticFiles(directory=APP_ROOT / "static"), name="static")
-
-# ---------- база захваченных шрифтов сайтов (Source Import) ----------
-FONTS_DIR = DATA_ROOT / "fonts"
-_FONT_NAME = re.compile(r"^[0-9a-f]{16}\.(woff2|woff|ttf|otf)$")
-
-
-@app.get("/fonts/{name}")
-def serve_font(name: str):
-    safe = Path(name).name
-    if not _FONT_NAME.match(safe):
-        return JSONResponse({"detail": "not found"}, status_code=404)
-    p = FONTS_DIR / safe
-    if not p.exists():
-        return JSONResponse({"detail": "not found"}, status_code=404)
-    return FileResponse(p, media_type=mimetypes.guess_type(safe)[0] or "font/woff2")
-
 
 @app.exception_handler(Exception)
 async def unhandled(request, exc):

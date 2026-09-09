@@ -2,7 +2,7 @@ import copy
 import json
 from unittest.mock import patch
 import pytest
-from video_story import build_pages, direct_story, validate_story
+from video_story import build_pages, direct_story
 from video_story_fixtures import pages_fixture
 from video_states import derive_states, text_fields
 from ir.timeline import validate, revert_change_set

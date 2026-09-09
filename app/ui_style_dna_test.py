@@ -3,7 +3,6 @@
 Нужен запущенный сервер: .venv/Scripts/python app/server.py
 Запуск: .venv/Scripts/python app/ui_style_dna_test.py
 """
-import json
 import pathlib
 import sys
 if hasattr(sys.stdout, "reconfigure"):

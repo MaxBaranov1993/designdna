@@ -467,7 +467,6 @@ def extract_css(html: str) -> str:
 
 def parse_design_tokens(css_text: str) -> dict:
     """Извлечение design-токенов из CSS (цвета, шрифты, радиусы)."""
-    import tinycss2
 
     tokens = {"color": {}, "font": {}, "radius": {}}
     color_re = re.compile(r"#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)")

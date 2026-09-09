@@ -1,0 +1,27 @@
+# Конфигурация проверок Python-части. Установка зависимостей — requirements.txt;
+# ruff ставится отдельно: .venv/Scripts/python -m pip install ruff
+
+[tool.pytest.ini_options]
+testpaths = ["app"]
+python_files = ["*_test.py", "test_*.py"]
+markers = [
+  "live: платные вызовы AI-моделей, запускать только по явной просьбе",
+  "ui: браузерные проверки через Playwright и запущенный сервер",
+  "slow: длинные проверки",
+]
+# Быстрый набор без UI и платных тестов:
+#   .venv/Scripts/python -m pytest app -q --ignore-glob="app/ui_*" --ignore-glob="*_live_test.py" --ignore-glob="app/designdna_live_mcp_test.py"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 160
+extend-exclude = [
+  ".venv", "spike", "tools", "desktop", "frontend", "app/static", "results",
+  "artifacts", "tmp", ".tmp", "design_handoff_node_editor",
+]
+
+[tool.ruff.lint]
+# Только реальные дефекты: синтаксис, неопределённые имена, повторные
+# определения, неиспользуемые импорты. Стилевые правила намеренно выключены:
+# .venv/Scripts/python -m ruff check app
+select = ["E9", "F63", "F7", "F82", "F811", "F401"]

@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 import json
 
-import run_registry
 import server
 from test_qualitygate import BASE_IR
 

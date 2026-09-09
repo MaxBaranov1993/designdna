@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from fidelity_repair import (
     apply_operations,

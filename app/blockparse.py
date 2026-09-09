@@ -16,7 +16,6 @@ import json
 import re
 import time
 import traceback
-from pathlib import Path
 from typing import Any, Callable
 
 from bs4 import BeautifulSoup

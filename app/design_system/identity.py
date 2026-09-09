@@ -6,7 +6,6 @@ confidence so inferred taste never masquerades as a measured fact.
 """
 from __future__ import annotations
 
-import copy
 import math
 import re
 from collections import Counter

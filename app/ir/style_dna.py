@@ -17,7 +17,6 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
-from .hash import canonical_json
 
 
 def _now() -> str:

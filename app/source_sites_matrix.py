@@ -2,7 +2,6 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
-from pathlib import Path
 import subprocess
 import sys
 import time

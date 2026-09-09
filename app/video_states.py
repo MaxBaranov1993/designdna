@@ -133,7 +133,7 @@ def derive_states(story: dict, states: list) -> dict:
 
 
 def state_layers(timeline: dict, story: dict, duration: int) -> list[dict]:
-    from video_story import build_pages, targets
+    from video_story import build_pages
     existing = {layer["id"] for layer in timeline["layers"]}
     added = []
     for page in story["pages"]:
