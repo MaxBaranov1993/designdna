@@ -16,6 +16,8 @@ import { ClaudeAgentServer, claudeProcessSpec } from "./services/claude-agent-se
 import { EnvelopeValidationError, redactForLog, UnsupportedCapabilityError } from "./services/provider-envelope.mjs";
 import { CodexAppServer, codexProcessSpec } from "./services/codex-app-server.mjs";
 import { loadAgentContract } from "./services/agent-contract.mjs";
+import { ProviderGovernor, parseProviderLimits } from "./services/provider-governor.mjs";
+import { LlmTrace, traceRecord } from "./services/llm-trace.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
 import { canonicalMcpSpec, createMcpActivationApprover } from "./services/mcp-activation-approval.mjs";
 import { ApiScheduler } from "./services/api-scheduler.mjs";
@@ -56,6 +58,12 @@ const codexRequests = new Map();
 /* Активные provider-чаты по requestId: отмена (providers:cancel) гасит
  * HTTP-запрос и CLI-процессы через AbortController. */
 const providerChats = new Map();
+/* Регулятор параллелизма подписочных CLI: лимит слотов на провайдера и FIFO
+ * (DESIGNDNA_PROVIDER_CONCURRENCY="claude=2,codex=2"). GPT (Sol/Astra) идёт
+ * через Codex-транспорт и делит его слоты. */
+const providerGovernor = new ProviderGovernor({ limits: parseProviderLimits(process.env.DESIGNDNA_PROVIDER_CONCURRENCY) });
+/* Трасса вызовов моделей: метаданные в userData/data/traces (без промптов). */
+let llmTrace = null;
 const repoCanvasQueue = new SerialRequestQueue();
 const liveMutationQueue = new SerialRequestQueue();
 let prewarmed = false;
@@ -900,6 +908,7 @@ function registerIpc() {
     runtimes: await getProviderStatus({ hasCredential: (id) => { try { return Boolean(credentials.get(id)); } catch { return false; } } }),
     credentials: credentials.status(),
     encryptedStorage: credentials.available(),
+    governor: providerGovernor.snapshot(),
   }));
   handleTrusted("providers:credentials", () => ({ configured: credentials.status(), encryptedStorage: credentials.available() }));
   handleTrusted("providers:set-credential", (_event, { provider, value }) => credentials.set(provider, value));
@@ -927,19 +936,34 @@ function registerIpc() {
     );
     const abort = new AbortController();
     providerChats.set(envelope.id, abort);
+    const profile = request?.profile || payload?.profile;
+    const startedAt = Date.now();
+    let slot = null;
+    let result = null;
+    let failure = null;
     try {
-      const result = await chatWithProvider({
+      // Слот регулятора: отменённый в очереди запрос не занимает провайдера.
+      slot = await providerGovernor.acquire(provider === "openai" || provider === "astra" ? "codex" : provider, { signal: abort.signal });
+      result = await chatWithProvider({
         provider,
         envelope: { ...envelope, provider },
-        profile: request?.profile || payload?.profile,
+        profile,
         signal: abort.signal,
         codex,
         claude,
         credentials,
       });
-      return { ...result, requestId: envelope.id };
+      return { ...result, requestId: envelope.id, transport: { ...(result.transport || {}), queuedMs: slot.queuedMs } };
+    } catch (error) {
+      failure = error;
+      throw error;
     } finally {
+      slot?.release();
       providerChats.delete(envelope.id);
+      llmTrace?.write(traceRecord({
+        envelope: { ...envelope, provider }, profile, result, error: failure,
+        durationMs: Date.now() - startedAt, queuedMs: slot?.queuedMs || 0, cancelled: abort.signal.aborted,
+      }));
     }
   };
   handleTrusted("providers:chat", (_event, payload) => runProviderChat(payload).catch((error) => {
@@ -1115,6 +1139,10 @@ function createWindow() {
 app.whenReady().then(async () => {
   registerFontsProtocol();
   credentials = new CredentialStore({ userDataPath: app.getPath("userData"), safeStorage });
+  llmTrace = new LlmTrace({
+    directory: path.join(app.getPath("userData"), "data", "traces"),
+    onError: (error) => console.warn(`[llm-trace] ${error.message}`),
+  });
   settings = new SettingsStore(app.getPath("userData"));
   mcpActivation = createMcpActivationApprover({
     showMessageBox: (options) => {

@@ -53,6 +53,7 @@ TOOL_NAMES = [
     "designdna_project_put",
     "designdna_design_ir_validate",
     "designdna_project_summary",
+    "designdna_llm_calls",
     "designdna_live_command",
 ]
 
@@ -947,3 +948,23 @@ def test_rejects_non_object_params_and_bad_id(data_dir):
         assert "tools" in still["result"]
     finally:
         assert mcp.stop() == 0
+
+
+def test_llm_calls_tool_reads_traces_without_prompt_text(tmp_path, monkeypatch):
+    import llm_trace
+
+    monkeypatch.setattr(llm_trace, "DATA_ROOT", tmp_path)
+    llm_trace.write(llm_trace.record(request_id="py-1", role="quality_judge", provider="claude", model="opus", effort="high",
+                                     contract_version="agent-contract/1.0", duration_ms=10, prompt_chars=5, output_chars=2))
+    (tmp_path / "traces" / llm_trace.ELECTRON_FILE).write_text(
+        json.dumps({"ts": "2099-01-01T00:00:00Z", "requestId": "el-1", "provider": "codex", "profile": "generator"}) + "\n",
+        encoding="utf-8")
+    payload, failed = _dispatch_tool("designdna_llm_calls", {"limit": 5})
+    assert failed is False and payload["ok"] is True and payload["count"] == 2
+    assert [item["requestId"] for item in payload["calls"]] == ["el-1", "py-1"]
+    assert "prompt" not in json.dumps(payload["calls"]).lower() or "promptChars" in json.dumps(payload["calls"])
+    only_python, _ = _dispatch_tool("designdna_llm_calls", {"limit": 5, "source": "python"})
+    assert [item["requestId"] for item in only_python["calls"]] == ["py-1"]
+    bad = _dispatch_tool("designdna_llm_calls", {"source": "cloud"})
+    assert isinstance(bad, tuple) and bad[1] is True
+    assert _dispatch_tool("designdna_llm_calls", {"limit": "5"}).startswith("invalid-args:")

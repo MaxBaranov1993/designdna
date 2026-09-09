@@ -49,6 +49,7 @@ npm run desktop:start
 
 - Dev: `data/` в корне (gitignored): `projects.db`, `design_systems.db`, `cache.db`, `blobs/`, `fonts/`.
 - Упакованное приложение: `%APPDATA%\@designdna\desktop\data`, герметичные cwd для CLI в `%APPDATA%\@designdna\desktop\agent-cwd`.
+- Трасса вызовов моделей: `<data>/traces/llm-calls.electron.jsonl` и `llm-calls.python.jsonl`, только метаданные. Читать через `GET /api/agent/trace` или MCP-инструмент `designdna_llm_calls`, чтобы понять, какой провайдер, модель и усилие стояли за результатом ноды.
 - Не трогать пользовательские `data/` и профили Electron в тестах: проверки интерфейса выполняются в отдельном профиле.
 
 ## Документы

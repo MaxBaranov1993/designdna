@@ -29,6 +29,7 @@ if str(APP_DIR) not in sys.path:
 
 import ir  # noqa: E402
 import project_store  # noqa: E402
+import llm_trace  # noqa: E402
 from design_system import resolver as design_system_resolver  # noqa: E402
 from design_system import store as design_system_store  # noqa: E402
 
@@ -478,6 +479,19 @@ def _tool_defs() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True},
         },
         {
+            "name": "designdna_llm_calls",
+            "description": "Recent model calls made by the app on both paths (Electron subscription CLIs and the Python worker): provider, model, effort, agent-contract version, durations, prompt/output sizes, dropped parameters and errors. Metadata only, never prompt or answer text. Use it to explain which model and effort produced a node result or why a call failed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                    "source": {"type": "string", "enum": ["python", "electron"]},
+                },
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True},
+        },
+        {
             "name": "designdna_live_command",
             "description": "Preview or apply a revision-safe command to the currently open DesignDNA editor. Requires the desktop app to be running; mutations use native approval and return only after CAS persistence.",
             "inputSchema": {
@@ -540,6 +554,11 @@ _TOOL_ARGS = {
         "allowed": {"userId", "projectId"},
         "required": set(),
         "types": {"userId": str, "projectId": str},
+    },
+    "designdna_llm_calls": {
+        "allowed": {"limit", "source"},
+        "required": set(),
+        "types": {"limit": int, "source": str},
     },
     "designdna_live_command": {
         "allowed": {"commandId", "idempotencyKey", "projectId", "pageId", "baseRevision", "intent", "scope", "action", "arguments", "mode", "correlationId", "timeoutMs"},
@@ -926,6 +945,15 @@ def _dispatch_tool(name: str, arguments: Any) -> tuple[dict[str, Any], bool] | s
         return payload, not payload.get("ok")
     if name == "designdna_project_summary":
         return _call_summary(args)
+    if name == "designdna_llm_calls":
+        source = args.get("source")
+        if source is not None and source not in ("python", "electron"):
+            return {"ok": False, "errors": ["arguments.source: python | electron"]}, True
+        limit = args.get("limit")
+        if limit is not None and not 1 <= int(limit) <= 500:
+            return {"ok": False, "errors": ["arguments.limit: 1..500"]}, True
+        calls = llm_trace.recent(limit=int(limit or 50), source=source)
+        return {"ok": True, "count": len(calls), "calls": calls, "directory": str(llm_trace.trace_dir())}, False
     if name == "designdna_live_command":
         return _call_live(args)
     return {"ok": False, "errors": [f"unknown tool: {name}"]}, True

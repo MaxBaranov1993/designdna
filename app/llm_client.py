@@ -14,6 +14,8 @@ import threading
 import urllib.request
 
 import cli_llm
+import llm_trace
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -364,12 +366,57 @@ def _extract_response(data: dict) -> tuple[str, list[dict] | None]:
     return content, tool_calls or None
 
 
+def _contract_version() -> str | None:
+    try:
+        import agent_contract
+        return agent_contract.version()
+    except Exception:
+        return None
+
+
+def _trace_call(request: ChatRequest, role: str, result: dict | None, error: str | None, duration_ms: float) -> None:
+    """Метаданные вызова в <data>/traces без текста промптов и ответов."""
+    try:
+        transport = (result or {}).get("transport") or {}
+        schema = (request.response_json_schema or {}).get("schema") if request.response_format == "json_schema" else None
+        llm_trace.write(llm_trace.record(
+            request_id=request.request_id, role=role,
+            provider=str(transport.get("provider") or request.provider or "auto"),
+            model=transport.get("model") or request.model, effort=request.reasoning_effort,
+            contract_version=_contract_version(), duration_ms=duration_ms,
+            prompt_chars=llm_trace.message_chars(request.messages, request.system),
+            output_chars=len(str((result or {}).get("content") or "")), error=error,
+            structured_output=bool(isinstance(schema, dict) and schema), dropped=transport.get("dropped") or [],
+            streamed=bool(transport.get("streamed")),
+        ))
+    except Exception:
+        pass
+
+
 def chat_envelope(
     request: ChatRequest,
     role: str = "mechanics",
     on_delta: Callable[[str], None] | None = None,
 ) -> dict:
-    """Execute the selected AI route and return transport diagnostics."""
+    """Execute the selected AI route and return transport diagnostics (traced)."""
+    started = time.perf_counter()
+    result: dict | None = None
+    error: str | None = None
+    try:
+        result = _chat_envelope(request, role, on_delta)
+        return result
+    except BaseException as exc:  # отмена и ошибки транспорта тоже попадают в трассу
+        error = str(exc) or type(exc).__name__
+        raise
+    finally:
+        _trace_call(request, role, result, error, (time.perf_counter() - started) * 1000.0)
+
+
+def _chat_envelope(
+    request: ChatRequest,
+    role: str,
+    on_delta: Callable[[str], None] | None,
+) -> dict:
     # Кооперативная отмена (cancel_token): отменённый запрос не начинает
     # следующий LLM-вызов — покрывает генератор, quality-pass и импорт разом.
     cancel_token.check()

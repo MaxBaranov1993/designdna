@@ -62,6 +62,7 @@ import typography
 import designkb
 import generator_policy
 import agent_contract
+import llm_trace
 from editor_assist import router as editor_assist_router
 
 import ir
@@ -2804,6 +2805,14 @@ def reproduce_segment(req: SegmentReq):
 def cache_stats():
     """Наблюдаемость кэша: сколько LLM-вызовов сэкономлено повторами."""
     return cache_store.stats()
+
+
+@app.get("/api/agent/trace")
+def agent_trace(limit: int = 50, source: str | None = None):
+    """Последние вызовы моделей из Electron и Python: метаданные без текста промптов."""
+    if source not in (None, "", "python", "electron"):
+        return err(422, "source: python | electron")
+    return {"calls": llm_trace.recent(limit=limit, source=source or None), "directory": str(llm_trace.trace_dir())}
 
 
 @app.post("/api/project/save")
