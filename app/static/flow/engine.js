@@ -419,6 +419,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     if (typeof style.boxShadow === "string" && style.boxShadow.length <= 300 && !/[;{}<>"'\\\r\n]/.test(style.boxShadow)) s.push(`box-shadow:${style.boxShadow}`);
     if (["none", "underline", "line-through", "overline"].includes(style.textDecoration)) s.push(`text-decoration:${style.textDecoration}`);
     if (["normal", "nowrap", "pre", "pre-wrap", "pre-line", "break-spaces"].includes(style.whiteSpace)) s.push(`white-space:${style.whiteSpace}`);
+    if (["auto", "antialiased", "subpixel-antialiased"].includes(style.fontSmoothing)) s.push(`-webkit-font-smoothing:${style.fontSmoothing}`);
     if (["visible", "hidden", "clip", "scroll", "auto"].includes(style.overflow)) s.push(`overflow:${style.overflow}`);
     if (Number(style.flexShrink) === 0) s.push("flex-shrink:0");
     if (["none", "uppercase", "lowercase", "capitalize"].includes(style.textTransform)) s.push(`text-transform:${style.textTransform}`);
@@ -855,7 +856,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         const placed = accentChildren(el);
         const role = typeRoleOf(el);
         const style = role ? styleWithoutTypeOverrides(el.style) : el.style;
-        const css = [visualCss(style), alignCss, placed ? "position:relative" : ""].filter(Boolean).join(";");
+        const css = [
+          visualCss(style),
+          alignCss,
+          placed ? "position:relative" : "",
+          (style == null ? void 0 : style.fontSmoothing) === "antialiased" ? "will-change:opacity" : ""
+        ].filter(Boolean).join(";");
         const sa = css ? ` style="${css}"` : "";
         const rc = role ? ` class="t-${role}" data-type-role="${role}"` : "";
         const childText = Array.isArray(el.children) ? el.children.map((c) => c && (c.text || c.title || "")).filter(Boolean).join(" ") : "";
@@ -868,7 +874,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         const placed = accentChildren(el);
         const role = typeRoleOf(el);
         const style = role ? styleWithoutTypeOverrides(el.style) : el.style;
-        const css = [visualCss(style), alignCss, placed ? "position:relative" : ""].filter(Boolean).join(";");
+        const css = [
+          visualCss(style),
+          alignCss,
+          placed ? "position:relative" : "",
+          (style == null ? void 0 : style.fontSmoothing) === "antialiased" ? "will-change:opacity" : ""
+        ].filter(Boolean).join(";");
         const sa = css ? ` style="${css}"` : "";
         const classes = [];
         if (el.size === "sm" || el.size === "xs") classes.push("muted");
@@ -1434,6 +1445,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       if (override && override.frame) node.frame = Object.assign({}, node.frame || {}, override.frame);
       if (override && override.style) node.style = Object.assign({}, node.style || {}, override.style);
       if (override && typeof override.src === "string") node.src = override.src;
+      if (override && typeof override.text === "string") node.text = override.text;
       if (Array.isArray(node.children)) node.children = node.children.map(resolveNode);
       return node;
     }

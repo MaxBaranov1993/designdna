@@ -88,8 +88,8 @@ function compactReferenceEvidence(value: unknown): unknown {
  * content-addressed blob references are tiny, immutable evidence handles and must
  * survive restart; otherwise Design System Compare loses its Source crop.
  */
-export function compactForStorage(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(compactForStorage);
+export function compactForStorage(v: unknown, preserveReferenceEvidence = false): unknown {
+  if (Array.isArray(v)) return v.map((item) => compactForStorage(item, preserveReferenceEvidence));
   if (v && typeof v === "object") {
     const object = v as Record<string, unknown>;
     // Even an evidence-looking property inside canonical IR is a hash input.
@@ -105,24 +105,24 @@ export function compactForStorage(v: unknown): unknown {
         continue;
       }
       if (STORAGE_REFERENCE_KEYS.has(key)) {
-        const evidence = compactReferenceEvidence(value);
+        const evidence = preserveReferenceEvidence ? value : compactReferenceEvidence(value);
         if (evidence !== undefined) out[key] = evidence;
         continue;
       }
-      out[key] = compactForStorage(value);
+      out[key] = compactForStorage(value, preserveReferenceEvidence);
     }
     return out;
   }
   return v;
 }
 
-/* ---------- автосейв: один compact + один stringify, запись в idle-слоте ----------
+/* ---------- автосейв: запись в idle-слоте ----------
  *
  * Раньше каждое изменение графа сериализовалось 3-4 раза (две записи в
  * localStorage + POST в SQLite получали несжатый payload с base64-скриншотами)
  * и писало localStorage синхронно в кадре взаимодействия. Теперь:
- *  - compact и stringify выполняются ровно один раз, одну и ту же строку едят
- *    localStorage и POST /api/project/save (скриншоты — evidence, не состояние);
+ *  - localStorage получает компактный кэш; SQLite сохраняет полное evidence,
+ *    включая inline-снимки, которые не удалось вынести в blob-хранилище;
  *  - сама работа уезжает в requestIdleCallback с timeout-капом, чтобы
  *    dragstop/набор текста не платили за сериализацию мегабайтного проекта;
  *  - legacy-ключ designai-flow-v1 больше не пишется (читается только при
@@ -183,7 +183,9 @@ function writeProjectSync(payload: PagesProjectPayload): void {
   pendingProjectWrite = null;
   const compact = compactForStorage(payload);
   const text = JSON.stringify(compact);
-  lastDbProjectText = text;
+  // SQLite is the durable project, localStorage is only a compact startup cache.
+  // A failed/timed-out blob put must never delete the only Source screenshot.
+  lastDbProjectText = JSON.stringify(compactForStorage(payload, true));
   scheduleDbProjectSave();
   if (lsPagesDisabled) return;
   try {

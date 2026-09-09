@@ -4,6 +4,7 @@
   import { NODE_DEFS } from "../flow/ports";
   import { flow, flowEdges, flowNodes } from "../flow/state";
   import type { FlowNode, PageFlowNode, SourceViewport } from "../flow/types";
+  import { PAGE_INPUT_LIMIT } from "../flow/types";
   import InPorts from "./InPorts.svelte";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -38,7 +39,7 @@
 <NodeShell {id} type="page" {selected}>
   {#snippet footer()}
     <div class="foot-left">
-      <button class="btn-node small add-input f-add-in nodrag" disabled={data.inputs.length >= 8} onclick={() => $flow.addPageInput(Number(id))}>+ Вход</button>
+      <button class="btn-node small add-input f-add-in nodrag" disabled={data.inputs.length >= PAGE_INPUT_LIMIT} onclick={() => $flow.addPageInput(Number(id))}>+ Вход</button>
     </div>
     <div class="foot-right">
       <button class="btn-node small f-to-editor nodrag" disabled={!data.ir} onclick={() => $flow.sendToNode(Number(id), "edit")}>→ Редактор</button>

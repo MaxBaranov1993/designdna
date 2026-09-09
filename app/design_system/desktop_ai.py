@@ -247,8 +247,14 @@ def _renderer(render=None):
     with sync_playwright() as playwright:
         browser = scraper.launch_chromium(playwright)
         try:
-            page = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
-            yield page, master_review.render_master_png
+            context = browser.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
+            try:
+                page = context.new_page()
+                yield page, master_review.render_master_png
+            finally:
+                # Drain the owned pages before shutting Chromium down. On Windows
+                # browser.close() with a live implicit context can stall teardown.
+                context.close()
         finally:
             browser.close()
 
@@ -373,7 +379,7 @@ def _visual_tasks(document: dict, stage: str, components: dict, *, render=None, 
                 try:
                     original = _proof(document, comp, viewport)
                     # Blob expansion belongs ONLY to the helper's disposable render copy.
-                    png = render_fn(page, copy.deepcopy(comp), viewport)
+                    png = render_fn(page, master_review.with_source_context(document, comp), viewport)
                     if not isinstance(png, bytes) or not png:
                         raise ValueError("Empty master render")
                     if stage == "master-repair":
@@ -402,7 +408,7 @@ def _visual_tasks(document: dict, stage: str, components: dict, *, render=None, 
                             if other == viewport or _hidden_evidence(document, comp, other):
                                 continue
                             other_original = _proof(document, comp, other)
-                            other_png = render_fn(page, copy.deepcopy(comp), other)
+                            other_png = render_fn(page, master_review.with_source_context(document, comp), other)
                             messages[1]["content"].extend([
                                 {"type": "text", "text": f"{other}: ORIGINAL then current RENDER"},
                                 {"type": "image_url", "image_url": {"url": other_original}},
@@ -515,8 +521,8 @@ def _safe_candidate(document: dict, comp: dict, operations: list[dict], render=N
                     raise ValueError(f"{viewport}: repair changed Source-hidden visibility evidence")
                 continue
             original = _proof(document, comp, viewport)
-            before_png = render_fn(page, copy.deepcopy(comp), viewport)
-            candidate_png = render_fn(page, copy.deepcopy(candidate), viewport)
+            before_png = render_fn(page, master_review.with_source_context(document, comp), viewport)
+            candidate_png = render_fn(page, master_review.with_source_context(document, candidate), viewport)
             safe, reasons = master_repair._layout_acceptance(
                 comp["masterIr"], candidate["masterIr"], page=page, viewport=viewport,
                 original=original, before_png=before_png, candidate_png=candidate_png)

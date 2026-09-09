@@ -320,6 +320,11 @@ def migrate_ir(ir: dict, source: str | None = None, *, recorded_at: str | None =
     - If the document is missing `version` or reports `1.0`, it is upgraded
       to 1.1 and provenance is recorded.
     - The original dict is never mutated.
+    - Optional responsive text/src values are preserved verbatim. Older
+      captures without them retain shared content; lost line text cannot be
+      inferred during migration and requires a fresh capture.
+    - Measured fontSmoothing is optional and preserved in styles; migration
+      never assumes a smoothing mode for old captures.
     """
     if not isinstance(ir, dict):
         raise ValueError("IR must be a dict")

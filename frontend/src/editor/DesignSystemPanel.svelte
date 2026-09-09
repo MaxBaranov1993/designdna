@@ -7,7 +7,10 @@
   import { resolveDesignSystemAiProvider } from "../flow/store";
   import type { DesignSystemNodeData, DesignSystemAiProvider, IRObject } from "../flow/types";
   import SourceArtifactPanel from "./SourceArtifactPanel.svelte";
+  import UiKitOverview from "./UiKitOverview.svelte";
+  import type { KitSection } from "./ui-kit-model";
   import { useEditorStore } from "./store";
+  import { componentMasterPreview, selectedComponentMaster } from '../engine/componentMaster';
 
   let { nodeId, onClose }: { nodeId: number; onClose: () => void } = $props();
 
@@ -16,18 +19,17 @@
     return ((node?.data || {}) as unknown) as DesignSystemNodeData;
   });
 
-  /* Постоянных вкладок ровно две: «Компоненты» и «Стиль сайта». Девять
-   * диагностических экранов (identity, archetypes, tests, proof, validation,
-   * mock, suggestions, foundations, библиотека) не занимают место в шапке —
-   * каждый открывается своим действием (Validate, Proof, Организовать…) и
-   * возвращает пользователя кнопкой «К компонентам». */
-  let activeTab = $state<"source" | "styleguide" | "foundations" | "components" | "suggestions" | "mock" | "identity" | "archetypes" | "tests" | "proof" | "validation">("source");
+  /* Пять понятных разделов библиотеки; проверки и редактирование мастеров
+   * открываются по действию и сохраняют отдельный рабочий экран. */
+  let toolsMenu = $state<HTMLDetailsElement | null>(null);
+  let activeTab = $state<KitSection | "source" | "styleguide" | "foundations" | "components" | "suggestions" | "mock" | "identity" | "archetypes" | "tests" | "proof" | "validation">("overview");
+  const isOverview = $derived(['overview', 'colors', 'fonts', 'concept'].includes(activeTab));
   const DIAGNOSTIC_LABELS: Record<string, string> = {
     foundations: "Основы", suggestions: "Предложения", mock: "Mock-данные",
-    identity: "Identity", archetypes: "Архетипы", tests: "Тесты identity",
+    identity: "Identity", archetypes: "Архетипы", tests: "Тесты identity", styleguide: "Проверки и правила",
     proof: "Proof · перенос", validation: "Валидация", components: "Библиотека",
   };
-  const isDiagnosticView = $derived(activeTab !== "source" && activeTab !== "styleguide");
+  const isDiagnosticView = $derived(!isOverview && activeTab !== "source" && activeTab !== "components");
   type CatalogPool = "components" | "review" | "suggestions";
   type CatalogEntry = { key: string; pool: CatalogPool; component: Record<string, any> };
   let selectedKey = $state<string>("");
@@ -242,12 +244,11 @@
       components: components.length,
     };
   });
-  /* Передать в Генератор: событие для графа (слушатель пока может быть no-op),
-   * затем закрыть панель — контракт события фиксируем здесь. */
+  /* Передать конкретную ноду, чтобы черновик и её подключения не потерялись. */
   function sendToGenerator() {
     const systemId = String(doc.id || data.systemId || "");
-    window.dispatchEvent(new CustomEvent("designdna:ds-to-generator", { detail: { systemId } }));
-    void cancel();
+    window.dispatchEvent(new CustomEvent("designdna:ds-to-generator", { detail: { systemId, nodeId: Number(nodeId) } }));
+    onClose();
   }
 
   let previewHost = $state<HTMLElement | null>(null);
@@ -338,18 +339,7 @@
     }
   });
 
-  /* Ревью стиля запускается само, как только документ готов и ревью ещё нет:
-   * это не «дополнительная кнопка», а часть разбора сайта. Запускаем один раз
-   * на документ; отказ (нет провайдера, не выполнен вход) остаётся тихим —
-   * измеренная часть стиль-гайда полноценна и без него. */
-  let autoReviewFor = "";
-  $effect(() => {
-    const systemId = String(doc.id || "");
-    if (!systemId || styleReview || reviewing || busy || data.pipelineStatus?.["style-review"]) return;
-    if (autoReviewFor === systemId) return;
-    autoReviewFor = systemId;
-    void runStyleReview({ silent: true });
-  });
+  // Opening the library is read-only. AI analysis is always a deliberate action.
 
   $effect(() => {
     if (selectedComp && !(selectedComp.variants || {})[selectedVariant]) selectedVariant = "default";
@@ -357,24 +347,15 @@
 
   async function loadRenderer() {
     if (rendererReady) return;
-    const existing = document.querySelector('script[data-engine]');
-    if (!existing) {
-      const script = document.createElement("script");
-      script.src = "/static/flow/engine.js";
-      script.dataset.engine = "1";
-      document.head.appendChild(script);
-      await new Promise((resolve) => { script.onload = resolve; script.onerror = resolve; });
-    }
+    if (!(window as any).IRRenderer) await import('../engine/index');
     rendererReady = !!(window as any).IRRenderer;
   }
 
   function renderSelected() {
     if (!previewHost) return;
     previewHost.innerHTML = "";
-    const variantMaster = selectedVariantData?.masterRef === "self"
-      ? selectedComp?.masterIr
-      : selectedVariantData?.masterIr;
-    const ir = previewIr || variantMaster || selectedComp?.templateIr || selectedComp?.masterIr;
+    const master = selectedComponentMaster(selectedComp, selectedVariant);
+    const ir = previewIr || (master ? componentMasterPreview(master) : null);
     if (!ir) return;
     const reference = String(previewMeta?.sourceRef?.referencePreviews?.[viewport] || "");
     const stage = document.createElement("div");
@@ -474,7 +455,8 @@
       };
     } catch {
       if (requestId !== previewRequest) return;
-      previewIr = (selectedVariantData?.masterIr || selectedComp?.templateIr || selectedComp?.masterIr || null) as IRObject | null;
+      const master = selectedComponentMaster(selectedComp, selectedVariant);
+      previewIr = master ? componentMasterPreview(master) : null;
       previewMeta = {
         usageMode: "strict", fixture: fixtureProfile,
         sourceRef: selectedVariantData?.sourceRef || selectedComp?.sourceRef || {},
@@ -639,14 +621,6 @@
    * или OpenAI) и переносит одобренные мастера в реестр. */
   let masterReviewing = $state(false);
   let masterReviewNote = $state("");
-  let autoMasterReviewFor = "";
-  $effect(() => {
-    const systemId = String(doc.id || "");
-    if (!systemId || masterReviewing || busy || !reviewComponents.length || data.pipelineStatus?.["master-review"]) return;
-    if (autoMasterReviewFor === systemId) return;
-    autoMasterReviewFor = systemId;
-    void runMasterReview({ silent: true });
-  });
 
   async function runMasterReview({ silent = false }: { silent?: boolean } = {}) {
     if (!doc.id || masterReviewing) return;
@@ -674,7 +648,7 @@
     try {
       const result = await $flow.runDesktopDesignSystemAi(Number(nodeId), "style-review", { beforeCommit: pushUndo });
       if (!result) return;
-      if (!silent) activeTab = "styleguide";
+      if (!silent) activeTab = "concept";
     } catch (e) {
       // Автозапуск не должен кричать ошибкой на весь экран: измеренная часть
       // стиль-гайда полноценна и без AI-ревью. Ручной запуск — сообщает.
@@ -914,6 +888,17 @@
     }
   }
 
+  async function openWorkingCopy() {
+    if (busy) return;
+    const result = $flow.copyDesignSystemComponentToEditor(Number(nodeId), selectedKey, selectedPool, selectedVariant);
+    if (result == null) { actionError = 'Не удалось открыть исходный компонент. Проверьте выбранный вариант.'; return; }
+    for (let i = 0; i < 40; i++) {
+      if (useEditorStore.getState().openEditor(result)) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    onClose();
+  }
+
   async function undo() {
     const prev = undoStack[undoStack.length - 1];
     if (!prev) return;
@@ -943,16 +928,23 @@
   function onKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       event.preventDefault();
-      void cancel();
+      if (toolsMenu?.open) { toolsMenu.open = false; return; }
+      onClose();
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
       event.preventDefault();
       void undo();
     }
   }
+
+  function closeToolsMenu(event: MouseEvent) {
+    const target = event.target;
+    if (toolsMenu?.open && target instanceof Element &&
+        (!toolsMenu.contains(target) || target.closest('.ds-tools-popover button'))) toolsMenu.open = false;
+  }
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onclick={closeToolsMenu} />
 
 <div class="ds-editor-overlay" role="dialog" aria-modal="true" aria-label="Редактор Design System" data-ds-editor>
   <header class="ds-editor-top">
@@ -966,15 +958,16 @@
         {:else}
           · мастеров из Source: {catalogEntries.length} · принято: {components.length} · предложений: {semanticSuggestions.length}
         {/if}
-        {dirty ? " · несохранённые правки" : ""}
+        {dirty ? " · черновик изменён" : ""}
       </span>
     </div>
     <div class="ds-editor-actions">
       <button type="button" data-ds-action="styleguide" aria-label="Собрать живой UI Kit и открыть в разделе «Компоненты»"
               title="UI Kit — живой набор компонентов дизайн-системы (DS), собранный из мастеров Source"
               aria-busy={exportingKit} onclick={() => void openStyleguide()} disabled={busy || !catalogEntries.length}>
-        {exportingKit ? "Сборка…" : "UI Kit"}
+        {exportingKit ? "Подготовка…" : "Живой лист"}
       </button>
+      <details class="ds-tools-menu" bind:this={toolsMenu}><summary>Действия</summary><div class="ds-tools-popover">
       <button type="button" data-ds-action="validate" aria-label="Проверить документ" aria-busy={validating} onclick={validate} disabled={busy || !components.length}>
         {validating ? "Проверка…" : "Проверить"}
       </button>
@@ -988,12 +981,14 @@
         Отменить шаг
       </button>
       <button type="button" data-ds-action="cancel" aria-label="Отменить правки и закрыть" onclick={() => void cancel()} disabled={publishing}>
-        Отмена
+        Отменить правки и закрыть
       </button>
+      <button type="button" onclick={() => activeTab = 'styleguide'}>Подробные проверки и правила</button>
+      </div></details>
       <button type="button" class="dna-btn-sell" data-ds-action="to-generator" aria-label="Передать систему в Генератор как style DNA" title="Style DNA — стилевой профиль системы (токены, правила, компоненты), по которому Генератор собирает новые страницы" onclick={sendToGenerator} disabled={publishing}>
         Передать в Генератор
       </button>
-      <button type="button" class="close" data-ds-action="close" aria-label="Закрыть редактор" onclick={() => void cancel()}>✕</button>
+      <button type="button" class="close" data-ds-action="close" aria-label="Закрыть редактор" onclick={onClose}>✕</button>
     </div>
   </header>
   {#if actionError}
@@ -1013,8 +1008,11 @@
   {/if}
 
   <nav class="ds-section-tabs" aria-label="Разделы дизайн-системы">
+    <button type="button" data-ds-tab="overview" class:active={activeTab === 'overview'} onclick={() => activeTab = 'overview'}>Обзор</button>
     <button type="button" data-ds-tab="source" class:active={activeTab === "source" || activeTab === "components"} onclick={() => (activeTab = "source")}>Компоненты <span>{catalogEntries.length}</span></button>
-    <button type="button" data-ds-tab="styleguide" class:active={activeTab === "styleguide"} onclick={() => (activeTab = "styleguide")}>Стиль сайта{#if styleReview}<span>AI</span>{/if}</button>
+    <button type="button" data-ds-tab="colors" class:active={activeTab === 'colors'} onclick={() => activeTab = 'colors'}>Цвета и токены</button>
+    <button type="button" data-ds-tab="fonts" class:active={activeTab === 'fonts'} onclick={() => activeTab = 'fonts'}>Шрифты</button>
+    <button type="button" data-ds-tab="concept" class:active={activeTab === 'concept'} onclick={() => activeTab = 'concept'}>Концепция сайта{#if styleReview}<span>AI</span>{/if}</button>
     {#if isDiagnosticView}
       <!-- Диагностические экраны (Validation, Tests, Proof…) больше не занимают
            постоянный ряд вкладок: они открываются своим действием и здесь
@@ -1024,11 +1022,28 @@
     {/if}
   </nav>
 
-  <div class="ds-editor-body" class:source-overview={activeTab === "source"} class:styleguide-overview={activeTab === "styleguide"} class:catalog-cols={activeTab === "components"}>
+  <div class="ds-editor-body" class:source-overview={activeTab === "source" || isOverview} class:styleguide-overview={activeTab === "styleguide"} class:catalog-cols={activeTab === "components"}>
     <aside class="ds-editor-lib">
       <nav class="ds-legacy-tabs" aria-hidden="true"></nav>
 
-      {#if activeTab === "source"}
+      {#if isOverview}
+        {#if activeTab === 'concept'}
+          <div class="ds-concept-provider"><span>AI для описания стиля</span>
+            <select aria-label="AI для описания стиля" value={aiProvider} onchange={setAiProvider} disabled={busy} data-ds-ai-provider>
+              <option value="inherit">Как в Source · {({ openai: 'GPT-5.6 Sol', astra: 'GPT-6 Astra', codex: 'Codex', claude: 'Claude' } as Record<string, string>)[resolvedProvider] || resolvedProvider}</option>
+              <option value="openai">GPT-5.6 Sol</option><option value="astra">GPT-6 Astra</option>
+              <option value="codex">Codex</option><option value="claude">Claude Opus</option>
+            </select>
+            <select aria-label="Глубина анализа стиля" value={aiEffort} onchange={setAiEffort} disabled={busy}>
+              <option value="medium">Обычный анализ</option><option value="high">Подробный анализ</option><option value="max">Максимальная глубина</option>
+            </select>
+            <span class="ds-concept-hint">Запускается по вашей кнопке. Компоненты не изменяет.</span>
+          </div>
+        {/if}
+        <UiKitOverview document={doc} entries={catalogEntries} section={activeTab as KitSection}
+          onSection={(section) => activeTab = section} onComponents={() => activeTab = 'source'}
+          onOpen={selectCatalogComponent} onAnalyze={() => void runStyleReview()} {busy} />
+      {:else if activeTab === "source"}
         <div class="ds-source-views" role="tablist" aria-label="Вид раздела «Компоненты»">
           <button type="button" role="tab" data-ds-source-view="catalog" aria-selected={sourceView === "catalog"}
                   class:active={sourceView === "catalog"} onclick={() => (sourceView = "catalog")}>Каталог</button>
@@ -1150,7 +1165,7 @@
           <section class="ds-sg-review-bar" aria-label="AI style review">
             <div>
               <strong>AI-ревью стиля</strong>
-              <small>Запускается автоматически при готовом ките. Модель изучает дизайн-язык сайта: тон, правила, характер — новые компоненты генерируются по этому гайду.</small>
+              <small>По вашему запросу модель описывает тон, правила и характер сайта. Открытие и сборка UI Kit не запускают AI.</small>
             </div>
             <label>
               <span>Провайдер</span>
@@ -1407,18 +1422,21 @@
       {#if hasSelection && selectedComp}
         <header class="ds-workbench-head">
           <div class="ds-workbench-title">
-            <span class="ds-eyebrow">{selectedComp.category || "component"} · exact Source family</span>
+            <span class="ds-eyebrow">{selectedComp.category || "component"} · из исходного сайта</span>
             <h2>{selectedComp.name}</h2>
             <div class="ds-component-meta">
-              <span class:verified={selectedComp.status === "verified"}>{selectedComp.status === "verified" ? "Готов" : masterReviewing ? "AI доводит…" : "AI-доводка"}</span>
+              <span class:verified={selectedComp.status === "verified"}>{selectedComp.status === "verified" ? "Готов" : masterReviewing ? "AI доводит…" : "Требует проверки"}</span>
               {#if selectedPolish.accepted}<span class="ds-polish-badge">Доведён</span>{/if}
               {#if selectedPolishDefects.length}<span class="ds-polish-needed">Нужна доводка · {selectedPolishDefects.length}</span>{/if}
               <span>{selectedComp.provenance?.occurrenceCount || 1} наблюдений</span>
               <span>{Object.keys(selectedComp.variants || {}).length} вариантов</span>
             </div>
           </div>
+          {#if selectedComp.origin === 'observed'}
+            <button type="button" class="ds-edit-master" data-ds-action="working-copy" onclick={openWorkingCopy} disabled={busy}>Открыть копию в редакторе</button>
+          {/if}
           {#if selectedIsReview}
-            <button type="button" class="ds-promote" data-ds-action="review" aria-label="Агент сверяет мастер с оригиналом и доводит его до готовности" onclick={() => void runMasterReview()} disabled={busy || masterReviewing}>{masterReviewing ? "AI доводит…" : "Довести агентом"}</button>
+            <button type="button" class="ds-promote" data-ds-action="review" aria-label="Агент сверяет мастер с оригиналом и доводит его до готовности" onclick={() => void runMasterReview()} disabled={busy || masterReviewing}>{masterReviewing ? "AI доводит…" : "Проверить и исправить с AI"}</button>
           {:else if selectedIsSuggestion}
             <button type="button" class="ds-promote" data-ds-action="promote" aria-label={selectedCanPromote ? "Продвинуть предложение в registry" : "Требуется повторная fidelity-проверка Source master"} onclick={() => void promoteSuggestion()} disabled={busy || !selectedCanPromote}>{selectedCanPromote ? "Включить в UI Kit" : "Нужна fidelity-проверка"}</button>
           {:else}
@@ -1590,6 +1608,22 @@
   .ds-editor-top strong { flex: none; font-size: 15px; letter-spacing: -.01em; }
   .ds-editor-meta { min-width: 0; margin-left: 14px; overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
   .ds-editor-actions { flex: none; display: flex; align-items: center; gap: 7px; }
+  .ds-tools-menu { position: relative; font-size: 12px; }
+  .ds-tools-menu > summary { padding: 8px 12px; cursor: pointer; border: 1px solid var(--border); border-radius: 7px; }
+  .ds-tools-popover { position: absolute; right: 0; top: 42px; z-index: 10; width: 250px; display: grid; gap: 8px; padding: 12px; background: var(--dna-panel-2); border: 1px solid var(--border); box-shadow: 0 12px 40px #0006; border-radius: 10px; }
+  .ds-tools-popover button { text-align: left; }
+  .ds-concept-provider { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px 36px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .ds-concept-provider select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--text); }
+  .ds-concept-hint { color: var(--muted); }
+  .ds-section-tabs { overflow-x: auto; flex-shrink: 0; }
+  .ds-section-tabs > button { white-space: nowrap; }
+  @media (max-width: 760px) {
+    .ds-editor-top { flex-wrap: wrap; padding-block: 12px; gap: 10px; }
+    .ds-editor-top > div:first-child { width: 100%; flex-direction: column; align-items: flex-start; gap: 3px; }
+    .ds-editor-meta { margin-left: 0; max-width: 100%; }
+    .ds-editor-actions { flex-wrap: wrap; width: 100%; }
+    .ds-editor-actions .close { margin-left: auto; }
+  }
   .ds-editor-actions button:not(.dna-btn-sell),
   .ds-edit-master,
   .ds-promote {
@@ -1623,7 +1657,7 @@
     border-bottom: 1px solid var(--border);
     background: var(--dna-panel-2);
   }
-  /* Основные вкладки крупнее: их всего две, и они несут ежедневную работу. */
+  /* Основные разделы библиотеки крупнее диагностических вкладок. */
   .ds-section-tabs:not(.ds-advanced-tabs) button:not(.ds-tab-more) { font-size: 12.5px; padding: 0 14px; }
   .ds-tab-more { margin-left: auto; color: var(--dna-faint) !important; font-size: 11px !important; }
   .ds-diagnostic-crumb {

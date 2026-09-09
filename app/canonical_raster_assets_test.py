@@ -168,7 +168,7 @@ def test_polish_measures_resolved_copy_and_fails_closed(monkeypatch):
     assert seen == ["desktop", "tablet", "mobile"]
 
 
-def test_pack_and_legacy_raw_blocks_are_canonical_before_polish(monkeypatch):
+def test_pack_and_legacy_raw_blocks_build_canonical_masters_without_polish(monkeypatch):
     from design_system import polish
     source = block()
     before = copy.deepcopy(source)
@@ -177,16 +177,16 @@ def test_pack_and_legacy_raw_blocks_are_canonical_before_polish(monkeypatch):
     assert not scraper.resolve_ir_blobs(canonical_ir)[1]
     pack["_raw_blocks"] = [source]  # old callers must not bypass the boundary
     checked = []
-    def inspect(doc, **_kwargs):
-        for pool in ("components", "reviewComponents", "suggestions"):
-            for comp in doc[pool].values():
-                if comp.get("origin") == "observed":
-                    assert not scraper.resolve_ir_blobs(comp["masterIr"])[1]
-                    assert comp["sourceRef"]["masterHash"] == dsdoc.content_hash(comp["masterIr"])
-                    checked.append(comp)
-        return doc, []
-    monkeypatch.setattr(polish, "polish_document", inspect)
-    builder.build_draft(pack, create_mock=False)
+    def unexpected_polish(*_args, **_kwargs):
+        raise AssertionError("Catalog construction must not run automatic polish")
+    monkeypatch.setattr(polish, "polish_document", unexpected_polish)
+    doc = builder.build_draft(pack, create_mock=False)
+    for pool in ("components", "reviewComponents", "suggestions"):
+        for comp in doc[pool].values():
+            if comp.get("origin") == "observed":
+                assert not scraper.resolve_ir_blobs(comp["masterIr"])[1]
+                assert comp["sourceRef"]["masterHash"] == dsdoc.content_hash(comp["masterIr"])
+                checked.append(comp)
     assert checked
     assert source == before
     assert pack["_raw_blocks"] == [before]

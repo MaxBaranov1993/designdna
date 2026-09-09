@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { componentMasterPreview as normalizedPreview, selectedComponentMaster } from "../engine/componentMaster";
   import type { IRObject } from "../flow/types";
 
   let {
@@ -13,79 +14,21 @@
 
   let host = $state<HTMLElement | null>(null);
   let renderVersion = 0;
+  let visible = $state(false);
 
   function exactMaster(): IRObject | null {
-    const variant = (component?.variants || {})[variantKey] || (component?.variants || {}).default;
-    if (variant?.masterRef !== "self" && variant?.masterIr) return variant.masterIr as IRObject;
-    return (component?.masterIr || component?.templateIr || null) as IRObject | null;
-  }
-
-  function normalizedPreview(master: IRObject): IRObject {
-    const clone = JSON.parse(JSON.stringify(master)) as Record<string, any>;
-    const root = (clone.tree as Array<Record<string, any>> | undefined)?.[0];
-    if (!root || root.type === "source-block") return clone;
-
-    const rootFrame = root.frame && typeof root.frame === "object" ? root.frame : {};
-    root.frame = { ...rootFrame, x: 0, y: 0 };
-    const responsive = root.responsive && typeof root.responsive === "object" ? root.responsive : {};
-    const wrapperResponsive: Record<string, any> = {};
-    for (const [name, override] of Object.entries(responsive) as Array<[string, any]>) {
-      if (!override?.frame) continue;
-      override.frame = { ...override.frame, x: 0, y: 0 };
-      wrapperResponsive[name] = {
-        frame: {
-          width: override.frame.width ?? rootFrame.width,
-          height: override.frame.height ?? rootFrame.height,
-          layout: "free",
-        },
-      };
-    }
-    const width = Number(rootFrame.width) || 320;
-    const height = Number(rootFrame.height) || 120;
-    return {
-      version: clone.version || "1.1",
-      tokens: clone.tokens,
-      frame: { width, height, layout: "free" },
-      tree: [{
-        id: "catalog-master-preview",
-        type: "source-block",
-        variant: "component-master",
-        frame: { width, height, layout: "free" },
-        responsive: wrapperResponsive,
-        props: {},
-        children: [root],
-      }],
-    } as IRObject;
+    return selectedComponentMaster(component, variantKey);
   }
 
   async function ensureRenderer(): Promise<boolean> {
     if ((window as any).IRRenderer) return true;
-    const globalWindow = window as any;
-    if (!globalWindow.__ddnaCatalogRendererPromise) {
-      globalWindow.__ddnaCatalogRendererPromise = new Promise<void>((resolve) => {
-        const existing = document.querySelector<HTMLScriptElement>('script[data-engine]');
-        if (existing) {
-          if ((window as any).IRRenderer) resolve();
-          else {
-            existing.addEventListener("load", () => resolve(), { once: true });
-            existing.addEventListener("error", () => resolve(), { once: true });
-          }
-          return;
-        }
-        const script = document.createElement("script");
-        script.src = "/static/flow/engine.js";
-        script.dataset.engine = "1";
-        script.addEventListener("load", () => resolve(), { once: true });
-        script.addEventListener("error", () => resolve(), { once: true });
-        document.head.appendChild(script);
-      });
-    }
-    await globalWindow.__ddnaCatalogRendererPromise;
+    await import('../engine/index');
     return !!(window as any).IRRenderer;
   }
 
   async function render(master: IRObject | null, version: number) {
-    if (!host || !master) return;
+    if (!host) return;
+    if (!master) { host.textContent = 'Исходный мастер варианта недоступен'; return; }
     const ready = await ensureRenderer();
     if (!host || version !== renderVersion) return;
     host.innerHTML = "";
@@ -101,12 +44,21 @@
   }
 
   $effect(() => {
+    if (!host) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { visible = true; observer.disconnect(); }
+    }, { rootMargin: '240px' });
+    observer.observe(host);
+    return () => observer.disconnect();
+  });
+
+  $effect(() => {
     const master = exactMaster();
     const currentHost = host;
     viewport;
     variantKey;
     component;
-    if (!currentHost) return;
+    if (!currentHost || !visible) return;
     const version = ++renderVersion;
     void render(master, version);
   });

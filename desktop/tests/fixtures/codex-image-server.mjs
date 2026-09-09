@@ -14,6 +14,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     else send({ id, result: {} });
   } else if (method === "account/read") {
     notify("fixture/account", params);
+    if (mode === "account-hold") return;
     const account = mode === "logged-out" ? null
       : { type: mode === "api-key" ? "apiKey" : mode === "bedrock" ? "amazonBedrock" : "chatgpt" };
     send({ id, result: { account } });
@@ -78,6 +79,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     });
   } else if (method === "turn/interrupt") {
     notify("fixture/interrupt", params);
+    send({ id, result: {} });
+  } else if (method === "thread/unsubscribe") {
+    notify("fixture/unsubscribe", params);
     send({ id, result: {} });
   }
 });

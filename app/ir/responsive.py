@@ -101,6 +101,9 @@ def materialize(ir: dict, width: int | float) -> dict:
         for key in ("frame", "style", "styleBindings"):
             if isinstance(override.get(key), dict):
                 node[key] = {**(node.get(key) or {}), **override[key]}
+        for key in ("text", "src"):
+            if isinstance(override.get(key), str):
+                node[key] = override[key]
         for child in node.get("children") or []:
             if isinstance(child, dict):
                 visit(child)

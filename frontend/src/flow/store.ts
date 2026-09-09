@@ -1,3 +1,5 @@
+import { componentMasterPreview, selectedComponentMaster } from "../engine/componentMaster";
+import { PAGE_INPUT_LIMIT, PAGE_INPUT_NAMES } from "./types";
 import { createStore } from "zustand/vanilla";
 
 import { api, apiGet } from "./api";
@@ -16,6 +18,7 @@ import { NODE_DEFS, defaultData, portsOfNode } from "./ports";
 import { deepClone, outValue, pullInput, reachable } from "./dataflow";
 import { generatorInputKey } from "./generator-inputs";
 import { inputFingerprint } from "./fingerprint";
+import { runDesktopAiQueue } from "./desktop-ai-queue";
 import { videoHistoryPatch, videoSourceCheckpoint } from "./video-history";
 import { videoPages } from "./video-inputs";
 import type { VideoRevisionChange } from "./types";
@@ -34,7 +37,7 @@ import {
   scheduleProjectSave,
 } from "./serialize";
 import { toast } from "./toast";
-import { fitFlowView } from "./graphdev";
+import { fitFlowView, focusFlowNode } from "./graphdev";
 import { offloadSourceEvidenceInPlace } from "../desktop/blobStore";
 import type {
   AnyNodeData,
@@ -124,7 +127,7 @@ type DesktopDsPreparation = {
   provider: NodeProvider;
   reasoningEffort: NodeEffort;
   stage: string;
-  tasks: Array<{ id: string; status: "ready" | "unsupported"; reason?: string | null;
+  tasks: Array<{ id: string; status: "ready" | "unsupported"; reason?: string | null; componentKey?: string; viewport?: string;
     messages: Parameters<NonNullable<Window["designDNA"]>["providers"]["chatRequest"]>[0]["messages"] }>;
 };
 export type DesignSystemAiResult = {
@@ -163,6 +166,9 @@ export async function runDesktopDesignSystemAi(
   const signal = beginRunAbort(nodeId);
   const runToken = newRunId();
   const activeChatIds = new Set<string>();
+  const cancelledChatIds = new Set<string>();
+  const startedAt = Date.now();
+  const timings = { elapsedMs: 0, prepareMs: 0, providerMs: 0, applyMs: 0, requests: 0, retries: 0 };
   let workingDocument = deepClone(originalDocument);
   let acceptedSummary: DesignSystemAiResult["summary"];
   let hasAcceptedStage = false;
@@ -184,31 +190,42 @@ export async function runDesktopDesignSystemAi(
     if (!ownsRun()) return;
     const current = get().nodes.find((n) => Number(n.id) === nodeId)!.data as DesignSystemNodeData;
     get().setNodeData(nodeId, { pipelineStatus: { ...current.pipelineStatus,
-      [operation]: { status, message, provider, updatedAt: new Date().toISOString() } } });
+      [operation]: { status, message, provider, updatedAt: new Date().toISOString(),
+        timings: { ...timings, elapsedMs: Date.now() - startedAt } } } });
     get().setStatus(nodeId, message, status === "success" ? "ok" : status === "running" ? undefined : "err");
   };
   const cancelChat = () => {
-    for (const chatId of activeChatIds) void window.designDNA?.providers.cancel?.(chatId).catch(() => undefined);
+    for (const chatId of activeChatIds) {
+      if (cancelledChatIds.has(chatId)) continue;
+      cancelledChatIds.add(chatId);
+      void window.designDNA?.providers.cancel?.(chatId).catch(() => undefined);
+    }
   };
   signal.addEventListener("abort", cancelChat);
   get().setNodeData(nodeId, { _dsAiRun: runToken, _dsAiRetryable: false, busyAction: operation, lastError: "" });
   get().setBusy(nodeId, true);
   stage("running", `${PROVIDER_LABELS[provider]} · ${operation}: подготовка…`);
   const request = async <T>(path: string, body: unknown): Promise<T> => {
-    const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body), signal });
-    const payload = await response.json();
-    if (!response.ok || payload.error) {
-      const detail = payload.detail || payload.error;
-      if (detail && typeof detail === "object") {
-        const first = Array.isArray(detail.errors) ? detail.errors[0] : null;
-        throw Object.assign(new Error([detail.message || detail.code || `HTTP ${response.status}`,
-          first?.message, first?.path, detail.errors?.length > 1 ? `Ошибок: ${detail.errors.length}` : ""].filter(Boolean).join(" · ")),
-          { httpStatus: response.status, detail });
+    const requestStarted = Date.now();
+    try {
+      const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body), signal });
+      const payload = await response.json();
+      if (!response.ok || payload.error) {
+        const detail = payload.detail || payload.error;
+        if (detail && typeof detail === "object") {
+          const first = Array.isArray(detail.errors) ? detail.errors[0] : null;
+          throw Object.assign(new Error([detail.message || detail.code || `HTTP ${response.status}`,
+            first?.message, first?.path, detail.errors?.length > 1 ? `Ошибок: ${detail.errors.length}` : ""].filter(Boolean).join(" · ")),
+            { httpStatus: response.status, detail });
+        }
+        throw new Error(String(detail || `HTTP ${response.status}`));
       }
-      throw new Error(String(detail || `HTTP ${response.status}`));
+      return payload as T;
+    } finally {
+      if (path.endsWith('/prepare')) timings.prepareMs += Date.now() - requestStarted;
+      if (path.endsWith('/apply')) timings.applyMs += Date.now() - requestStarted;
     }
-    return payload as T;
   };
   try {
     if (!originalDocument.id) {
@@ -220,6 +237,12 @@ export async function runDesktopDesignSystemAi(
       if (!loaded.document || loaded.document.id !== node.data.systemId) throw new Error(loaded.error || "Документ Design System недоступен");
       originalDocument = loaded.document;
       workingDocument = deepClone(loaded.document);
+    }
+    if (operation === "master-review") {
+      const assets = (originalDocument.referenceAssets || {}) as Record<string, { referencePreviews?: Record<string, unknown> }>;
+      const missing = Object.values(originalDocument.reviewComponents || {}).filter((component: any) =>
+        component?.sourceRef?.evidenceKey && !Object.values(assets[component.sourceRef.evidenceKey]?.referencePreviews || {}).some(Boolean));
+      if (missing.length) throw new Error(`Нет исходных снимков Source для ${missing.length} мастеров. Обновите Source Import и выполните синхронизацию UI Kit; повтор AI-ревью без снимков не поможет.`);
     }
     let result: DesignSystemAiResult;
     const warnings: string[] = [];
@@ -250,8 +273,11 @@ export async function runDesktopDesignSystemAi(
         const parallel = preparation.stage.startsWith("master-") ? 2 : 1;
         const runTask = async (task: DesktopDsPreparation["tasks"][number], taskIndex: number, correction?: string) => {
           guard();
-          stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: task ${taskIndex + 1}/${preparation.tasks.length} · ${correction ? "исправление формата 1/1" : `готово ${completed}`}…`);
-          if (task.status === "unsupported") { warnings.push(task.reason || "Нет evidence для проверки"); completed++; return; }
+          stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: готово ${completed}/${preparation.tasks.length} · ${correction ? "исправление формата 1/1" : [task.componentKey || `проверка ${taskIndex + 1}`, task.viewport].filter(Boolean).join(" / ")}…`);
+          if (task.status === "unsupported") {
+            warnings.push(`${task.componentKey || task.id}${task.viewport ? ` (${task.viewport})` : ""}: ${task.reason || "Нет исходного снимка для проверки"}`);
+            completed++; return;
+          }
           if (task.status !== "ready" || !task.messages?.length) throw new Error("Некорректная AI-задача");
           const chatId = `${runToken}:${task.id}${correction ? ":format-correction" : ""}`;
           activeChatIds.add(chatId);
@@ -286,6 +312,8 @@ export async function runDesktopDesignSystemAi(
                 guard();
                 const attemptId = attempt ? `${chatId}:retry-${attempt}` : chatId;
                 activeChatIds.add(attemptId);
+                const chatStarted = Date.now();
+                timings.requests++;
                 try {
                   return await desktop.providers.chatRequest({ ...chatRoute(provider, effort), id: attemptId, profile, messages,
                     ...(responseFormat ? { responseFormat } : {}),
@@ -293,9 +321,12 @@ export async function runDesktopDesignSystemAi(
                 } catch (error) {
                   guard(); // Cancellation or changed Source must never restart a request.
                   const message = error instanceof Error ? error.message : String(error);
-                  if (attempt || !/timed out|timeout|ECONNRESET|ETIMEDOUT|\b429\b|\b50[234]\b/i.test(message)) throw error;
+                  // A full model deadline already consumed its budget. Repeating
+                  // it silently doubles the wait; retry only transport failures.
+                  if (attempt || !/ECONNRESET|ETIMEDOUT|\b429\b|\b50[234]\b/i.test(message)) throw error;
+                  timings.retries++;
                   stage("running", `${PROVIDER_LABELS[provider]} · повтор временно прерванного запроса…`);
-                } finally { activeChatIds.delete(attemptId); }
+                } finally { timings.providerMs += Date.now() - chatStarted; activeChatIds.delete(attemptId); }
               }
               throw new Error("AI-запрос не завершён");
             };
@@ -311,12 +342,9 @@ export async function runDesktopDesignSystemAi(
             stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: готово ${completed}/${preparation.tasks.length}…`);
           } finally { activeChatIds.delete(chatId); }
         };
-        for (let offset = 0; offset < preparation.tasks.length; offset += parallel) {
-          guard();
-          try {
-            await Promise.all(preparation.tasks.slice(offset, offset + parallel).map((task, index) => runTask(task, offset + index)));
-          } catch (error) { cancelChat(); throw error; }
-        }
+        guard();
+        try { await runDesktopAiQueue(preparation.tasks, parallel, runTask); }
+        catch (error) { cancelChat(); throw error; }
         // Completion order can differ; the server always receives task order.
         const responses = () => preparation.tasks.filter((task) => task.status === "ready")
           .map((task) => ({ taskId: task.id, output: outputs.get(task.id)! }));
@@ -899,23 +927,13 @@ const DESIGN_SYSTEM_SECTION_TYPES = new Set([
 ]);
 
 function renderableDesignSystemMaster(component: { templateIr?: IRObject; masterIr?: IRObject }): IRObject | null {
-  if (component.templateIr) return deepClone(component.templateIr);
+  if (!component.masterIr && component.templateIr) return deepClone(component.templateIr);
   const master = component.masterIr;
   const tree = Array.isArray(master?.tree) ? master.tree : [];
   const root = tree[0] as Record<string, any> | undefined;
   if (!master || !root) return null;
   if (DESIGN_SYSTEM_SECTION_TYPES.has(String(root.type || ""))) return deepClone(master);
-  const frame = root.frame && typeof root.frame === "object"
-    ? Object.fromEntries(["width", "height"].filter((key) => root.frame[key] != null).map((key) => [key, deepClone(root.frame[key])]))
-    : {};
-  return {
-    version: master.version,
-    tokens: deepClone(master.tokens),
-    tree: [{
-      id: "ds-master-preview", type: "source-block", variant: "component-master", props: {},
-      ...(Object.keys(frame).length ? { frame } : {}), children: [deepClone(root)],
-    }],
-  } as IRObject;
+  return componentMasterPreview(master);
 }
 
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
@@ -1027,6 +1045,7 @@ export interface FlowStoreState {
   promoteVariantToDesignSystem: (generatorId: number) => Promise<number | null>;
   recordVariantTaste: (generatorId: number, kind: "accepted" | "rejected") => Promise<boolean>;
   setDesignSystemPicker: (patch: Partial<DesignSystemPickerConfig>) => void;
+  sendDesignSystemToGenerator: (nodeId: number) => number | null;
   publishDesignSystem: (nodeId: number) => Promise<boolean>;
   setDefaultDesignSystem: (nodeId: number) => Promise<boolean>;
   rebuildDesignSystemFromSource: (nodeId: number) => Promise<boolean>;
@@ -1036,6 +1055,7 @@ export interface FlowStoreState {
   runDesignSystemAi: (nodeId: number, operation: DesignSystemAiOperation, viewport?: string) => Promise<DesignSystemAiResult | null>;
   restorePublishedDesignSystem: (nodeId: number, ref?: { systemId?: string; revision?: number }) => Promise<boolean>;
   applyDesignSystemToEditor: (nodeId: number, componentKey: string) => { editNodeId: number; previousIr: IRObject | null } | null;
+  copyDesignSystemComponentToEditor: (nodeId: number, componentKey: string, pool: "components" | "review" | "suggestions", variant: string) => number | null;
   restoreDesignSystemEditorApply: (editNodeId: number, previousIr: IRObject | null) => void;
 }
 
@@ -1974,13 +1994,24 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         { systemId?: string; revision?: number; contentHash?: string; status?: string; name?: string } | null;
       if (wiredDs && wiredDs.systemId) {
         if (wiredDs.status === "draft") {
-          if (scope.owns()) get().setStatus(id, "Публикую ДС…");
+          const dsId = Number((wiredDs as { nodeId?: number }).nodeId);
+          const dsNode = get().nodes.find((node) => Number(node.id) === dsId);
+          const dsData = dsNode?.data as DesignSystemNodeData | undefined;
+          if (get().busy[dsId] || dsData?._dsFinishing) {
+            get().setStatus(id, "Дизайн-система ещё обрабатывается. Дождитесь завершения проверки и повторите генерацию.", "err");
+            return;
+          }
+          const needsReview = !!dsData?.sourceUpdate || Number(dsData?.summary?.reviewMasters || 0) > 0
+            || Object.keys(dsData?.document?.reviewComponents || {}).length > 0;
+          if (scope.owns()) get().setStatus(id, needsReview ? "Проверяю и дорабатываю ДС…" : "Публикую ДС…");
           publishingDs = true;
-          const published = await scope.wait(get().publishDesignSystem(Number((wiredDs as { nodeId?: number }).nodeId)));
+          const ready = !needsReview || await scope.wait(get().finishDesignSystem(dsId));
+          const published = ready && ((get().nodes.find((node) => Number(node.id) === dsId)?.data as DesignSystemNodeData | undefined)?.status === "published"
+            || await scope.wait(get().publishDesignSystem(dsId)));
           if (!published) {
             const dsNode = get().nodes.find((node) => Number(node.id) === Number((wiredDs as { nodeId?: number }).nodeId));
             const reason = String((dsNode?.data as DesignSystemNodeData | undefined)?.lastError || "публикация заблокирована");
-            if (scope.owns()) get().setStatus(id, `Не удалось опубликовать ДС: ${reason}. Откройте ноду ДС → AI-ревью`, "err");
+            if (scope.owns()) get().setStatus(id, `Дизайн-система не готова: ${reason}. Откройте диагностику ноды UI Kit.`, "err");
             if (scope.owns()) get().setBusy(id, false);
             if (scope.owns()) get().setProgress(id, null);
             return;
@@ -2500,6 +2531,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         recordStage("quality", qualityFailures.length ? "warning" : quality.length && quality.every((item) => item?.gate?.passed === true) ? "success" : "skipped",
           qualityFailures.length ? `Quality: ${qualityFailures.flatMap((item) => item.gate?.reasons || []).join("; ") || `${qualityFailures.length} компонент(ов) не прошли проверку`}`
             : quality.length && quality.every((item) => item?.gate?.passed === true) ? "Quality пройден" : "Quality не проверен");
+        // Refine/repair responses may expand blob handles back to inline images.
+        // Persist the final response too, before it becomes graph state.
+        await scope.wait(offloadSourceEvidenceInPlace(res.blocks || []));
+        guard();
         const currentSource = get().nodes.find((node) => Number(node.id) === id);
         if (!currentSource || currentSource.type !== "sourceimport") return;
         const litBefore = new Set(currentSource.data.blocks.filter((b) => b.lit).map((b) => b.name));
@@ -3430,17 +3465,17 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     get().propagate(id);
   },
 
-  /* «+ вход» у Page: до 8 блоков, имена a..h (паттерн addMixInput) */
+  /* Page keeps existing port names stable when more source blocks are added. */
   addPageInput: (id) => {
     const sid = String(id);
     const n = get().nodes.find((x) => x.id === sid);
     if (!n || n.type !== "page") return;
     const inputs = (n.data as PageNodeData).inputs;
-    if (inputs.length >= 8) {
-      toast("Максимум 8 блоков", "error");
+    if (inputs.length >= PAGE_INPUT_LIMIT) {
+      toast(`Максимум ${PAGE_INPUT_LIMIT} блоков`, "error");
       return;
     }
-    const name = ["a", "b", "c", "d", "e", "f", "g", "h"].find((c) => !inputs.includes(c));
+    const name = PAGE_INPUT_NAMES.find((c) => !inputs.includes(c));
     if (!name) return;
     set((state) => ({
       nodes: state.nodes.map((x) =>
@@ -3563,9 +3598,13 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         }),
       }));
       const result = await scope.wait(resp.json());
-      if (result.error) {
-        if (scope.owns()) get().setStatus(dsId, "Ошибка: " + result.error, "err");
-        get().deleteNode(dsId);
+      if (!resp.ok || result.error || !result.document) {
+        const detail = result.error || result.detail || `HTTP ${resp.status}`;
+        const message = typeof detail === 'string' ? detail : String(detail.message || JSON.stringify(detail));
+        if (scope.owns()) {
+          get().setNodeData(dsId, { lastError: message });
+          get().setStatus(dsId, "Не удалось собрать UI Kit: " + message, "err");
+        }
         return null;
       }
       if (scope.owns()) get().setNodeData(dsId, {
@@ -3573,10 +3612,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         revision: 0, summary: result.summary, sourceNodeId: sourceId,
         defaultSet: false, sourceUpdate: false,
         document: result.document, autoPublish: true, _sourceFingerprint: sourceKitFingerprint(data),
+        pipelineStatus: { build: { status: "success", message: "UI Kit собран из Source · компоненты доступны", updatedAt: new Date().toISOString() } },
       } as unknown as Partial<DesignSystemNodeData>);
       if (scope.owns()) {
         get().setBusy(dsId, false);
-        await scope.wait(get().finishDesignSystem(dsId));
+        get().setStatus(dsId, "UI Kit собран · откройте компоненты и стиль сайта", "ok");
+        get().propagate(dsId);
       }
       return dsId;
     } catch (e) {
@@ -3909,14 +3950,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         document: result.document,
         lastError: "",
       });
-      buildStage("success", "Черновик пересобран из Source", true);
+      buildStage("success", "UI Kit обновлён из Source · компоненты доступны", true);
       get().propagate(nodeId);
-      if (window.designDNA?.providers?.chatRequest) {
-        get().setBusy(nodeId, false);
-        get().setNodeData(nodeId, { busyAction: "" });
-        endRunAbort(nodeId, signal);
-        return await get().finishDesignSystem(nodeId);
-      }
       return true;
     } catch (e) {
       if (!ownsBuild()) return false;
@@ -3933,10 +3968,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   finishDesignSystem: async (nodeId) => {
-    const initial = get();
-    const node = initial.nodes.find((n) => Number(n.id) === nodeId);
+    let initial = get();
+    let node = initial.nodes.find((n) => Number(n.id) === nodeId);
     if (!node || node.type !== "designsystem" || initial.busy[nodeId] || node.data._dsFinishing) return false;
-    if (node.data.sourceUpdate) return await get().rebuildDesignSystemFromSource(nodeId);
+    if (node.data.sourceUpdate) {
+      if (!await get().rebuildDesignSystemFromSource(nodeId)) return false;
+      initial = get();
+      node = initial.nodes.find((n) => Number(n.id) === nodeId);
+      if (!node || node.type !== "designsystem" || node.data.sourceUpdate || initial.busy[nodeId] || node.data._dsFinishing) return false;
+    }
     const selectedProvider = resolveDesignSystemAiProvider(initial.nodes, initial.edges, node);
     const pageId = initial.activePageId;
     const systemId = node.data.systemId;
@@ -3957,9 +3997,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       for (const operation of ["organize", "style-review", "master-review"] as const) {
         if (!fresh()) return false;
         if (operation !== "master-review" && current()?.data.pipelineStatus?.[operation]?.status === "success") continue;
-        // Each pass reviews, safely repairs and verifies all visible viewports.
-        // Accepted masters leave the review pool and remain pinned on later passes.
-        const attempts = operation === "master-review" ? 3 : 2;
+        // runDesignSystemAi already performs review -> safe repair -> verification.
+        // Rejected candidates are NOT committed. Another pass would judge the
+        // same masters again. Only a retryable response-format error may resume.
+        const attempts = 2;
         for (let attempt = 0; attempt < attempts; attempt++) {
           const result = await get().runDesignSystemAi(nodeId, operation);
           if (!fresh()) return false;
@@ -3968,7 +4009,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             return false;
           }
           if (current()?.data.pipelineStatus?.[operation]?.status === "success") break;
-          if (operation !== "master-review" || result.results?.some((item) => item.supported === false || item.error)) return false;
+          return false;
         }
         if (current()?.data.pipelineStatus?.[operation]?.status !== "success") return false;
       }
@@ -4073,6 +4114,46 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + message, "err");
       return false;
     }
+  },
+
+  sendDesignSystemToGenerator: (nodeId) => {
+    const state = get();
+    const source = state.nodes.find(n => Number(n.id) === nodeId && n.type === 'designsystem');
+    if (!source || source.type !== 'designsystem' || !source.data.systemId) return null;
+    // The exact graph node is authoritative, including drafts and duplicate registry references.
+    const existing = state.nodes.find(n => n.type === 'generator' && state.edges.some(e =>
+      e.source === source.id && e.sourceHandle === 'system' && e.target === n.id && e.targetHandle === 'designSystem'));
+    const target = existing || get().addNode('generator', source.position.x + 390, source.position.y);
+    const targetId = Number(target.id);
+    if (!existing) {
+      get().setNodeData(targetId, { provider: resolveDesignSystemAiProvider(state.nodes, state.edges, source) });
+      if (!get().connect({ node: nodeId, port: 'system' }, { node: targetId, port: 'designSystem' })) {
+        get().deleteNode(targetId);
+        return null;
+      }
+      get().setStatus(targetId, 'UI Kit подключён · задайте промпт и запустите генерацию');
+    }
+    set({ nodes: get().nodes.map(n => ({ ...n, selected: n.id === String(target.id) })) });
+    const scope = captureNodeScope(get, targetId);
+    void focusFlowNode(String(target.id), scope.owns);
+    return targetId;
+  },
+
+  copyDesignSystemComponentToEditor: (nodeId, componentKey, pool, variant) => {
+    const node = get().nodes.find(n => Number(n.id) === nodeId && n.type === 'designsystem');
+    if (!node) return null;
+    const document = (node.data as DesignSystemNodeData).document as Record<string, any> | null;
+    const component = document?.[pool === 'review' ? 'reviewComponents' : pool]?.[componentKey];
+    if (!component?.masterIr || component.origin !== 'observed') return null;
+    const masterIr = selectedComponentMaster(component, variant);
+    if (!masterIr) return null;
+    const ir = renderableDesignSystemMaster({ masterIr });
+    if (!ir) return null;
+    const edit = get().addNode('edit', node.position.x + 360, node.position.y);
+    // A working copy has no registry pin and cannot promote a review master.
+    get().setNodeData(Number(edit.id), { ir, label: `Копия · ${component.name || componentKey}` });
+    window.dispatchEvent(new Event('designdna:ensure-editor'));
+    return Number(edit.id);
   },
 
   applyDesignSystemToEditor: (nodeId, componentKey) => {

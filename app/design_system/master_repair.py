@@ -403,7 +403,7 @@ def repair_master(document: dict, key: str, comp: dict | None, verdict: dict, *,
 
     for _round in range(max(1, int(max_rounds))):
         current_comp = _with_master(comp, current_master)
-        current_png = render(page, current_comp, viewport)
+        current_png = render(page, master_review.with_source_context(document, current_comp), viewport)
         nodes = describe_nodes(current_master)
         if not nodes:
             break
@@ -417,7 +417,7 @@ def repair_master(document: dict, key: str, comp: dict | None, verdict: dict, *,
             break  # правка ничего не меняет — следующий раунд предложит то же самое
         rounds += 1
         candidate_comp = _with_master(comp, candidate_master)
-        candidate_png = render(page, candidate_comp, viewport)
+        candidate_png = render(page, master_review.with_source_context(document, candidate_comp), viewport)
         safe, rejected = _layout_acceptance(current_master, candidate_master, page=page,
                                             viewport=viewport, original=original,
                                             before_png=current_png, candidate_png=candidate_png)

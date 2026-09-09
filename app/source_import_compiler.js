@@ -161,6 +161,7 @@ async (blocks) => {
                       // («свечение» акцентного слова) приезжали плоскими.
                       textShadow:cs.textShadow && cs.textShadow!=='none' ? cs.textShadow.slice(0,300) : null,
                       textDecoration:safeEnum(deco,['none','underline','line-through','overline'],'none'),
+                      fontSmoothing:cs.webkitFontSmoothing==='antialiased'?'antialiased':null,
                       whiteSpace:safeEnum(cs.whiteSpace,['normal','nowrap','pre','pre-wrap','pre-line','break-spaces'],'normal'),
                       overflow:safeEnum(cs.overflow,['visible','hidden','clip','scroll','auto'],'visible'),
                       // flex-shrink:0 — единственное нетривиальное значение (дефолт 1):
@@ -902,8 +903,14 @@ async (blocks) => {
                             const mid=(lo+hi)>>1;
                             if(rectsOf(start,mid).length<=1){ best=mid; lo=mid+1; } else hi=mid-1;
                           }
-                          const rects=rectsOf(start,best);
-                          const piece=raw.slice(start,best).replace(/\s+/g,' ').trim();
+                          const fragment=raw.slice(start,best);
+                          const piece=fragment.replace(/\s+/g,' ').trim();
+                          // The emitted text is trimmed; measure the same substring.
+                          // Keeping the leading-space bbox joined inline labels to
+                          // their text ("Output:who") and shifted every glyph left.
+                          const leftTrim=fragment.length-fragment.trimStart().length;
+                          const rightTrim=fragment.length-fragment.trimEnd().length;
+                          const rects=piece ? rectsOf(start+leftTrim,best-rightTrim) : [];
                           if(piece && rects.length){
                             const lr=rects[0];
                             const lstyle=cleanTextStyle(styleOf(cs,warnings));
@@ -925,7 +932,11 @@ async (blocks) => {
                           if(text) directOnlyText=(directOnlyText+' '+text).trim();
                           if(text && !isContainer) inlineTextNodes.push({node:child,idx});
                           if(!text || !isContainer) return;
-                          const range=document.createRange(); range.selectNodeContents(child); const tr=range.getBoundingClientRect();
+                          const range=document.createRange();
+                          const rawText=child.textContent||'';
+                          range.setStart(child,rawText.length-rawText.trimStart().length);
+                          range.setEnd(child,rawText.trimEnd().length);
+                          const tr=range.getBoundingClientRect();
                           if(tr.width<1||tr.height<1) return;
                           const lines=[...range.getClientRects()].filter(x=>x.width>0.5&&x.height>0.5);
                           if(lines.length>1){

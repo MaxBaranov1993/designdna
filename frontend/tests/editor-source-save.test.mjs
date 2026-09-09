@@ -31,6 +31,7 @@ test('responsive Source style save preserves every sibling and strips only rende
   state.activeIR.tree[0].children[0].__path = 'children.0';
   state.activeIR.tree[0].children[0].style.background = '#123abc';
   const ctx = {state,manualSourceKey:0};
+  runInNewContext(functions(read('../src/engine/responsiveContent.ts').replace('export function', 'function'),['syncResponsiveContent']),ctx);
   runInNewContext(functions(source,names)+'\nsyncActiveIR(); result=copyWithoutRenderMetadata(state.ir);',ctx);
   const expected=clone(original);
   expected.tree[0].children[0].style.background='#123abc';

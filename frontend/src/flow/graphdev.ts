@@ -45,8 +45,8 @@ declare global {
 
 /* Минимальный интерфейс инстанса канваса, нужный GraphDev.fit (Svelte Flow) */
 export interface FlowInstanceLike {
-  fitView: (options?: { padding?: number; duration?: number }) => unknown;
-  getNodes?: () => Array<{ id: string; selected?: boolean }>;
+  fitView: (options?: { padding?: number; duration?: number; nodes?: Array<{ id: string }>; maxZoom?: number }) => unknown;
+  getNodes?: () => Array<{ id: string; selected?: boolean; measured?: { width?: number; height?: number } }>;
   updateNode?: (id: string, update: Record<string, unknown>) => void;
 }
 
@@ -60,6 +60,21 @@ export function setReactFlowInstance(instance: FlowInstanceLike | null) {
  *  страниц, чтобы ноды были видны целиком без ручного зума). */
 export function fitFlowView() {
   if (rfInstance) void rfInstance.fitView({ padding: 0.12, duration: 250 });
+}
+
+/** Wait for Svelte Flow to measure a newly created node before focusing it. */
+export async function focusFlowNode(id: string, owns: () => boolean): Promise<boolean> {
+  if (!rfInstance) return false;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if (!owns()) return false;
+    const node = rfInstance?.getNodes?.().find(n => n.id === id);
+    if (node?.measured?.width && node.measured.height) {
+      await rfInstance?.fitView({ nodes: [{ id }], padding: 0.25, maxZoom: 1, duration: 250 });
+      return true;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  return false;
 }
 
 function legacyEdges(edges: FlowEdge[]) {

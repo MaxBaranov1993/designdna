@@ -45,6 +45,22 @@ def check(name: str, cond: bool, extra: str = "") -> None:
         FAILS.append(name)
 
 
+def ds_action(page, name):
+    button = page.locator(f"[data-ds-editor] [data-ds-action='{name}']")
+    if not button.is_visible():
+        menu = page.locator('[data-ds-editor] .ds-tools-menu')
+        if menu.get_attribute('open') is None:
+            menu.locator('summary').click()
+    return button
+
+
+def ds_tab(page, name):
+    tab = page.locator(f"[data-ds-editor] [data-ds-tab='{name}']")
+    if not tab.is_visible() and name == 'suggestions':
+        page.locator("[data-ds-editor] [data-ds-tab='source']").click()
+    return tab
+
+
 def free_port() -> int:
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
@@ -82,9 +98,8 @@ def main() -> None:
             page = browser.new_page(viewport={"width": 1600, "height": 950})
             page.route("**/api/project/load", lambda route: route.fulfill(status=200, content_type="application/json", body='{"project":null}'))
             page.route("**/api/project/save", lambda route: route.fulfill(status=200, content_type="application/json", body='{"ok":true}'))
-            # The panel starts both AI reviews automatically. This lifecycle test
-            # covers deterministic UI actions, so keep those background calls
-            # local and immediate instead of invoking an account-backed LLM.
+            # Catalog build and opening must not start AI. Keep legacy endpoints
+            # intercepted so a regression cannot call a real model during QA.
             page.route("**/api/design-system/organize", lambda route: route.fulfill(
                 status=503,
                 content_type="application/json",
@@ -135,9 +150,9 @@ def main() -> None:
             summary = node.get("summary") or {}
             check("summary has catalog components", int(summary.get("catalogComponents") or 0) >= 1, json.dumps(summary))
             check("Source masters stay review-gated", int(summary.get("reviewMasters") or 0) >= 1, json.dumps(summary))
-            check("unavailable AI leaves an explanatory draft status",
-                  bool(node.get("lastError")) and node["lastError"] in
-                  page.locator(f'.n-designsystem[data-id="{ds_id}"] .n-status').inner_text())
+            check("catalog builds without requiring AI",
+                  not node.get("lastError") and
+                  node.get("pipelineStatus", {}).get("build", {}).get("status") == "success")
 
             open_btn = page.locator(f'.n-designsystem[data-id="{ds_id}"] [data-ds-action="open"]')
             check("open has accessible label", (open_btn.get_attribute("aria-label") or "").startswith("Открыть"))
@@ -145,8 +160,8 @@ def main() -> None:
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
             check("open editor panel", page.locator("[data-ds-editor]").count() == 1)
-            pub_btn = page.locator("[data-ds-editor] [data-ds-action='publish']")
-            def_btn = page.locator("[data-ds-editor] [data-ds-action='default']")
+            pub_btn = ds_action(page, "publish")
+            def_btn = ds_action(page, "default")
             check("publish has accessible label", "Опубликовать" in (pub_btn.get_attribute("aria-label") or ""))
             check("review-only draft cannot publish", pub_btn.is_disabled())
             check("default disabled until published", def_btn.is_disabled())
@@ -173,10 +188,10 @@ def main() -> None:
               };
               await state.saveDesignSystemDocument(id, doc);
             }""", ds_id)
-            page.locator("[data-ds-editor] [data-ds-tab='suggestions']").click()
+            ds_tab(page, "suggestions").click()
             page.locator("[data-ds-editor] [data-ds-suggestion='semantic-promo']").click()
             page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
-            promote_btn = page.locator("[data-ds-editor] [data-ds-action='promote']")
+            promote_btn = ds_action(page, "promote")
             check("semantic suggestion can be explicitly promoted", promote_btn.is_enabled())
             promote_btn.click()
             page.wait_for_function("id => Object.keys(window.GraphDev.node(id)?.data?.document?.components || {}).length > 0", arg=ds_id)
@@ -193,9 +208,9 @@ def main() -> None:
               doc.components[key].polish = {before: structuredClone(doc.components[key].masterIr || doc.components[key].templateIr)};
               await state.saveDesignSystemDocument(id, doc);
             }""", ds_id)
-            page.locator("[data-ds-editor] [data-ds-action='publish']").click()
+            ds_action(page, "publish").click()
             page.wait_for_function("id => window.GraphDev.node(id).data.status === 'published'", arg=ds_id)
-            page.locator("[data-ds-editor] [data-ds-action='close']").click()
+            ds_action(page, "close").click()
             page.wait_for_selector("[data-ds-editor]", state="detached")
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
@@ -208,11 +223,11 @@ def main() -> None:
               });
               window.__flowStore.getState().setNodeData(id, {document: doc});
             }""", ds_id)
-            page.locator("[data-ds-editor] [data-ds-action='validate']").click()
+            ds_action(page, "validate").click()
             page.wait_for_selector("[data-ds-validation]")
             check("validate action runs", page.locator("[data-ds-validation]").count() == 1)
 
-            page.locator("[data-ds-editor] [data-ds-tab='source']").click()
+            ds_tab(page, "source").click()
             page.locator("[data-ds-editor] [data-catalog-component] button").first.click()
             page.wait_for_selector("[data-ds-editor] [data-ds-component]")
             first_comp = page.locator("[data-ds-editor] [data-ds-component][data-ds-pool='components']").first
@@ -265,10 +280,10 @@ def main() -> None:
                 json.dumps(persisted_state),
             )
 
-            undo_btn = page.locator("[data-ds-editor] [data-ds-action='undo']")
+            undo_btn = ds_action(page, "undo")
             undo_btn.wait_for(state="visible")
             page.wait_for_function("() => { const b = document.querySelector(\"[data-ds-editor] [data-ds-action='undo']\"); return b && !b.disabled; }")
-            undo_btn.click()
+            ds_action(page, "undo").click()
             page.wait_for_function(
                 """({id, name}) => {
                   const comps = Object.values(window.GraphDev.node(id)?.data?.document?.components || {});
@@ -297,7 +312,7 @@ def main() -> None:
             }""", {"id": ds_id, "name": state_name})
             page.wait_for_selector(f"[data-ds-editor] [data-ds-state='{state_name}'].unconfirmed")
 
-            page.locator("[data-ds-editor] [data-ds-action='apply']").click()
+            ds_action(page, "apply").click()
             page.wait_for_function("""() => window.GraphDev.state().nodes.some(n => n.type === 'edit')""")
             page.wait_for_function("""() => {
               const el = document.querySelector('.dna-editor');
@@ -329,7 +344,7 @@ def main() -> None:
                     pass
                 page.wait_for_function("() => { const el = document.querySelector('.dna-editor'); return !el || getComputedStyle(el).display === 'none'; }")
             page.wait_for_function("() => { const b = document.querySelector(\"[data-ds-editor] [data-ds-action='undo']\"); return b && !b.disabled; }")
-            undo_btn.click()
+            ds_action(page, "undo").click()
             page.wait_for_function("""() => {
               const edit = window.__flowStore.getState().nodes.find(n => n.type === 'edit');
               return edit && !edit.data?.ir;
@@ -358,7 +373,7 @@ def main() -> None:
                 }""",
                 arg={"id": ds_id, "name": state_name},
             )
-            page.locator("[data-ds-editor] [data-ds-action='cancel']").click()
+            ds_action(page, "cancel").click()
             page.wait_for_selector("[data-ds-editor]", state="detached")
             rolled_back = page.evaluate(
                 """({id, name}) => {
@@ -378,10 +393,10 @@ def main() -> None:
             page.wait_for_selector("[data-ds-editor]")
             save_draft_hits: list[str] = []
             page.on("request", lambda req: save_draft_hits.append(req.url) if "/api/design-system/save-draft" in req.url else None)
-            page.locator("[data-ds-editor] [data-ds-action='publish']").click()
+            ds_action(page, "publish").click()
             page.wait_for_function("id => window.GraphDev.node(id).data.status === 'published'", arg=ds_id)
             before_close = len(save_draft_hits)
-            page.locator("[data-ds-editor] [data-ds-action='close']").click()
+            ds_action(page, "close").click()
             page.wait_for_selector("[data-ds-editor]", state="detached")
             published = page.evaluate("id => window.GraphDev.node(id).data", ds_id)
             check("close after in-panel publish does not save-draft", len(save_draft_hits) == before_close, str(len(save_draft_hits) - before_close))
@@ -394,16 +409,16 @@ def main() -> None:
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
             page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
-            page.locator("[data-ds-editor] [data-ds-action='default']").click()
+            ds_action(page, "default").click()
             page.wait_for_function("id => window.GraphDev.node(id).data.defaultSet === true", arg=ds_id)
-            page.locator("[data-ds-editor] [data-ds-action='close']").click()
+            ds_action(page, "close").click()
             page.wait_for_selector("[data-ds-editor]", state="detached")
             listed = page.evaluate("async () => (await (await fetch('/api/design-system/list')).json())")
             check("set default persists in registry", bool(listed.get("defaultSystemRef") and listed["defaultSystemRef"]["systemId"] == published["systemId"]), json.dumps(listed.get("defaultSystemRef")))
 
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
-            page.locator("[data-ds-editor] [data-ds-tab='source']").click()
+            ds_tab(page, "source").click()
             page.locator("[data-ds-editor] [data-catalog-component] button").first.click()
             page.wait_for_selector("[data-ds-editor] [data-ds-component]")
             page.locator("[data-ds-editor] [data-ds-component][data-ds-pool='components']").first.click()
@@ -433,7 +448,7 @@ def main() -> None:
             page.locator("[data-ds-editor] [data-ds-state='hover'].unconfirmed").click()
             page.wait_for_function("id => window.GraphDev.node(id).data.status === 'draft'", arg=ds_id)
             after_edit_drafts = len(save_draft_hits)
-            page.locator("[data-ds-editor] [data-ds-action='cancel']").click()
+            ds_action(page, "cancel").click()
             page.wait_for_selector("[data-ds-editor]", state="detached")
             check(
                 "cancel after published edit does not save-draft",
@@ -546,7 +561,7 @@ def main() -> None:
                 reopened_meta,
             )
             reopen_drafts = len(save_draft_hits)
-            page.locator("[data-ds-editor] [data-ds-action='close']").click()
+            ds_action(page, "close").click()
             page.wait_for_selector("[data-ds-editor]", state="detached")
             check(
                 "clean reopen/close after restore does not save-draft",
@@ -582,17 +597,17 @@ def main() -> None:
               };
               await state.saveDesignSystemDocument(id, doc);
             }""", ds_id2)
-            page.locator("[data-ds-editor] [data-ds-tab='suggestions']").click()
+            ds_tab(page, "suggestions").click()
             page.locator("[data-ds-editor] [data-ds-suggestion='semantic-promo']").click()
             page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id2)
-            page.locator("[data-ds-editor] [data-ds-action='promote']").click()
+            ds_action(page, "promote").click()
             page.wait_for_function("id => Object.keys(window.GraphDev.node(id)?.data?.document?.components || {}).length > 0", arg=ds_id2)
-            page.locator("[data-ds-editor] [data-ds-action='publish']").click()
+            ds_action(page, "publish").click()
             page.wait_for_function("id => window.GraphDev.node(id).data.status === 'published'", arg=ds_id2)
-            page.locator("[data-ds-editor] [data-ds-action='default']").click()
+            ds_action(page, "default").click()
             page.wait_for_function("id => window.GraphDev.node(id).data.defaultSet === true", arg=ds_id2)
             page.wait_for_function("id => window.GraphDev.node(id).data.defaultSet === false", arg=ds_id)
-            page.locator("[data-ds-editor] [data-ds-action='close']").click()
+            ds_action(page, "close").click()
             page.wait_for_selector("[data-ds-editor]", state="detached")
             sibling_flags = page.evaluate(
                 """ids => ({
@@ -606,9 +621,9 @@ def main() -> None:
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
             page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
-            page.locator("[data-ds-editor] [data-ds-action='default']").click()
+            ds_action(page, "default").click()
             page.wait_for_function("id => window.GraphDev.node(id).data.defaultSet === true", arg=ds_id)
-            page.locator("[data-ds-editor] [data-ds-action='close']").click()
+            ds_action(page, "close").click()
             page.wait_for_selector("[data-ds-editor]", state="detached")
 
             # пикер убран из ноды Генератора (перегружала ноду) — выбор
@@ -652,8 +667,25 @@ def main() -> None:
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
             page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
-            busy_pub = page.locator("[data-ds-editor] [data-ds-action='publish']")
+            busy_pub = ds_action(page, "publish")
             check("publish button remains labeled after lifecycle", "Опубликовать" in (busy_pub.get_attribute("aria-label") or ""))
+            handoff_before = page.evaluate("id => JSON.stringify(window.GraphDev.node(id).data.document)", ds_id)
+            ds_action(page, "to-generator").click()
+            page.wait_for_selector("[data-ds-editor]", state="detached")
+            target_id = page.evaluate("""id => {
+              const state = window.GraphDev.state();
+              const edge = state.edges.find(e => e.from.node === id && e.from.port === 'system' && e.to.port === 'designSystem');
+              return edge?.to.node;
+            }""", ds_id)
+            check("UI Kit button connects its actual node to a Generator", bool(target_id) and
+                  page.evaluate("id => window.GraphDev.node(id).type", target_id) == "generator")
+            check("handoff keeps the library document", handoff_before ==
+                  page.evaluate("id => JSON.stringify(window.GraphDev.node(id).data.document)", ds_id))
+            open_btn.click()
+            ds_action(page, "to-generator").click()
+            check("repeat handoff reuses the same wire", page.evaluate("""([id, target]) =>
+              window.GraphDev.state().edges.filter(e => e.from.node === id && e.from.port === 'system' && e.to.node === target).length
+            """, [ds_id, target_id]) == 1)
             browser.close()
     finally:
         if proc is not None:

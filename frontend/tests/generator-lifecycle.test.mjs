@@ -65,6 +65,32 @@ function setup() {
  store.getState().connect({node:prompt,port:'out'},{node:id,port:'prompt'});
  return {prompt,id};
 }
+
+test('generator resumes draft review before publishing and preserves the specific failure', async () => {
+ const finish = store.getState().finishDesignSystem;
+ const publish = store.getState().publishDesignSystem;
+ try {
+  for (const approved of [false, true]) {
+   const {id} = setup(); const calls = mock(); const ds = add('designsystem');
+   patch(ds, {systemId:'kit', status:'draft', summary:{reviewMasters:43}, lastError:'old publication error'});
+   store.getState().connect({node:ds,port:'system'},{node:id,port:'designSystem'});
+   const stages = [];
+   store.setState({finishDesignSystem:async dsId => {
+    assert.equal(dsId,ds); stages.push('review');
+    patch(ds,{lastError:approved?'':'Missing desktop screenshot; refresh Source'});
+    return approved;
+   },publishDesignSystem:async () => {
+    stages.push('publish'); patch(ds,{status:'published',revision:1,contentHash:'pin'}); return true;
+   }});
+   await store.getState().runGenerator(id);
+   assert.deepEqual(stages,approved?['review','publish']:['review']);
+   if (!approved) {
+    assert.match(store.getState().statuses[id].text,/Missing desktop screenshot/);
+    assert.equal(calls.length,0);
+   } else assert.equal(node(id).data.variants.length,1,'generation continues after successful review and publication');
+  }
+ } finally {store.setState({finishDesignSystem:finish,publishDesignSystem:publish});}
+});
 function mock() {
  const calls=[];
  window.designDNA={providers:{chatRequest:async request=>{calls.push(['chat',request]); return {content:'{}'};},cancel:async id=>calls.push(['cancel',id])}};

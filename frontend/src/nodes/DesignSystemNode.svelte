@@ -49,16 +49,12 @@
   {#snippet footer()}
     <div class="foot-left"><span>{statusLabel}{data.defaultSet ? " · по умолчанию" : ""}</span></div>
     <div class="foot-right">
-      {#if canOpen && data.status !== "published"}
-        <button type="button" class="btn-node primary small nodrag" data-ds-action="finish"
-          disabled={busy} onclick={() => $flow.finishDesignSystem(Number(id))}>{busy ? 'ИИ дорабатывает…' : 'Довести до готового'}</button>
-      {/if}
       {#if !canOpen}
         <button type="button" class="btn-node primary small nodrag" data-ds-action="build"
           disabled={!canBuild || busy} onclick={() => $flow.rebuildDesignSystemFromSource(Number(id))}>Собрать из Source</button>
       {/if}
       <button type="button" class="btn-node small nodrag" class:primary={canOpen} data-ds-action="open"
-        aria-label="Открыть редактор Design System и Source UI" disabled={!canOpen} onclick={openEditor}>Открыть</button>
+        aria-label="Открыть редактор Design System и Source UI" disabled={!canOpen} onclick={openEditor}>Открыть UI Kit</button>
     </div>
   {/snippet}
   <InPorts type="designsystem" />
@@ -66,13 +62,13 @@
   {#if data.systemId}
     <div class="ds-funnel" aria-label="Source detected to system accepted">
       <div class="source-side">
-        <span>В источнике</span>
+        <span>В библиотеке</span>
         <strong>{detectedComponents ?? "—"}</strong>
         <small>{detectedVariants ?? "—"} вариантов</small>
       </div>
       <div class="funnel-arrow" aria-hidden="true"><i></i><b>→</b></div>
       <div class="system-side">
-        <span>В системе</span>
+        <span>Проверены</span>
         <strong>{acceptedMasters}</strong>
         <small>{acceptedVariants} вариантов</small>
       </div>
@@ -80,7 +76,7 @@
     <div class="ds-metrics">
       <span>{sourceArtifact?.summary.screenCount ?? sourceArtifact?.screens?.length ?? 0} экранов</span>
       <span>{sourceArtifact?.summary.viewportCount ?? 0} вьюпорта</span>
-      {#if Number(summary.reviewMasters || 0)}<span>{Number(summary.reviewMasters)} на ревью</span>{/if}
+      {#if Number(summary.reviewMasters || 0)}<span>{Number(summary.reviewMasters)} требуют проверки</span>{/if}
       <span>{Math.round(Number(summary.stateCoverage || 0))}% состояний</span>
       <span>Качество {Math.round(Number(summary.qualityScore || 0))}/100</span>
     </div>

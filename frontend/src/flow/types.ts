@@ -1,5 +1,9 @@
 import type { Edge, Node } from "@xyflow/svelte";
 
+export const PAGE_INPUT_LIMIT = 32;
+export const PAGE_INPUT_NAMES = Array.from({ length: PAGE_INPUT_LIMIT }, (_, index) =>
+  index < 26 ? String.fromCharCode(97 + index) : `block${index + 1}`);
+
 /* Типы данных актуальных нод графа (см. docs/NODES.md).
  * Runtime-поля legacy (el/geo/history) в React Flow state не переносятся. */
 
@@ -346,6 +350,7 @@ export type AiPipelineStage = {
   message: string;
   provider?: NodeProvider;
   updatedAt: string;
+  timings?: { elapsedMs: number; prepareMs: number; providerMs: number; applyMs: number; requests: number; retries: number };
 };
 export type DesignSystemNodeData = {
   /** Missing values inherit the provider of the Source wired to artifact. */

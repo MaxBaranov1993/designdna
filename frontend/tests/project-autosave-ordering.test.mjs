@@ -87,6 +87,25 @@ test("slow earlier offload cannot overwrite newest snapshot; pending preparation
   await settle();
 });
 
+test("failed blob storage and unload retain Source screenshots in SQLite while local cache stays compact", async () => {
+  const h = await harness({ offload: async () => { throw new Error('blob disk unavailable'); } });
+  const preview = 'data:image/png;base64,c291cmNl';
+  const project = { pages: [{ graph: { nodes: [{ type: 'sourceimport', data: {
+    blocks: [{ name: 'header', preview, previews: { desktop: preview, mobile: preview } }],
+  } }] } }] };
+  h.api.scheduleProjectSave(() => project);
+  await h.tick(300); await h.tick(0); await h.tick(250);
+  const saved = h.requests[0].body.project.pages[0].graph.nodes[0].data.blocks[0];
+  assert.equal(saved.preview, preview);
+  assert.equal(saved.previews.mobile, preview);
+  assert.equal(h.writes.at(-1).pages[0].graph.nodes[0].data.blocks[0].preview, undefined);
+  h.requests[0].resolve(reply(200, {revision: B})); await settle();
+  h.api.scheduleProjectSave(() => project);
+  h.handlers.get('beforeunload')();
+  const beacon = JSON.parse(await h.beacons.at(-1)[1].text());
+  assert.equal(beacon.project.pages[0].graph.nodes[0].data.blocks[0].previews.desktop, preview);
+});
+
 test("a new edit invalidates an older offload even before the new debounce fires", async () => {
   const slow = Promise.withResolvers();
   const h = await harness({ offload: () => slow.promise });

@@ -89,13 +89,16 @@
       projectConflict = detail || { expectedRevision: null, currentRevision: null, error: "stale_revision" };
     };
     window.addEventListener("designdna:project-conflict", onProjectConflict);
-    // «Передать в Генератор» из панели DS: система становится выбором проекта,
-    // Генератор подхватывает её через pinnedDesignSystemRef.
+    // Drafts must reach the consumer through an explicit wire; the project picker
+    // resolves published revisions only and cannot represent this handoff.
     const onDsToGenerator = (event: Event) => {
-      const systemId = String((event as CustomEvent).detail?.systemId || "");
-      if (!systemId) return;
-      useFlowStore.getState().setDesignSystemPicker({ selection: systemId });
-      toast("Дизайн-система передана в Генератор", "ok");
+      const detail = (event as CustomEvent).detail;
+      const state = useFlowStore.getState();
+      const source = state.nodes.find(n => Number(n.id) === Number(detail?.nodeId) && n.type === 'designsystem');
+      const target = source?.type === 'designsystem' && source.data.systemId && source.data.systemId === detail?.systemId
+        ? state.sendDesignSystemToGenerator(Number(source.id)) : null;
+      if (target == null) { toast('Не удалось подключить UI Kit: исходная нода недоступна'); return; }
+      toast('UI Kit подключён к Генератору', 'ok');
     };
     window.addEventListener("designdna:ds-to-generator", onDsToGenerator);
     installGraphDev();

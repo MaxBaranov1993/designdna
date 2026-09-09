@@ -150,8 +150,10 @@ export class CodexAppServer extends EventEmitter {
   }
   async start() {
     if (this.initialized) return this.initialized;
-    this.initialized = this.#startAndInitialize();
-    try { return await this.initialized; } catch (error) { this.initialized = null; throw error; }
+    const initializing = this.#startAndInitialize();
+    this.initialized = initializing;
+    try { return await initializing; }
+    catch (error) { if (this.initialized === initializing) this.initialized = null; throw error; }
   }
   async account() { await this.start(); return this.request("account/read", { refreshToken: false }); }
   async login({ type, apiKey } = {}) {
@@ -233,6 +235,15 @@ export class CodexAppServer extends EventEmitter {
         let completed = "";
         const deltasByItem = new Map();
         let completedItemId = null;
+        let owningChild = null;
+        let unsubscribed = false;
+        const releaseThread = () => {
+          if (!threadId || unsubscribed || !this.child || this.child !== owningChild) return;
+          unsubscribed = true;
+          // Ephemeral means no history, not automatic runtime disposal.
+          // Each viewport chat must release its subscription after completion.
+          void this.request("thread/unsubscribe", { threadId }).catch(() => {});
+        };
         const interrupt = () => {
           if (!threadId || !turnId || interrupted) return;
           interrupted = true;
@@ -246,6 +257,7 @@ export class CodexAppServer extends EventEmitter {
           signal?.removeEventListener("abort", onAbort);
           this.removeListener("notification", onNotification);
           this.removeListener("serverError", onServerError);
+          releaseThread();
           if (error) reject(error); else resolve(value);
         };
         const cancel = (error) => { shouldInterrupt = true; interrupt(); finish(error); };
@@ -299,6 +311,7 @@ export class CodexAppServer extends EventEmitter {
         void (async () => {
           await this.start();
           if (settled) return;
+          owningChild = this.child;
           const accountState = await this.account();
           if (settled) return;
           if (accountState?.account?.type !== "chatgpt") {
@@ -317,8 +330,8 @@ export class CodexAppServer extends EventEmitter {
             developerInstructions,
             config: { ...HERMETIC_CODEX_CONFIG },
           });
-          if (settled) return;
           threadId = String(started.thread?.id || "");
+          if (settled) { releaseThread(); return; }
           if (!threadId) throw new Error("Codex did not return a generator thread id");
           if (started.modelProvider !== "openai"
             || (started.thread?.modelProvider != null && started.thread.modelProvider !== "openai")) {
@@ -378,6 +391,8 @@ export class CodexAppServer extends EventEmitter {
         config: { ...HERMETIC_CODEX_CONFIG },
       });
       const sources = Array.isArray(started?.instructionSources) ? started.instructionSources.map(String) : [];
+      // Эфемерность не освобождает runtime: подписку на тред снимаем сами.
+      if (started?.thread?.id) void this.request("thread/unsubscribe", { threadId: String(started.thread.id) }).catch(() => {});
       const inside = (file) => path.resolve(file).toLowerCase().startsWith(path.resolve(root).toLowerCase());
       const canaryHit = sources.some(inside);
       return {
@@ -393,11 +408,19 @@ export class CodexAppServer extends EventEmitter {
   }
   request(method, params = {}) {
     if (!this.child) return Promise.reject(new Error("Codex app-server is not running"));
+    const child = this.child;
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Codex app-server timed out: ${method}`)); }, this.timeoutMs);
+      const timer = setTimeout(() => {
+        const error = new Error(`Codex app-server timed out: ${method}`);
+        // A live pid with an unresponsive protocol is not a ready provider.
+        // Fail the affected calls; the next explicit request starts a fresh process.
+        if (this.child === child) this.#disconnect(error);
+        else { this.pending.delete(id); reject(error); }
+      }, this.timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      this.child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
+      try { child.stdin.write(`${JSON.stringify({ id, method, params })}\n`); }
+      catch (error) { if (this.child === child) this.#disconnect(error); else { clearTimeout(timer); this.pending.delete(id); reject(error); } }
     });
   }
   respond(id, result, error) {
@@ -405,7 +428,14 @@ export class CodexAppServer extends EventEmitter {
     this.child.stdin.write(`${JSON.stringify(error ? { id, error } : { id, result })}\n`);
   }
   notify(method, params = {}) { this.child?.stdin.write(`${JSON.stringify({ method, params })}\n`); }
-  stop() { this.child?.kill(); this.#fail(new Error("Codex app-server stopped")); }
+  stop() { this.#disconnect(new Error("Codex app-server stopped")); }
+  #disconnect(error) {
+    const child = this.child;
+    this.#fail(error);
+    // EOF also reaches the native Codex child when Windows uses the npm shim.
+    try { child?.stdin?.end?.(); } catch { /* already closed */ }
+    try { child?.kill(); } catch { /* already exited */ }
+  }
   async #startAndInitialize() {
     const spec = codexProcessSpec();
     const child = this.spawnProcess(spec.command, spec.args, {
@@ -415,7 +445,7 @@ export class CodexAppServer extends EventEmitter {
       windowsHide: true,
     });
     this.child = child;
-    createInterface({ input: child.stdout }).on("line", (line) => this.#onLine(line));
+    createInterface({ input: child.stdout }).on("line", (line) => { if (this.child === child) this.#onLine(line); });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-4_000); });
     child.once("error", (error) => { if (this.child === child) this.#fail(error); });

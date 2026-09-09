@@ -20,6 +20,9 @@
     acceptedVariants?: number;
     onOpen?: (key: string, pool: CatalogPool) => void;
   } = $props();
+  let search = $state('');
+  const visibleEntries = $derived(catalogEntries.filter(entry =>
+    `${entry.component.name || ''} ${entry.key} ${entry.component.category || ''} ${catalog.componentMeta?.[entry.key]?.label || ''}`.toLowerCase().includes(search.trim().toLowerCase())));
 
   /* Одно семейство — одна карточка. Fidelity-гейт раскладывает провалившиеся
    * вхождения в ключи "family-review", "-review-2", ... — раньше каждый такой
@@ -68,7 +71,7 @@
   ];
 
   let levelGroups = $derived.by((): LevelGroup[] => {
-    const byKey = new Map(catalogEntries.map((entry) => [entry.key, entry]));
+    const byKey = new Map(visibleEntries.map((entry) => [entry.key, entry]));
     const declared = (catalog.levels || []) as Array<{ key: string; label: string; description?: string; componentKeys?: string[] }>;
     const source = declared.length
       ? declared
@@ -96,7 +99,7 @@
         });
       }
     }
-    const rest = catalogEntries.filter((entry) => !seen.has(entry.key));
+    const rest = visibleEntries.filter((entry) => !seen.has(entry.key));
     if (rest.length) {
       groups.push({ key: "other", label: "Прочее",
         description: "Компоненты, которым не определён уровень", families: mergeFamilies(rest) });
@@ -134,37 +137,37 @@
   <div class="source-workbench">
     <header class="source-intro">
       <div>
-        <span class="source-eyebrow">Measured Source Artifact</span>
-        <h2>Observed UI → accepted system</h2>
-        <p>Every exact Source master stays visible. Quality decides publishability, not whether a component exists.</p>
+        <span class="source-eyebrow">КОМПОНЕНТЫ ВАШЕГО САЙТА</span>
+        <h2>От отдельных элементов до целых секций</h2>
+        <p>Исходные компоненты доступны сразу. Откройте любой, чтобы посмотреть варианты, сравнить с оригиналом и использовать в редакторе.</p>
       </div>
       <code>{artifact.source.pipelineVersion}</code>
     </header>
 
     <section class="source-funnel" aria-label="Detected Source content and accepted Design System content">
       <div class="source-observed">
-        <span>Detected in Source</span>
+        <span>В библиотеке</span>
         <strong>{detectedComponents}</strong>
-        <small>components · {detectedVariants} variants</small>
+        <small>компонентов · {detectedVariants} вариантов</small>
       </div>
-      <div class="source-transfer" aria-hidden="true"><i></i><b>review</b><em>→</em></div>
+      <div class="source-transfer" aria-hidden="true"><i></i><b>проверка</b><em>→</em></div>
       <div class="source-accepted">
-        <span>Accepted in System</span>
+        <span>Проверены для генерации</span>
         <strong>{acceptedMasters}</strong>
-        <small>masters · {acceptedVariants} variants</small>
+        <small>компонентов · {acceptedVariants} вариантов</small>
       </div>
     </section>
 
     <section class="source-section">
       <div class="source-section-head">
         <div><span>01</span><h3>Основы</h3></div>
-        <small>{artifact.summary.tokenCount ?? 0} measured tokens</small>
+        <small>{artifact.summary.tokenCount ?? 0} значений оформления</small>
       </div>
       <div class="foundation-strip">
         {#each foundationGroups as group (group.key)}
           <span title={group.key}>{group.name}<strong>{group.tokenCount}</strong></span>
         {:else}
-          <span>Raw groups<strong>{Object.keys(artifact.foundations.tokens || {}).length}</strong></span>
+          <span>Группы значений<strong>{Object.keys(artifact.foundations.tokens || {}).length}</strong></span>
         {/each}
       </div>
     </section>
@@ -172,24 +175,24 @@
     <section class="source-section">
       <div class="source-section-head">
         <div><span>02</span><h3>Экраны</h3></div>
-        <small>{screens.length} viewport compositions</small>
+        <small>{screens.length} размеров страницы</small>
       </div>
       <div class="screen-grid">
         {#each screens as screen (screen.screenKey)}
           <article>
             <header><div><strong>{screen.name}</strong><span>{screen.viewport}{screen.theme ? ` · ${screen.theme}` : ""}</span></div><code>{dimension(screen.size.width)} × {dimension(screen.size.height)}</code></header>
             <div class="screen-metrics">
-              <span>{screen.componentKeys.length} instances</span>
-              <span>{screen.metrics.editableLayers ?? screen.metrics.layers ?? 0} layers</span>
-              <span>mean {percent(screen.metrics.fidelityMean)}</span>
-              <span>min {percent(screen.metrics.fidelityMin)}</span>
+              <span>{screen.componentKeys.length} экземпляров</span>
+              <span>{screen.metrics.editableLayers ?? screen.metrics.layers ?? 0} слоёв</span>
+              <span>сходство: среднее {percent(screen.metrics.fidelityMean)}</span>
+              <span>минимальное {percent(screen.metrics.fidelityMin)}</span>
             </div>
             <p title={screen.hierarchy.map((item) => item.name).join(" → ")}>
               {screen.hierarchy.slice(0, 5).map((item) => item.name).join(" → ")}{screen.hierarchy.length > 5 ? " …" : ""}
             </p>
           </article>
         {:else}
-          <div class="source-empty">Run Source again to assemble the screen registry.</div>
+          <div class="source-empty">В этом источнике ещё нет сведений о размерах страницы.</div>
         {/each}
       </div>
     </section>
@@ -199,12 +202,14 @@
         <div><span>03</span><h3>Компоненты</h3></div>
         <small>{detectedComponents} мастеров из источника · от простых к составным</small>
       </div>
+      <label class="catalog-search">Найти компонент<input type="search" bind:value={search} placeholder="Название компонента…" /></label>
       <div class="component-sheet" data-source-component-catalog>
+        {#if !levelGroups.length}<p class="source-empty" role="status">{search.trim() ? 'По этому запросу ничего не найдено. Попробуйте другое название.' : 'В этом источнике пока нет компонентов.'}</p>{/if}
         {#each levelGroups as level (level.key)}
           <section class="catalog-group">
             <header>
               <div class="level-head">
-                <h4>{level.label}</h4>
+                <h4>{({ atoms: 'Элементы', molecules: 'Группы элементов', organisms: 'Блоки и секции' } as Record<string, string>)[level.key] || level.label}</h4>
                 <p>{level.description}</p>
               </div>
               <span>{level.families.length} компонент(ов)</span>
@@ -224,7 +229,7 @@
                       <small>{section || comp.category || family.baseKey}</small>
                     </div>
                     <span class:verified={allVerified}>
-                      {allVerified ? "проверен" : family.review.length ? `на ревью ×${family.review.length}` : "нужна проверка"}
+                      {allVerified ? "проверен" : family.review.length ? `нужна проверка: ${family.review.length}` : "нужна проверка"}
                     </span>
                   </header>
                   <div class="catalog-facts">
@@ -246,7 +251,7 @@
                       <div>
                         {#each family.review as instance (instance.pool + ":" + instance.key)}
                           <button type="button" title="Открыть экземпляр {instance.key}"
-                                  onclick={() => onOpen?.(instance.key, instance.pool)}>
+                                  data-catalog-open={instance.key} onclick={() => onOpen?.(instance.key, instance.pool)}>
                             <ComponentCatalogPreview component={instance.component} variantKey="default" />
                           </button>
                         {/each}
@@ -255,7 +260,7 @@
                   {/if}
                   <footer>
                     <span>{family.review.length ? `+${family.review.length} на ревью` : "все экземпляры совпали"}</span>
-                    <button type="button" onclick={() => onOpen?.(entry.key, entry.pool)}>Открыть</button>
+                    <button type="button" data-catalog-open={entry.key} onclick={() => onOpen?.(entry.key, entry.pool)}>Открыть</button>
                   </footer>
                 </article>
               {/each}
@@ -269,15 +274,16 @@
   </div>
 {:else}
   <div class="source-empty large">
-    <strong>No Source Artifact</strong>
-    <span>Connect or Sync a completed Source import to inspect screens and measured components.</span>
+    <strong>{catalogEntries.length ? 'Компоненты сохранённого UI Kit' : 'Источник не подключён'}</strong>
+    <span>{catalogEntries.length ? 'Компоненты доступны. Сведения об исходных экранах отсутствуют.' : 'Подключите Source с результатом импорта.'}</span>
     {#if catalogEntries.length}
       <div class="component-sheet" data-source-component-catalog>
         {#each catalogEntries as entry (entry.pool + ":" + entry.key)}
           <article data-catalog-component={entry.key}>
+            <ComponentCatalogPreview component={entry.component} />
             <strong>{entry.component.name || entry.key}</strong>
             <span>{entry.component.category || entry.pool}</span>
-            <button type="button" onclick={() => onOpen?.(entry.key, entry.pool)}>Открыть</button>
+            <button type="button" data-catalog-open={entry.key} onclick={() => onOpen?.(entry.key, entry.pool)}>Открыть</button>
           </article>
         {/each}
       </div>
@@ -286,6 +292,9 @@
 {/if}
 
 <style>
+  .catalog-search { display: grid; gap: 6px; max-width: 440px; margin-bottom: 18px; font-size: 12px; color: var(--dna-muted); }
+  .catalog-search input { padding: 10px 12px; border: 1px solid var(--dna-border); border-radius: 7px; background: var(--dna-panel); color: var(--dna-text); }
+  .catalog-search input:focus-visible { outline: 2px solid var(--dna-violet); outline-offset: 2px; }
   .source-workbench { display: grid; gap: 20px; padding: 22px; color: #dfe4ee; }
   .source-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
   .source-eyebrow { color: #58d1bc; font-size: 10px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }

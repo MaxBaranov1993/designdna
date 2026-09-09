@@ -10,7 +10,8 @@ runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind
 const status=ctx.exports.designSystemIdleStatus;
 test('saved DS warnings cannot become generic ready after restart',()=>{
   assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'warning'}}}).text,'Нужно ревью');
-  assert.equal(status({systemId:'kit',summary:{reviewMasters:6}}).text,'Нужно ревью');
+  assert.equal(status({systemId:'kit',summary:{reviewMasters:6}}).text,'UI Kit собран · 6 требуют проверки');
+  assert.equal(status({systemId:'kit',summary:{reviewMasters:6}}).kind,null);
   assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'failed'}}}).text,'Ошибка проверки');
   assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'cancelled'}}}).text,'Не завершено');
 });

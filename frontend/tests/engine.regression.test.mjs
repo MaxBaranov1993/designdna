@@ -25,6 +25,7 @@ const outdir = fs.mkdtempSync(path.join(os.tmpdir(), "engine-regression-"));
 buildSync({
   entryPoints: [
     path.join(here, "..", "src", "engine", "renderer.ts"),
+    path.join(here, "..", "src", "engine", "responsiveContent.ts"),
     path.join(here, "..", "src", "engine", "locked.ts"),
     path.join(here, "..", "src", "engine", "sourcepath.ts"),
     path.join(here, "..", "src", "engine", "timeline.ts"),
@@ -42,6 +43,7 @@ const { isSourceKeyPath, sourceParentPath, findByKey, locateByKey, parentKeyByKe
   await import(pathToFileURL(path.join(outdir, "sourcepath.js")).href);
 const { TimelineEngine, Timeline } = await import(pathToFileURL(path.join(outdir, "timeline.js")).href);
 const { composePage } = await import(pathToFileURL(path.join(outdir, "compose.js")).href);
+const { syncResponsiveContent } = await import(pathToFileURL(path.join(outdir, "responsiveContent.js")).href);
 
 let passed = 0;
 function check(name, fn) {
@@ -61,6 +63,24 @@ check("captured font families do not load extra Google weights", () => {
 });
 
 /* ---------- Page: common artboard follows every editable block ---------- */
+
+check("measured viewport text renders and remains editable without overwriting desktop", () => {
+  const node = {type:'text',text:'who to email + how',sourceKey:'line',responsive:{
+    desktop:{text:'who to email + how'},mobile:{text:'who to email + how many you can'}}};
+  const ir = {tree:[{id:'step',type:'source-block',children:[node]}],responsive:{viewports:{
+    desktop:{width:1440,height:100},mobile:{width:390,height:100}}}};
+  const mobile = IRRenderer.materializeResponsiveIR(ir,'mobile').tree[0].children[0];
+  assert.equal(mobile.text,'who to email + how many you can');
+  syncResponsiveContent(node,{...mobile,text:'Edited mobile'},'mobile');
+  assert.equal(node.text,'who to email + how');
+  assert.equal(IRRenderer.materializeResponsiveIR(ir,'mobile').tree[0].children[0].text,'Edited mobile');
+  syncResponsiveContent(node,{...node,text:''},'desktop');
+  assert.equal(IRRenderer.materializeResponsiveIR(ir,'desktop').tree[0].children[0].text,'');
+  assert.equal(node.responsive.mobile.text,'Edited mobile');
+  const legacy = {text:'Shared'};
+  syncResponsiveContent(legacy,{text:'Edited shared'},'mobile');
+  assert.equal(legacy.text,'Edited shared');
+});
 
 check("Page artboard is auto-height and viewport metadata sums all blocks", () => {
   const block = (label, desktopHeight, mobileHeight) => ({

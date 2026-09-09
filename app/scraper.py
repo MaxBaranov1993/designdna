@@ -2280,6 +2280,10 @@ def _walk_source_nodes(nodes: list, parent: dict | None = None):
 
 def _responsive_override(node: dict) -> dict:
     override = {"visible": True}
+    # A captured Range keeps its DOM offset when wrapping changes, but the
+    # substring at that offset can differ between viewports.
+    if isinstance(node.get("text"), str):
+        override["text"] = node["text"]
     if isinstance(node.get("frame"), dict):
         override["frame"] = copy.deepcopy(node["frame"])
     if isinstance(node.get("style"), dict) and node["style"]:

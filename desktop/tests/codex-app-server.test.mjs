@@ -181,3 +181,21 @@ test("Codex chat surfaces provider failure with a readable error", async () => {
     /provider overloaded/,
   );
 });
+
+test('cancellation during thread/start releases the late ephemeral thread without starting a turn', async () => {
+  const server=new CodexAppServer({cwd:'C:\\workspace'});
+  const abort=new AbortController(), requests=[];
+  server.child={};
+  server.start=async()=>({});server.account=async()=>({account:{type:'chatgpt'}});
+  let resolveThread, entered;
+  const waiting=new Promise(resolve=>entered=resolve);
+  server.startThread=async()=>{entered();return new Promise(resolve=>resolveThread=resolve);};
+  server.startTurn=async()=>assert.fail('a cancelled request must not start a model turn');
+  server.request=async(method,params)=>{requests.push({method,params});return {};};
+  const chat=server.chat([{role:'user',content:'review'}],{signal:abort.signal});
+  await waiting;abort.abort();await assert.rejects(chat,/cancelled/);
+  resolveThread({thread:{id:'late-thread'},model:'fixture',modelProvider:'openai'});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(requests,[{method:'thread/unsubscribe',params:{threadId:'late-thread'}}]);
+  assert.equal(server.listenerCount('notification'),0);
+});

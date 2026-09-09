@@ -494,6 +494,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "text": {
+          "type": "string"
+        },
         "visible": {
           "type": "boolean"
         },
@@ -1289,6 +1292,9 @@
       "description": "Sanitized local computed style for an imported DOM layer.",
       "additionalProperties": false,
       "properties": {
+        "fontSmoothing": {
+          "enum": ["auto", "antialiased", "subpixel-antialiased"]
+        },
         "color": {
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{3,8}$"

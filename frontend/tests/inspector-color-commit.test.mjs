@@ -43,6 +43,7 @@ function harness() {
   const state = { ir: clone(baseline), activeIR: clone(baseline), viewport: "desktop" };
   let mutations = 0;
   const saveCtx = { state, manualSourceKey: 0 };
+  runInNewContext(functions(read("../src/engine/responsiveContent.ts"), ["syncResponsiveContent"]), saveCtx);
   runInNewContext(functions(read("../src/editor/controller.ts"),
     ["deepClone", "sourceNodeMap", "syncSharedStructure", "syncActiveIR", "copyWithoutRenderMetadata"]), saveCtx);
   const geoCtx = { selections: [{ ref: "selected" }], styleSessionUntil: 0, onCommit() {},

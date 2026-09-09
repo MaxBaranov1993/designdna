@@ -97,13 +97,14 @@ def main() -> None:
             hasEditableSrc:text.includes('data:image/svg+xml;base64,PHN2Zy8+'),
           };
         }""", result["evidenceRef"])
-        check("sqlite project is compact too (screenshots are evidence, not state)",
-              not db_saved["hasDataScreenshot"], json.dumps(db_saved))
+        check("sqlite retains inline Source evidence when blob offload is unavailable",
+              db_saved["hasDataScreenshot"], json.dumps(db_saved))
         check("sqlite keeps compact Source evidence handles", db_saved["hasEvidenceRef"], json.dumps(db_saved))
         check("sqlite project keeps editable IR", db_saved["hasEditableSrc"], json.dumps(db_saved))
 
         page.reload()
         page.wait_for_function("window.GraphDev")
+        page.wait_for_function("id => window.GraphDev.node(id)?.data?.blocks?.[0]?.previews?.desktop?.startsWith('data:image/jpeg;base64,')", arg=result["source"])
         restored = page.evaluate("(id) => window.GraphDev.node(id)?.data?.ir?.tree?.[0]?.children?.[0]?.src", result["edit"])
         check("compact project restores editable IR", restored == result["editableSrc"], str(restored))
         check("reload preserves canonical evidence and geometry exactly",

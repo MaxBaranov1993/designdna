@@ -64,4 +64,12 @@
   {#if data.lastError}
     <div class="dna-insp-log err">{String(data.lastError)}</div>
   {/if}
+  {#each Object.entries(data.pipelineStatus || {}) as [stage, result]}
+    {#if result.timings}
+      <details class="dna-field" data-ds-timings={stage}>
+        <summary>{stage}: {Math.round(result.timings.elapsedMs / 1000)} с · запросов {result.timings.requests}</summary>
+        <div class="dna-field-hint">Подготовка снимков: {Math.round(result.timings.prepareMs / 1000)} с. Серверная проверка: {Math.round(result.timings.applyMs / 1000)} с. AI суммарно по запросам: {Math.round(result.timings.providerMs / 1000)} с. Повторов из-за сети: {result.timings.retries}.</div>
+      </details>
+    {/if}
+  {/each}
 </div>

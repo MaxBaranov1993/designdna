@@ -11,6 +11,38 @@ import scraper
 from source_capture_pixels import capture_source_png
 
 
+@pytest.mark.parametrize('prefix', ['', '<b>Output:</b> '])
+def test_wrapped_source_text_survives_capture_merge_and_browser_render(prefix):
+    compiler = Path(__file__).with_name('source_import_compiler.js').read_text(encoding='utf-8')
+    content = 'who to email + how many you can reach.'
+    variants, sizes, references = {}, {}, {}
+    with sync_playwright() as p:
+        browser = scraper.launch_chromium(p)
+        try:
+            page = browser.new_page(device_scale_factor=1)
+            for name, width in [('desktop', 1440), ('mobile', 390)]:
+                page.set_viewport_size({'width': width, 'height': 900})
+                page.set_content(f'''<style>body{{margin:0}} section{{width:280px;height:130px;background:#fff}}
+                  p{{font:16px/24px Arial;margin:0;width:145px;color:#333;{"-webkit-font-smoothing:antialiased;will-change:opacity" if prefix else ""}}}
+                  @media(max-width:600px){{p{{width:240px}}}}</style>
+                  <section id="step"><p>{prefix}{content}</p></section>''')
+                block = {'name': 'step', 'kind': 'section', 'selector': '#step', 'label': 'Step'}
+                item = page.evaluate(compiler, [block])[0]
+                sizes[name] = {'width': item['root']['width'], 'height': item['root']['height']}
+                references[name] = capture_source_png(page, page.locator('#step'), item)
+                variants[name] = scraper._captured_ir(block, item)
+            merged = scraper._merge_responsive_irs(variants, sizes)
+            render_page = browser.new_page(device_scale_factor=1)
+            for name, size in sizes.items():
+                rendered = fidelity_harness._render_block_png(render_page, merged, name, **size)
+                texts = render_page.locator('#preview p').all_text_contents()
+                assert ' '.join(' '.join(texts).split()) == ('Output: ' if prefix else '') + content, (name, texts)
+                metrics = fidelity_harness._image_metrics(references[name], rendered)
+                assert metrics['pixel_similarity'] >= (95 if prefix else 98), (name, metrics)
+        finally:
+            browser.close()
+
+
 @pytest.mark.parametrize('left,top', [(-7.5,85), (-7.5,140), (20,-7.5)])
 def test_clipped_document_preserves_nodes_gradient_and_pixel_coordinates(left, top):
     compiler = Path(__file__).with_name('source_import_compiler.js').read_text(encoding='utf-8')

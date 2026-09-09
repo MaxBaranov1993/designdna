@@ -579,7 +579,7 @@ def polish_document(document: dict, *, headless: bool = False) -> tuple[dict, li
                                     rejected.append(f"{candidate_viewport}: no-source-proof ({note or 'missing'})")
                                     continue
                                 render_comp = {**component, "masterIr": candidate}
-                                rendered = master_review.render_master_png(page, render_comp, candidate_viewport)
+                                rendered = master_review.render_master_png(page, master_review.with_source_context(updated, render_comp), candidate_viewport)
                                 reference = fidelity_harness._decode_data_url(source)
                                 ref_image = Image.open(io.BytesIO(reference))
                                 rendered_image = Image.open(io.BytesIO(rendered)).convert("RGB")

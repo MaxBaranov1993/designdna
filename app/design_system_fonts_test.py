@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import copy
+
 from design_system import builder
 from design_system.document import preview_ir_for_master
 
@@ -82,3 +84,33 @@ def test_master_without_fonts_stays_clean():
               "tree": [{"type": "card", "frame": {"width": 10, "height": 10}, "children": []}]}
     preview = preview_ir_for_master(master)
     assert "meta" not in preview or not preview["meta"]
+
+
+def test_catalog_build_preserves_extracted_masters_without_polish_or_browser(monkeypatch):
+    from design_system import polish
+    import scraper
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Building a catalog must not render or polish Source masters")
+
+    monkeypatch.setattr(polish, "polish_document", forbidden)
+    monkeypatch.setattr(scraper, "launch_chromium", forbidden)
+    extract = builder._components_from_blocks
+    expected = {}
+
+    def track(*args, **kwargs):
+        result = extract(*args, **kwargs)
+        for pool in result[:2]:
+            for key, component in pool.items():
+                if component.get("masterIr"):
+                    expected[key] = copy.deepcopy({name: component.get(name) for name in
+                        ("masterIr", "sourceRef", "variants", "fidelity")})
+        return result
+
+    monkeypatch.setattr(builder, "_components_from_blocks", track)
+    document = _document()
+    assert expected
+    for key, original in expected.items():
+        component = document["components"].get(key) or document["reviewComponents"].get(key)
+        assert component is not None
+        assert {name: component.get(name) for name in original} == original

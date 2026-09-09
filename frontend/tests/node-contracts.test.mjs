@@ -45,6 +45,47 @@ const preparedDs = (operation, provider, stage = operation) => ({
 });
 const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), { status });
 
+test('Page composes all nine Source blocks and persists their port order', () => {
+  reset();
+  const source = add('sourceimport'), page = add('page');
+  const blocks = Array.from({ length: 9 }, (_, i) => ({name: `source-${i}`, lit: true,
+    ir: {version:'1.1', tree:[{id:'source',type:'source-block',variant:'dom-capture',sourceKey:'root',
+      frame:{width:1440,height:100}, children:[{type:'text',sourceKey:'root/text',text:`Exact ${i}`,
+        style:{color:'#9d9aab'},responsive:{mobile:{text:`Mobile ${i}`,frame:{width:200}}}}]}]}}));
+  patch(source, {blocks});
+  while (node(page).data.inputs.length < 9) store.getState().addPageInput(page);
+  const inputs = [...node(page).data.inputs];
+  blocks.forEach((b,i) => connect(source,b.name,page,inputs[i]));
+  const before = JSON.stringify(node(source).data.blocks);
+  store.getState().runPage(page);
+  assert.equal(node(page).data.ir.tree.length,9);
+  assert.deepEqual(node(page).data.ir.tree.map(s=>s.children[0].text),blocks.map(b=>b.ir.tree[0].children[0].text));
+  assert.equal(node(page).data.ir.tree[8].children[0].responsive.mobile.text,'Mobile 8');
+  assert.equal(JSON.stringify(node(source).data.blocks),before);
+  const saved = buildSavePayload(store.getState());
+  const loaded = payloadToRf(parseLegacyPayload(saved));
+  assert.deepEqual(loaded.nodes.find(n=>Number(n.id)===page).data.inputs,inputs);
+  assert.equal(loaded.edges.filter(e=>Number(e.target)===page).length,9);
+  for(let i=0;i<40;i++) store.getState().addPageInput(page);
+  assert.equal(node(page).data.inputs.length,32);
+  assert.equal(new Set(node(page).data.inputs).size,32);
+});
+
+test('legacy UI Kit without Source screenshots stops before AI and explains recovery', async () => {
+  const previousFetch = globalThis.fetch;
+  try {
+    const {ds} = dsFixture();
+    patch(ds,{document:{id:'kit',reviewComponents:{header:{sourceRef:{evidenceKey:'capture'}}},
+      referenceAssets:{capture:{referencePreviews:{},blockSizes:{desktop:{width:100,height:50}}}}}});
+    globalThis.fetch = async () => { throw new Error('Missing evidence must be detected before preparing AI'); };
+    assert.equal(await store.getState().runDesignSystemAi(ds,'master-review'),null);
+    assert.match(node(ds).data.lastError,/Нет исходных снимков Source/);
+    assert.match(node(ds).data.lastError,/Обновите Source Import/);
+    assert.equal(node(ds).data.pipelineStatus['master-review'].status,'failed');
+    assert.equal(node(ds).data.document.reviewComponents.header.sourceRef.evidenceKey,'capture');
+  } finally {globalThis.fetch=previousFetch;}
+});
+
 test('autosave isolates live data, stores DS references only and preserves canonical Source IR bytes', async () => {
   const desktop = window.designDNA;
   try {
@@ -438,7 +479,8 @@ test('master tasks run at most two at once, apply deterministic task order and c
       assert.equal(pending.length, 2);
       if (cancel) await store.getState().cancelRun(ds);
       pending[1].resolve({ provider: 'codex', content: 'output1' });
-      await Promise.resolve(); assert.equal(pending.length, 2);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(pending.length, cancel ? 2 : 3, 'a free slot starts the next check without waiting for its slow sibling');
       pending[0].resolve({ provider: 'codex', content: 'output0' });
       if (cancel) {
         assert.equal(await running, null); assert.deepEqual(canceled.sort(), pending.map(p => p.request.id).sort()); assert.equal(applied, 0);
@@ -541,6 +583,27 @@ test('Source AI repair provider failure survives final import and a cached rerun
   } finally { globalThis.fetch = previousFetch; window.designDNA = desktop; }
 });
 
+test('Source repair re-offloads expanded screenshot evidence before committing blocks', async () => {
+  const previousFetch = globalThis.fetch, desktop = window.designDNA;
+  try {
+    reset(); const source = add('sourceimport'); patch(source,{url:'https://example.test',mine:true});
+    const preview='data:image/png;base64,Y2FwdHVyZQ==';
+    const block={name:'header',selector:'header',ir:ir('Captured'),preview,previews:{desktop:preview},fidelityReport:{gate:{passed:false}}};
+    let puts=0;
+    window.designDNA={blobs:{put:async()=>{puts++;return {name:'a'.repeat(64)+'.png',sha256:'a'.repeat(64)};}},
+      providers:{chatRequest:async()=>({content:'{}'})}};
+    globalThis.fetch=async (url,init)=>{
+      if(url==='/api/block-parse')return jsonResponse({blocks:[structuredClone(block)]});
+      assert.equal(url,'/api/block-parse/repair');
+      if(JSON.parse(init.body).prepareOnly)return jsonResponse({tasks:[{blockIndex:0,messages:[{role:'user',content:'repair'}]}]});
+      return jsonResponse({blocks:[{...block,fidelityReport:{gate:{passed:true}}}],results:[{appliedCount:1}]});
+    };
+    await store.getState().runSourceImport(source);
+    assert.equal(puts,2,'initial capture and the expanded repair result must both be persisted');
+    assert.equal(node(source).data.blocks[0].previews.desktop,'ddna://blobs/'+'a'.repeat(64)+'.png');
+  } finally {globalThis.fetch=previousFetch;window.designDNA=desktop;}
+});
+
 test('source reimport preserves artifact wire and clears editors whose block disappeared', async () => {
   reset(); const source = add('sourceimport'), ds = add('designsystem'), edit = add('edit');
   patch(source, { url: 'https://example.test', mine: true, blocks: [{ name: 'hero', lit: true, ir: ir('Old') }], sourceArtifact: { version: 'source-artifact/1.0' } });
@@ -552,6 +615,57 @@ test('source reimport preserves artifact wire and clears editors whose block dis
   assert.ok(store.getState().edges.some(e => Number(e.target) === ds));
   assert.equal(node(edit).data.ir, null);
   assert.equal(node(ds).data.sourceNodeId, source);
+});
+
+test('DS catalog creation and rebuild never start AI even with an active provider', async () => {
+  reset(); const source = add('sourceimport');
+  const sourceIR = ir('Exact Source');
+  patch(source, { url: 'https://example.test', blocks: [{ name: 'hero', ir: sourceIR }] });
+  const savedFetch = globalThis.fetch, bridge = window.designDNA;
+  const originalFinish = store.getState().finishDesignSystem;
+  const document = { id: 'instant-kit', name: 'Kit', reviewComponents: { hero: { masterIr: sourceIR } } };
+  let requests = 0;
+  globalThis.fetch = async url => {
+    assert.equal(url, '/api/design-system/build'); requests++;
+    return new Response(JSON.stringify({ document, summary: { components: 0, reviewMasters: 1 } }));
+  };
+  window.designDNA = { providers: { chatRequest: () => assert.fail('No AI during catalog build') } };
+  store.setState({ finishDesignSystem: () => assert.fail('No automatic full pipeline') });
+  try {
+    const ds = await store.getState().createDesignSystemFromSource(source);
+    assert.ok(ds); assert.equal(node(ds).data.pipelineStatus.build.status, 'success');
+    assert.deepEqual(node(ds).data.document.reviewComponents.hero.masterIr, sourceIR);
+    assert.equal(await store.getState().rebuildDesignSystemFromSource(ds), true);
+    assert.equal(requests, 2); assert.equal(store.getState().busy[ds], false);
+  } finally { globalThis.fetch = savedFetch; window.designDNA = bridge; store.setState({ finishDesignSystem: originalFinish }); }
+});
+
+test('review component working copies preserve exact selected variant and fonts without publication or a registry pin', () => {
+  reset(); const ds = add('designsystem');
+  const master = { ...ir('Default'), meta: { fontFaces: [{ family: 'Source', url: '/fonts/a.woff2' }] } };
+  const variant = { ...ir('Actual selected variant'), meta: master.meta };
+  const document = { id: 'kit', components: {}, reviewComponents: { card: { origin: 'observed', masterIr: master,
+    variants: { alt: { masterIr: variant }, default: { masterRef: 'self' } } } } };
+  patch(ds, { systemId: 'kit', document }); const before = JSON.stringify(node(ds).data.document);
+  const edit = store.getState().copyDesignSystemComponentToEditor(ds, 'card', 'review', 'alt');
+  assert.ok(edit); assert.deepEqual(node(edit).data.ir, variant);
+  assert.equal(node(edit).data._dsMaster, undefined);
+  assert.equal(JSON.stringify(node(ds).data.document), before);
+  assert.equal(store.getState().copyDesignSystemComponentToEditor(ds, 'card', 'review', 'missing'), null);
+});
+
+test('failed UI Kit creation keeps the connected node and readable error for retry', async () => {
+  reset(); const source = add('sourceimport');
+  patch(source, { blocks: [{ ir: ir('Source') }] });
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ detail: 'Captured asset unavailable' }), { status: 422 });
+  try {
+    assert.equal(await store.getState().createDesignSystemFromSource(source), null);
+    const ds = store.getState().nodes.find(n => n.type === 'designsystem');
+    assert.ok(ds); assert.equal(ds.data.lastError, 'Captured asset unavailable');
+    assert.equal(store.getState().busy[ds.id], false);
+    assert.ok(store.getState().edges.some(e => e.target === ds.id));
+  } finally { globalThis.fetch = previousFetch; }
 });
 
 test('DS build uses the current wire, resets published metadata and ignores viewport-only updates', async () => {
@@ -903,21 +1017,21 @@ test('finished Motion/Timeline videos survive save-load; running jobs do not res
 });
 
 
-test('finish DS resumes failed stages, retries unresolved masters and publishes only after success', async () => {
+test('finish DS resumes failed stages and publishes after one complete successful review/repair/verify cycle', async () => {
   const { ds } = dsFixture('openai');
   patch(ds, { autoPublish: true, pipelineStatus: { organize: { status: 'success' }, 'style-review': { status: 'failed' } } });
   const originalRun = store.getState().runDesignSystemAi, originalPublish = store.getState().publishDesignSystem;
-  const calls = []; let rounds = 0;
+  const calls = [];
   store.setState({ runDesignSystemAi: async (id, operation) => {
     calls.push(operation);
-    const approved = operation !== 'master-review' || ++rounds === 2;
+    const approved = true;
     patch(id, { pipelineStatus: { ...node(id).data.pipelineStatus, [operation]: { status: approved ? 'success' : 'warning' } },
       summary: { reviewMasters: approved ? 0 : 1 }, document: { id: 'kit', reviewComponents: approved ? {} : { hero: {} } } });
     return { document: node(id).data.document, results: [{ key: 'hero', approved, supported: true }] };
   }, publishDesignSystem: async () => { calls.push('publish'); return true; } });
   try {
     assert.equal(await store.getState().finishDesignSystem(ds), true);
-    assert.deepEqual(calls, ['style-review', 'master-review', 'master-review', 'publish']);
+    assert.deepEqual(calls, ['style-review', 'master-review', 'publish']);
     assert.equal(node(ds).data._dsFinishing, null);
   } finally { store.setState({ runDesignSystemAi: originalRun, publishDesignSystem: originalPublish }); }
 });
@@ -938,7 +1052,7 @@ test('finish DS stops on cancellation, missing evidence or bounded failed verifi
         return { document: node(id).data.document, results: [{ key: 'hero', approved: false, supported: failure !== 'unsupported' }] };
       }, publishDesignSystem: async () => { published++; return true; } });
       assert.equal(await store.getState().finishDesignSystem(ds), false, failure);
-      assert.equal(reviews, failure === 'rejected' ? 3 : 1, failure);
+      assert.equal(reviews, 1, 'never repeat unchanged rejected masters after a completed repair/verify cycle');
       assert.equal(published, 0, failure);
       assert.equal(node(ds).data._dsFinishing, null);
     }
@@ -946,12 +1060,27 @@ test('finish DS stops on cancellation, missing evidence or bounded failed verifi
 });
 
 
-test('finish DS rebuilds a changed Source before starting AI or publication', async () => {
-  const { ds } = dsFixture(); patch(ds, { sourceUpdate: true });
-  const original = store.getState().rebuildDesignSystemFromSource; let rebuilt = 0;
-  store.setState({ rebuildDesignSystemFromSource: async id => { assert.equal(id, ds); rebuilt++; return true; } });
-  try { assert.equal(await store.getState().finishDesignSystem(ds), true); assert.equal(rebuilt, 1); }
-  finally { store.setState({ rebuildDesignSystemFromSource: original }); }
+test('explicit finish rebuilds changed Source then completes review and publication', async () => {
+  const { ds } = dsFixture(); patch(ds, { sourceUpdate: true, autoPublish: true });
+  const { rebuildDesignSystemFromSource, runDesignSystemAi, publishDesignSystem } = store.getState();
+  const calls = [];
+  store.setState({
+    rebuildDesignSystemFromSource: async id => { calls.push('build'); patch(id, { sourceUpdate: false }); return true; },
+    runDesignSystemAi: async (id, operation) => {
+      calls.push(operation);
+      patch(id, { pipelineStatus: { ...node(id).data.pipelineStatus, [operation]: { status: 'success' } } });
+      return { document: node(id).data.document };
+    },
+    publishDesignSystem: async () => { calls.push('publish'); return true; },
+  });
+  try {
+    assert.equal(await store.getState().finishDesignSystem(ds), true);
+    assert.deepEqual(calls, ['build', 'organize', 'style-review', 'master-review', 'publish']);
+    patch(ds, { sourceUpdate: true }); calls.length = 0;
+    store.setState({ rebuildDesignSystemFromSource: async () => { calls.push('failed-build'); return false; } });
+    assert.equal(await store.getState().finishDesignSystem(ds), false);
+    assert.deepEqual(calls, ['failed-build']);
+  } finally { store.setState({ rebuildDesignSystemFromSource, runDesignSystemAi, publishDesignSystem }); }
 });
 
 
@@ -971,12 +1100,12 @@ test('finish DS recovers retryable AI output failure from the saved checkpoint',
 });
 
 
-test('desktop DS retries a timed-out chat once with a new cancellable id', async () => {
+test('desktop DS retries a transient connection reset once with a new cancellable id', async () => {
   const previousFetch = globalThis.fetch, desktop = window.designDNA;
   const { ds } = dsFixture('openai'); const requests = [];
   window.designDNA = { providers: { chatRequest: async request => {
     requests.push(request);
-    if (requests.length === 1) throw new Error('Codex generator timed out');
+    if (requests.length === 1) throw new Error('ECONNRESET');
     return { content: '{}', provider: 'codex', transport: { requestedProvider: 'openai' } };
   } } };
   globalThis.fetch = async (url, init) => url.endsWith('/prepare') ? jsonResponse(preparedDs('style-review', 'openai'))
@@ -992,7 +1121,7 @@ test('desktop DS retries a timed-out chat once with a new cancellable id', async
 test('desktop DS bounds transient retries and never retries authentication failures', async () => {
   const previousFetch = globalThis.fetch, desktop = window.designDNA;
   try {
-    for (const [message, expected] of [['Codex generator timed out', 2], ['OpenAI API key missing', 1]]) {
+    for (const [message, expected] of [['Codex generator timed out', 1], ['ECONNRESET', 2], ['OpenAI API key missing', 1]]) {
       const { ds } = dsFixture('openai'); let calls = 0, applies = 0;
       window.designDNA = { providers: { chatRequest: async () => { calls++; throw new Error(message); } } };
       globalThis.fetch = async url => { if (url.endsWith('/prepare')) return jsonResponse(preparedDs('style-review', 'openai')); applies++; throw new Error('must not apply'); };
@@ -1000,4 +1129,51 @@ test('desktop DS bounds transient retries and never retries authentication failu
       assert.equal(calls, expected); assert.equal(applies, 0);
     }
   } finally { globalThis.fetch = previousFetch; window.designDNA = desktop; }
+});
+
+
+test('UI Kit handoff wires the exact draft and survives saving without replacing other generators', () => {
+  const { ds } = dsFixture('claude');
+  patch(ds, { status: 'draft', revision: 0 });
+  const otherDs = add('designsystem'); patch(otherDs, { systemId: 'kit' });
+  const unrelated = add('generator'); patch(unrelated, { prompt: 'Keep my work', provider: 'openai' });
+  connect(otherDs, 'system', unrelated, 'designSystem');
+  const picker = JSON.stringify(store.getState().designSystemPicker);
+  const document = JSON.stringify(node(ds).data.document);
+  const target = store.getState().sendDesignSystemToGenerator(ds);
+  assert.ok(target && target !== unrelated);
+  assert.equal(node(target).selected, true);
+  assert.equal(node(target).data.provider, 'claude');
+  const edge = store.getState().edges.find(e => e.target === String(target) && e.targetHandle === 'designSystem');
+  assert.equal(edge.source, String(ds)); assert.equal(edge.sourceHandle, 'system');
+  const ref = outValue(node(ds), 'system');
+  assert.equal(ref.status, 'draft'); assert.equal(ref.nodeId, ds); assert.equal(ref.systemId, 'kit');
+  assert.equal(store.getState().sendDesignSystemToGenerator(ds), target, 'repeat focuses the already connected generator');
+  assert.equal(store.getState().nodes.filter(n => n.type === 'generator').length, 2);
+  assert.equal(node(unrelated).data.prompt, 'Keep my work');
+  assert.equal(JSON.stringify(store.getState().designSystemPicker), picker);
+  assert.equal(JSON.stringify(node(ds).data.document), document);
+  assert.ok(!store.getState().busy[target], 'handoff never starts generation');
+  const restored = payloadToRf(parseLegacyPayload(buildSavePayload(store.getState())));
+  assert.ok(restored.edges.some(e => e.source === String(ds) && e.target === String(target) && e.targetHandle === 'designSystem'));
+  assert.equal(store.getState().sendDesignSystemToGenerator(999999), null);
+});
+
+
+test('handoff focus waits for node measurement and ignores a stale page', async () => {
+  const { setReactFlowInstance, focusFlowNode } = await bundle('flow/graphdev');
+  const calls = []; let measurements = 0;
+  const savedTimeout = globalThis.setTimeout; globalThis.setTimeout = realTimeout;
+  setReactFlowInstance({
+    getNodes: () => [{ id: 'target', measured: ++measurements > 1 ? { width: 322, height: 440 } : {} }],
+    fitView: options => { calls.push(options); },
+  });
+  try {
+    assert.equal(await focusFlowNode('target', () => true), true);
+    assert.equal(measurements, 2);
+    assert.deepEqual(calls[0].nodes, [{ id: 'target' }]);
+    assert.equal(calls[0].maxZoom, 1);
+    assert.equal(await focusFlowNode('target', () => false), false);
+    assert.equal(calls.length, 1, 'stale focus cannot move another page');
+  } finally { setReactFlowInstance(null); globalThis.setTimeout = savedTimeout; }
 });

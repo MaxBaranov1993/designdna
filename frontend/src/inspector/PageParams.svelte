@@ -2,6 +2,7 @@
   import { NODE_DEFS } from "../flow/ports";
   import { flow, flowEdges, flowNodes } from "../flow/state";
   import type { FlowNode, PageNodeData, SourceViewport } from "../flow/types";
+  import { PAGE_INPUT_LIMIT } from "../flow/types";
 
   let { id, data }: { id: number; data: PageNodeData } = $props();
   const VIEWPORTS: SourceViewport[] = ["desktop", "tablet", "mobile"];
@@ -49,7 +50,7 @@
         </div>
       {/each}
     </div>
-    <button class="dna-btn-ghost" disabled={data.inputs.length >= 8} onclick={() => $flow.addPageInput(id)}>+ Вход</button>
+    <button class="dna-btn-ghost" disabled={data.inputs.length >= PAGE_INPUT_LIMIT} onclick={() => $flow.addPageInput(id)}>+ Вход</button>
   </div>
   <button class="dna-btn-ghost" disabled={!data.ir} onclick={() => $flow.sendToNode(id, "edit")}>→ Открыть в Редакторе</button>
 </div>

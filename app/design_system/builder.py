@@ -27,7 +27,7 @@ from .identity import extract_identity
 # версию, когда нода не передала свою. Расхождение (было "dom-v31" против
 # "dom-v39") помечало свежие захваты устаревшим парсером. Синхронность
 # проверяется тестом test_source_compiler_default_matches_pipeline.
-SOURCE_COMPILER_DEFAULT = "dom-v45"
+SOURCE_COMPILER_DEFAULT = "dom-v47"
 _GEN_STATES = ("hover", "loading", "error", "empty", "disabled")
 
 
@@ -1079,6 +1079,9 @@ def _reference_assets(blocks: list) -> dict:
             "selector": str(block.get("selector") or ""),
             "referencePreviews": previews,
             "blockSizes": copy.deepcopy(block.get("sizes") or {}),
+            # One canonical section per evidence record, shared by all master reviews.
+            "sourceIr": copy.deepcopy(block["ir"]),
+            "sourceIrHash": _content_hash(block["ir"]),
         }
     return assets
 
@@ -1942,22 +1945,9 @@ def build_draft(pack: dict, *, name: str | None = None, locale: str = "ru",
     ensure_style_guide(doc)
     doc["referenceAssets"] = _reference_assets(blocks)
 
-    # Every catalog path consumes masterIr after this point. Run the pure,
-    # deterministic polish pass during construction; the explicit /polish
-    # endpoint can repeat the same lint in Chromium when source fonts/crops are
-    # available. Keeping this pass model-free makes Source and JSON imports
-    # reproducible and safe in offline desktop builds.
-    from .polish import polish_document
-    polish_pools = list((doc.get("components") or {}).values()) + list((doc.get("reviewComponents") or {}).values())
-    has_captured_fonts = any(
-        isinstance(component, dict)
-        and isinstance(component.get("masterIr"), dict)
-        and bool(((component["masterIr"].get("meta") or {}).get("fontFaces") or []))
-        for component in polish_pools
-    )
-    polished, _polish_results = polish_document(doc, headless=has_captured_fonts)
-    doc["components"] = polished.get("components") or {}
-    doc["reviewComponents"] = polished.get("reviewComponents") or {}
+    # Catalog construction preserves the extracted masters and their measured
+    # evidence. Rendering/polishing is an explicit operation, never a prerequisite
+    # for opening the library (and never a silent edit of a Source master).
 
     # Deterministic first pass: measurements and provenance are available even
     # when no interpretation model is connected. AI may later propose wording,

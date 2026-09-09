@@ -3,6 +3,7 @@
  * семантика undo — контракт UI-тестов. */
 import type { GeoHandle, GeoRef, GeoSel, IRHistoryHandle } from "./globals";
 import { IRRenderer } from "../engine/renderer";
+import { syncResponsiveContent } from "../engine/responsiveContent";
 import { GeoEdit } from "../engine/geoedit";
 import { IRHistory } from "../engine/irhistory";
 import { DesignAIFontCatalog } from "../engine/fontCatalog";
@@ -2134,13 +2135,10 @@ function syncActiveIR() {
   }
   const source = sourceNodeMap(state.activeIR);
   const target = sourceNodeMap(state.ir);
-  const sharedKeys = ["text", "title", "placeholder", "value", "label", "src", "alt", "href"];
   target.forEach((node, key) => {
     const active = source.get(key);
     if (!active) return;
-    sharedKeys.forEach((prop) => {
-      if (Object.prototype.hasOwnProperty.call(active, prop)) node[prop] = active[prop];
-    });
+    syncResponsiveContent(node, active, state!.viewport);
     if (state!.viewport === "desktop") {
       if (active.frame) node.frame = JSON.parse(JSON.stringify(active.frame));
       if (active.style) node.style = JSON.parse(JSON.stringify(active.style));

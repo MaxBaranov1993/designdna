@@ -44,6 +44,39 @@ function clean(h) {
   assert.equal(h.server.listenerCount("notification"), 1, "only the fixture observer should remain");
 }
 
+test('21 viewport chats release all ephemeral thread subscriptions', async t => {
+  const h = harness(t);
+  for(let offset=0;offset<21;offset+=2) {
+    await Promise.all(Array.from({length:Math.min(2,21-offset)},()=>h.server.chat(messages,{profile:'quality_judge'})));
+  }
+  await h.server.account(); // JSONL barrier after the final unsubscribe writes.
+  const opened=h.notifications.filter(e=>e.method==='fixture/thread');
+  const closed=h.notifications.filter(e=>e.method==='fixture/unsubscribe').map(e=>e.params.threadId);
+  assert.equal(opened.length,21);
+  assert.equal(closed.length,21);
+  assert.equal(new Set(closed).size,21);
+  clean(h);
+});
+
+test('account/read timeout invalidates the dead transport and the next call starts a fresh process',async t=>{
+  const children=[];
+  const server=new CodexAppServer({timeoutMs:2000,spawnProcess:(_cmd,_args,options)=>{
+    const child=spawn(process.execPath,[fixture,children.length?'success':'account-hold'],{...options,cwd:process.cwd()});
+    children.push(child);return child;
+  }});
+  t.after(async()=>{
+    const exits=children.filter(c=>c.exitCode===null && c.signalCode===null).map(c=>once(c,'exit'));
+    server.stop();await Promise.all(exits);
+  });
+  await server.start();server.timeoutMs=30;
+  const chat=server.chat(messages,{profile:'quality_judge'});
+  await assert.rejects(chat,/timed out: account\/read/);
+  assert.equal(server.child,null);assert.equal(server.initialized,null);assert.equal(server.pending.size,0);
+  server.timeoutMs=2000;
+  assert.equal((await server.account()).account.type,'chatgpt');
+  assert.equal(children.length,2);
+});
+
 test("Source DS visual QA sends actual image bytes through envelope, router and JSONL localImage input", async (t) => {
   const h = harness(t);
   const prepared = prepareProviderRequest({ provider: "codex", model: "gpt-5.6-sol",

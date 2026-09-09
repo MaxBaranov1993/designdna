@@ -97,11 +97,75 @@ def proof_aligned_preview(comp: dict, viewport: str) -> tuple[dict, int, int]:
     return preview, width, height
 
 
+def with_source_context(document: dict, comp: dict) -> dict:
+    """Attach a disposable, hash-checked section for review; never alter masters."""
+    result = copy.deepcopy(comp)
+    evidence = (document.get("referenceAssets") or {}).get((comp.get("sourceRef") or {}).get("evidenceKey")) or {}
+    if isinstance(evidence.get("sourceIr"), dict):
+        if evidence.get("sourceIrHash") != content_hash(evidence["sourceIr"]):
+            raise ValueError("Source review context hash mismatch")
+        result["_reviewSourceIr"] = copy.deepcopy(evidence["sourceIr"])
+    return result
+
+
+def _context_preview(comp: dict, viewport: str) -> dict | None:
+    source = comp.get("_reviewSourceIr")
+    if not isinstance(source, dict):
+        return None
+    context = copy.deepcopy(source)
+    roots = (comp.get("masterIr") or {}).get("tree") or []
+    key = (comp.get("sourceRef") or {}).get("sourceKey")
+    if len(roots) != 1 or roots[0].get("sourceKey") != key:
+        raise ValueError("Source review requires the exact component root")
+    matches = []
+    def visit(nodes):
+        for index, node in enumerate(nodes):
+            if node.get("sourceKey") == key:
+                matches.append((nodes, index, node))
+            visit(node.get("children") or [])
+    visit(context.get("tree") or [])
+    if len(matches) != 1:
+        raise ValueError("Source review component is missing or ambiguous")
+    nodes, index, original = matches[0]
+    def frame(node):
+        return {**(node.get("frame") or {}),
+                **((((node.get("responsive") or {}).get(viewport) or {}).get("frame")) or {})}
+    # A fixed crop must never conceal moved/resized candidate boundaries.
+    a, b = frame(original), frame(roots[0])
+    if any(a.get(k) != b.get(k) for k in ("x", "y", "width", "height")):
+        return None
+    nodes[index] = copy.deepcopy(roots[0])
+    return context
+
+
 def render_master_png(page, comp: dict, viewport: str) -> bytes:
     """Рендер мастера тем же движком, что и fidelity harness (шрифты источника инлайнятся)."""
     import fidelity_harness
     import scraper
 
+    context = _context_preview(comp, viewport)
+    if context is not None:
+        ref = comp.get("sourceRef") or {}
+        bounds = (ref.get("boundsByViewport") or {}).get(viewport)
+        size = ((context.get("responsive") or {}).get("viewports") or {}).get(viewport)
+        if not isinstance(bounds, dict) or not isinstance(size, dict):
+            raise ValueError("Missing measured Source review context bounds")
+        resolved, errors = scraper.resolve_ir_blobs(context)
+        if errors:
+            raise RuntimeError("blob resolve failed: " + "; ".join(errors[:3]))
+        rendered = fidelity_harness._render_block_png(page, resolved, viewport, size["width"], size["height"])
+        # Match proof_crop's integer pixel edges, not the harness's rounded crops.
+        import io
+        from PIL import Image
+        image = Image.open(io.BytesIO(rendered)).convert("RGB")
+        if image.size != (int(size["width"]), int(size["height"])):
+            raise ValueError("Source review canvas size mismatch")
+        x, y, w, h = (float(bounds[k]) for k in ("x", "y", "width", "height"))
+        if min(x, y) < 0 or min(w, h) <= 0 or x + w > image.width + .5 or y + h > image.height + .5:
+            raise ValueError("Source review crop is outside its section")
+        output = io.BytesIO()
+        image.crop((int(x), int(y), int(x+w), int(y+h))).save(output, format="PNG")
+        return output.getvalue()
     preview, width, height = proof_aligned_preview(comp, viewport)
     resolved, errors = scraper.resolve_ir_blobs(preview)
     if errors:
@@ -254,7 +318,7 @@ def run(document: dict, *, provider: str = "auto", viewport: str = "desktop", ma
                 original, _bytes, note = styleguide.proof_crop(updated, comp, viewport, budget_left=4_000_000)
                 if not original:
                     raise RuntimeError(note or "no original crop")
-                master_png = render_fn(page, comp, viewport)
+                master_png = render_fn(page, with_source_context(updated, comp), viewport)
                 raw = chat_vision([original, _data_url(master_png)], build_prompt(comp, viewport))
                 verdict = parse_verdict(raw)
                 repair_result = None
