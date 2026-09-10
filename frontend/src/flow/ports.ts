@@ -44,7 +44,7 @@ const RAW_PORTS: Record<NodeType, { in: RawPortDecl[]; out: RawPortDecl[] }> = {
     in: [
       { name: "prompt", label: "Промт", kind: "text", kinds: ["text"] },
       { name: "designSystem", label: "Дизайн-система", kind: "ds", kinds: ["ds", "tokens"] },
-      { name: "reference", label: "Референс", kind: "ir", kinds: ["ir", "text"] },
+      { name: "reference", label: "Референс", kind: "ir", kinds: ["ir", "text", "image"] },
     ],
     out: [{ name: "ir", label: "варианты", kind: "ir" }],
   },

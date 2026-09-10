@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
+  import ResultAssets from "../components/ResultAssets.svelte";
   import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
 import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
@@ -91,5 +92,6 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
     </details>
   {/if}
   <NodeStatus {id} />
+  <ResultAssets {id} type="reskin" {data} />
   <OutPorts type="reskin" />
 </NodeShell>

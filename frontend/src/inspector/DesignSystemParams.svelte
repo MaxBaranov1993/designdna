@@ -1,6 +1,6 @@
 <script lang="ts">
   import { flow, flowBusy, flowEdges, flowNodes } from "../flow/state";
-  import { resolveDesignSystemAiProvider } from "../flow/store";
+  import { resolveDesignSystemAiProvider, bindPageState, captureNodeScope } from "../flow/store";
   import type { DesignSystemAiProvider, DesignSystemNodeData } from "../flow/types";
 
   let { id, data }: { id: number; data: DesignSystemNodeData & Record<string, any> } = $props();
@@ -17,7 +17,10 @@
     return source?.type === "sourceimport" && source.data.blocks.some((b) => !!b.ir && !b.error);
   });
 
+  let fileSequence = 0;
   async function onFile(event: Event) {
+    const sequence = ++fileSequence, targetId = id;
+    const get = bindPageState(), scope = captureNodeScope(get, targetId);
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = "";
@@ -26,10 +29,10 @@
     try {
       payload = JSON.parse(await file.text());
     } catch {
-      $flow.setNodeData(id, { lastError: `«${file.name}» не разбирается как JSON` });
+      if (sequence === fileSequence && scope.owns()) get().setNodeData(targetId, { lastError: `«${file.name}» не разбирается как JSON` });
       return;
     }
-    await $flow.importDesignSystemDocument(id, payload, file.name);
+    if (sequence === fileSequence && scope.owns()) await get().importDesignSystemDocument(targetId, payload, file.name);
   }
 </script>
 

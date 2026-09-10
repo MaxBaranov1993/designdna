@@ -55,7 +55,7 @@ class Worker:
                 frame = json.loads(line)
             except Exception:
                 continue
-            body = frame.get("params") or {}
+            body = frame.get("result") or {}
             body_len = body.pop("bodyLen", 0)
             if body_len:
                 body["bodyBytes"] = self.proc.stdout.read(body_len)
@@ -194,6 +194,18 @@ def main() -> None:
             t.join(timeout=30)
         parallel_wall = time.time() - t0
         check("three concurrent calls finish near-parallel", parallel_wall < 1.4, f"{parallel_wall:.2f}s")
+
+        # All execution slots are busy, yet a same-process status lookup and
+        # cancellation must still return before any of those jobs completes.
+        slow_ids = worker.send_batch([("debug.sleep", {"seconds": 2.0}) for _ in range(3)])
+        started = time.monotonic()
+        progress = worker.request("http.request", {"method": "GET", "path": "/api/block-parse/job/missing-job"})
+        cancel = worker.request("http.request", {"method": "POST", "path": "/api/block-parse/job/missing-job/cancel", "body": "{}"})
+        check("status and cancellation use reserved capacity under full load", time.monotonic() - started < 1.4)
+        check("status still addresses the owning process", progress.get("result", {}).get("status") == 404)
+        check("queued Source cancellation is acknowledged", cancel.get("result", {}).get("status") == 200)
+        for slow_id in slow_ids:
+            check("neighbouring request survives Source cancellation", worker.wait_response(slow_id).get("result", {}).get("ok") is True)
     finally:
         worker.close()
 

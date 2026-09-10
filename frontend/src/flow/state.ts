@@ -1,5 +1,15 @@
 import { asReadable, selectReadable, shallowRecordEquals } from "../lib/zustand";
-import { useFlowStore } from "./store";
+import { useFlowStore, bindPageState } from "./store";
+import { readable } from 'svelte/store';
+
+/** A workspace keeps its original sheet when callbacks outlive the component. */
+export function pageFlow(pageId = useFlowStore.getState().activePageId) {
+  const get = bindPageState(pageId);
+  return readable(get(), set => {
+    set(get());
+    return useFlowStore.subscribe(() => set(get()));
+  });
+}
 
 /* Реактивный снимок zustand-стора графа для Svelte-компонентов ($flow).
  * Действия вызываются через тот же объект: $flow.addNode(...) и т.д.

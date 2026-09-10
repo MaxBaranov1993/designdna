@@ -11,7 +11,7 @@
    * более новые правки; при закрытии несинхронизированный остаток сбрасывается
    * немедленно). ИИ-правки приходят через timeline-change-set как ПРЕВЬЮ:
    * канонический таймлайн ноды не меняется до явного «Применить». */
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import VideoModelPicker from "./VideoModelPicker.svelte";
   import { TimelineEngine, Timeline } from "../engine/timeline";
   import { IRRenderer } from "../engine/renderer";
@@ -19,15 +19,21 @@
   import type { VideoStory } from "../engine/video-story";
   import VideoStoryPanel from "./VideoStoryPanel.svelte";
   import VideoStatesPanel from "./VideoStatesPanel.svelte";
-  import { flow } from "../flow/state";
+  import { pageFlow } from "../flow/state";
+  const flow = pageFlow();
+  import { bindPageState, captureNodeScope, beginRunAbort, endRunAbort } from "../flow/store";
+  const get = bindPageState();
   import { api, apiGet } from "../flow/api";
   import { toast } from "../flow/toast";
   import { resizeTimeline, moveTimelineKey, setTimelineKeyValue } from "./timeline-edits";
+  import { assembleLayers } from './assembly-scene';
   import { bodyPortal } from "../lib/bodyPortal";
-  import type { TimelineNodeData, VideoRevision, VideoRevisionChange, VideoChatMessage, VideoEffort } from "../flow/types";
+  import type { TimelineNodeData, VideoRevision, VideoRevisionChange, VideoChatMessage } from "../flow/types";
 
   let { nodeId, data, onClose, startWithPrompt = false }: { nodeId: number; data: TimelineNodeData; onClose: () => void; startWithPrompt?: boolean } = $props();
 
+  const nodeScope = untrack(() => captureNodeScope(get, nodeId));
+  const currentData = () => get().nodes.find(node => Number(node.id) === nodeId)?.data as TimelineNodeData | undefined;
   type AnyDoc = Record<string, any>;
 
   /* Локальная редактируемая копия: снимок таймлайна ноды на момент открытия.
@@ -57,7 +63,6 @@
   let followChat = $state(true);
   let aiRequestSequence = 0;
   let aiRunId: string | null = null;
-  let aiController: AbortController | null = null;
   let aiStartedAt = $state(0);
   let aiElapsed = $state(0);
   $effect(() => {
@@ -71,22 +76,23 @@
   });
   function appendChat(role: VideoChatMessage["role"], content: string, kind: VideoChatMessage["kind"] = "message", provider: "codex" | "claude" = accountProvider) {
     const entry: VideoChatMessage = { id: crypto.randomUUID(), role, content: content.slice(0, 16000), createdAt: new Date().toISOString(), kind, provider };
-    $flow.setNodeData(nodeId, { chatMessages: [...(data.chatMessages || []), entry].slice(-100) });
+    if (nodeScope.owns()) get().setNodeData(nodeId, { chatMessages: [...(currentData()?.chatMessages || []), entry].slice(-100) });
     followChat = true;
     return entry.id;
   }
   function markChat(id: string, kind: VideoChatMessage["kind"]) {
-    $flow.setNodeData(nodeId, { chatMessages: (data.chatMessages || []).map(entry => entry.id === id ? { ...entry, kind } : entry) });
+    if (nodeScope.owns()) get().setNodeData(nodeId, { chatMessages: (currentData()?.chatMessages || []).map(entry => entry.id === id ? { ...entry, kind } : entry) });
   }
   function stopAiDirector() {
     aiRequestSequence++;
-    aiController?.abort();
+    void get().cancelRun(nodeId);
     if (aiRunId) {
       void window.designDNA?.api?.cancel("long", aiRunId).catch(() => undefined);
       void api(`/api/runs/${aiRunId}/cancel`, {}).catch(() => undefined);
     }
     aiRunId = null;
-    aiBusy = false;
+    get().setNodeData(nodeId, { directorRunId: null });
+    get().setBusy(nodeId, false);
     appendChat("assistant", "Запрос остановлен. Можно изменить сообщение и отправить снова.", "cancelled");
     void tick().then(() => chatInput?.focus());
   }
@@ -95,17 +101,16 @@
   const accountProvider = $derived(data.provider === "claude" ? "claude" : "codex");
   onMount(() => {
     aiPrompt = data.prompt || "";
+    aiStartedAt = data.directorStartedAt || Date.now();
     if (startWithPrompt && aiPrompt.trim()) void runAiDirector();
   });
-  let busy = $state(false);
-  let aiBusy = $state(false);
+  let localBusy = $state(false);
+  const busy = $derived(localBusy || ["queued", "rendering"].includes(data.renderJob?.status || ""));
+  const aiBusy = $derived(Boolean($flow.busy[nodeId] && data.directorRunId));
   let message = $state("");
   let renderState = $state<AnyDoc | null>(null);
-  let renderStateInitialized = false;
-  $effect.pre(() => {
-    if (renderStateInitialized) return;
-    renderStateInitialized = true;
-    if (data.renderJob?.status === "complete") renderState = { ...data.renderJob, status: "done" };
+  $effect(() => {
+    if (data.renderJob) renderState = { ...data.renderJob, status: data.renderJob.status === "complete" ? "done" : data.renderJob.status };
   });
   let renderId = $state<string | null>(null);
   let historyDepth = $state(0);
@@ -118,20 +123,8 @@
   let lastChangeSet = $state<AnyDoc | null>(null);
 
   // Превью ИИ-монтажа: канонический документ не трогается до «Применить».
-  type AiPreview = {
-    chatMessageId: string;
-    prompt: string;
-    provider: "codex" | "claude";
-    effort: VideoEffort;
-    model: string;
-    timeline: AnyDoc;
-    changeSet: AnyDoc;
-    intent: string;
-    planSource: string;
-    warning: string | null;
-    operations: number;
-  };
-  let preview = $state<AiPreview | null>(null);
+  type AiPreview = NonNullable<TimelineNodeData["aiPreview"]>;
+  const preview = $derived((data.aiPreview || null) as AiPreview | null);
 
   let irHost: HTMLDivElement | null = $state(null);
   let storyPlayer = $state<VideoStoryPlayer | null>(null);
@@ -323,7 +316,7 @@
         say("Правки не прошли валидацию: " + errors[0]);
         return false; // keep the last valid canonical document
       }
-      if (!$flow.commitTimeline(nodeId, canonical, sourceRevision, payload, pendingRevision)) {
+      if (!nodeScope.owns() || !$flow.commitTimeline(nodeId, canonical, sourceRevision, payload, pendingRevision)) {
         say("Вход или таймлайн изменился вне редактора. Скопируйте черновик перед повторным открытием.");
         return false;
       }
@@ -349,8 +342,7 @@
   $effect(() => {
     return () => {
       disposed = true;
-      aiRequestSequence++;
-      aiController?.abort();
+      // The sheet-owned task keeps running after the workspace is unmounted.
       removeDragListeners();
       flushPendingSync();
     };
@@ -364,9 +356,8 @@
   }
 
   async function closeWorkspace() {
-    if (busy || aiBusy) { say("Дождитесь операции или отмените рендер"); return; }
     if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
-    if (await syncNow()) { if (preview) cancelPreview(); onClose(); }
+    if (await syncNow()) onClose();
   }
 
   function workspaceKey(event: KeyboardEvent) {
@@ -451,11 +442,13 @@
   async function runAiDirector() {
     const prompt = aiPrompt.trim();
     if (!doc || !prompt || aiBusy || busy || preview) return;
-    aiBusy = true;
     const requestSequence = ++aiRequestSequence;
     const runId = crypto.randomUUID();
     aiRunId = runId;
-    aiController = new AbortController();
+    const signal = beginRunAbort(nodeId, get().activePageId);
+    get().setNodeData(nodeId, { directorRunId: runId, directorStartedAt: Date.now() });
+    get().setBusy(nodeId, true);
+    get().setStatus(nodeId, "ИИ-режиссёр готовит монтаж…");
     aiStartedAt = Date.now(); aiElapsed = 0;
     const conversation = chatMessages.filter(entry => entry.kind !== "error").slice(-24)
       .map(entry => ({ role: entry.role, content: entry.content.slice(0, 15800) + (entry.kind === "preview" ? "\n[Предложение не применено]" : entry.kind === "applied" ? "\n[Применено]" : entry.kind === "cancelled" ? "\n[Отменено]" : "") }));
@@ -468,14 +461,15 @@
     say("Изучаю визуал, структуру и содержимое страницы, затем готовлю монтаж…");
     try {
       if (!await syncNow()) throw new Error("Сначала сохраните текущие правки");
-      if (disposed || requestSequence !== aiRequestSequence) return;
+      if (!nodeScope.owns() || signal.aborted || requestSequence !== aiRequestSequence) return;
       const resp = await api<{
         timeline?: AnyDoc; changeSet?: AnyDoc; planSource?: string; warning?: string | null; error?: string; understanding?: string;
-      }>("/api/timeline/assist", { timeline: doc, prompt, provider, effort, model, require_llm: true, conversation }, { signal: aiController.signal, runId });
-      if (disposed || requestSequence !== aiRequestSequence) return;
+      }>("/api/timeline/assist", { timeline: doc, prompt, provider, effort, model, require_llm: true, conversation }, { signal, runId });
+      if (!nodeScope.owns() || signal.aborted || requestSequence !== aiRequestSequence) return;
       if ($flow.getNodeIrRevision(nodeId) !== sourceRevision) throw new Error("Исходная страница изменилась во время запроса. Откройте редактор заново и повторите сообщение.");
       if (resp.error || !resp.timeline || !resp.changeSet) throw new Error(resp.error || "пустой ответ");
-      preview = {
+      const nextPreview: AiPreview = {
+        baseTimeline: cloneDoc(canonical || doc!),
         chatMessageId: appendChat("assistant", (resp.understanding ? "Понял страницу: " + resp.understanding + "\n\n" : "") + String(resp.changeSet.intent || "Подготовил изменения монтажа.") + (resp.warning ? "\n\n" + resp.warning : ""), "preview", provider),
         prompt, provider, effort, model,
         timeline: resp.timeline,
@@ -485,22 +479,32 @@
         warning: resp.warning || null,
         operations: Array.isArray(resp.changeSet.operations) ? resp.changeSet.operations.length : 0,
       };
+      get().setNodeData(nodeId, { aiPreview: nextPreview });
+      get().setStatus(nodeId, "Превью монтажа готово · откройте редактор для применения", "ok");
       say("Превью готово — проверьте монтаж и примените или отмените");
     } catch (error) {
-      if (disposed || requestSequence !== aiRequestSequence) return;
+      if (!nodeScope.owns() || signal.aborted || requestSequence !== aiRequestSequence) return;
       const msg = error instanceof Error ? error.message : String(error);
       const question = msg.startsWith("Нужно уточнить:");
       appendChat("assistant", question ? msg.replace(/^Нужно уточнить:\s*/, "") : msg, question ? "question" : "error", provider);
       say("ИИ-режиссёр: " + msg);
     } finally {
-      if (requestSequence === aiRequestSequence) { aiBusy = false; aiRunId = null; void tick().then(() => chatInput?.focus()); }
+      if (nodeScope.owns() && currentData()?.directorRunId === runId) {
+        get().setNodeData(nodeId, { directorRunId: null });
+        get().setBusy(nodeId, false);
+      }
+      endRunAbort(nodeId, signal, get().activePageId);
+      if (requestSequence === aiRequestSequence) { aiRunId = null; if (!disposed) void tick().then(() => chatInput?.focus()); }
     }
   }
 
   async function applyPreview() {
     if (!preview || !doc || busy) return;
     const applied = preview;
-    busy = true;
+    if (!nodeScope.owns() || JSON.stringify(currentData()?.timeline) !== JSON.stringify(applied.baseTimeline)) {
+      say("Таймлайн изменился после запроса. Подготовьте новое превью."); return;
+    }
+    localBusy = true;
     say("Применение ИИ-монтажа...");
     try {
       const resp = await api<{ timeline?: AnyDoc; error?: string }>(
@@ -513,7 +517,7 @@
       pendingRevision = { kind: "prompt", label: applied.intent, prompt: applied.prompt, provider: applied.provider, effort: applied.effort, model: applied.model };
       lastChangeSet = applied.changeSet;
       markChat(applied.chatMessageId, "applied");
-      preview = null;
+      get().setNodeData(nodeId, { aiPreview: null });
       aiPrompt = "";
       say("Применено: " + applied.intent);
       await syncNow();
@@ -523,13 +527,13 @@
       say("Применение: " + msg);
       toast("ИИ-режиссёр: " + msg, "error");
     } finally {
-      busy = false;
+      localBusy = false;
     }
   }
 
   function cancelPreview() {
     if (preview) markChat(preview.chatMessageId, "cancelled");
-    preview = null;
+    get().setNodeData(nodeId, { aiPreview: null });
     say("Превью отменено — таймлайн не изменён");
   }
 
@@ -539,13 +543,13 @@
       say("Эта версия создана для другой исходной страницы. Подключите прежнюю страницу перед восстановлением.");
       return;
     }
-    busy = true;
+    localBusy = true;
     try {
       if (!await syncNow()) return;
       const result = await api<{ errors?: string[] }>("/api/timeline/validate", { timeline: version.timeline });
       if (result.errors?.length) throw new Error(result.errors[0]);
       const next = JSON.parse(JSON.stringify(version.timeline));
-      if (!$flow.commitTimeline(nodeId, canonical, sourceRevision, next, {
+      if (!nodeScope.owns() || !$flow.commitTimeline(nodeId, canonical, sourceRevision, next, {
         kind: "restore", label: "Возврат: " + version.label, restoredFrom: version.id,
         prompt: version.prompt, provider: version.provider, effort: version.effort, model: version.model,
       })) throw new Error("Страница или монтаж изменились вне редактора. Откройте редактор заново.");
@@ -565,13 +569,13 @@
     } catch (error) {
       say(error instanceof Error ? error.message : String(error));
     } finally {
-      busy = false;
+      localBusy = false;
     }
   }
 
   async function undoAi() {
     if (!doc || !lastChangeSet || busy) return;
-    busy = true;
+    localBusy = true;
     try {
       const resp = await api<{ timeline?: AnyDoc }>("/api/timeline/revert", {
         timeline: doc, changeSet: lastChangeSet });
@@ -586,7 +590,7 @@
     } catch (error) {
       say("Откат: " + (error instanceof Error ? error.message : String(error)));
     } finally {
-      busy = false;
+      localBusy = false;
     }
   }
 
@@ -618,7 +622,7 @@
 
   async function exportCss() {
     if (!doc || busy) return;
-    busy = true;
+    localBusy = true;
     try {
       const resp = await api<{ files?: Record<string, string>; error?: string }>(
         "/api/timeline/export", { timeline: doc, mode: "css" });
@@ -629,13 +633,13 @@
       const msg = error instanceof Error ? error.message : String(error);
       say("Экспорт: " + msg);
     } finally {
-      busy = false;
+      localBusy = false;
     }
   }
 
   function publishRenderJob(id: string, state: AnyDoc, format: string) {
-    const current = $flow.nodes.find((node) => Number(node.id) === nodeId);
-    if (!current || $flow.getNodeIrRevision(nodeId) !== sourceRevision
+    const current = get().nodes.find((node) => Number(node.id) === nodeId);
+    if (!nodeScope.owns() || !current || $flow.getNodeIrRevision(nodeId) !== sourceRevision
       || JSON.stringify((current.data as TimelineNodeData).timeline) !== JSON.stringify(canonical)) return;
     const mapped = state.status === "done" ? "complete"
       : state.status === "running" ? "rendering"
@@ -661,7 +665,7 @@
     if (!doc || busy || aiBusy || preview) return;
     if (!designIr) { say("Нет входного Design IR для рендера"); return; }
     if (!await syncNow()) return;
-    busy = true;
+    localBusy = true;
     renderState = { status: "starting" };
     renderId = null;
     say("Рендер запущен...");
@@ -671,9 +675,9 @@
       if (resp.error || !resp.renderId) throw new Error(resp.error || "нет renderId");
       renderId = resp.renderId;
       publishRenderJob(renderId, { status: "queued", progress: 0 }, format);
-      for (let i = 0; i < 600 && !disposed; i++) {
+      for (let i = 0; i < 600 && nodeScope.owns(); i++) {
         await new Promise((r) => setTimeout(r, 1500));
-        if (disposed) break;
+        if (!nodeScope.owns()) break;
         const st = await apiGet<AnyDoc>(`/api/timeline/render/${renderId}`);
         renderState = st;
         publishRenderJob(renderId, st, format);
@@ -687,13 +691,13 @@
       publishRenderJob(renderId || "failed", renderState, format);
       say("Рендер: " + msg);
     } finally {
-      busy = false;
+      localBusy = false;
       renderId = null;
     }
   }
 
   async function cancelRender() {
-    const id = renderId;
+    const id = renderId || currentData()?.renderJob?.id;
     if (!id) return;
     try {
       await api<{ status?: string }>(`/api/timeline/render/${id}/cancel`, {});
@@ -853,7 +857,7 @@
     if (!doc || busy || aiBusy || preview) return;
     if (!await syncNow()) return;
     const seq = docSeq;
-    busy = true;
+    localBusy = true;
     try {
       const next = JSON.parse(JSON.stringify(doc));
       next.story = story;
@@ -866,11 +870,11 @@
       const result = await api<{ errors?: string[] }>("/api/timeline/validate", { timeline: next });
       if (result.errors?.length) throw new Error(result.errors[0]);
       if (docSeq !== seq || disposed) return;
-      busy = false;
+      localBusy = false;
       mutate((d) => Object.assign(d, next));
       playhead = Math.min(playhead, next.composition.duration);
     } catch (error) { say(error instanceof Error ? error.message : String(error)); }
-    finally { busy = false; }
+    finally { localBusy = false; }
   }
 
   function timeLabel(ms: number) {
@@ -947,6 +951,9 @@
   <div class="tlw-body" class:hasSelection={Boolean(selectedLayer)}>
     <div class="tlw-layers">
       {#if activeDoc?.story}
+        <button type="button" data-act="assembly-scene" disabled={busy || aiBusy || Boolean(preview)}
+          title="Последовательное появление свободных слоёв в первые две секунды. Доступна отмена."
+          onclick={() => { try { let count = 0; mutate(d => { count = assembleLayers(d); }); say(`Сборка: ${count} слоёв`); } catch (error) { say(String(error)); } }}>Сборка из слоёв</button>
         <VideoStoryPanel story={activeDoc.story} disabled={busy || aiBusy || Boolean(preview)}
           onChange={(story) => void editStory(story)} onPolish={(story) => void editStory(story, true)} onSeek={(time) => { playing = false; playhead = time; }} />
         <VideoStatesPanel story={activeDoc.story} disabled={busy || aiBusy || Boolean(preview)}

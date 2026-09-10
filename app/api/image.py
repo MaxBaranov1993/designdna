@@ -10,7 +10,7 @@ import base64
 import re
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import llm_client as llm
 from ir_render import render_svg_png
@@ -43,6 +43,14 @@ class ImageConvertReq(BaseModel):
 class ImageMaskReq(BaseModel):
     image: str
     mask: str
+
+
+class ImageChromaReq(BaseModel):
+    image: str
+    color: str = "#00ff00"
+    tolerance: int = Field(default=32, ge=0, le=160)
+    softness: int = Field(default=24, ge=1, le=100)
+    despill: bool = True
 
 
 _IMAGE_STYLE_HINTS = {
@@ -95,6 +103,15 @@ def image_remove_background(req: ImageMaskReq):
     from image_output import apply_background_mask
     try:
         return apply_background_mask(req.image, req.mask)
+    except ValueError as exc:
+        return err(422, str(exc))
+
+
+@router.post("/api/image/chroma-key")
+def image_chroma_key(req: ImageChromaReq):
+    from chroma_key import remove_chroma
+    try:
+        return remove_chroma(req.image, req.color, req.tolerance, req.softness, req.despill)
     except ValueError as exc:
         return err(422, str(exc))
 

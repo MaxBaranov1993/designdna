@@ -375,7 +375,8 @@ def main() -> int:
 
     threading.Thread(target=read_loop, name="stdin-reader", daemon=True).start()
 
-    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="asgi") as pool:
+    with (ThreadPoolExecutor(max_workers=3, thread_name_prefix="asgi") as pool,
+          ThreadPoolExecutor(max_workers=1, thread_name_prefix="asgi-control") as control_pool):
         pending = 0
         drained = threading.Condition()
 
@@ -410,7 +411,13 @@ def main() -> int:
                 with drained:
                     pending += 1
                 try:
-                    pool.submit(process_counted, message)
+                    import re
+                    request_path = str((message.get("params") or {}).get("path", "")).split("?", 1)[0]
+                    control = str(message.get("method", "")) == "http.request" and re.fullmatch(
+                        r"/api/(?:block-parse/job/[^/]+(?:/cancel)?|runs/[^/]+(?:/cancel)?|(?:motion|timeline)/render/[^/]+(?:/cancel)?)",
+                        request_path,
+                    )
+                    (control_pool if control else pool).submit(process_counted, message)
                 except Exception as error:
                     with drained:
                         pending -= 1

@@ -21,6 +21,15 @@
 
 <div class="dna-insp-fields">
   <div class="dna-field">
+    <div class="dna-field-cap">Роль изображения</div>
+    <select value={data.role || "style"} onchange={(e) => $flow.setNodeData(id, { role: e.currentTarget.value as NonNullable<ReferenceNodeData["role"]> })}>
+      <option value="style">Стиль: палитра и характер</option>
+      <option value="composition">Композиция: расположение и иерархия</option>
+      <option value="reproduce">Воспроизведение исходника</option>
+    </select>
+    <div class="dna-field-hint">Подключите выход «картинка» к «Референсу» Генератора. Точные компоненты дизайн-системы сохраняют приоритет.</div>
+  </div>
+  <div class="dna-field">
     <div class="dna-field-cap">Описание стиля</div>
     <textarea
       rows="5"

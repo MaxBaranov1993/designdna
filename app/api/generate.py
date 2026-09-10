@@ -18,6 +18,7 @@ import typography
 import designkb
 import generator_policy
 import agent_contract
+import visual_reference
 from ir import apply_tokens as apply_ir_tokens
 from ir import bind_element_styles as bind_ir_element_styles
 from ir import ensure_current as ensure_current_ir
@@ -139,6 +140,7 @@ class GenerateReq(BaseModel):
     # Существующие экраны проекта (порт reference): агент видит их паттерны и
     # мастера, а не «забывает, с чего начинали» на пятом экране.
     referenceIrs: list[dict] | None = None
+    visualReference: visual_reference.VisualReference | None = None
     # Клиентский id запуска для стадий/отмены (run_registry); старые клиенты не шлют
     runId: str | None = None
     # Десктоп: арт-направления считает провайдер через транспорт Electron
@@ -199,6 +201,7 @@ def generate(req: GenerateReq):
             if ds_error:
                 return err(422, f"Design System: {ds_error}")
         context_key = generator_policy.digest({"policy": policy, "ds": resolved,
+            "visualReferencePolicy": visual_reference.policy_fingerprint(),
             "rules": project_rules.prompt_block("generation"),
             "promptFiles": [llm._file_stamp(llm.ROOT / name) for name in llm._PROMPT_FILES]})
         if prepared and prepared.get("contextKey") != context_key:
@@ -495,6 +498,10 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
     brief = req.brief.strip()
     if not brief:
         return err(422, "Пустой бриф: опишите, что нужно сгенерировать.")
+    try:
+        visual = visual_reference.prepare(req.visualReference)
+    except ValueError as exc:
+        return err(422, str(exc))
     count = max(1, min(int(req.count or 1), 5))
     if req.rawOutputs is not None and len(req.rawOutputs) < count:
         return err(422, "Модель вернула меньше ответов, чем запрошено вариантов.")
@@ -850,8 +857,10 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             user += "\n\n" + rules_block
         if ds_reference_note:
             user += "\n\n" + ds_reference_note
-        content = ([{"type": "text", "text": user}, *(item["part"] for item in ds_reference_parts)]
-                   if ds_reference_parts else user)
+        if visual:
+            user += "\n\n" + visual["instruction"]
+        image_parts = [item["part"] for item in ds_reference_parts] + ([visual["part"]] if visual else [])
+        content = ([{"type": "text", "text": user}, *image_parts] if image_parts else user)
         if req.prepareOnly:
             return content, None, None
         if run_registry.is_cancelled(run_id):
@@ -865,6 +874,8 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             run_registry.stage(run_id, "validate", "Проверка схемы и автофиксы")
         qa = None
         if ir is not None:
+            if visual_reference.concept_used_in_output(ir, visual):
+                return None, "Эскиз попал в итоговый макет; нужно собрать живой текст и отдельные изображения", None
             ir = sanitize_generated_ir(ir)
             if ds_font_faces:
                 # Шрифты системы (включая моно для лейблов) — в meta.fontFaces:
@@ -1065,6 +1076,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
                     return err(422, f"Design System Strict отклонил все варианты: {first}")
     # Журнал решений: что агент получил и что проверил — вместо чёрного ящика.
     generation_log = {
+        "visualReference": visual["info"] if visual else None,
         "contractVersion": agent_contract.version(),
         "product": pinfo["label"],
         "mode": mode,

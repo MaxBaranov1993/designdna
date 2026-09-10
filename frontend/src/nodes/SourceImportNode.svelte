@@ -2,6 +2,7 @@
   import { captureNodeUpload } from "../flow/store";
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
+  import CompositionParts from "../components/CompositionParts.svelte";
   import { flow, flowBusy } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import { useFlowStore } from "../flow/store";
@@ -201,6 +202,7 @@
             {:else}
               <IrPreview class="bp-preview" ir={b.ir || null} height={72} viewport={data.activeViewport} empty="" />
             {/if}
+            <CompositionParts ir={b.ir || null} protectedRoot />
           {/if}
           {#if !b.error}
             {@const active = data.activeViewport}

@@ -2,9 +2,18 @@
 import copy
 import json
 
+import pytest
+
 import server
 from api import quality
-from test_qualitygate import BASE_IR
+from quality_test_fixtures import QUALITY_IR as BASE_IR
+
+
+@pytest.fixture(autouse=True)
+def isolated_evidence_cache(monkeypatch):
+    cache = {}
+    monkeypatch.setattr(server.cache_store, "get", lambda kind, key: copy.deepcopy(cache.get((kind, key))))
+    monkeypatch.setattr(server.cache_store, "put", lambda kind, key, value: cache.__setitem__((kind, key), copy.deepcopy(value)))
 
 
 def _judge(score: int, severity: str | None = "major", verdict: str | None = None) -> str:
@@ -125,3 +134,62 @@ def test_codex_step_continues_on_an_equal_score_until_max_rounds(monkeypatch):
                    "rejudges": [same, same, same]})
     assert "pending" not in final and final["scorecard"]["score"] == 70
     assert [item["round"] for item in final["repair"]["rounds"]] == [1, 2, 3]
+
+
+def _run_rounds(monkeypatch, transport, judges, repairs):
+    """Exercise the endpoints with scripted model answers; no network or guard mocks."""
+    judge_answers, repair_answers = iter(judges), iter(repairs)
+    if transport == "desktop":
+        _forbid_server_llm(monkeypatch)
+        outputs = {"repairs": [], "rejudges": []}
+        for _ in range(12):
+            result = _step(outputs)
+            if "pending" not in result:
+                return result
+            stage = result["pending"]["stage"]
+            if stage == "judge":
+                outputs["judge"] = next(judge_answers)
+            elif stage == "repair":
+                outputs["repairs"].append(next(repair_answers))
+            else:
+                outputs["rejudges"].append(next(judge_answers))
+        pytest.fail("desktop did not finish its bounded rounds")
+    monkeypatch.setattr(server.llm, "chat_vision", lambda *a, **kw: next(judge_answers))
+    monkeypatch.setattr(server.llm, "chat", lambda *a, **kw: next(repair_answers))
+    monkeypatch.setattr(quality, "render_png", lambda *a, **kw: b"png")
+    return quality.quality_pass(quality.QualityPassReq(ir=copy.deepcopy(BASE_IR), brief="Лендинг"))
+
+
+@pytest.mark.parametrize("transport", ["desktop", "server"])
+@pytest.mark.parametrize("rejection", ["tokens", "new-critical"])
+def test_late_rejected_round_preserves_the_best_validated_ir(monkeypatch, transport, rejection):
+    bad_ir = json.loads(_repaired("r2-rejected"))
+    if rejection == "tokens":
+        bad_ir["tokens"]["color"]["primary"] = "#2563ec"
+    last_judge = _judge(90, "critical" if rejection == "new-critical" else None)
+    result = _run_rounds(monkeypatch, transport, [_judge(50), _judge(70), last_judge],
+                         [_repaired("r1-valid"), json.dumps(bad_ir)])
+    assert result["ir"]["meta"]["name"] == "r1-valid"
+    assert result["ir"]["tokens"] == BASE_IR["tokens"]
+    assert result["scorecard"]["score"] == 70 and result["initial_scorecard"]["score"] == 50
+    assert result["repair"]["applied"] is True and result["passed"] is False
+    assert result["repair"]["rounds"][-1]["applied"] is False
+    assert result["repair"]["rounds"][-1]["error"]
+
+
+@pytest.mark.parametrize("transport", ["desktop", "server"])
+def test_high_score_needs_repair_continues_and_equal_score_pass_is_selected(monkeypatch, transport):
+    result = _run_rounds(monkeypatch, transport,
+                         [_judge(70, None), _judge(85, None, "needs_repair"), _judge(85, None, "pass")],
+                         [_repaired("r1-unaccepted"), _repaired("r2-accepted")])
+    assert result["passed"] is True
+    assert result["ir"]["meta"]["name"] == "r2-accepted"
+    assert result["scorecard"]["score"] == 85 and result["scorecard"]["verdict"] == "pass"
+    assert len(result["repair"]["rounds"]) == 2
+
+
+@pytest.mark.parametrize("transport", ["desktop", "server"])
+def test_initial_high_score_still_repairs_a_rejected_verdict(monkeypatch, transport):
+    result = _run_rounds(monkeypatch, transport, [_judge(85, None, "needs_repair"), _judge(85, None, "pass")],
+                         [_repaired("accepted")])
+    assert result["passed"] is True and result["ir"]["meta"]["name"] == "accepted"

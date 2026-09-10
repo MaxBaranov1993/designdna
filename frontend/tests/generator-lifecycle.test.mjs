@@ -26,7 +26,7 @@ const response = value => new Response(JSON.stringify(value), {status: 200});
 function reset() {
  window.designDNA = undefined;
  store.getState().loadGraph({ nodes:[], edges:[], nextId:1 });
- store.setState({pages:[{id:'A',name:'A',nodes:[],edges:[],nextId:1,view:{x:0,y:0,zoom:1}}],activePageId:'A',statuses:{},statusLog:{},busy:{},designSystemPicker:null});
+ store.setState({pages:[{id:'A',name:'A',nodes:[],edges:[],nextId:1,view:{x:0,y:0,zoom:1}}],pageRuntimes:{},activePageId:'A',statuses:{},statusLog:{},busy:{},designSystemPicker:null});
 }
 const add = type => store.getState().addNode(type,0,0).id;
 const patch = (id,data) => store.getState().setNodeData(id,data);
@@ -115,7 +115,7 @@ test('current prompt and receipt reach finalize; prior review is cleared before 
  assert.deepEqual(node(id).data.qualityReviews[0].reasons,['Current comment']);
 });
 
-test('late result never writes into a different sheet or the same sheet after returning',async()=>{
+test('generation finishes in its original sheet, including after returning before completion',async()=>{
  for(const returnToA of [false,true]) {
   const {id}=setup(); mock(); let resolve;
   window.designDNA.providers.chatRequest=()=>new Promise(r=>resolve=r);
@@ -124,9 +124,16 @@ test('late result never writes into a different sheet or the same sheet after re
   add('prompt'); const other=add('generator'); patch(other,{ownPrompt:'Sheet B',variants:[{tag:'B'}]});
   if(returnToA) store.getState().switchPage('A');
   resolve({content:'{}'}); await pending;
-  assert.equal(store.getState().statuses[id],undefined);
-  if(returnToA) { assert.equal(node(id).data.variants.length,0); store.getState().switchPage(b); }
+  if(returnToA) {
+   assert.equal(node(id).data.variants.length,1);
+   assert.equal(store.getState().busy[id],false);
+   store.getState().switchPage(b);
+  } else assert.equal(store.getState().statuses[id],undefined);
   assert.equal(node(other).data.variants[0].tag,'B');
+  store.getState().switchPage('A');
+  assert.equal(node(id).data.variants.length,1);
+  assert.equal(store.getState().busy[id],false);
+  assert.equal(store.getState().statuses[id].kind,'ok');
  }
 });
 
@@ -236,20 +243,93 @@ test('file uploads keep their original node and newest selection across async re
  assert.equal(first({image:'old.png'}),false); assert.equal(node(id).data.image,'new.png');
  const pending=captureNodeUpload(id);
  store.getState().createPage('B'); const other=add('reference');
- assert.equal(pending({image:'wrong-sheet.png'}),false); assert.equal(node(other).data.image,null);
+ assert.equal(pending({image:'original-sheet.png'}),true); assert.equal(node(other).data.image,null);
+ const b=store.getState().activePageId;
+ store.getState().switchPage('A'); assert.equal(node(id).data.image,'original-sheet.png');
+ store.getState().switchPage(b);
  const removed=captureNodeUpload(other); store.getState().deleteNode(other);
  store.setState({nextId:other}); add('reference');
  assert.equal(removed({image:'deleted.png'}),false); assert.equal(node(other).data.image,null);
 });
 
-test('leaving during Motion Design planning settles without an unhandled rejection or paid submit',async()=>{
+test('Motion Design planning continues on its own sheet after navigation',async()=>{
  reset(); const id=add('motiondesign');patch(id,{prompt:'Camera move',planner:'claude'});
  let resolve,submitted=0;
  window.designDNA={providers:{chatRequest:()=>new Promise(r=>resolve=r)}};
- globalThis.fetch=async()=>{submitted++;return response({})};
+ globalThis.fetch=async path=>{ if(path.includes('/submit')) submitted++; return response({configured:false}); };
  const pending=store.getState().runMotionDesign(id,true);assert.ok(resolve);
  store.getState().createPage('B');resolve({content:'Camera move'});
  await assert.doesNotReject(pending);assert.equal(submitted,0);
+ store.getState().switchPage('A'); assert.equal(node(id).data.plannedPrompt,'Camera move');
+});
+
+test('two generators with identical IDs finish out of order in the background and keep both results', async () => {
+ const {id} = setup(); mock(); const answers = new Map();
+ window.designDNA.providers.chatRequest = request => new Promise(resolve => answers.set(request.messages[0].content, resolve));
+ const base = globalThis.fetch;
+ globalThis.fetch = async (path, options) => {
+  const body = JSON.parse(options.body || '{}');
+  if (path === '/api/generate' && !body.prepareOnly) return response({variants:[{...resultIr,tag:body.brief}]});
+  if (path === '/api/quality-pass/codex-step') return response({ir:body.ir,passed:true});
+  return base(path, options);
+ };
+ const a = store.getState().runGenerator(id); await tick();
+ store.getState().setView({x:123,y:456,zoom:0.75});
+ store.getState().createPage('B'); const pageB = store.getState().activePageId;
+ add('prompt'); const other = add('generator'); assert.equal(other,id);
+ patch(other,{ownPrompt:'B task',count:1});
+ const b = store.getState().runGenerator(other); await tick();
+ store.getState().createPage('C');
+ answers.get('B task')({content:'{}'}); await b;
+ assert.equal(store.getState().nodes.length,0);
+ answers.get('Marketplace header')({content:'{}'}); await a;
+ assert.deepEqual(store.getState().busy,{});
+ store.getState().switchPage(pageB);
+ assert.equal(node(id).data.variants[0].tag,'B task'); assert.equal(store.getState().busy[id],false);
+ store.getState().switchPage('A');
+ assert.equal(node(id).data.variants[0].tag,'Marketplace header');
+ assert.deepEqual(store.getState().view,{x:123,y:456,zoom:0.75});
+ assert.equal(store.getState().busy[id],false);
+});
+
+test('cancelling one sheet and deleting an idle sheet leave the other generator running', async () => {
+ const {id}=setup(); const calls=mock(); const answers=[];
+ window.designDNA.providers.chatRequest=request=>new Promise(resolve=>answers.push({request,resolve}));
+ const a=store.getState().runGenerator(id);await tick();
+ store.getState().createPage('B'); const pageB=store.getState().activePageId;
+ add('prompt');add('generator');patch(id,{ownPrompt:'B task',count:1});
+ const b=store.getState().runGenerator(id);await tick();
+ store.getState().createPage('temporary');const pageC=store.getState().activePageId;
+ store.getState().switchPage(pageB);store.getState().deletePage(pageC);
+ assert.equal(store.getState().busy[id],true);
+ await store.getState().cancelRun(id);
+ assert.deepEqual(calls.filter(c=>c[0]==='cancel').map(c=>c[1]),[answers[1].request.id]);
+ answers[1].resolve({content:'{}'});await b;
+ store.getState().switchPage('A');assert.equal(store.getState().busy[id],true);
+ answers[0].resolve({content:'{}'});await a;
+ assert.equal(node(id).data.variants.length,1);assert.equal(store.getState().statuses[id].kind,'ok');
+ store.getState().switchPage(pageB);assert.equal(node(id).data.variants.length,0);
+});
+
+test('Source Import completes on the hidden sheet and never modifies a same-numbered Source', async () => {
+ reset();const id=add('sourceimport');patch(id,{url:'https://example.com/a',mine:true,aiRefine:false,autoFidelityRepair:false});
+ let resolve;
+ globalThis.fetch=()=>new Promise(r=>resolve=r);
+ const a=store.getState().runSourceImport(id);
+ store.getState().createPage('B');add('sourceimport');patch(id,{url:'https://example.com/b'});
+ resolve(response({blocks:[{name:'header',selector:'header',ir:resultIr,lit:true}],tokens:{},url:'https://example.com/a'}));
+ await a; assert.equal(node(id).data.blocks.length,0);assert.equal(node(id).data.url,'https://example.com/b');
+ store.getState().switchPage('A');assert.equal(node(id).data.blocks.length,1);assert.equal(store.getState().busy[id],false);
+});
+
+test('undoing creation cancels that node and redo cannot revive its stale response',async()=>{
+ reset();mock();const id=add('generator');patch(id,{ownPrompt:'Undo test',count:1});
+ let resolve;window.designDNA.providers.chatRequest=()=>new Promise(r=>resolve=r);
+ const task=store.getState().runGenerator(id);await tick();
+ assert.equal(store.getState().undoGraph(),true);assert.equal(node(id),undefined);
+ assert.equal(store.getState().redoGraph(),true);
+ resolve({content:'{}'});await task;
+ assert.equal(node(id).data.variants.length,0);assert.equal(store.getState().busy[id],false);
 });
 
 test('quality pass repeats repair rounds until the server accepts the result',async()=>{

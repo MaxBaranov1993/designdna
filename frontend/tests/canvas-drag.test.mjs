@@ -16,7 +16,7 @@ buildSync({ entryPoints: [fileURLToPath(new URL('../src/flow/store.ts', import.m
 const { useFlowStore: store } = await import(pathToFileURL(outfile));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const node = (id, x = 0) => ({ id, type: 'prompt', data: { text: 'draft' }, position: { x, y: 20 }, selected: false });
-const setup = () => store.setState({ activePageId: 'a', nodes: [node('1'), node('2', 300)], edges: [], graphHistory: { past: [], future: [] }, statuses: {}, busy: {} });
+const setup = () => store.setState({ activePageId: 'a', pages: [{id:'a',name:'A',nodes:[],edges:[],view:{x:0,y:0,zoom:1},nextId:3}], nodes: [node('1'), node('2', 300)], edges: [], graphHistory: { past: [], future: [] }, statuses: {}, busy: {} });
 
 test('drop preserves async results, new nodes and new wires; never resurrects deleted nodes', () => {
   setup();

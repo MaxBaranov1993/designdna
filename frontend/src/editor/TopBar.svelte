@@ -8,6 +8,8 @@
   import { flowNodes } from "../flow/state";
   import { useFlowStore } from "../flow/store";
   import { toast } from "../flow/toast";
+  import PresentationExport from "../components/PresentationExport.svelte";
+  import DiagramInsert from "./DiagramInsert.svelte";
 
   /* Нода Edit открыта на мастере ДС (_dsMaster): текущее состояние можно
    * сохранить вариантом того же компонента — реестр не раздувается новыми
@@ -94,6 +96,8 @@
   </span>
   <span class="fe-sep fe-responsive-sep" hidden bind:this={responsiveSep}></span>
   <span class="fe-spacer"></span>
+  <DiagramInsert disabled={!!dsMaster} />
+  <PresentationExport compact snapshot={() => ({ ir: ctl.currentIrSnapshot(), width: ctl.getSession()?.previewWidth || 1280, viewport: ctl.getSession()?.viewport || "desktop" })} />
   {#if dsMaster}
     <button class="fe-btn" data-act="save-ds-variant" title="Сохранить текущее состояние как вариант компонента «{dsMaster.componentKey}» в дизайн-системе" aria-label="Сохранить как вариант ДС" disabled={savingVariant} onclick={() => void saveVariant()}>◈ Вариант в ДС</button>
   {/if}

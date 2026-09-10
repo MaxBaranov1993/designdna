@@ -19,7 +19,7 @@
     const value = node ? pullInput($flowNodes, $flowEdges, node, "image") : null;
     return isImageSource(value) ? value : data.image;
   });
-  let showSource = $state(false);
+  let view = $state<'result' | 'source' | 'mask' | 'edge'>('result');
   async function download() {
     if (!active) return;
     try { await downloadImage(active.png, `cutout-${nodeId}.png`); }
@@ -38,14 +38,16 @@
   {/snippet}
   <InPorts type="removebackground" />
   <div class="n-hero nodrag">
-    {#if active && !showSource}<img class="cutout" src={active.png} alt="Изображение без фона" />
+    {#if active && view !== 'source'}<img class="cutout" src={(view === 'mask' ? active.mask : view === 'edge' ? active.edge : '') || active.png} alt={view === 'mask' ? 'Маска: белое сохраняется' : view === 'edge' ? 'Контур прозрачности' : 'Изображение без фона'} />
     {:else if source}<img class="cutout" src={source} alt="Исходное изображение" />
     {:else}<div class="n-hero-empty">Подключите картинку или загрузите файл в параметрах</div>{/if}
   </div>
   {#if active}
     <div class="n-seg grow nodrag" role="group" aria-label="Сравнение">
-      <button class:active={showSource} onclick={() => showSource = true}>Оригинал</button>
-      <button class:active={!showSource} onclick={() => showSource = false}>Без фона</button>
+      <button class:active={view === 'source'} onclick={() => view = 'source'}>Оригинал</button>
+      <button class:active={view === 'result'} onclick={() => view = 'result'}>Без фона</button>
+      {#if active.mask}<button class:active={view === 'mask'} onclick={() => view = 'mask'}>Маска</button>{/if}
+      {#if active.edge}<button class:active={view === 'edge'} onclick={() => view = 'edge'}>Край</button>{/if}
     </div>
   {/if}
   {#if data.variants.length > 1}

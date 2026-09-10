@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { LiveProjectApiSync } from "../services/live-project-api-sync.mjs";
 import { ApiScheduler } from "../services/api-scheduler.mjs";
+import { ApiRequestManager } from "../services/api-request-manager.mjs";
 
 const A = "a".repeat(64);
 const B = "b".repeat(64);
@@ -31,7 +32,7 @@ function apiHandler(sync, reply) {
     sourceAuthIntent: () => null,
     ensureWorkerConfigured: async () => {},
     apiSequence: 0,
-    apiRequests: new Map(),
+    apiRequests: new ApiRequestManager(),
     Uint8Array,
     Buffer,
   });

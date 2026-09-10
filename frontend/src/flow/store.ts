@@ -1,6 +1,7 @@
 import { componentMasterPreview, selectedComponentMaster } from "../engine/componentMaster";
 import { PAGE_INPUT_LIMIT, PAGE_INPUT_NAMES } from "./types";
 import { createStore } from "zustand/vanilla";
+import { createPageAccess, emptyPageRuntime, pageRuntime, type FlowSet, type PageRuntime } from "./page-state";
 
 import { api, apiGet } from "./api";
 import { imageDataUrl, isImageSource } from "./image-assets";
@@ -17,6 +18,9 @@ import type {
 import { NODE_DEFS, defaultData, portsOfNode } from "./ports";
 import { deepClone, outValue, pullInput, reachable } from "./dataflow";
 import { generatorInputKey } from "./generator-inputs";
+import { conceptRunPatch, createVisualConcept, generatorVisualReference, settleInterruptedConcepts } from "./generator-visual";
+import { assetRunPatch, effectiveAssetProvider, executeAssetPlan, hasImagePrompts, reconcileAssets, settleInterruptedAssets } from "./generator-assets";
+import type { AssetPlan, AssetRun } from "./generator-assets";
 import { inputFingerprint } from "./fingerprint";
 import { runDesktopAiQueue } from "./desktop-ai-queue";
 import { videoHistoryPatch, videoSourceCheckpoint } from "./video-history";
@@ -146,9 +150,9 @@ export type DesignSystemAiResult = {
 export async function runDesktopDesignSystemAi(
   nodeId: number,
   operation: DesignSystemAiOperation,
-  options: { viewport?: string; repair?: boolean; beforeCommit?: () => void } = {},
+  options: { viewport?: string; repair?: boolean; beforeCommit?: () => void; getState?: () => FlowStoreState } = {},
 ): Promise<DesignSystemAiResult | null> {
-  const get = useFlowStore.getState;
+  const get = options.getState || bindPageState();
   const initial = get();
   const node = initial.nodes.find((n) => Number(n.id) === nodeId);
   if (!node || node.type !== "designsystem" || initial.busy[nodeId] || node.data.busyAction) return null;
@@ -163,7 +167,7 @@ export async function runDesktopDesignSystemAi(
   const source = connectedDesignSystemSource(initial.nodes, initial.edges, node);
   const sourceFingerprint = source ? sourceKitFingerprint(source.data) : null;
   const pageId = initial.activePageId;
-  const signal = beginRunAbort(nodeId);
+  const signal = beginRunAbort(nodeId, get().activePageId);
   const runToken = newRunId();
   const activeChatIds = new Set<string>();
   const cancelledChatIds = new Set<string>();
@@ -172,7 +176,7 @@ export async function runDesktopDesignSystemAi(
   let workingDocument = deepClone(originalDocument);
   let acceptedSummary: DesignSystemAiResult["summary"];
   let hasAcceptedStage = false;
-  const ownsRun = () => runAborts.get(nodeId)?.signal === signal && get().activePageId === pageId
+  const ownsRun = () => runAborts.get(nodeRunKey(get().activePageId, nodeId))?.signal === signal && get().activePageId === pageId
     && get().nodes.some((n) => Number(n.id) === nodeId && n.type === "designsystem" && n.data._dsAiRun === runToken);
   const guard = (allowCancelled = false) => {
     if ((!allowCancelled && signal.aborted) || !ownsRun()) throw new DOMException("DS AI run cancelled", "AbortError");
@@ -428,7 +432,7 @@ export async function runDesktopDesignSystemAi(
   } finally {
     signal.removeEventListener("abort", cancelChat);
     if (ownsRun()) { get().setNodeData(nodeId, { busyAction: "", _dsAiRun: null }); get().setBusy(nodeId, false); }
-    endRunAbort(nodeId, signal);
+    endRunAbort(nodeId, signal, get().activePageId);
   }
 }
 type NodeEffort = "medium" | "high" | "max";
@@ -574,18 +578,21 @@ function generatorVariantDirections(
 }
 
 const MOTION_DESIGN_TERMINAL = new Set(["completed", "failed", "cancelled", "expired"]);
-const motionDesignPollTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const motionDesignPollTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const MOTION_DESIGN_POLL_MS = 30_000;
 
 /* Поллинг Seedance-джоба: раз в 30 с, но только пока вкладка видима и нода
  * ещё есть на активной странице. Скрытая вкладка — ждём visibilitychange,
  * а не дёргаем провайдера вхолостую; удалённая/чужая нода — таймер снимается. */
-function scheduleMotionDesignPoll(id: number, refresh: () => void): void {
-  const oldTimer = motionDesignPollTimers.get(id);
+function scheduleMotionDesignPoll(get: () => FlowStoreState, id: number, refresh: () => void): void {
+  const key = nodeRunKey(get().activePageId, id);
+  const scope = captureNodeScope(get, id);
+  const oldTimer = motionDesignPollTimers.get(key);
   if (oldTimer) clearTimeout(oldTimer);
   const fire = () => {
-    motionDesignPollTimers.delete(id);
-    const st = useFlowStore.getState();
+    motionDesignPollTimers.delete(key);
+    if (!scope.owns()) return;
+    const st = get();
     if (!st.nodes.some((node) => Number(node.id) === id && node.type === "motiondesign")) return;
     if (typeof document !== "undefined" && document.hidden) {
       const resume = () => {
@@ -597,7 +604,7 @@ function scheduleMotionDesignPoll(id: number, refresh: () => void): void {
     }
     refresh();
   };
-  motionDesignPollTimers.set(id, setTimeout(fire, MOTION_DESIGN_POLL_MS));
+  motionDesignPollTimers.set(key, setTimeout(fire, MOTION_DESIGN_POLL_MS));
 }
 
 function motionDesignDigest(motion: IRObject | null, timeline: IRObject | null, video: VideoArtifact | null) {
@@ -715,7 +722,10 @@ async function refineSourceWithAi(
   id: number,
   effort: NodeEffort = "high",
   guard: () => void = () => {},
+  signal?: AbortSignal,
 ): Promise<BlockParseResp | null> {
+  const callApi: typeof api = (path, body, init) => api(path, body, { signal, ...init });
+  const chat = (request: Parameters<typeof cancellableChat>[0]) => cancellableChat(request, signal);
   const desktop = window.designDNA;
   if (!desktop) return null;
   setStatus(id, "AI-уточнение структуры…");
@@ -729,7 +739,7 @@ async function refineSourceWithAi(
     '{"op":"rename-component","block":"<name>","sourceKey":"<ключ>","label":"<текст>"}]}',
     "Не добавляй пояснений. Не выдумывай блоки и sourceKey, которых нет во входных данных.",
   ].join(" ");
-  const answer = await desktop.providers.chatRequest({
+  const answer = await chat({
     ...chatRoute(provider, effort),
     messages: [
       { role: "system", content: instruction },
@@ -752,7 +762,7 @@ async function refineSourceWithAi(
     throw new Error("AI-уточнение: некорректный JSON");
   }
   if (!Array.isArray(operations) || !operations.length) return null;
-  const applied = await api<{ blocks: BlockParseResp["blocks"]; sourceArtifact: unknown; appliedCount: number }>(
+  const applied = await callApi<{ blocks: BlockParseResp["blocks"]; sourceArtifact: unknown; appliedCount: number }>(
     "/api/block-parse/refine", {
       blocks: response.blocks, operations, source: response.sourceArtifact?.source,
     },
@@ -785,10 +795,13 @@ async function segmentScreenshotWithAi(
   id: number,
   effort: NodeEffort = "high",
   guard: () => void = () => {},
+  signal?: AbortSignal,
 ): Promise<SegmentResp | null> {
+  const callApi: typeof api = (path, body, init) => api(path, body, { signal, ...init });
+  const chat = (request: Parameters<typeof cancellableChat>[0]) => cancellableChat(request, signal);
   const desktop = window.designDNA;
   if (!desktop) return null;
-  const prepared = await api<{ tasks: SegmentTask[] }>("/api/reproduce/segment", {
+  const prepared = await callApi<{ tasks: SegmentTask[] }>("/api/reproduce/segment", {
     image, prepareOnly: true,
   });
   const tasks = prepared?.tasks || [];
@@ -799,7 +812,7 @@ async function segmentScreenshotWithAi(
   for (const [index, task] of tasks.entries()) {
     guard();
     setStatus(id, `Разметка компонентов: тайл ${index + 1}/${tasks.length}…`);
-    const answer = await desktop.providers.chatRequest({
+    const answer = await chat({
       ...chatRoute(provider, effort),
       messages: task.messages,
     });
@@ -808,7 +821,7 @@ async function segmentScreenshotWithAi(
   }
 
   setStatus(id, "Проверяю рамки по пикселям…");
-  const applied = await api<SegmentResp>("/api/reproduce/segment", { image, rawOutputs });
+  const applied = await callApi<SegmentResp>("/api/reproduce/segment", { image, rawOutputs });
   guard();
   if (!applied?.block || !(applied.regions || []).length) return null;
   return applied;
@@ -844,7 +857,10 @@ async function repairSourceWithAi(
   effort: NodeEffort = "high",
   guard: () => void = () => {},
   onWarning: (message: string) => void = () => {},
+  signal?: AbortSignal,
 ): Promise<BlockParseResp | null> {
+  const callApi: typeof api = (path, body, init) => api(path, body, { signal, ...init });
+  const chat = (request: Parameters<typeof cancellableChat>[0]) => cancellableChat(request, signal);
   const desktop = window.designDNA;
   if (!desktop) return null;
   let current = response;
@@ -858,7 +874,7 @@ async function repairSourceWithAi(
   for (let round = 1; round <= REPAIR_MAX_ROUNDS; round += 1) {
     guard();
     if ((current.blocks || []).every(blockGatePassed)) break;
-    const prepared = await api<{ tasks: RepairTask[] }>("/api/block-parse/repair", {
+    const prepared = await callApi<{ tasks: RepairTask[] }>("/api/block-parse/repair", {
       blocks: current.blocks, viewport, prepareOnly: true,
     });
     const tasks = prepared?.tasks || [];
@@ -871,7 +887,7 @@ async function repairSourceWithAi(
       guard();
       setStatus(id, `AI-починка ${round}/${REPAIR_MAX_ROUNDS}: диагностика ${index + 1}/${tasks.length}…`);
       try {
-        const answer = await desktop.providers.chatRequest({
+        const answer = await chat({
           ...chatRoute(provider, effort),
           messages: task.messages,
         });
@@ -895,7 +911,7 @@ async function repairSourceWithAi(
 
     setStatus(id, `AI-починка ${round}/${REPAIR_MAX_ROUNDS}: перепроверяю сходство…`);
     guard();
-    const applied = await api<RepairApplyResp>("/api/block-parse/repair", {
+    const applied = await callApi<RepairApplyResp>("/api/block-parse/repair", {
       blocks: current.blocks, viewport, rawOutputs,
     });
     guard();
@@ -963,6 +979,7 @@ export interface FlowStoreState {
   view: LegacyView;
   nextId: number;
   pages: FlowPage[];
+  pageRuntimes: Record<string, PageRuntime>;
   activePageId: string;
   channels: Record<string, IRObject | null>;
   designSystems: DesignSystemsRegistry;
@@ -999,8 +1016,7 @@ export interface FlowStoreState {
   setStatus: (id: number, text: string, kind?: "ok" | "err" | "warn") => void;
   setBusy: (id: number, v: boolean) => void;
   setProgress: (id: number, progress: { expectedMs: number; label: string; percent?: number; stage?: string } | null) => void;
-  /* Отмена идущего запроса ноды: в браузере — AbortController у fetch,
-   * в десктопе — рестарт long-воркера через designDNA.api.cancel. */
+  /* Адресная отмена запроса ноды; общий воркер продолжает работу. */
   cancelRun: (id: number) => Promise<void>;
   undoGraph: () => boolean;
   redoGraph: () => boolean;
@@ -1008,6 +1024,7 @@ export interface FlowStoreState {
   refreshInputs: (id: number, visited?: Set<number>) => void;
   runNode: (id: number) => void;
   runGenerator: (id: number) => Promise<void>;
+  retryGeneratorAssets: (id: number, slotId?: string) => Promise<void>;
   runMix: (id: number) => Promise<void>;
   runPage: (id: number) => void;
   refreshEdit: (id: number) => void;
@@ -1267,13 +1284,13 @@ const EMPTY_GRAPH_HISTORY: GraphHistory = { past: [], future: [] };
 const GRAPH_HISTORY_LIMIT = 50;
 let graphHistoryMuted = 0;
 
-function recordGraphHistory(): void {
+function recordGraphHistory(get: () => FlowStoreState, set: FlowSet): void {
   if (graphHistoryMuted > 0) return;
-  const st = useFlowStore.getState();
+  const st = get();
   const past = st.graphHistory.past.length >= GRAPH_HISTORY_LIMIT
     ? st.graphHistory.past.slice(1)
     : st.graphHistory.past;
-  useFlowStore.setState({
+  set({
     graphHistory: { past: [...past, { nodes: st.nodes, edges: st.edges }], future: [] },
   });
 }
@@ -1292,17 +1309,17 @@ function withGraphHistoryMuted<T>(fn: () => T): T {
 /* После восстановления снимка данные по восстановленным рёбрам нужно
  * протолкнуть заново (зеркало connect/deleteEdge), иначе downstream-ноды
  * остаются с устаревшим входом. */
-function resyncAfterGraphRestore(before: FlowEdge[], after: FlowEdge[]): void {
+function resyncAfterGraphRestore(get: () => FlowStoreState, before: FlowEdge[], after: FlowEdge[]): void {
   const beforeIds = new Set(before.map((edge) => edge.id));
   const afterIds = new Set(after.map((edge) => edge.id));
   withGraphHistoryMuted(() => {
-    const st = useFlowStore.getState();
+    const st = get();
     for (const edge of after) {
       if (!beforeIds.has(edge.id)) st.propagate(Number(edge.source));
     }
     for (const edge of before) {
       if (afterIds.has(edge.id)) continue;
-      const target = useFlowStore.getState().nodes.find((node) => node.id === edge.target);
+      const target = get().nodes.find((node) => node.id === edge.target);
       if (target) st.refreshInputs(Number(target.id));
     }
   });
@@ -1310,33 +1327,62 @@ function resyncAfterGraphRestore(before: FlowEdge[], after: FlowEdge[]): void {
 
 /* AbortController идущих fetch-запросов нод (браузерный режим): отмена
  * обрывает ожидание на клиенте, сервер дорабатывает запрос в фоне. */
-const runAborts = new Map<number, AbortController>();
-let graphEpoch = 0;
-const nodeLifetimes = new Map<number, number>();
-function leaveGraph(): void {
+const runAborts = new Map<string, AbortController>();
+const graphEpochs = new Map<string, number>();
+const nodeLifetimes = new Map<string, number>();
+const nodeRunKey = (pageId: string, id: number) => JSON.stringify([pageId, id]);
+function invalidateRemovedNodes(get: () => FlowStoreState, next: FlowNode[]): void {
+  const alive = new Set(next.map(node => node.id));
+  for (const node of get().nodes) {
+    if (alive.has(node.id)) continue;
+    const id = Number(node.id), key = nodeRunKey(get().activePageId, id);
+    nodeLifetimes.set(key, (nodeLifetimes.get(key) || 0) + 1);
+    runAborts.get(key)?.abort();
+    get().setBusy(id, false);
+  }
+}
+function leaveGraph(pageId: string): void {
   flushAllNodeText();
-  graphEpoch += 1;
-  for (const controller of runAborts.values()) controller.abort();
-  runAborts.clear();
-  for (const runId of runIds.values()) void api(`/api/runs/${runId}/cancel`, {}).catch(() => undefined);
-  runIds.clear();
+  graphEpochs.set(pageId, (graphEpochs.get(pageId) || 0) + 1);
+  for (const [key, controller] of runAborts) {
+    if (JSON.parse(key)[0] !== pageId) continue;
+    controller.abort();
+    runAborts.delete(key);
+  }
+  for (const [key, runId] of runIds) {
+    if (JSON.parse(key)[0] !== pageId) continue;
+    void api(`/api/runs/${runId}/cancel`, {}).catch(() => undefined);
+    runIds.delete(key);
+  }
+  for (const [key, timer] of motionDesignPollTimers) {
+    if (JSON.parse(key)[0] === pageId) { clearTimeout(timer); motionDesignPollTimers.delete(key); }
+  }
 }
 
-/** Numeric node IDs are local to a sheet. A task must never write into a new
- * sheet, a replacement graph, or a deleted/recreated node with the same ID. */
+/** Navigation preserves ownership. Only deletion/replacement invalidates it. */
 export function captureNodeScope(get: () => FlowStoreState, id: number) {
-  const initial = get(), epoch = graphEpoch, lifetime = nodeLifetimes.get(id);
+  const initial = get(), pageId = initial.activePageId, key = nodeRunKey(pageId, id);
+  get = bindPageState(pageId);
+  const epoch = graphEpochs.get(pageId), lifetime = nodeLifetimes.get(key);
   const type = initial.nodes.find(node => Number(node.id) === id)?.type;
-  const owns = () => graphEpoch === epoch && nodeLifetimes.get(id) === lifetime
-    && get().activePageId === initial.activePageId
-    && get().nodes.some(node => Number(node.id) === id && node.type === type);
+  const owns = () => graphEpochs.get(pageId) === epoch && nodeLifetimes.get(key) === lifetime
+    && !!type && get().nodes.some(node => Number(node.id) === id && node.type === type);
+  const visible = () => owns() && useFlowStore.getState().activePageId === pageId;
   let inputCurrent = () => true;
   const check = () => {
     if (!owns()) throw new DOMException("Лист или нода изменились", "AbortError");
+    if (runAborts.get(key)?.signal.aborted) throw new DOMException("Отменено", "AbortError");
     if (!inputCurrent()) throw new DOMException("Входные данные изменились. Запустите ноду заново.", "AbortError");
   };
-  return { owns, check, watchInputs(test: () => boolean) { inputCurrent = test; }, async wait<T>(promise: Promise<T>): Promise<T> {
+  return { owns, visible, get, check,
+    api: <T>(path: string, body: unknown, init?: { signal?: AbortSignal; runId?: string }) =>
+      api<T>(path, body, { signal: runAborts.get(key)?.signal, ...init }),
+    apiGet: <T>(path: string) => apiGet<T>(path, { signal: runAborts.get(key)?.signal }),
+    chat: (request: Parameters<typeof cancellableChat>[0]) => cancellableChat(request, runAborts.get(key)?.signal),
+    watchInputs(test: () => boolean) { inputCurrent = test; }, async wait<T>(promise: Promise<T>): Promise<T> {
+    const signal = runAborts.get(key)?.signal;
     const value = await promise;
+    if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
     check();
     return value;
   } };
@@ -1367,27 +1413,27 @@ function watchNodeInputs(scope: ReturnType<typeof captureNodeScope>, get: () => 
 }
 
 
-function beginRunAbort(id: number): AbortSignal {
-  runAborts.get(id)?.abort();
+export function beginRunAbort(id: number, pageId = useFlowStore.getState().activePageId): AbortSignal {
+  const key = nodeRunKey(pageId, id);
+  runAborts.get(key)?.abort();
   const controller = new AbortController();
-  runAborts.set(id, controller);
+  runAborts.set(key, controller);
   return controller.signal;
 }
 
-function endRunAbort(id: number, signal: AbortSignal): void {
-  if (runAborts.get(id)?.signal === signal) runAborts.delete(id);
+export function endRunAbort(id: number, signal: AbortSignal, pageId = useFlowStore.getState().activePageId): void {
+  const key = nodeRunKey(pageId, id);
+  if (runAborts.get(key)?.signal === signal) runAborts.delete(key);
 }
 
-/* Для кнопки отмены на ноде: контроллер регистрируется до setBusy(true),
- * поэтому реактивного busy достаточно как триггера перепроверки. */
-export function hasRunAbort(id: number): boolean {
-  return runAborts.has(id);
+export function hasRunAbort(id: number, pageId = useFlowStore.getState().activePageId): boolean {
+  return runAborts.has(nodeRunKey(pageId, id));
 }
 
 /* Серверные стадии длинных запусков (app/run_registry.py): web слушает SSE,
  * polling включается только как fallback. Desktop получает собственные IPC-
  * события. Отмена web-запуска кооперативно закрывает LLM stream на дельте. */
-const runIds = new Map<number, string>();
+const runIds = new Map<string, string>();
 
 function newRunId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -1395,15 +1441,15 @@ function newRunId(): string {
     : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function watchRunStages(id: number, runId: string, expectedMs: number, label: string): () => void {
-  runIds.set(id, runId);
+function watchRunStages(get: () => FlowStoreState, id: number, runId: string, expectedMs: number, label: string): () => void {
+  runIds.set(nodeRunKey(get().activePageId, id), runId);
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
   let source: EventSource | null = null;
   type RunProgress = { status?: string; stageLabel?: string; percent?: number | null; receivedChars?: number };
   const applyRun = (run: RunProgress) => {
-    if (runIds.get(id) !== runId || !run || run.status !== "running") return;
-    const st = useFlowStore.getState();
+    if (runIds.get(nodeRunKey(get().activePageId, id)) !== runId || !run || run.status !== "running") return;
+    const st = get();
     if (!st.busy[id]) return;
     const received = typeof run.receivedChars === "number" ? run.receivedChars : 0;
     const receivedLabel = received >= 1000
@@ -1446,7 +1492,7 @@ function watchRunStages(id: number, runId: string, expectedMs: number, label: st
     source?.close();
     if (pollTimer) clearInterval(pollTimer);
     if (fallbackTimer) clearTimeout(fallbackTimer);
-    if (runIds.get(id) === runId) runIds.delete(id);
+    if (runIds.get(nodeRunKey(get().activePageId, id)) === runId) runIds.delete(nodeRunKey(get().activePageId, id));
   };
 }
 
@@ -1454,7 +1500,7 @@ function isAbortError(error: unknown): boolean {
   return !!error && typeof error === "object" && (error as { name?: string }).name === "AbortError";
 }
 
-export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
+function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreState { return ({
   designSystems: initialDesignSystems,
   designSystemPicker: emptyPicker,
   // A clean desktop profile has no localStorage snapshot. Until SQLite has
@@ -1465,6 +1511,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   view: initialActiveGraph.view,
   nextId: initialActiveGraph.nextId,
   pages: initialPages,
+  pageRuntimes: {},
   activePageId: initialActivePageId,
   channels: initialChannels,
   statuses: {},
@@ -1491,7 +1538,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       initialHeight: 120,
       data,
     } as FlowNode;
-    recordGraphHistory();
+    recordGraphHistory(get, set);
     set({ nodes: [...get().nodes, node], nextId: id + 1 });
     return { id, type, x: rx, y: ry, data: node.data };
   },
@@ -1512,7 +1559,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       return !!position && (position.x !== node.position.x || position.y !== node.position.y);
     });
     if (!moved) return; // dragstop без смещения: ни снимка в историю, ни автосейва
-    recordGraphHistory();
+    recordGraphHistory(get, set);
     set({
       nodes: current.map((node) => {
         const position = positions.get(node.id);
@@ -1540,7 +1587,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       changed = true;
       return { ...node, position, selected: selected.has(node.id), dragging: false };
     });
-    if (moved) recordGraphHistory();
+    if (moved) recordGraphHistory(get, set);
     if (changed) set({ nodes });
   },
 
@@ -1573,7 +1620,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       ...state.edges.filter((e) => !(e.target === sidTarget && e.targetHandle === to.port)),
       makeRfEdge(state.nodes, { node: fromNode, port: from.port }, { node: toNode, port: to.port }),
     ];
-    recordGraphHistory();
+    recordGraphHistory(get, set);
     set({ edges: nextEdges });
     // зеркало nodes.js:1067: propagate от источника
     get().propagate(fromNode);
@@ -1584,12 +1631,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
    * Без подтверждения: удаление обратимо через undoGraph, тост даёт «Вернуть». */
   deleteNode: (id) => {
     flushAllNodeText();
-    nodeLifetimes.set(id, (nodeLifetimes.get(id) || 0) + 1);
-    runAborts.get(id)?.abort();
+    nodeLifetimes.set(nodeRunKey(get().activePageId, id), (nodeLifetimes.get(nodeRunKey(get().activePageId, id)) || 0) + 1);
+    runAborts.get(nodeRunKey(get().activePageId, id))?.abort();
     const sid = String(id);
     if (!get().nodes.some((node) => node.id === sid)) return;
     const targets = [...new Set(get().edges.filter((edge) => edge.source === sid).map((edge) => Number(edge.target)))];
-    recordGraphHistory();
+    recordGraphHistory(get, set);
     if (graphHistoryMuted === 0) {
       toast("Нода удалена · Ctrl+Z вернёт", "info", {
         key: "graph-delete",
@@ -1614,7 +1661,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   deleteEdge: (edgeId) => {
     const removed = get().edges.find((edge) => edge.id === edgeId);
     if (!removed) return;
-    recordGraphHistory();
+    recordGraphHistory(get, set);
     set({ edges: get().edges.filter((edge) => edge.id !== edgeId) });
     const target = get().nodes.find((node) => node.id === removed.target);
     if (target) get().refreshInputs(Number(target.id));
@@ -1624,7 +1671,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const sid = String(id);
     const connected = get().edges.filter((edge) => edge.source === sid || edge.target === sid);
     if (!connected.length) return 0;
-    recordGraphHistory(); // один шаг undo на все рёбра ноды
+    recordGraphHistory(get, set); // один шаг undo на все рёбра ноды
     withGraphHistoryMuted(() => {
       for (const edge of connected) get().deleteEdge(edge.id);
     });
@@ -1741,6 +1788,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   setBusy: (id, v) => {
+    const key = nodeRunKey(get().activePageId, id);
+    if (v && !runAborts.has(key)) beginRunAbort(id, get().activePageId);
+    if (!v) runAborts.delete(key);
     set((state) => ({ busy: { ...state.busy, [id]: v } }));
   },
 
@@ -1761,25 +1811,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   cancelRun: async (id) => {
-    const scope = captureNodeScope(get, id);
-    // Сначала серверу: кооперативная отмена не даст начать следующую стадию
-    // (следующий LLM-вызов), затем обрываем ожидание на клиенте.
-    const runId = runIds.get(id);
+    const runId = runIds.get(nodeRunKey(get().activePageId, id));
     if (runId) void api(`/api/runs/${runId}/cancel`, {}).catch(() => undefined);
-    const controller = runAborts.get(id);
+    const controller = runAborts.get(nodeRunKey(get().activePageId, id));
     controller?.abort();
-    const cancellingNode = get().nodes.find(node => Number(node.id) === id);
-    if (["image", "removebackground", "generator", "qualitypass"].includes(cancellingNode?.type || "")) {
-      // Image runs cancel their own provider request; never restart another worker.
-      if (controller) get().setStatus(id, "Отменено", "err");
-      return;
-    }
-    // Десктоп: с известным runId main.mjs шлёт воркеру адресный cancel
-    // (cancel_token, кооперативно между стадиями); без него — прежний рестарт
-    // long-воркера как последний рубеж.
-    const desktopCancel = window.designDNA?.api?.cancel;
-    if (desktopCancel) await desktopCancel("long", runId).catch(() => undefined);
-    if (scope.owns() && (controller || desktopCancel)) get().setStatus(id, "Отменено", "err");
+    if (controller) get().setStatus(id, "Отменено", "err");
   },
 
   undoGraph: () => {
@@ -1787,12 +1823,13 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const prev = st.graphHistory.past[st.graphHistory.past.length - 1];
     if (!prev) return false;
     const current: GraphSnapshot = { nodes: st.nodes, edges: st.edges };
+    invalidateRemovedNodes(get, prev.nodes);
     set({
       nodes: prev.nodes,
       edges: prev.edges,
       graphHistory: { past: st.graphHistory.past.slice(0, -1), future: [...st.graphHistory.future, current] },
     });
-    resyncAfterGraphRestore(current.edges, prev.edges);
+    resyncAfterGraphRestore(get, current.edges, prev.edges);
     return true;
   },
 
@@ -1801,12 +1838,13 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const next = st.graphHistory.future[st.graphHistory.future.length - 1];
     if (!next) return false;
     const current: GraphSnapshot = { nodes: st.nodes, edges: st.edges };
+    invalidateRemovedNodes(get, next.nodes);
     set({
       nodes: next.nodes,
       edges: next.edges,
       graphHistory: { past: [...st.graphHistory.past, current], future: st.graphHistory.future.slice(0, -1) },
     });
-    resyncAfterGraphRestore(current.edges, next.edges);
+    resyncAfterGraphRestore(get, current.edges, next.edges);
     return true;
   },
 
@@ -1976,7 +2014,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const referenceMaster = referenceNode
       ? (referenceNode.data as Record<string, unknown>)._dsMaster as Record<string, unknown> | undefined
       : undefined;
-    const styleHint = typeof referenceRaw === "string" && referenceRaw.trim() ? referenceRaw.trim() : undefined;
+    let visualReference = generatorVisualReference(st.nodes, st.edges, n);
+    const styleHint = typeof referenceRaw === "string" && !visualReference && referenceRaw.trim() ? referenceRaw.trim() : undefined;
+    let conceptHash: string | undefined;
     const desktop = window.designDNA;
     const effort: "medium" | "high" | "max" = ["medium", "high", "max"].includes(data.effort)
       ? data.effort
@@ -1987,7 +2027,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       ? PROVIDER_LABELS.codex
       : `${PROVIDER_LABELS[provider]} · ${effort}`;
     if (scope.owns()) get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
-    const signal = beginRunAbort(id);
+    const signal = beginRunAbort(id, get().activePageId);
     get().setNodeData(id, { qualityScores: [], qualityReviews: [] });
     let stopPoll: () => void = () => {};
     if (scope.owns()) get().setBusy(id, true);
@@ -2062,6 +2102,21 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             } : {}),
           } as IRObject]
         : undefined;
+      if (data.conceptMode === "on" && visualReference?.role !== "reproduce") {
+        get().setProgress(id, { expectedMs: 120_000, label: "Эскиз", stage: "Создаю визуальное направление" });
+        const concept = await createVisualConcept({ id: newRunId(), inputKey, startedAt: Date.now(),
+          conceptOnly: true, status: "running", provider: effectiveAssetProvider(data.assetMode, provider) },
+          { brief, tokens, designSystem: designSystemRef }, { signal, check: scope.check, model: data.assetModel, reference: visualReference,
+            onChange: run => {
+              const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
+              get().setNodeData(id, { conceptRuns: conceptRunPatch(now.conceptRuns, run) });
+            },
+          });
+        if (concept.result) {
+          visualReference = { image: concept.result.src, role: "composition", conceptOnly: true, origin: "Эскиз генерации" };
+          conceptHash = concept.result.sha256;
+        }
+      }
       const request = {
         brief,
         count,
@@ -2075,6 +2130,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         preset: data.preset || undefined,
         designSystem: designSystemRef,
         referenceIrs,
+        visualReference,
         // T1 may expose the staged contract under either name while old
         // servers simply ignore these extra Pydantic fields.
         selectedDirection: String((data as Record<string, unknown>).selectedDirection || "all"),
@@ -2085,15 +2141,15 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       if (!desktop) {
         const runId = newRunId();
         if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Модель генерирует IR" });
-        stopPoll = watchRunStages(id, runId, 90_000, progressLabel);
+        stopPoll = watchRunStages(get, id, runId, 90_000, progressLabel);
         try {
-          res = await scope.wait(api<GenerateResp>("/api/generate", { ...request, runId }, { signal, runId }));
+          res = await scope.wait(scope.api<GenerateResp>("/api/generate", { ...request, runId }, { signal, runId }));
         } finally {
           stopPoll();
         }
       } else {
         const prepareRequest = { ...request, prepareOnly: true, clientArtDirection: true };
-        let prepared = await scope.wait(api<GenerateResp>("/api/generate", prepareRequest, { signal }));
+        let prepared = await scope.wait(scope.api<GenerateResp>("/api/generate", prepareRequest, { signal }));
         if (prepared.artDirection?.messages?.length) {
           // Арт-направления идут через транспорт Electron (регулятор, трасса,
           // GPT по подписке через Codex), а не из Python-воркера.
@@ -2104,7 +2160,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             messages: prepared.artDirection.messages,
           }, signal));
           if (signal.aborted) throw new DOMException("cancelled", "AbortError");
-          prepared = await scope.wait(api<GenerateResp>("/api/generate", { ...prepareRequest, artDirectionRaw: directionsAnswer.content }, { signal }));
+          prepared = await scope.wait(scope.api<GenerateResp>("/api/generate", { ...prepareRequest, artDirectionRaw: directionsAnswer.content }, { signal }));
         }
         if (!prepared.prompts?.length && Array.isArray(prepared.variants) && prepared.variants.length) {
           // strict + пиннутый мастер, который не влезает в промпт: сервер уже
@@ -2124,18 +2180,45 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             rawOutputs.push(answer.content);
           }
           if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Проверка схемы и автофиксы" });
-          res = await scope.wait(api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId }, { signal }));
+          res = await scope.wait(scope.api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId }, { signal }));
         }
       }
       const directionResponse = res as GenerateDirectionResp;
-      const variants = Array.isArray(res.variants) ? [...res.variants] : [];
-      const generationContext = { inputKey, pageId: st.activePageId, brief, startedAt };
+      let variants = Array.isArray(res.variants) ? [...res.variants] : [];
+      const generationContext = { inputKey, baseInputKey: generatorInputKey(get().nodes, get().edges,
+        get().nodes.find(node => Number(node.id) === id)!, get().designSystemPicker, false, true),
+        pageId: st.activePageId, brief, startedAt, designSystem: designSystemRef };
       const directions = generatorDirections(directionResponse);
       const variantDirections = generatorVariantDirections(directionResponse, variants, directions);
       const directionPatch = { directions };
       const generationLog = (res as unknown as Record<string, unknown>).generationLog;
       const logPatch = generationLog && typeof generationLog === "object" ? { generationLog: generationLog as Record<string, unknown> } : {};
       if (scope.owns()) get().setNodeData(id, { variants, active: 0, qualityScores: [], qualityReviews: [], generationContext, variantDirections, ...directionPatch, ...logPatch } as unknown as Partial<GeneratorNodeData>);
+      let assetRun: AssetRun | undefined;
+      if (data.assetMode !== "off" && hasImagePrompts(variants)) {
+        const plan = await scope.wait(scope.api<AssetPlan>("/api/generate/assets/prepare", { variants,
+          context: { brief, inputKey, pageId: st.activePageId, designSystem: designSystemRef, designPolicy: res.designPolicy,
+            coherentSeries: data.assetConsistency !== "independent", conceptHash } }, { signal }));
+        if (plan.slots.length) {
+          assetRun = { id: newRunId(), inputKey, pageId: st.activePageId, generationStartedAt: startedAt, startedAt: Date.now(), status: "running",
+            provider: effectiveAssetProvider(data.assetMode, provider), model: data.assetModel, plan, events: [] };
+          let expected = inputFingerprint(variants);
+          const assetScope = { check: () => {
+            scope.check();
+            const now = get().nodes.find(node => Number(node.id) === id)?.data as GeneratorNodeData;
+            if (inputFingerprint(now?.variants) !== expected) throw new DOMException("Варианты изменились", "AbortError");
+          } };
+          const result = await executeAssetPlan(variants, assetRun, { signal, scope: assetScope,
+            onStage: stage => get().setProgress(id, { expectedMs: 120_000, label: "Изображения", stage }),
+            onChange: (next, run) => {
+              const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
+              get().setNodeData(id, { variants: next, assetRuns: assetRunPatch(now.assetRuns, run) });
+              expected = inputFingerprint(next);
+            },
+          });
+          variants = result.variants; assetRun = result.run;
+        }
+      }
       // Quality Pass встроен: судья + починка каждого варианта тем же
       // провайдером. Провал судьи не теряет вариант — он остаётся как есть
       // с прочерком в статусе.
@@ -2147,7 +2230,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         if (scope.owns()) get().setStatus(id, `Quality Pass${label}: судья…`);
         if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage: "Судья оценивает" });
         const qpRunId = newRunId();
-        const stopQpPoll = desktop ? () => {} : watchRunStages(id, qpRunId, 60_000, `Quality Pass${label}`);
+        const stopQpPoll = desktop ? () => {} : watchRunStages(get, id, qpRunId, 60_000, `Quality Pass${label}`);
         try {
           const qp = await scope.wait(qualityPassCycle(variants[i], brief, provider, effort, (stage) => {
             scope.check();
@@ -2159,10 +2242,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           const rawScore = qp.scorecard?.score;
           const score = rawScore == null || !Number.isFinite(Number(rawScore)) ? null : Number(rawScore);
           qualityScores.push(score);
+          if (assetRun) (assetRun.quality ||= [])[i] = qp.resourceEvidence || null;
           qualityReviews.push({
             score,
             passed: qp.acceptance?.status === "unverified" ? null : typeof qp.passed === "boolean" ? qp.passed : null,
-            reasons: (qp.scorecard?.issues || []).map((issue) => {
+            reasons: [...(qp.resourceEvidence?.errors || []), ...(qp.scorecard?.issues || [])].map((issue) => {
               const problem = String(issue.problem || "").trim();
               return problem || String((issue as Record<string, unknown>).instruction || "").trim();
             }).filter(Boolean).slice(0, 5),
@@ -2176,6 +2260,18 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           qualityReviews.push({ score: null, passed: null, reasons: [] });
         } finally {
           stopQpPoll();
+        }
+      }
+      if (assetRun) {
+        variants = await scope.wait(reconcileAssets(variants, assetRun, signal, scope));
+        assetRun.status = assetRun.plan.slots.every(slot => slot.status === "complete") ? "complete" : "partial";
+        const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
+        get().setNodeData(id, { assetRuns: assetRunPatch(now.assetRuns, assetRun) });
+        for (const slot of assetRun.plan.slots.filter(slot => slot.status !== "complete")) {
+          if (qualityReviews[slot.variant]) {
+            qualityReviews[slot.variant].passed = false;
+            qualityReviews[slot.variant].reasons.push(`Изображение не готово: ${slot.subject.slice(0, 100)}`);
+          }
         }
       }
       if (scope.owns()) get().setNodeData(id, { variants: [...variants], active: 0, qualityScores, qualityReviews, generationContext, variantDirections, ...directionPatch } as unknown as Partial<GeneratorNodeData>);
@@ -2220,9 +2316,90 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       }
     } finally {
       stopPoll();
-      endRunAbort(id, signal);
+      endRunAbort(id, signal, get().activePageId);
       if (scope.owns()) get().setProgress(id, null);
       if (scope.owns()) get().setBusy(id, false);
+      if (scope.owns()) {
+        const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
+        if (now.assetRuns?.at(-1)?.status === "running") get().setNodeData(id, { assetRuns: settleInterruptedAssets(now.assetRuns) });
+        if (now.conceptRuns?.at(-1)?.status === "running") get().setNodeData(id, { conceptRuns: settleInterruptedConcepts(now.conceptRuns) });
+      }
+    }
+  },
+
+  retryGeneratorAssets: async (id, slotId) => {
+    flushAllNodeText();
+    const state = get(), node = state.nodes.find(node => Number(node.id) === id);
+    if (!node || node.type !== "generator" || state.busy[id]) return;
+    const data = node.data as GeneratorNodeData, context = data.generationContext;
+    const previous = data.assetRuns?.at(-1);
+    if (!previous || !context) return;
+    if (previous.generationStartedAt != null && previous.generationStartedAt !== context.startedAt) {
+      get().setStatus(id, "Этот план относится к предыдущей генерации", "warn"); return;
+    }
+    if (context.pageId !== state.activePageId || context.baseInputKey !== generatorInputKey(state.nodes, state.edges, node, state.designSystemPicker, false, true)) {
+      get().setStatus(id, "Входные данные изменились: запустите Генератор для нового задания", "warn"); return;
+    }
+    const scope = captureNodeScope(get, id), signal = beginRunAbort(id, get().activePageId);
+    const inputKey = generatorInputKey(state.nodes, state.edges, node, state.designSystemPicker);
+    let expected = inputFingerprint(data.variants);
+    scope.watchInputs(() => {
+      const now = get(), current = now.nodes.find(node => Number(node.id) === id);
+      return !!current && generatorInputKey(now.nodes, now.edges, current, now.designSystemPicker) === inputKey
+        && inputFingerprint((current.data as GeneratorNodeData).variants) === expected;
+    });
+    get().setBusy(id, true);
+    let run: AssetRun = structuredClone(previous);
+    run.id = newRunId(); run.startedAt = Date.now(); run.inputKey = inputKey;
+    run.provider = effectiveAssetProvider(data.assetMode, nodeProvider(data.provider)); run.model = data.assetModel;
+    run.events = []; delete run.finishedAt;
+    try {
+      const plan = await scope.wait(scope.api<AssetPlan>("/api/generate/assets/prepare", { variants: data.variants,
+        context: { ...previous.plan.context, coherentSeries: data.assetConsistency !== "independent" } }, { signal }));
+      run.plan.context = plan.context;
+      run.plan.slots = run.plan.slots.map(slot => {
+        const fresh = plan.slots.find(candidate => candidate.id === slot.id);
+        return slot.status !== "complete" && fresh ? { ...fresh, attempts: slot.attempts } : slot;
+      });
+      const result = await executeAssetPlan(data.variants, run, { signal, scope, onlySlot: slotId,
+        onStage: stage => get().setProgress(id, { expectedMs: 120_000, label: "Изображения", stage }),
+        onChange: (variants, current) => {
+          const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
+          get().setNodeData(id, { variants, assetRuns: assetRunPatch(now.assetRuns, current), qualityReviews: [], qualityScores: [] });
+          expected = inputFingerprint(variants);
+        },
+      });
+      run = result.run;
+      const variants = result.variants, reviews: GeneratorQualityReview[] = [];
+      for (let index = 0; index < variants.length; index++) {
+        try {
+          const qp = await scope.wait(qualityPassCycle(variants[index], context.brief, nodeProvider(data.provider), data.effort,
+            stage => get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage }),
+            { signal, repair: false, visualReview: true, surface: data.surface || "auto", designSystem: context.designSystem }));
+          const missing = run.plan.slots.some(slot => slot.variant === index && slot.status !== "complete");
+          (run.quality ||= [])[index] = qp.resourceEvidence || null;
+          reviews.push({ score: qp.scorecard?.score ?? null, passed: missing ? false : qp.acceptance?.status === "unverified" ? null : qp.passed ?? null,
+            reasons: missing ? ["Не все изображения готовы"] : [...(qp.resourceEvidence?.errors || []), ...(qp.scorecard?.issues || [])].map(issue => String(issue.problem || "")).filter(Boolean) });
+        } catch (error) {
+          scope.check(); if (signal.aborted) throw error;
+          reviews.push({ score: null, passed: null, reasons: ["Проверка не завершена"] });
+        }
+      }
+      scope.check();
+      const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
+      get().setNodeData(id, { qualityReviews: reviews, qualityScores: reviews.map(review => review.score), generationContext: { ...context, inputKey }, assetRuns: assetRunPatch(now.assetRuns, run) });
+      get().setStatus(id, run.status === "complete" ? "Изображения готовы" : "Часть изображений требует повторной попытки",
+        run.status === "complete" && reviews.every(review => review.passed === true) ? "ok" : "warn");
+      get().propagate(id);
+    } catch (error) {
+      if (scope.owns()) get().setStatus(id, isAbortError(error) || signal.aborted ? "Создание изображений остановлено" : friendlyProviderError(error), "warn");
+    } finally {
+      endRunAbort(id, signal, get().activePageId);
+      if (scope.owns()) {
+        const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
+        get().setNodeData(id, { assetRuns: settleInterruptedAssets(now.assetRuns) });
+        get().setBusy(id, false); get().setProgress(id, null);
+      }
     }
   },
 
@@ -2268,7 +2445,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         runs.push(boosted.map((w) => w / sum));
       }
       const results = await scope.wait(Promise.all(
-        runs.map((run) => api<MixResp>("/api/mix", { irs, weights: run })),
+        runs.map((run) => scope.api<MixResp>("/api/mix", { irs, weights: run })),
       ));
       const mixVariants = results.map((res) => res.ir).filter((ir): ir is IRObject => !!ir);
       if (scope.owns()) get().setNodeData(id, { mixVariants, mixActive: 0, ir: mixVariants[0] || null });
@@ -2338,15 +2515,20 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const data = n.data as SourceImportNodeData;
     const provider = nodeProvider(data.aiProvider);
     const effort = nodeEffort(data.aiEffort || "high");
-    const signal = beginRunAbort(id);
+    const signal = beginRunAbort(id, get().activePageId);
     const sourceRun = newRunId();
+    let sourceJobId: string | null = null;
+    const cancelJob = () => {
+      if (sourceJobId) void api(`/api/block-parse/job/${encodeURIComponent(sourceJobId)}/cancel`, {}).catch(() => undefined);
+    };
+    signal.addEventListener("abort", cancelJob, { once: true });
     const sourceInput = (value: SourceImportNodeData) => inputFingerprint({
       mode: value.mode, url: value.url, image: value.image, mine: value.mine,
       authenticatedSession: value.authenticatedSession, kit: sourceKitFingerprint(value),
     });
     let inputAtStart = sourceInput(data);
     if (scope.owns()) get().setNodeData(id, { _sourceRun: sourceRun });
-    const ownsRun = () => get().activePageId === st.activePageId && runAborts.get(id)?.signal === signal
+    const ownsRun = () => get().activePageId === st.activePageId && runAborts.get(nodeRunKey(get().activePageId, id))?.signal === signal
       && get().nodes.some((node) => Number(node.id) === id && node.type === "sourceimport"
         && (node.data as unknown as Record<string, unknown>)._sourceRun === sourceRun);
     const guard = () => {
@@ -2384,7 +2566,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           try {
             recordStage("segmentation", "running", "AI-сегментация…");
             segmented = await scope.wait(segmentScreenshotWithAi(
-              data.image, provider, get().setStatus, id, effort, guard));
+              data.image, provider, get().setStatus, id, effort, guard, signal));
             guard();
             recordStage("segmentation", segmented ? "success" : "warning", segmented ? "Компоненты размечены" : "AI-сегментация не вернула компоненты");
           } catch (error) {
@@ -2410,7 +2592,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         if (scope.owns()) get().setStatus(id, "Скриншот → pixel capture через подключённый аккаунт…");
         guard();
         if (provider === "codex" || provider === "claude") throw new Error("AI-сегментация не завершена; API fallback для выбранного desktop-аккаунта отключён");
-        const res = await scope.wait(api<ReproduceResp>("/api/reproduce", {
+        const res = await scope.wait(scope.api<ReproduceResp>("/api/reproduce", {
           image: data.image,
           url: "",
           provider,
@@ -2455,9 +2637,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         recordStage("import", "running", "Source Import…");
         if (scope.owns()) get().setStatus(id, `Импортирую ${url.slice(0, 30)}…`);
         const desktop = window.designDNA;
-        const initial = await scope.wait(api<BlockParseResp | BlockParseJobResp>("/api/block-parse", {
+        sourceJobId = sourceRun;
+        const initial = await scope.wait(scope.api<BlockParseResp | BlockParseJobResp>("/api/block-parse", {
           url,
           asyncJob: true,
+          jobId: sourceJobId,
           fullResolutionEvidence: !!desktop,
           useAuthenticatedSession: !!data.authenticatedSession && !!window.designDNA?.sourceAuth,
           viewports: [
@@ -2465,11 +2649,12 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             { name: "tablet", width: 768, height: 1024 },
             { name: "mobile", width: 390, height: 844 },
           ],
-        }));
+        }, { signal }));
         guard();
         let res: BlockParseResp;
         if ("jobId" in initial) {
           let job = initial;
+          sourceJobId = job.jobId;
           const started = Date.now();
           const deadline = started + 12 * 60_000;
           while (job.status === "queued" || job.status === "running") {
@@ -2488,9 +2673,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             const delay = elapsed < 10_000 ? 400 : elapsed < 60_000 ? 1_000 : 2_000;
             await scope.wait(new Promise((resolve) => setTimeout(resolve, delay)));
             guard();
-            job = await scope.wait(apiGet<BlockParseJobResp>(`/api/block-parse/job/${encodeURIComponent(job.jobId)}`));
+            job = await scope.wait(scope.apiGet<BlockParseJobResp>(`/api/block-parse/job/${encodeURIComponent(job.jobId)}`));
             guard();
           }
+          if (job.status === "cancelled") throw new DOMException("Импорт отменён", "AbortError");
           if (job.status === "error") throw new Error(job.error || "Source Import завершился с ошибкой");
           if (!job.result) throw new Error("Source Import завершился без результата");
           res = job.result;
@@ -2513,7 +2699,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           try {
             recordStage("refine", "running", "AI-уточнение…");
             const refined = await scope.wait(refineSourceWithAi(
-              res, provider, get().setStatus, id, effort, guard,
+              res, provider, get().setStatus, id, effort, guard, signal,
             ));
             guard();
             if (refined) res = refined;
@@ -2535,7 +2721,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
             recordStage("repair", "running", "AI-починка…");
             const repaired = await scope.wait(repairSourceWithAi(
               res, provider, data.activeViewport || "desktop",
-              get().setStatus, id, effort, guard, (message) => recordStage("repair", "failed", message),
+              get().setStatus, id, effort, guard, (message) => recordStage("repair", "failed", message), signal,
             ));
             guard();
             if (repaired) res = repaired;
@@ -2608,8 +2794,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
       toast("Source Import: " + msg, "error");
     } finally {
+      signal.removeEventListener("abort", cancelJob);
       if (ownsRun()) { if (scope.owns()) get().setProgress(id, null); if (scope.owns()) get().setBusy(id, false); if (scope.owns()) get().setNodeData(id, { _sourceRun: null }); }
-      endRunAbort(id, signal);
+      endRunAbort(id, signal, get().activePageId);
     }
   },
 
@@ -2653,21 +2840,21 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       let res: GenerateResp;
       const desktop = window.designDNA;
       if (!desktop) {
-        res = await scope.wait(api<GenerateResp>("/api/generate", request));
+        res = await scope.wait(scope.api<GenerateResp>("/api/generate", request));
       } else {
         // тот же transport-контракт, что у Generator: сервер готовит промпты,
         // LLM отвечает через подключённый аккаунт, сервер валидирует и чинит
-        const prepared = await scope.wait(api<GenerateResp>("/api/generate", { ...request, prepareOnly: true }));
+        const prepared = await scope.wait(scope.api<GenerateResp>("/api/generate", { ...request, prepareOnly: true }));
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы Derive");
         const rawOutputs: string[] = [];
         for (const p of prepared.prompts) {
-          const answer = await scope.wait(desktop.providers.chatRequest({
+          const answer = await scope.wait(scope.chat({
             ...chatRoute(provider, effort),
             messages: p.messages,
           }));
           rawOutputs.push(answer.content);
         }
-        res = await scope.wait(api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId }));
+        res = await scope.wait(scope.api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId }));
       }
       const variants = Array.isArray(res.variants) ? res.variants : [];
       if (scope.owns()) get().setNodeData(id, { variants, active: 0 });
@@ -2724,20 +2911,20 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       let res: ReskinResp;
       const desktop = window.designDNA;
       if (!desktop) {
-        res = await scope.wait(api<ReskinResp>("/api/reskin", payload));
+        res = await scope.wait(scope.api<ReskinResp>("/api/reskin", payload));
       } else {
         // desktop: сервер готовит reskin-промпт, аккаунт отвечает, сервер
         // делает merge-back/валидацию — креденшелы не покидают main-процесс
-        const prepared = await scope.wait(api<{ prompts: Array<{ messages: import("./api").ApiChatMessage[] }> }>(
+        const prepared = await scope.wait(scope.api<{ prompts: Array<{ messages: import("./api").ApiChatMessage[] }> }>(
           "/api/reskin", { ...payload, prepareOnly: true },
         ));
         if (!prepared.prompts?.length) throw new Error("Не удалось подготовить промпт рестайла");
         const effort = ["medium", "high", "max"].includes(data.effort) ? data.effort : "medium";
-        const answer = await scope.wait(desktop.providers.chatRequest({
+        const answer = await scope.wait(scope.chat({
           ...chatRoute(nodeProvider(data.provider), effort),
           messages: prepared.prompts[0].messages,
         }));
-        res = await scope.wait(api<ReskinResp>("/api/reskin", { ...payload, rawOutput: answer.content }));
+        res = await scope.wait(scope.api<ReskinResp>("/api/reskin", { ...payload, rawOutput: answer.content }));
       }
       const log = Array.isArray(res.log) ? res.log : [];
       if (scope.owns()) get().setNodeData(id, { ir: res.ir || null, log });
@@ -2780,13 +2967,14 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       if (scope.owns()) get().setStatus(id, "Подключите изображение или загрузите файл", "err");
       return;
     }
+    const chroma = removeBackground && cutoutOptions.method === 'chroma';
     const raster = removeBackground || imageOptions.engine === "raster";
-    const signal = beginRunAbort(id);
+    const signal = beginRunAbort(id, get().activePageId);
     const requestId = `image-${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const desktop = window.designDNA;
     const cancel = () => { void desktop?.providers?.cancel(requestId).catch(() => {}); };
     signal.addEventListener("abort", cancel, { once: true });
-    const ownsRun = () => get().activePageId === st.activePageId && runAborts.get(id)?.signal === signal
+    const ownsRun = () => get().activePageId === st.activePageId && runAborts.get(nodeRunKey(get().activePageId, id))?.signal === signal
       && get().nodes.some(node => node.id === n.id && node.type === n.type);
     const stillCurrent = () => {
       const current = get();
@@ -2796,43 +2984,47 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         && (pullInput(current.nodes, current.edges, target, removeBackground ? "image" : "reference")
           || (removeBackground ? cutoutOptions.image : null)) === refRaw;
     };
-    if (scope.owns()) get().setStatus(id, removeBackground ? "GPT Image · удаляем фон…" : raster ? "GPT Image · создаём изображение…" : "SVG · создаём изображение…");
+    if (scope.owns()) get().setStatus(id, chroma ? "Локально · удаляем однородный фон…" : removeBackground ? "GPT Image · удаляем фон…" : raster ? "GPT Image · создаём изображение…" : "SVG · создаём изображение…");
     if (scope.owns()) get().setBusy(id, true);
     try {
       const referenceImage = isImageSource(refRaw) ? await scope.wait(imageDataUrl(refRaw)) : null;
       if (!stillCurrent()) return;
       type ImageResp = Omit<ImageVariant, "createdAt">;
       let res: ImageResp;
-      if (raster) {
+      if (chroma) {
+        res = await scope.wait(scope.api<ImageResp>('/api/image/chroma-key', { image: referenceImage,
+          color: cutoutOptions.keyColor || '#00ff00', tolerance: cutoutOptions.tolerance ?? 32,
+          softness: cutoutOptions.softness ?? 24, despill: cutoutOptions.despill !== false }, { signal, runId: requestId }));
+      } else if (raster) {
         if (!desktop?.providers?.imageRequest) throw new Error("Для GPT Image нужен обновлённый десктоп и подключённый аккаунт Codex");
         const generated = await scope.wait(desktop.providers.imageRequest({ id: requestId, referenceImage, removeBackground,
           ...(!removeBackground && imageOptions.rasterModel ? { model: imageOptions.rasterModel } : {}),
           prompt: removeBackground ? prompt : `${prompt}\nRequested canvas: ${imageOptions.width}×${imageOptions.height}. ${imageOptions.tileable ? "Make a seamless tileable texture, opposite edges must match." : ""}` }));
         if (!stillCurrent()) return;
         res = removeBackground
-          ? await scope.wait(api<ImageResp>("/api/image/remove-background", { image: referenceImage, mask: generated.image }, { signal, runId: requestId }))
-          : await scope.wait(api<ImageResp>("/api/image/convert", { image: generated.image,
+          ? await scope.wait(scope.api<ImageResp>("/api/image/remove-background", { image: referenceImage, mask: generated.image }, { signal, runId: requestId }))
+          : await scope.wait(scope.api<ImageResp>("/api/image/convert", { image: generated.image,
               outputFormat: imageOptions.outputFormat || "png" }, { signal, runId: requestId }));
       } else {
         const provider = nodeProvider(imageOptions.provider);
         const payload = { prompt, style: imageOptions.style || "vector", width: imageOptions.width, height: imageOptions.height,
           tileable: !!imageOptions.tileable, model: imageOptions.model || null, provider, effort: nodeEffort(imageOptions.effort), referenceImage };
         if (!desktop) {
-          res = await scope.wait(api<ImageResp>("/api/image/generate", payload, { signal }));
+          res = await scope.wait(scope.api<ImageResp>("/api/image/generate", payload, { signal }));
         } else {
-          const prepared = await scope.wait(api<{ prompts: Array<{ messages: import("./api").ApiChatMessage[] }> }>(
+          const prepared = await scope.wait(scope.api<{ prompts: Array<{ messages: import("./api").ApiChatMessage[] }> }>(
             "/api/image/generate", { ...payload, prepareOnly: true }, { signal, runId: requestId }));
           if (!stillCurrent()) return;
           if (!prepared.prompts?.length) throw new Error("Не удалось подготовить промпт изображения");
-          const answer = await scope.wait(desktop.providers.chatRequest({ ...chatRoute(provider, payload.effort), id: requestId,
+          const answer = await scope.wait(scope.chat({ ...chatRoute(provider, payload.effort), id: requestId,
             ...(imageOptions.model ? { model: imageOptions.model } : {}),
             profile: "graphics", messages: prepared.prompts[0].messages }));
           if (!stillCurrent()) return;
-          res = await scope.wait(api<ImageResp>("/api/image/generate", { ...payload, rawOutput: answer.content }, { signal, runId: requestId }));
+          res = await scope.wait(scope.api<ImageResp>("/api/image/generate", { ...payload, rawOutput: answer.content }, { signal, runId: requestId }));
         }
         if (!stillCurrent()) return;
         if (imageOptions.outputFormat === "jpeg") {
-          const converted = await scope.wait(api<ImageResp>("/api/image/convert", { image: res.png, outputFormat: "jpeg" }, { signal, runId: requestId }));
+          const converted = await scope.wait(scope.api<ImageResp>("/api/image/convert", { image: res.png, outputFormat: "jpeg" }, { signal, runId: requestId }));
           res = { ...res, ...converted };
         }
       }
@@ -2852,7 +3044,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     } finally {
       if (ownsRun()) if (scope.owns()) get().setBusy(id, false);
       signal.removeEventListener("abort", cancel);
-      endRunAbort(id, signal);
+      endRunAbort(id, signal, get().activePageId);
     }
   },
 
@@ -2873,11 +3065,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       return;
     }
     if (scope.owns()) get().setStatus(id, "Quality Pass: judge + проверка правил… 30–120 сек");
-    const signal = beginRunAbort(id);
+    const signal = beginRunAbort(id, get().activePageId);
     if (scope.owns()) get().setBusy(id, true);
     if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage: "Судья оценивает" });
     const runId = newRunId();
-    const stopPoll = window.designDNA ? () => {} : watchRunStages(id, runId, 60_000, "Quality Pass");
+    const stopPoll = window.designDNA ? () => {} : watchRunStages(get, id, runId, 60_000, "Quality Pass");
     try {
       // Общий цикл с генератором: судья/починка идут выбранным на ноде
       // провайдером (раньше нода была прибита к Sol).
@@ -2905,7 +3097,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       }
     } finally {
       stopPoll();
-      endRunAbort(id, signal);
+      endRunAbort(id, signal, get().activePageId);
       if (scope.owns()) get().setProgress(id, null);
       if (scope.owns()) get().setBusy(id, false);
     }
@@ -2927,7 +3119,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     if (scope.owns()) get().setBusy(id, true);
     if (scope.owns()) get().setStatus(id, "Sanitizing Interaction IR...");
     try {
-      const response = await scope.wait(api<{ interaction?: IRObject }>("/api/interaction/build", {
+      const response = await scope.wait(scope.api<{ interaction?: IRObject }>("/api/interaction/build", {
         base_ir: baseIr,
         source: { kind: "design-ir", url: "" },
         scenes: data.draftScenes,
@@ -2965,7 +3157,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     if (scope.owns()) get().setBusy(id, true);
     if (scope.owns()) get().setStatus(id, `Replaying ${actions.length} actions in Chromium...`);
     try {
-      const response = await scope.wait(api<{ interaction?: IRObject }>("/api/interaction/capture", {
+      const response = await scope.wait(scope.api<{ interaction?: IRObject }>("/api/interaction/capture", {
         base_ir: baseIr,
         url: data.liveUrl.trim(),
         mine: data.mine,
@@ -3014,7 +3206,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         const draftScenes = Array.isArray(data.scenes) && data.scenes.length
           ? data.scenes
           : [{ id: "scene-0", viewport: "desktop", patch: [] }];
-        const built = await scope.wait(api<{ interaction?: IRObject }>("/api/interaction/build", {
+        const built = await scope.wait(scope.api<{ interaction?: IRObject }>("/api/interaction/build", {
           base_ir: designIr,
           source: { kind: "design-ir", url: "" },
           scenes: draftScenes,
@@ -3024,7 +3216,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         interaction = built.interaction || null;
         if (!interaction) throw new Error("Не удалось построить Interaction IR из Design IR");
       }
-      const response = await scope.wait(api<{ motion?: IRObject; sceneIrs?: MotionNodeData["sceneIrs"] }>("/api/motion/build", {
+      const response = await scope.wait(scope.api<{ motion?: IRObject; sceneIrs?: MotionNodeData["sceneIrs"] }>("/api/motion/build", {
         base_ir: designIr,
         interaction,
         composition: data.composition,
@@ -3096,7 +3288,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           useReference ? sourceTimeline : null,
           useReference ? sourceVideo : null,
         );
-        const answer = await scope.wait(desktop.providers.chatRequest({
+        const answer = await scope.wait(scope.chat({
           ...chatRoute(data.planner, data.effort),
           messages: [
             {
@@ -3180,7 +3372,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
     if (scope.owns()) get().setBusy(id, true);
     try {
-      const config = await scope.wait(apiGet<{ configured?: boolean; model?: string }>("/api/video/seedance/config"));
+      const config = await scope.wait(scope.apiGet<{ configured?: boolean; model?: string }>("/api/video/seedance/config"));
       if (!config.configured) throw new Error("OpenRouter key не подключён. Откройте Agents → Connections.");
       const references: Array<Record<string, unknown>> = [];
       if (sourceVideo && data.inputMode !== "prompt") {
@@ -3191,7 +3383,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
         });
       }
       if (scope.owns()) get().setStatus(id, `Отправляем подтверждённый запрос в ${config.model || "Seedance 2.5"}…`);
-      const response = await scope.wait(api<SeedanceVideoJob>("/api/video/seedance/submit", {
+      const response = await scope.wait(scope.api<SeedanceVideoJob>("/api/video/seedance/submit", {
         prompt: planned,
         duration: data.settings.duration,
         aspect_ratio: data.settings.aspectRatio,
@@ -3204,9 +3396,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       const job = { ...response, model: "bytedance/seedance-2.5" as const };
       if (scope.owns()) get().setNodeData(id, { job, video: null, sourceVideo: sourceVideo ? deepClone(sourceVideo) : null });
       if (scope.owns()) get().setStatus(id, `Seedance job ${job.id} · ${job.status}`, "ok");
-      const oldTimer = motionDesignPollTimers.get(id);
+      const key = nodeRunKey(get().activePageId, id);
+      const oldTimer = motionDesignPollTimers.get(key);
       if (oldTimer) clearTimeout(oldTimer);
-      scheduleMotionDesignPoll(id, () => void get().refreshMotionDesign(id));
+      scheduleMotionDesignPoll(get, id, () => void get().refreshMotionDesign(id));
     } catch (error) {
       if (!scope.owns()) return;
       const message = error instanceof Error ? error.message : String(error);
@@ -3227,7 +3420,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     if (!data.job?.id || (MOTION_DESIGN_TERMINAL.has(data.job.status) && data.video)) return;
     if (scope.owns()) get().setBusy(id, true);
     try {
-      const response = await scope.wait(apiGet<SeedanceVideoJob>(`/api/video/seedance/${encodeURIComponent(data.job.id)}`));
+      const response = await scope.wait(scope.apiGet<SeedanceVideoJob>(`/api/video/seedance/${encodeURIComponent(data.job.id)}`));
       const job = { ...data.job, ...response, id: data.job.id, model: "bytedance/seedance-2.5" as const };
       if (job.status === "completed") {
         const cost = Number(job.usage?.cost);
@@ -3255,9 +3448,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       } else {
         if (scope.owns()) get().setNodeData(id, { job });
         if (scope.owns()) get().setStatus(id, `Seedance job ${job.id} · ${job.status}`);
-        const oldTimer = motionDesignPollTimers.get(id);
+        const key = nodeRunKey(get().activePageId, id);
+        const oldTimer = motionDesignPollTimers.get(key);
         if (oldTimer) clearTimeout(oldTimer);
-        scheduleMotionDesignPoll(id, () => void get().refreshMotionDesign(id));
+        scheduleMotionDesignPoll(get, id, () => void get().refreshMotionDesign(id));
       }
     } catch (error) {
       if (!scope.owns()) return;
@@ -3265,9 +3459,10 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       // and retry status later, as recommended by OpenRouter's async contract.
       const message = error instanceof Error ? error.message : String(error);
       if (scope.owns()) get().setStatus(id, `Seedance status: ${message} · job сохранён`, "err");
-      const oldTimer = motionDesignPollTimers.get(id);
+      const key = nodeRunKey(get().activePageId, id);
+      const oldTimer = motionDesignPollTimers.get(key);
       if (oldTimer) clearTimeout(oldTimer);
-      scheduleMotionDesignPoll(id, () => void get().refreshMotionDesign(id));
+      scheduleMotionDesignPoll(get, id, () => void get().refreshMotionDesign(id));
     } finally {
       if (scope.owns()) get().setBusy(id, false);
     }
@@ -3296,7 +3491,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     if (scope.owns()) get().setBusy(id, true);
     if (scope.owns()) get().setStatus(id, "Сборка таймлайна: слои и группы из компонентов...");
     try {
-      const response = await scope.wait(api<{ timeline?: IRObject }>("/api/timeline/build", {
+      const response = await scope.wait(scope.api<{ timeline?: IRObject }>("/api/timeline/build", {
         ir: designIr,
         settings: data.settings,
         pages: sourcePages,
@@ -3382,13 +3577,13 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const inputs = node.data.inputs || ["ir"];
     if (inputs.length >= 8) return;
     const name = Array.from({ length: 7 }, (_, i) => `page${i + 2}`).find((n) => !inputs.includes(n))!;
-    recordGraphHistory();
+    recordGraphHistory(get, set);
     get().setNodeData(id, { inputs: [...inputs, name] });
   },
   removeVideoInput: (id, name) => {
     const node = get().nodes.find((n) => Number(n.id) === id);
     if (node?.type !== "timeline" || name === "ir") return;
-    recordGraphHistory();
+    recordGraphHistory(get, set);
     get().setNodeData(id, { inputs: (node.data.inputs || ["ir"]).filter((n) => n !== name) });
     set((state) => ({ edges: state.edges.filter((e) => !(e.target === node.id && e.targetHandle === name)) }));
     get().refreshInputs(id);
@@ -3462,7 +3657,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const sid = String(id);
     const node = get().nodes.find((item) => item.id === sid);
     if (node?.type !== "edit" || !(node.data.inputs || ["ir"]).includes(name)) return;
-    recordGraphHistory();
+    recordGraphHistory(get, set);
     set((state) => ({
       nodes: state.nodes.map((item) => {
         if (item.id !== sid || item.type !== "edit") return item;
@@ -3553,7 +3748,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     if (removedNodes.length || removedEdges.length) {
       // Del/Backspace на канвасе: одно нажатие — один шаг undo, сколько бы
       // нод и рёбер ни было выделено.
-      recordGraphHistory();
+      recordGraphHistory(get, set);
       withGraphHistoryMuted(() => {
         for (const n of removedNodes) get().deleteNode(Number(n.id));
         for (const e of removedEdges) get().deleteEdge(e.id);
@@ -3574,7 +3769,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
 
   /* Зеркало load() (nodes.js:1202-1219): полная замена графа из payload */
   loadGraph: (payload) => {
-    leaveGraph();
+    leaveGraph(get().activePageId);
     const graph = payloadToRf(payload);
     set((state) => ({
       ...graph,
@@ -3900,8 +4095,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     if (!n || n.type !== "designsystem" || get().busy[nodeId]) return false;
     const data = n.data as DesignSystemNodeData;
     const pageId = get().activePageId;
-    const signal = beginRunAbort(nodeId);
-    const ownsBuild = () => get().activePageId === pageId && runAborts.get(nodeId)?.signal === signal
+    const signal = beginRunAbort(nodeId, get().activePageId);
+    const ownsBuild = () => get().activePageId === pageId && runAborts.get(nodeRunKey(get().activePageId, nodeId))?.signal === signal
       && get().nodes.some((x) => Number(x.id) === Number(nodeId) && x.type === "designsystem");
     const buildStage = (status: AiPipelineStage["status"], message: string, fresh = false) => {
       if (!ownsBuild()) return;
@@ -4050,8 +4245,8 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     }
   },
 
-  runDesktopDesignSystemAi,
-  runDesignSystemAi: (nodeId, operation, viewport) => runDesktopDesignSystemAi(nodeId, operation, { viewport }),
+  runDesktopDesignSystemAi: (nodeId, operation, options) => runDesktopDesignSystemAi(nodeId, operation, { ...options, getState: get }),
+  runDesignSystemAi: (nodeId, operation, viewport) => runDesktopDesignSystemAi(nodeId, operation, { viewport, getState: get }),
 
   saveDesignSystemDocument: async (nodeId, document) => {
     const n = get().nodes.find((x) => Number(x.id) === Number(nodeId));
@@ -4161,7 +4356,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     }
     set({ nodes: get().nodes.map(n => ({ ...n, selected: n.id === String(target.id) })) });
     const scope = captureNodeScope(get, targetId);
-    void focusFlowNode(String(target.id), scope.owns);
+    void focusFlowNode(String(target.id), scope.visible);
     return targetId;
   },
 
@@ -4229,7 +4424,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   },
 
   createPage: (name) => {
-    leaveGraph();
+    flushAllNodeText();
     const st = get();
     const id = pageId();
     const nextIndex = st.pages.length + 1;
@@ -4243,6 +4438,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     };
     set((state) => ({
       pages: [...withCurrentPageSaved(state), page],
+      pageRuntimes: { ...state.pageRuntimes, [state.activePageId]: pageRuntime(state) },
       activePageId: id,
       nodes: page.nodes,
       edges: page.edges,
@@ -4259,7 +4455,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   /* Start an isolated video workspace from the selected assembled page.
    * A snapshot preserves the original graph; no import, generation or paid job starts. */
   addVideoChainPage: (options) => {
-    leaveGraph();
+    flushAllNodeText();
     const assembled = get().nodes.filter((node) => node.type === "page" && node.data.ir);
     const selected = assembled.filter((node) => node.selected);
     const source = selected.length === 1 ? selected[0] : assembled.length === 1 ? assembled[0] : null;
@@ -4286,6 +4482,7 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     };
     set((state) => ({
       pages: [...withCurrentPageSaved(state), page],
+      pageRuntimes: { ...state.pageRuntimes, [state.activePageId]: pageRuntime(state) },
       activePageId: id,
       nodes: page.nodes,
       edges: page.edges,
@@ -4298,33 +4495,29 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       graphHistory: EMPTY_GRAPH_HISTORY,
     }));
     // вписать цепочку в экран: ноды измеряются асинхронно, поэтому дважды
-    setTimeout(fitFlowView, 80);
-    setTimeout(fitFlowView, 450);
+    const fit = () => { if (get().activePageId === id) fitFlowView(); };
+    setTimeout(fit, 80);
+    setTimeout(fit, 450);
   },
 
   switchPage: (id) => {
     const st = get();
     if (id === st.activePageId || !st.pages.some(page => page.id === id)) return;
-    leaveGraph();
+    flushAllNodeText();
     const pages = withCurrentPageSaved(get());
     const page = pages.find((p) => p.id === id);
     if (!page) return;
     set({
       pages,
+      pageRuntimes: { ...st.pageRuntimes, [st.activePageId]: pageRuntime(st) },
       activePageId: id,
       nodes: hydratePageBridgeNodes(page.nodes, st.channels),
       edges: page.edges,
       view: page.view,
       nextId: page.nextId,
-      statuses: {},
-      statusLog: {},
-      busy: {},
-      progresses: {},
-      graphHistory: EMPTY_GRAPH_HISTORY,
+      ...(st.pageRuntimes[id] || emptyPageRuntime()),
     });
-    // каждая страница начинается с полного вида: без ручного зума
-    setTimeout(fitFlowView, 80);
-    setTimeout(fitFlowView, 450);
+    // Restore the saved viewport; navigation does not schedule a late fit.
   },
 
   renamePage: (id, name) => {
@@ -4340,21 +4533,18 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
   deletePage: (id) => {
     const st = get();
     if (st.pages.length <= 1 || !st.pages.some(page => page.id === id)) return;
-    leaveGraph();
+    leaveGraph(id);
     const pages = withCurrentPageSaved(get()).filter((page) => page.id !== id);
     const next = pages.find((page) => page.id === st.activePageId) || pages[0];
     set({
       pages,
+      pageRuntimes: Object.fromEntries(Object.entries({ ...st.pageRuntimes, [st.activePageId]: pageRuntime(st) }).filter(([key]) => key !== id)),
       activePageId: next.id,
       nodes: hydratePageBridgeNodes(next.nodes, st.channels),
       edges: next.edges,
       view: next.view,
       nextId: next.nextId,
-      statuses: {},
-      statusLog: {},
-      busy: {},
-      progresses: {},
-      graphHistory: EMPTY_GRAPH_HISTORY,
+      ...(next.id === st.activePageId ? pageRuntime(st) : st.pageRuntimes[next.id] || emptyPageRuntime()),
     });
   },
 
@@ -4383,7 +4573,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       set({ projectHydrated: true });
       return;
     }
+    for (const page of get().pages) leaveGraph(page.id);
     set({
+      pageRuntimes: {},
       pages: project.pages,
       activePageId: activePage.id,
       nodes: hydratePageBridgeNodes(activePage.nodes, project.channels),
@@ -4403,8 +4595,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     // temporary empty canvas back over the freshly loaded project.
     setTimeout(() => {
       set({ projectHydrated: true });
-      fitFlowView();
-      setTimeout(fitFlowView, 350);
+      const fit = () => { if (get().activePageId === activePage.id) fitFlowView(); };
+      fit();
+      setTimeout(fit, 350);
     }, 0);
   },
 
@@ -4414,6 +4607,9 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     const activePage = project.pages.find((page) => page.id === project.activePageId) || project.pages[0];
     if (!activePage) return false;
     const current = get();
+    // An explicit replacement accepts the DB graphs. Invalidate work on every
+    // replaced sheet; only exact live Source/DS revisions below retain ownership.
+    for (const page of current.pages) if (page.id !== current.activePageId) leaveGraph(page.id);
     const preserved = new Set<number>();
     const nodes = activePage.nodes.map((incoming) => {
       if (current.activePageId !== activePage.id) return incoming;
@@ -4447,12 +4643,13 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
     for (const node of current.nodes) {
       const id = Number(node.id);
       if (!preserved.has(id)) {
-        nodeLifetimes.set(id, (nodeLifetimes.get(id) || 0) + 1);
-        runAborts.get(id)?.abort();
+        nodeLifetimes.set(nodeRunKey(get().activePageId, id), (nodeLifetimes.get(nodeRunKey(get().activePageId, id)) || 0) + 1);
+        runAborts.get(nodeRunKey(get().activePageId, id))?.abort();
       }
     }
     const keepRuntime = <T>(values: Record<number, T>) => Object.fromEntries(Object.entries(values).filter(([id]) => preserved.has(Number(id))));
     set({
+      pageRuntimes: {},
       pages: project.pages.map((page) => page.id === activePage.id ? { ...page, nodes } : page),
       activePageId: activePage.id,
       nodes: hydratePageBridgeNodes(nodes, project.channels),
@@ -4467,10 +4664,21 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       graphHistory: EMPTY_GRAPH_HISTORY,
       projectHydrated: true,
     });
-    setTimeout(fitFlowView, 0);
+    setTimeout(() => { if (get().activePageId === activePage.id) fitFlowView(); }, 0);
     return true;
   },
-}));
+}); }
+
+let pageAccess: ReturnType<typeof createPageAccess>;
+export const useFlowStore = createStore<FlowStoreState>()((set, get) => {
+  pageAccess = createPageAccess(get, set, createFlowState);
+  return pageAccess.wrap(createFlowState(set, get));
+});
+
+/** Capture this getter before starting work that may outlive its UI component. */
+export function bindPageState(pageId = useFlowStore.getState().activePageId): () => FlowStoreState {
+  return pageAccess.bind(pageId);
+}
 
 function samePersistedNodes(a: FlowNode[], b: FlowNode[]): boolean {
   if (a === b) return true;
@@ -4525,16 +4733,18 @@ if (typeof window !== "undefined") (window as unknown as { __flowStore?: unknown
 
 // FileReader callbacks outlive inspectors and sheets. Capture the target at selection
 // time and let the most recently selected file win even if reads finish out of order.
-const nodeUploadTokens = new Map<number, symbol>();
+const nodeUploadTokens = new Map<string, symbol>();
 export function captureNodeUpload(id: number) {
-  const scope = captureNodeScope(useFlowStore.getState, id);
+  const get = bindPageState();
+  const scope = captureNodeScope(get, id);
+  const key = nodeRunKey(get().activePageId, id);
   const token = Symbol('node-upload');
-  nodeUploadTokens.set(id, token);
+  nodeUploadTokens.set(key, token);
   return (patch: Record<string, unknown>) => {
-    if (!scope.owns() || nodeUploadTokens.get(id) !== token) return false;
-    nodeUploadTokens.delete(id);
-    useFlowStore.getState().setNodeData(id, patch);
-    useFlowStore.getState().propagate(id);
+    if (!scope.owns() || nodeUploadTokens.get(key) !== token) return false;
+    nodeUploadTokens.delete(key);
+    get().setNodeData(id, patch);
+    get().propagate(id);
     return true;
   };
 }

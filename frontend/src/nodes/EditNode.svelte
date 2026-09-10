@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { bindPageState, captureNodeScope } from "../flow/store";
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import { toast } from "../flow/toast";
@@ -28,9 +29,10 @@
     }
     window.dispatchEvent(new Event("designdna:ensure-editor"));
     try {
+      const scope = captureNodeScope(bindPageState(), nodeId);
       await loadEditorController();
       const { useEditorStore } = await import("../editor/store");
-      useEditorStore.getState().openEditor(nodeId);
+      if (scope.visible()) useEditorStore.getState().openEditor(nodeId);
     } catch (error) {
       toast(`Не удалось открыть DNA-редактор: ${error instanceof Error ? error.message : String(error)}`, "error");
     }

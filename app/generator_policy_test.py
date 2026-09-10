@@ -14,7 +14,7 @@ from design_system import store
 from design_system_strict_fallback_test import _document, _fixture
 from generation_provider_test import art_directions
 from quality_pass_test import HIGH_JUDGE, LOW_JUDGE
-from test_qualitygate import BASE_IR
+from quality_test_fixtures import QUALITY_IR as BASE_IR
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +33,7 @@ def isolated_context(monkeypatch):
     ("Форма настроек", "form"), ("Dashboard analytics", "dashboard"),
     ("Canvas editor", "editor"), ("AI assistant", "ai-workspace"),
     ("Editorial article", "article"), ("Лента публикаций", "feed"),
-    ("Button component", "component"),
+    ("Button component", "component"), ("Схема обработки заказа", "diagram"), ("Architecture diagram", "diagram"),
 ])
 def test_surface_classification(brief, expected):
     assert policy.surface_for(brief) == expected

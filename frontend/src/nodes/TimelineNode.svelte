@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { bindPageState, captureNodeScope } from "../flow/store";
   import type { NodeProps } from "@xyflow/svelte";
   import { toast } from "../flow/toast";
   import IrPreview from "../components/IrPreview.svelte";
@@ -35,26 +36,28 @@
   })());
 
   const openWorkspace = async (withPrompt = false) => {
-    if (preparing || busy) return;
+    const get = bindPageState(), scope = captureNodeScope(get, nodeId);
+    if (preparing || (busy && !data.timeline)) return;
     if (inputs.some((port) => !(data.sourcePages || []).some((p) => p.id === port)) && inputs.length > 1) {
       toast("Подключите все страницы или удалите пустой вход", "error"); return;
     }
     preparing = true;
     try {
-      if (!data.timeline) await $flow.runTimeline(nodeId);
-      const current = $flow.nodes.find((node) => node.id === id);
+      if (!data.timeline) await get().runTimeline(nodeId);
+      const current = get().nodes.find((node) => node.id === id);
       if (current?.type !== "timeline" || !current.data.timeline) return;
       if (!(current.data.timeline as any).story) {
-        const pages = videoPages($flow.nodes, $flow.edges, current, true);
+        const pages = videoPages(get().nodes, get().edges, current, true);
         if (!pages.length) throw new Error("Подключите исходную страницу для сценария");
         const upgraded = JSON.parse(JSON.stringify(current.data.timeline));
         upgraded.story = { pages, initialPageId: pages[0].id, actions: [] };
-        $flow.setNodeData(nodeId, { sourcePages: pages });
-        if (!$flow.commitTimeline(nodeId, current.data.timeline, $flow.getNodeIrRevision(nodeId), upgraded,
+        get().setNodeData(nodeId, { sourcePages: pages });
+        if (!get().commitTimeline(nodeId, current.data.timeline, get().getNodeIrRevision(nodeId), upgraded,
           { kind: "manual", label: "Добавлен сценарий страниц" })) throw new Error("Страницы изменились — откройте редактор повторно");
       }
       startWithPrompt = withPrompt;
       if (!TimelineWorkspace) TimelineWorkspace = (await import("../editor/TimelineWorkspace.svelte")).default;
+      if (!scope.visible()) return;
       open = true;
     } catch (error) {
       open = false;
@@ -71,7 +74,7 @@
       <button class="btn-node small add-input nodrag" disabled={inputs.length >= 8 || busy} onclick={() => $flow.addVideoInput(nodeId)}>+ Страница</button>
     </div>
     <div class="foot-right">
-      <button class="btn-node small nodrag" disabled={busy || preparing || !data.ir} onclick={() => void openWorkspace()}>Редактор</button>
+      <button class="btn-node small nodrag" disabled={preparing || !data.ir || (busy && !data.timeline)} onclick={() => void openWorkspace()}>Редактор</button>
       <button class="btn-node primary small nodrag" disabled={busy || preparing || !data.ir || !data.prompt?.trim()} title={!data.prompt?.trim() ? "Опишите ролик, чтобы собрать его по промпту" : ""} onclick={() => void openWorkspace(true)}>
         {#if busy || preparing}<span class="spinner"></span>{/if} По промпту
       </button>

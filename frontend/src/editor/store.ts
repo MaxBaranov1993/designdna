@@ -2,7 +2,7 @@
  * Тяжёлая сессия (IR, geo-хендл, история, pan/zoom) живёт в controller.ts —
  * здесь только то, что рендерит React. */
 import { createStore } from "zustand/vanilla";
-import { useFlowStore } from "../flow/store";
+import { bindPageState, captureNodeScope } from "../flow/store";
 import { toast } from "../flow/toast";
 import type { IRObject } from "../flow/types";
 import type { AssistPreview, AssistProgress } from "./aiTypes";
@@ -61,7 +61,9 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
   closeConfirmOpen: false,
 
   openEditor: (nodeId) => {
-    const st = useFlowStore.getState();
+    const get = bindPageState();
+    const scope = captureNodeScope(get, nodeId);
+    const st = get();
     const n = st.nodes.find((x) => Number(x.id) === nodeId);
     const ir = n ? ((n.data as { ir?: IRObject | null }).ir ?? null) : null;
     const sourceRegistry = n ? ((n.data as { sourceRegistry?: Record<string, unknown> }).sourceRegistry || {}) : {};
@@ -78,11 +80,11 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
     const nodeLike: ctl.NodeShim = {
       data: {
         get ir(): IRObject | null {
-          const cur = useFlowStore.getState().nodes.find((x) => Number(x.id) === nodeId);
+          const cur = get().nodes.find((x) => Number(x.id) === nodeId);
           return cur ? (cur.data as { ir?: IRObject | null }).ir ?? null : null;
         },
         set ir(v: IRObject | null) {
-          useFlowStore.getState().setNodeData(nodeId, { ir: v });
+          if (scope.owns()) get().setNodeData(nodeId, { ir: v });
         },
       },
       draft: persistedDraft?.ir
@@ -92,18 +94,18 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
             ir: persistedDraft.ir,
           }
         : null,
-      currentRevision: () => useFlowStore.getState().getNodeIrRevision(nodeId),
-      persistDraft: (draft) => useFlowStore.getState().persistEditorDraft(nodeId, draft),
-      clearDraft: () => useFlowStore.getState().clearEditorDraft(nodeId),
+      currentRevision: () => get().getNodeIrRevision(nodeId),
+      persistDraft: (draft) => scope.owns() && get().persistEditorDraft(nodeId, draft),
+      clearDraft: () => scope.owns() && get().clearEditorDraft(nodeId),
       commitDraft: (expectedRevision, draftIr) =>
-        useFlowStore.getState().commitEditorDraft(nodeId, expectedRevision, draftIr),
+        scope.owns() && get().commitEditorDraft(nodeId, expectedRevision, draftIr),
     } as ctl.NodeShim;
 
     const ok = ctl.open(
       nodeLike,
       (savedIr: IRObject, expectedRevision: number) => {
-        const fst = useFlowStore.getState();
-        if (!fst.commitEditorDraft(nodeId, expectedRevision, savedIr)) {
+        const fst = get();
+        if (!scope.owns() || !fst.commitEditorDraft(nodeId, expectedRevision, savedIr)) {
           toast("IR изменился во входном графе. Черновик сохранён; обновите или перенесите правки вручную.", "error");
           return false;
         }
@@ -112,7 +114,7 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
         return true;
       },
       (saved) => {
-        if (!saved) useFlowStore.getState().clearEditorDraft(nodeId);
+        if (!saved && scope.owns()) get().clearEditorDraft(nodeId);
       },
       { registry: sourceRegistry, nodeSources, layoutEvidence },
     );

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
+  import ResultAssets from "../components/ResultAssets.svelte";
   import { flow, flowBusy } from "../flow/state";
   import type { MixFlowNode } from "../flow/types";
   import InPorts from "./InPorts.svelte";
@@ -78,5 +79,6 @@
     {/each}
   </div>
   <NodeStatus {id} />
+  <ResultAssets {id} type="mix" {data} />
   <OutPorts type="mix" {data} />
 </NodeShell>

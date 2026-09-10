@@ -30,7 +30,9 @@ export function installDesktopFetchBridge(): void {
       return browserFetch(input, init);
     }
 
-    const request = input instanceof Request ? input.clone() : new Request(url.toString(), init);
+    const request = new Request(input instanceof Request ? input : url.toString(), init);
+    const signal = request.signal;
+    signal.throwIfAborted();
     const method = request.method.toUpperCase();
     // Тело — UTF-8 JSON (все DesignDNA API): текст нужен для разворота блобов,
     // в IPC уходит Uint8Array (structured clone, без base64-инфляции)
@@ -42,22 +44,38 @@ export function installDesktopFetchBridge(): void {
     // handles. Expanding them would re-inflate Source screenshots into IPC JSON
     // and immutable SQLite revisions. One-shot render/QA APIs still get pixels.
     const keepsBlobRefs = url.pathname.startsWith("/api/project/")
+      || url.pathname.startsWith("/api/export/")
       || url.pathname.startsWith("/api/design-system/");
     if (requestText && !keepsBlobRefs) {
       requestText = await expandBlobRefs(requestText);
     }
+    signal.throwIfAborted();
     const requestBody = requestText ? new TextEncoder().encode(requestText) : "";
     // runId из flow/api.ts → requestId IPC-фрейма: main.mjs шлёт воркеру
     // адресный cancel по нему (cancel_token), без рестарта всего воркера.
-    const runId = request.headers.get("x-designdna-run-id") || "";
-    const response = await bridge.request({
+    const requestId = request.headers.get("x-designdna-run-id") || crypto.randomUUID();
+    let abort: () => void = () => {};
+    const cancelled = new Promise<never>((_, reject) => {
+      abort = () => {
+        void bridge.cancel('long', requestId).catch(() => undefined);
+        reject(signal.reason || new DOMException('Запрос отменён', 'AbortError'));
+      };
+      signal.addEventListener('abort', abort, { once: true });
+    });
+    let response: DesktopHttpResponse;
+    try {
+      response = await Promise.race([bridge.request({
       method,
       path: `${url.pathname}${url.search}`,
       headers: Object.fromEntries(request.headers.entries()),
       body: requestBody,
       encoding: "raw",
-      ...(runId ? { requestId: runId } : {}),
-    }) as DesktopHttpResponse;
+      requestId,
+    }) as Promise<DesktopHttpResponse>, cancelled]);
+      signal.throwIfAborted();
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
     // main отдаёт бинарные тела уже Uint8Array (structured clone без base64);
     // строка с encoding=base64 — fallback для старых main-процессов
     let body: ArrayBuffer | string;

@@ -20,6 +20,15 @@ export function parseProviderLimits(spec, defaults = DEFAULT_PROVIDER_LIMITS) {
 }
 
 export class ProviderGovernor {
+  async run(provider, task, { signal } = {}) {
+    const slot = await this.acquire(provider, { signal });
+    try {
+      if (signal?.aborted) throw this.#cancelled();
+      return await task(slot);
+    } finally {
+      slot.release();
+    }
+  }
   constructor({ limits = DEFAULT_PROVIDER_LIMITS, now = Date.now } = {}) {
     this.limits = limits;
     this.now = now;

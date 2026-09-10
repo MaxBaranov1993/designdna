@@ -7,10 +7,8 @@
   let { id }: { id: string } = $props();
   let status = $derived($flowStatuses[Number(id)]);
   let busy = $derived(!!$flowBusy[Number(id)]);
-  /* Отмена доступна везде, где есть что отменять: браузер — AbortController
-   * запроса ноды (регистрируется до setBusy), десктоп — рестарт воркера. */
-  const isDesktop = typeof window !== "undefined" && !!window.designDNA?.api?.cancel;
-  const canCancel = $derived(busy && (isDesktop || hasRunAbort(Number(id))));
+  /* Every cancellable task registers its own controller before showing busy. */
+  const canCancel = $derived(busy && hasRunAbort(Number(id)));
 
   const cancelRun = () => {
     void useFlowStore.getState().cancelRun(Number(id));
@@ -26,7 +24,7 @@
   {#if canCancel}
     <button
       class="n-cancel nodrag"
-      title={isDesktop ? "Отменить текущую задачу (перезапускает фоновый воркер)" : "Отменить ожидание ответа"}
+      title="Отменить текущую задачу этой ноды"
       aria-label="Отменить"
       onclick={cancelRun}
     >✕</button>

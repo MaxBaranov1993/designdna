@@ -4,10 +4,11 @@ import threading
 import traceback
 import uuid
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from urlguard import validate_public_url
 import cache_store
 import blockparse
+import cancel_token
 from fastapi import APIRouter
 from api.common import (  # noqa: F401
     APP_ROOT, CANCELLED_STATUS, DATA_ROOT, ROOT, _finish_run, err, parse_ir_response,
@@ -32,6 +33,8 @@ class BlockParseReq(BaseModel):
     authSessionFallback: bool = False
     fullResolutionEvidence: bool = False
     asyncJob: bool = False
+    # Chosen before dispatch, so cancellation can also address a queued start.
+    jobId: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,80}$")
 
 
 class BlockParseRefineReq(BaseModel):
@@ -80,7 +83,11 @@ def _execute_block_parse(values: dict, on_stage=None) -> dict:
 
 
 def _run_source_import_job(job_id: str, values: dict) -> None:
+    token_id = f"source-import:{job_id}"
+    cancel_token.set_current(token_id)
+
     def on_stage(stage: str, _duration: int, timings: dict[str, int]) -> None:
+        cancel_token.check()
         progress, label = _SOURCE_STAGE_PROGRESS.get(stage, (1, stage))
         if stage.startswith("capture") and stage != "captureCompile":
             viewport_index = max(1, int(timings.get("captureViewportIndex", 1)))
@@ -89,25 +96,35 @@ def _run_source_import_job(job_id: str, values: dict) -> None:
             label = stage.removeprefix("capture") + " layers"
         with SOURCE_IMPORT_JOBS_LOCK:
             job = SOURCE_IMPORT_JOBS.get(job_id)
-            if job:
+            if job and job.get("status") != "cancelled":
                 job.update(status="running", progress=progress, stage=stage,
                            stageLabel=label, timingsMs=timings)
 
     try:
+        cancel_token.check()
+        on_stage("prepare", 0, {})
         result = _execute_block_parse(values, on_stage=on_stage)
+        cancel_token.check()
         with SOURCE_IMPORT_JOBS_LOCK:
             job = SOURCE_IMPORT_JOBS.get(job_id)
-            if job:
+            if job and job.get("status") != "cancelled":
                 job.update(status="complete", progress=100, stage="complete",
                            stageLabel="Готово", result=result,
                            timingsMs=(result.get("diagnostics") or {}).get("timingsMs", {}))
+    except cancel_token.Cancelled:
+        with SOURCE_IMPORT_JOBS_LOCK:
+            job = SOURCE_IMPORT_JOBS.get(job_id)
+            if job:
+                job.update(status="cancelled", stage="cancelled", stageLabel="Отменено")
     except Exception as exc:
         traceback.print_exc()
         with SOURCE_IMPORT_JOBS_LOCK:
             job = SOURCE_IMPORT_JOBS.get(job_id)
-            if job:
+            if job and job.get("status") != "cancelled":
                 job.update(status="error", stage="error", stageLabel="Ошибка",
                            error=str(exc)[:500])
+    finally:
+        cancel_token.clear(token_id)
 
 
 @router.post("/api/block-parse")
@@ -130,7 +147,7 @@ def block_parse(req: BlockParseReq):
         "fullResolutionEvidence": req.fullResolutionEvidence,
     }
     if req.asyncJob:
-        job_id = uuid.uuid4().hex
+        job_id = req.jobId or uuid.uuid4().hex
         job = {
             "jobId": job_id,
             "status": "queued",
@@ -140,14 +157,16 @@ def block_parse(req: BlockParseReq):
             "timingsMs": {},
         }
         with SOURCE_IMPORT_JOBS_LOCK:
+            if job_id in SOURCE_IMPORT_JOBS:
+                return err(409, "Source Import job уже существует.")
             # Keep bounded diagnostics; completed payloads can be large.
             completed = [key for key, value in SOURCE_IMPORT_JOBS.items()
-                         if value.get("status") in {"complete", "error"}]
+                         if value.get("status") in {"complete", "error", "cancelled"}]
             for stale_id in completed[:-9]:
                 SOURCE_IMPORT_JOBS.pop(stale_id, None)
             SOURCE_IMPORT_JOBS[job_id] = job
         common.SOURCE_IMPORT_EXECUTOR.submit(_run_source_import_job, job_id, values)
-        return job
+        return dict(job)
 
     try:
         return _execute_block_parse(values)
@@ -167,9 +186,23 @@ def block_parse_job(job_id: str):
         # Завершённый job больше не мутирует, а его результат — мегабайты
         # артефакта: deepcopy под глобальным локом на каждом финальном полле
         # был заметной паузой. Копируем только живые (маленькие) записи.
-        if job.get("status") in {"complete", "error"}:
+        if job.get("status") in {"complete", "error", "cancelled"}:
             return job
         return copy.deepcopy(job)
+
+
+@router.post("/api/block-parse/job/{job_id}/cancel")
+def cancel_block_parse_job(job_id: str):
+    if not 1 <= len(job_id) <= 80 or not all(c.isascii() and (c.isalnum() or c in "_-") for c in job_id):
+        return err(422, "Некорректный Source Import job ID.")
+    with SOURCE_IMPORT_JOBS_LOCK:
+        job = SOURCE_IMPORT_JOBS.get(job_id)
+        if job and job.get("status") in {"complete", "error", "cancelled"}:
+            return {"jobId": job_id, "status": job["status"]}
+        cancel_token.cancel(f"source-import:{job_id}")
+        if job:
+            job.update(status="cancelled", stage="cancelled", stageLabel="Отменено")
+    return {"jobId": job_id, "status": "cancelled"}
 
 
 @router.post("/api/block-parse/refine")

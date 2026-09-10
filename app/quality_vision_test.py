@@ -2,12 +2,25 @@
 from __future__ import annotations
 
 import copy
+import base64
+import io
 import json
+
+import pytest
+from PIL import Image
 
 import server
 import api.quality as quality_api
 
-from test_qualitygate import BASE_IR
+from quality_test_fixtures import QUALITY_IR as BASE_IR
+
+
+@pytest.fixture(autouse=True)
+def isolated_evidence_cache(monkeypatch):
+    cache = {}
+    monkeypatch.setattr(server.cache_store, "get", lambda kind, key: copy.deepcopy(cache.get((kind, key))))
+    monkeypatch.setattr(server.cache_store, "put", lambda kind, key, value: cache.__setitem__((kind, key), copy.deepcopy(value)))
+    return cache
 
 
 def _score(score: int, verdict: str, issues: list | None = None) -> str:
@@ -101,3 +114,51 @@ def test_component_mode_uses_component_rubric_and_skips_page_rules(monkeypatch):
     assert "not a complete page" in calls[0][0]
     violations = server._quality_violations(component)
     assert [item["rule"] for item in violations] == ["free-overlap"]
+
+
+@pytest.mark.parametrize("transport", ["desktop", "server"])
+def test_repair_uses_first_screens_from_the_judged_long_page(monkeypatch, transport):
+    render_calls = []
+
+    def render(ir, width, **kwargs):
+        render_calls.append((width, kwargs["viewport"]))
+        screenshot = Image.new("RGB", (width, 3200 if width == 1440 else 4800), "blue")
+        screenshot.paste("red" if width == 1440 else "lime", (0, 0, width, 900))
+        out = io.BytesIO()
+        screenshot.save(out, "PNG")
+        return out.getvalue()
+
+    monkeypatch.setattr(quality_api, "render_png", render)
+    judged_images = []
+    if transport == "desktop":
+        step = quality_api.quality_pass_codex_step(quality_api.QualityPassCodexReq(ir=copy.deepcopy(BASE_IR), visualReview=True))
+        judged_images = [part["image_url"]["url"] for part in step["pending"]["messages"][1]["content"] if part["type"] == "image_url"]
+    else:
+        def judge(provider, images, *args, **kwargs):
+            judged_images.extend(images)
+            return _score(70, "needs_repair")
+        monkeypatch.setattr(server.llm, "chat_vision", judge)
+        quality_api._quality_scorecard(copy.deepcopy(BASE_IR), "")
+
+    selected = quality_api._repair_images(BASE_IR, "")
+    assert len(judged_images) > 4 and len(selected) == 2
+    assert all(image in judged_images for image in selected)
+    for url, width, color in zip(selected, (1440, 390), ((255, 0, 0), (0, 255, 0)), strict=True):
+        with Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))) as screenshot:
+            assert screenshot.size == (width, 900)
+            assert screenshot.getpixel((10, 10)) == color
+    messages, error = quality_api._quality_repair_messages(
+        BASE_IR, {"score": 70, "repair_instruction": "repair"}, "", images=selected)
+    assert error is None
+    assert [part["image_url"]["url"] for part in messages[1]["content"] if part["type"] == "image_url"] == selected
+    assert render_calls == [(1440, "desktop"), (390, "mobile")]
+
+
+def test_legacy_flat_visual_cache_is_refreshed_without_guessing_mobile_index(monkeypatch, isolated_evidence_cache):
+    key = quality_api._quality_visual_key(BASE_IR, "")
+    isolated_evidence_cache[("generator-visual", key)] = {"images": ["old-first", "old-bottom"], "widths": [1440, 390]}
+    assert quality_api._repair_images(BASE_IR, "") == []
+    monkeypatch.setattr(quality_api, "render_png", lambda ir, width, **kw: str(width).encode())
+    monkeypatch.setattr(quality_api, "_judge_images", lambda screenshot: [screenshot.decode() + "-first", screenshot.decode() + "-bottom"])
+    quality_api._quality_desktop_messages(BASE_IR, "", True)
+    assert quality_api._repair_images(BASE_IR, "") == ["1440-first", "390-first"]

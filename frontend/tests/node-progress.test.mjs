@@ -75,8 +75,8 @@ test("video chain page lays nodes in a single row and auto-fits the view", async
   for (let i = 1; i < xs.length; i++) {
     assert.ok(xs[i] > xs[i - 1], "left-to-right order");
   }
-  assert.match(body, /setTimeout\(fitFlowView, 80\)/);
+  assert.match(body, /setTimeout\(fit, 80\)/);
 
   const switchBody = source.slice(source.indexOf("switchPage: (id) => {"), source.indexOf("renamePage: (id, name) => {"));
-  assert.match(switchBody, /setTimeout\(fitFlowView, 80\)/, "switching pages shows all nodes");
+  assert.doesNotMatch(switchBody, /setTimeout\(/, "switching preserves the saved viewport without a delayed fit");
 });

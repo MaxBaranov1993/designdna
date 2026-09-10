@@ -22,7 +22,7 @@
     ["auto", "Определить по задаче"], ["landing", "Лендинг"], ["catalog", "Поиск и каталог"],
     ["detail", "Карточка объекта"], ["checkout", "Запись и оформление"], ["dashboard", "Кабинет и аналитика"],
     ["form", "Форма и настройки"], ["editor", "Редактор"], ["ai-workspace", "AI-интерфейс"],
-    ["article", "Статья и журнал"], ["feed", "Лента"], ["component", "Один компонент"],
+    ["article", "Статья и журнал"], ["feed", "Лента"], ["component", "Один компонент"], ["diagram", "Схема и инфографика"],
   ];
   const styleOptions = [
     ["auto", "По задаче и дизайн-системе"], ["minimal", "Спокойный минимализм"], ["enterprise", "Информационный"],
@@ -91,6 +91,32 @@
       <div class="dna-field-hint">Подключите ноду «Дизайн-система» ко входу или выберите систему проекта.</div>
     {/if}
   </div>
+  <div class="dna-field">
+    <div class="dna-field-cap">Изображения в макете</div>
+    <select disabled={busy} value={data.assetMode || "auto"} onchange={(e) => $flow.setNodeData(id, { assetMode: e.currentTarget.value as "auto" | "codex" | "off" })}>
+      <option value="auto">Через провайдера ноды</option>
+      <option value="codex">GPT Image · аккаунт Codex</option>
+      <option value="off">Добавлю изображения сам</option>
+    </select>
+    <div class="dna-field-hint">GPT Image создаёт отдельные картинки; текст остаётся редактируемым. Для Claude можно отдельно выбрать Codex для изображений.</div>
+  </div>
+  <div class="dna-field">
+    <div class="dna-field-cap">Роль изображения-референса</div>
+    <select disabled={busy} value={data.referenceRole || "inherit"} onchange={(e) => $flow.setNodeData(id, { referenceRole: e.currentTarget.value === "inherit" ? undefined : e.currentTarget.value as NonNullable<GeneratorNodeData["referenceRole"]> })}>
+      <option value="inherit">Из ноды «Референс»</option>
+      <option value="style">Стиль</option><option value="composition">Композиция</option><option value="reproduce">Воспроизведение</option>
+    </select>
+    <div class="dna-field-hint">Для изображения без заданной роли используется стиль. IR и текстовые референсы работают как прежде.</div>
+  </div>
+  <label class="dna-insp-check">
+    <input type="checkbox" disabled={busy || data.assetMode === "off"} checked={data.conceptMode === "on"} onchange={(e) => $flow.setNodeData(id, { conceptMode: e.currentTarget.checked ? "on" : "off" })} />
+    <span>Создать визуальный эскиз перед сборкой</span>
+  </label>
+  <div class="dna-field-hint">Отдельный запрос GPT Image. При воспроизведении ориентиром остаётся исходник. Эскиз сохраняется в истории.</div>
+  <label class="dna-insp-check">
+    <input type="checkbox" disabled={busy || data.assetMode === "off"} checked={data.assetConsistency !== "independent"} onchange={(e) => $flow.setNodeData(id, { assetConsistency: e.currentTarget.checked ? "series" : "independent" })} />
+    <span>Единый образец для серии изображений</span>
+  </label>
   <div class="dna-field">
     <div class="dna-field-cap">Активный вариант</div>
     <div class="dna-insp-row">

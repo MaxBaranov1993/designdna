@@ -2796,6 +2796,24 @@ export function currentIrSnapshot(): any | null {
 /** Вставить секцию-мастер ДС после выделенной секции или в конец: один шаг undo,
  * черновик сохраняется, шрифты мастера доезжают через meta.fontFaces. */
 export function insertDesignSystemSection(section: any, meta?: any): boolean {
+  return insertSection(section, meta, false);
+}
+
+/** Expand the document canvas for a newly requested process diagram. Existing
+ * sections and masters remain intact; the complete insertion is one undo step. */
+export function insertDiagramSection(section: any): boolean {
+  if (!state) return false;
+  const copy = deepClone(section);
+  if (state.ir.frame?.layout === "free") {
+    const rendered = dom.canvasInner?.querySelector<HTMLElement>("[data-design-width]");
+    const bottom = Math.max(Number(state.ir.frame.height) || 0, rendered?.scrollHeight || 0,
+      ...(state.ir.tree || []).map((entry: any) => (Number(entry.frame?.y) || 0) + (Number(entry.frame?.height) || 0)));
+    copy.frame = { ...copy.frame, x: 0, y: bottom + 24 };
+  }
+  return insertSection(copy, undefined, true);
+}
+
+function insertSection(section: any, meta: any, expandArtboard: boolean): boolean {
   if (!state || !section || typeof section !== "object") return false;
   pushHistory();
   if (!Array.isArray(state.ir.tree)) state.ir.tree = [];
@@ -2811,6 +2829,10 @@ export function insertDesignSystemSection(section: any, meta?: any): boolean {
     ? state.ir.tree.length
     : Math.min(state.ir.tree.length, selectedSection + 1);
   state.ir.tree.splice(insertAt, 0, copy);
+  if (expandArtboard) {
+    state.ir.frame = { ...state.ir.frame, height: state.ir.frame?.layout === "free"
+      ? Math.max(Number(state.ir.frame.height) || 0, (Number(copy.frame.y) || 0) + Number(copy.frame.height)) : "hug" };
+  }
   const faces = meta && Array.isArray(meta.fontFaces) ? meta.fontFaces : [];
   if (faces.length) {
     if (!state.ir.meta || typeof state.ir.meta !== "object") state.ir.meta = {};

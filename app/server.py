@@ -86,7 +86,9 @@ from api.reproduce import router as reproduce_router  # noqa: E402
 from api.quality import router as quality_router  # noqa: E402
 from api.source_import import router as source_import_router  # noqa: E402
 from api.generate import router as generate_router  # noqa: E402
-for _router in (generate_router, source_import_router, quality_router, reproduce_router,
+from api.assets import router as assets_router  # noqa: E402
+from api.export import router as export_router  # noqa: E402
+for _router in (generate_router, assets_router, export_router, source_import_router, quality_router, reproduce_router,
                 image_router, rules_router, project_router, system_router, runs_router,
                 style_router, interaction_router, motion_router, pages_router):
     app.include_router(_router)

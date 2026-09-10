@@ -1,4 +1,6 @@
-import { SerialRequestQueue } from "../lib/serial-request-queue.mjs";
+// Status/cancellation stays on the owning worker (jobs are process-local), with
+// reserved capacity mirrored by the worker's small control pool.
+export const isControlPath = path => /^\/api\/(?:block-parse\/job\/[^/]+(?:\/cancel)?|runs\/[^/]+(?:\/cancel)?|(?:motion|timeline)\/render\/[^/]+(?:\/cancel)?)$/.test(path);
 
 /* Планировщик /api-трафика: три полосы вместо одного глобального мьютекса.
  *
@@ -22,12 +24,21 @@ export class Semaphore {
     this.waiters = [];
   }
 
-  async run(operation) {
-    while (this.active >= this.limit) {
-      await new Promise((resolve) => this.waiters.push(resolve));
-    }
-    this.active += 1;
+  async run(operation, signal) {
+    signal?.throwIfAborted();
+    if (this.active >= this.limit || this.waiters.length) {
+      await new Promise((resolve, reject) => {
+        const abort = () => {
+          this.waiters = this.waiters.filter(item => item !== resume);
+          reject(signal.reason);
+        };
+        const resume = () => { signal?.removeEventListener('abort', abort); this.active += 1; resolve(); };
+        this.waiters.push(resume);
+        signal?.addEventListener('abort', abort, { once: true });
+      });
+    } else this.active += 1;
     try {
+      signal?.throwIfAborted();
       return await operation();
     } finally {
       this.active -= 1;
@@ -41,10 +52,11 @@ export class ApiScheduler {
   constructor({ exclusivePaths = [], projectPathPrefix = "/api/project/" } = {}) {
     this.exclusivePaths = new Set(exclusivePaths);
     this.projectPathPrefix = projectPathPrefix;
-    this.exclusiveQueue = new SerialRequestQueue();
-    this.projectQueue = new SerialRequestQueue();
+    this.exclusiveQueue = new Semaphore(1);
+    this.projectQueue = new Semaphore(1);
     this.workerLimits = new Map();
     this.semaphores = new Map();
+    this.controlSemaphores = new Map();
   }
 
   /** Лимит одновременных запросов для конкретного воркера. */
@@ -53,20 +65,25 @@ export class ApiScheduler {
   }
 
   lane(path) {
+    if (isControlPath(path)) return "control";
     if (this.exclusivePaths.has(path)) return "exclusive";
     if (path === this.projectPathPrefix.replace(/\/$/, "") || path.startsWith(this.projectPathPrefix)) return "project";
     return "concurrent";
   }
 
-  run(path, worker, operation) {
+  run(path, worker, operation, signal) {
     const lane = this.lane(path);
-    if (lane === "exclusive") return this.exclusiveQueue.run(operation);
-    if (lane === "project") return this.projectQueue.run(operation);
+    if (lane === "exclusive") return this.exclusiveQueue.run(operation, signal);
+    if (lane === "project") return this.projectQueue.run(operation, signal);
+    if (lane === "control") {
+      if (!this.controlSemaphores.has(worker)) this.controlSemaphores.set(worker, new Semaphore(1));
+      return this.controlSemaphores.get(worker).run(operation, signal);
+    }
     let semaphore = this.semaphores.get(worker);
     if (!semaphore) {
       semaphore = new Semaphore(this.workerLimits.get(worker) ?? 3);
       this.semaphores.set(worker, semaphore);
     }
-    return semaphore.run(operation);
+    return semaphore.run(operation, signal);
   }
 }

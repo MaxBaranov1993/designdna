@@ -11,6 +11,7 @@
   } from "./serialize";
   import { useFlowStore } from "./store";
   import { toast } from "./toast";
+  import { embedGraphAssets } from "./portable-assets";
 
   let { detail, onclose }: { detail: ProjectConflictDetail; onclose: () => void } = $props();
   let busy = $state(false);
@@ -51,8 +52,11 @@
     }
   }
 
-  function exportJson() {
-    downloadJson("designai-graph.json", buildExportPayload(useFlowStore.getState()));
+  async function exportJson() {
+    busy = true;
+    try { downloadJson("designai-graph.json", await embedGraphAssets(buildExportPayload(useFlowStore.getState()))); }
+    catch (error) { toast("Экспорт не завершён: " + (error instanceof Error ? error.message : String(error)), "error"); }
+    finally { busy = false; }
   }
 </script>
 

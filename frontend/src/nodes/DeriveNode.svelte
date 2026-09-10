@@ -2,6 +2,7 @@
   import type { NodeProps } from "@xyflow/svelte";
   import ProviderPicker from "../components/ProviderPicker.svelte";
   import IrPreview from "../components/IrPreview.svelte";
+  import ResultAssets from "../components/ResultAssets.svelte";
   import { flow, flowBusy } from "../flow/state";
   import type { DeriveFlowNode } from "../flow/types";
   import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
@@ -73,5 +74,6 @@ import NodeShell from "./NodeShell.svelte";
   </div>
   <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} usageMode={(data as any).designSystemUsageMode || "strict"} fixtureProfile={(data as any).designSystemFixture || "typical"} onChange={(v, meta) => $flow.setNodeData(Number(id), { designSystemSelection: v, designSystemUsageMode: meta?.usageMode, designSystemFixture: meta?.fixtureProfile } as any)} />
   <NodeStatus {id} />
+  <ResultAssets {id} type="derive" {data} />
   <OutPorts type="derive" />
 </NodeShell>

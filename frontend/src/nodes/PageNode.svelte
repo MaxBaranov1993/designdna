@@ -8,6 +8,7 @@
   import InPorts from "./InPorts.svelte";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
+  import PresentationExport from "../components/PresentationExport.svelte";
   import OutPorts from "./OutPorts.svelte";
 
   /* «Страница» — компоновщик: превью страницы как герой, переключатель
@@ -99,6 +100,7 @@
       </div>
     {/each}
   </div>
+  {#if data.ir}<PresentationExport snapshot={() => ({ir: data.ir, viewport: data.activeViewport, width: data.activeViewport === "mobile" ? 390 : data.activeViewport === "tablet" ? 768 : Number((data.ir?.frame as Record<string, unknown> | undefined)?.width) || 1440})} />{/if}
   <NodeStatus {id} />
   <OutPorts type="page" {data} />
 </NodeShell>

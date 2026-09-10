@@ -1070,7 +1070,9 @@ import { isLockedNode } from "./locked";
 
     if (t === "feature-alternating") {
       const rows = (sec.children || []).map((c, i) => {
-        const media = `<div class="img-ph" style="min-height:240px">${esc(c.imagePrompt || c.alt || "изображение")}</div>`;
+        const media = c.src
+          ? `<div class="img-ph" style="min-height:240px;padding:0;overflow:hidden"><img src="${esc(c.src)}" alt="${esc(c.alt || "")}" style="display:block;width:100%;height:240px;object-fit:cover" decoding="sync"></div>`
+          : `<div class="img-ph" style="min-height:240px">${esc(c.imagePrompt || c.alt || "изображение")}</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center;gap:12px">
           ${c.title || c.text ? `<h3>${esc(c.title || "")}</h3><p class="muted">${esc(c.text || "")}</p>` : renderElement(c, uid, false, sec.frame)}
           ${(c.children || []).map(ch => renderElement(ch, uid, !!(c.frame && c.frame.layout === "free"), c.frame)).join("")}</div>`;
@@ -1098,7 +1100,12 @@ import { isLockedNode } from "./locked";
     if (t === "gallery") {
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:16px">
-        ${(sec.children || []).map((c, i) => `<div class="img-ph" style="min-height:${v === "masonry" ? 140 + ((i * 67) % 120) : 200}px">${esc(c.imagePrompt || c.alt || "фото")}</div>`).join("")}</div></div></section>`;
+        ${(sec.children || []).map((c, i) => {
+          const height = v === "masonry" ? 140 + ((i * 67) % 120) : 200;
+          return c.src
+            ? `<div class="img-ph" style="min-height:${height}px;padding:0;overflow:hidden"><img src="${esc(c.src)}" alt="${esc(c.alt || "")}" style="display:block;width:100%;height:${height}px;object-fit:cover" decoding="sync"></div>`
+            : `<div class="img-ph" style="min-height:${height}px">${esc(c.imagePrompt || c.alt || "фото")}</div>`;
+        }).join("")}</div></div></section>`;
     }
 
     if (t === "testimonials") {
@@ -1701,4 +1708,4 @@ export const IRRenderer = { renderIR, materializeResponsiveIR, fitPreview, getRe
 
 /** Чистые строковые инструменты рендерера для headless regression-тестов
  *  (frontend/tests/engine.regression.test.mjs) — без DOM. */
-export const IRRendererTest = { baseCss, frameCss, withFrame, renderElement, visualCss, fontsUrl };
+export const IRRendererTest = { baseCss, frameCss, withFrame, renderElement, renderSection, visualCss, fontsUrl };

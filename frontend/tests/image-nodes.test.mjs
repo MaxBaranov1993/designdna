@@ -25,7 +25,7 @@ const { payloadToRf, parseLegacyPayload, buildSavePayload } = await bundle('flow
 after(() => { for (const file of files) unlinkSync(file); rmdirSync(dir); });
 const png = 'data:image/png;base64,AAAA';
 const blob = 'a'.repeat(64) + '.png';
-function reset() { store.setState({ nodes: [], edges: [], nextId: 1, activePageId: 'A', statuses: {}, busy: {}, graphHistory: { past: [], future: [] } }); }
+function reset() { store.getState().loadGraph({nodes:[],edges:[],nextId:1}); store.setState({ pages:[{id:'A',name:'A',nodes:[],edges:[],nextId:1,view:{x:0,y:0,zoom:1}}],pageRuntimes:{}, nodes: [], edges: [], nextId: 1, activePageId: 'A', statuses: {}, busy: {}, graphHistory: { past: [], future: [] } }); }
 const add = type => store.getState().addNode(type, 0, 0).id;
 const patch = (id, data) => store.getState().setNodeData(id, data);
 const node = id => store.getState().nodes.find(n => Number(n.id) === id);
@@ -90,7 +90,8 @@ test('a delayed image cannot overwrite another page with the same node ID', asyn
   let resolve; window.designDNA.providers.imageRequest = () => new Promise(r => resolve = r);
   const pending = store.getState().runImage(id);
   const other = structuredClone(node(id)); other.data.prompt = 'page B'; other.data.variants = [{ png: 'original-B' }];
-  store.setState({ activePageId: 'B', nodes: [other], busy: {}, statuses: {} });
+  store.getState().createPage('B');
+  store.setState({ nodes: [other], busy: {}, statuses: {} });
   resolve({ image: png }); await pending;
   assert.equal(node(id).data.variants[0].png, 'original-B');
   assert.deepEqual(store.getState().statuses, {});

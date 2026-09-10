@@ -25,8 +25,8 @@ export async function api<T>(path: string, body: unknown, init?: { signal?: Abor
   return data as T;
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
-  const resp = await fetch(path, { method: "GET" });
+export async function apiGet<T>(path: string, init?: { signal?: AbortSignal }): Promise<T> {
+  const resp = await fetch(path, { method: "GET", signal: init?.signal });
   let data: Record<string, unknown> = {};
   try {
     data = await resp.json();
@@ -115,7 +115,7 @@ export type BlockParseResp = {
 };
 export type BlockParseJobResp = {
   jobId: string;
-  status: "queued" | "running" | "complete" | "error";
+  status: "queued" | "running" | "complete" | "error" | "cancelled";
   progress: number;
   stage: string;
   stageLabel: string;
@@ -125,6 +125,7 @@ export type BlockParseJobResp = {
 };
 export type ReskinResp = { ir?: IRObject | null; log?: string[]; designSystem?: Record<string, unknown> };
 export type QualityPassResp = {
+  resourceEvidence?: { status: string; nativeTextCount: number; errors: { path: string; problem: string }[]; warnings: { path: string; problem: string }[]; checks: Record<string, string> };
   acceptance?: { status?: string; checks?: Record<string, string> };
   ir?: IRObject | null;
   passed?: boolean;

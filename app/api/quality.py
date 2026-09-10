@@ -42,7 +42,7 @@ class QualityPassReq(BaseModel):
     visualReview: bool = False
     runId: str | None = None
     # Раунды «починка → повторная оценка», пока результат не пройдёт порог.
-    # Останавливаемся раньше, если раунд ничего не улучшил; итог — лучший IR.
+    # Останавливаемся на приёмке или регрессии; итог — лучший допустимый IR.
     max_rounds: int = 3
 
 
@@ -139,8 +139,19 @@ def _quality_visual_key(ir: dict, brief: str) -> str:
         engine_stamp = llm._file_stamp(engine)
     except FileNotFoundError:
         engine_stamp = None  # A concurrent build must not crash cache lookup; render reports missing engine.
-    return generator_policy.digest({"ir": ir, "brief": brief, "policy": generator_policy.fingerprint(),
+    return generator_policy.digest({"ir": ir, "brief": brief, "policy": generator_policy.fingerprint(), "evidenceVersion": 2,
         "engine": engine_stamp, "renderer": llm._file_stamp(APP_ROOT / "ir_render.py")})
+
+
+def _render_quality_evidence(ir: dict, brief: str) -> dict:
+    """Keep each viewport's first screen identifiable even when it has many tiles."""
+    images, first_screen_indices = [], []
+    for width in (1440, 390):
+        first_screen_indices.append(len(images))
+        images.extend(_judge_images(render_png(ir, width=width, webfonts=True, viewport="mobile" if width == 390 else "desktop")))
+    evidence = {"images": images, "widths": [1440, 390], "firstScreenIndices": first_screen_indices}
+    cache_store.put("generator-visual", _quality_visual_key(ir, brief), evidence)
+    return evidence
 
 
 def _quality_desktop_messages(ir: dict, brief: str, visual: bool, surface: str = "auto") -> list[dict]:
@@ -148,12 +159,8 @@ def _quality_desktop_messages(ir: dict, brief: str, visual: bool, surface: str =
         return _quality_judge_messages(ir, brief, surface)
     key = _quality_visual_key(ir, brief)
     evidence = cache_store.get("generator-visual", key)
-    if not evidence:
-        images = []
-        for width in (1440, 390):
-            images.extend(_judge_images(render_png(ir, width=width, webfonts=True, viewport="mobile" if width == 390 else "desktop")))
-        evidence = {"images": images, "widths": [1440, 390]}
-        cache_store.put("generator-visual", key, evidence)
+    if not evidence or "firstScreenIndices" not in evidence:
+        evidence = _render_quality_evidence(ir, brief)
     text = (generator_policy.judge_rules(brief, ir, surface) + "\nFirst group: desktop 1440px. Second group: mobile 390px. "
             "Only these viewports were rendered; keyboard and performance remain unknown.\nBrief: " + brief
             + "\nIR: " + json.dumps(ir, ensure_ascii=False))
@@ -224,13 +231,9 @@ def _repair_images(ir: dict, brief: str) -> list[str]:
     """Первый экран desktop и mobile из кэша судьи: починка видит, что именно не так."""
     evidence = cache_store.get("generator-visual", _quality_visual_key(ir, brief))
     images = list((evidence or {}).get("images") or [])
-    if not images:
-        return []
-    # первая картинка — desktop 1440×900 1:1, последняя группа — mobile; берём по одной
-    picked = [images[0]]
-    if len(images) > 1:
-        picked.append(images[-1])
-    return picked
+    indices = (evidence or {}).get("firstScreenIndices") or []
+    # Legacy flat caches cannot identify the mobile boundary reliably.
+    return [images[index] for index in indices if isinstance(index, int) and 0 <= index < len(images)]
 
 
 def _quality_repair_messages(ir: dict, scorecard: dict, brief: str, surface: str = "auto", *,
@@ -294,8 +297,7 @@ def _quality_repair_messages(ir: dict, scorecard: dict, brief: str, surface: str
 
 
 def _needs_repair(scorecard: dict, min_score: int, deterministic: list | None = None) -> bool:
-    important = any(issue.get("severity") in {"critical", "major"} for issue in scorecard.get("issues", []))
-    return bool(deterministic) or important or int(scorecard.get("score", 0)) < min_score
+    return bool(deterministic) or not _passes(scorecard, min_score)
 
 
 def _passes(scorecard: dict, min_score: int) -> bool:
@@ -308,10 +310,24 @@ def _important_count(scorecard: dict) -> int:
 
 
 def _better(candidate: dict, best: dict) -> bool:
-    """Лучше — выше балл; при равном балле меньше critical/major замечаний."""
+    """Break equal scores by major/critical count, then the judge's acceptance."""
     if int(candidate.get("score", 0)) != int(best.get("score", 0)):
         return int(candidate.get("score", 0)) > int(best.get("score", 0))
-    return _important_count(candidate) < _important_count(best)
+    if _important_count(candidate) != _important_count(best):
+        return _important_count(candidate) < _important_count(best)
+    return candidate.get("verdict") == "pass" and best.get("verdict") != "pass"
+
+
+def _round_failure(req: QualityPassReq, repaired: dict, initial: dict, current: dict, scorecard: dict, surface: str) -> str | None:
+    """A rejected candidate must never replace the best validated round."""
+    failure = generator_policy.repair_guard(req.ir, repaired, surface, req.designSystem, brief=req.brief)
+    if failure:
+        return failure
+    old_critical = sum(issue.get("severity") == "critical" for issue in initial.get("issues", []))
+    new_critical = sum(issue.get("severity") == "critical" for issue in scorecard.get("issues", []))
+    if int(scorecard["score"]) < int(current.get("score", 0)) or new_critical > old_critical:
+        return "Повторная оценка выявила регрессию; раунд отклонён"
+    return None
 
 
 def _round_outputs(outputs: QualityPassCodexOutputs) -> tuple[list[str], list[str]]:
@@ -382,10 +398,8 @@ def _judge_images(screenshot: bytes) -> list[str]:
 def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None, *, provider: str = "auto", effort: str = "medium", surface: str = "auto") -> dict:
     """Render IR and ask the standalone server's vision model for a scorecard."""
     run_registry.stage(run_id, "render", "Рендерю IR для визуальной проверки")
-    screenshot = render_png(ir, width=1440, webfonts=True)
-    image_data_url = _judge_images(screenshot)
-    mobile_screenshot = render_png(ir, width=390, webfonts=True, viewport="mobile")
-    image_data_url.extend(_judge_images(mobile_screenshot))
+    # Server rejudges render afresh; repairs reuse these exact first screens.
+    image_data_url = _render_quality_evidence(ir, brief)["images"]
     rubric = (APP_ROOT / "prompts" / "RUBRIC.md").read_text(encoding="utf-8")
     component_mode = _component_quality_mode(ir)
     if component_mode:
@@ -448,12 +462,21 @@ def _quality_finish(req, output_ir, initial, final, repair, *, visual=False):
     passed = (final["score"] >= min_score and final["verdict"] == "pass" and not important
               and qualitygate.passed(after) and not (ds_check or {}).get("errors")
               and not repair.get("error"))
+    from asset_quality import audit as audit_assets
+    resource_evidence = audit_assets(output_ir)
+    resource_unknown = passed and resource_evidence["status"] == "unknown"
+    passed = passed and resource_evidence["status"] == "pass"
+    acceptance = generator_policy.report(passed=bool(passed), visual=visual, surface=surface, ds_check=ds_check)
+    acceptance["checks"]["resources"] = resource_evidence["status"]
+    acceptance["checks"]["editUndo"] = "unknown"
+    acceptance["checks"]["exportReopen"] = "unknown"
+    if resource_unknown:
+        acceptance["status"] = "unverified"
     return {"ir": output_ir, "passed": bool(passed), "min_score": min_score,
             "scorecard": final, "initial_scorecard": initial,
             "deterministic": {"before": before, "after": after}, "repair": repair,
             "designSystem": ds_check,
-            "acceptance": generator_policy.report(passed=bool(passed), visual=visual,
-                                                   surface=surface, ds_check=ds_check)}
+            "resourceEvidence": resource_evidence, "acceptance": acceptance}
 
 
 def _quality_repair(ir: dict, scorecard: dict, brief: str, *, provider: str = "auto", effort: str = "medium",
@@ -487,8 +510,8 @@ def quality_pass(req: QualityPassReq):
 def _quality_pass(req: QualityPassReq, run_id: str | None):
     """Премиальный контур: детерминированные правила → независимый judge → repair → rejudge.
 
-    API всегда возвращает исходный валидный IR, если repair не удался: результат
-    контролируем и не подменяем граф битым ответом модели.
+    Если repair не удался, возвращаем лучший уже проверенный IR (либо исходник,
+    если ни один раунд не принят), не подменяя граф битым ответом модели.
     """
     schema_errors = validate_ir(sanitize_font_face_weights(req.ir))
     if schema_errors:
@@ -533,15 +556,16 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
             repair["error"] = f"rejudge недоступен: {e}"
             repair["rounds"].append({"round": index, "applied": False, "error": repair["error"]})
             break
-        repair["rounds"].append({"round": index, "applied": True, "score": scorecard["score"],
-                                 "issues": len(scorecard["issues"])})
-        regressed = int(scorecard["score"]) < int(current.get("score", 0))
+        failure = _round_failure(req, repaired, initial, current, scorecard, surface)
+        repair["rounds"].append({"round": index, "applied": not failure, "score": scorecard["score"],
+                                 "issues": len(scorecard["issues"]), **({"error": failure} if failure else {})})
+        if failure:
+            repair["error"] = failure
+            break
         current_ir, current = repaired, scorecard
         if _better(scorecard, final):
             output_ir, final, repair["applied"] = repaired, scorecard, True
-        # Равный балл — не повод останавливаться: судья колеблется на ±5, а
-        # список замечаний обычно меняется; стоп только на падении балла.
-        if _passes(scorecard, min_score) or regressed:
+        if not _needs_repair(scorecard, min_score, generator_policy.lint(repaired, surface)):
             break
     return _quality_finish(req, output_ir, initial, final, repair, visual=True)
 
@@ -626,13 +650,16 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
         except Exception as e:
             return err(502, f"Quality Pass rejudge вернул неверный ответ: {e}")
         consumed = index
-        repair["rounds"].append({"round": index, "applied": True, "score": scorecard["score"],
-                                 "issues": len(scorecard["issues"])})
-        regressed = int(scorecard["score"]) < int(current.get("score", 0))
+        failure = _round_failure(req, repaired, initial, current, scorecard, surface)
+        repair["rounds"].append({"round": index, "applied": not failure, "score": scorecard["score"],
+                                 "issues": len(scorecard["issues"]), **({"error": failure} if failure else {})})
+        if failure:
+            repair["error"] = failure
+            break
         current_ir, current = repaired, scorecard
         if _better(scorecard, final):
             output_ir, final, repair["applied"] = repaired, scorecard, True
-        if _passes(scorecard, min_score) or regressed:
+        if not _needs_repair(scorecard, min_score, generator_policy.lint(repaired, surface)):
             break
 
     if rejudges and consumed == 0 and not repair["applied"]:

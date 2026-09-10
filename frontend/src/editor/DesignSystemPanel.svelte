@@ -3,7 +3,8 @@
    * канвас мастер-компонента с viewport-переключением, инспектор, validation,
    * publish. Переиспользует IrPreview (тот же рендерер, что DNA Editor). */
 
-  import { flow, flowBusy, flowNodes, flowEdges } from "../flow/state";
+  import { pageFlow } from "../flow/state";
+  const flow = pageFlow();
   import { resolveDesignSystemAiProvider } from "../flow/store";
   import type { DesignSystemNodeData, DesignSystemAiProvider, IRObject } from "../flow/types";
   import SourceArtifactPanel from "./SourceArtifactPanel.svelte";
@@ -11,11 +12,12 @@
   import type { KitSection } from "./ui-kit-model";
   import { useEditorStore } from "./store";
   import { componentMasterPreview, selectedComponentMaster } from '../engine/componentMaster';
+  import CompositionParts from '../components/CompositionParts.svelte';
 
   let { nodeId, onClose }: { nodeId: number; onClose: () => void } = $props();
 
   const data = $derived.by(() => {
-    const node = $flowNodes.find((n) => Number(n.id) === Number(nodeId));
+    const node = $flow.nodes.find((n) => Number(n.id) === Number(nodeId));
     return ((node?.data || {}) as unknown) as DesignSystemNodeData;
   });
 
@@ -50,8 +52,8 @@
   const aiProvider = $derived(data.aiProvider || "inherit");
   const aiEffort = $derived(data.aiEffort || "high");
   const resolvedProvider = $derived.by(() => {
-    const node = $flowNodes.find((n) => Number(n.id) === Number(nodeId));
-    return node ? resolveDesignSystemAiProvider($flowNodes, $flowEdges, node) : "openai";
+    const node = $flow.nodes.find((n) => Number(n.id) === Number(nodeId));
+    return node ? resolveDesignSystemAiProvider($flow.nodes, $flow.edges, node) : "openai";
   });
   function setAiProvider(event: Event) {
     $flow.setNodeData(Number(nodeId), { aiProvider: (event.currentTarget as HTMLSelectElement).value as DesignSystemAiProvider });
@@ -79,8 +81,8 @@
 
   const doc = $derived((data.document || {}) as Record<string, any>);
   const connectedSource = $derived.by(() => {
-    const wire = $flowEdges.find((edge) => Number(edge.target) === Number(nodeId) && edge.targetHandle === "artifact");
-    const source = $flowNodes.find((node) => node.id === wire?.source);
+    const wire = $flow.edges.find((edge) => Number(edge.target) === Number(nodeId) && edge.targetHandle === "artifact");
+    const source = $flow.nodes.find((node) => node.id === wire?.source);
     return source?.type === "sourceimport" ? source : null;
   });
   const pipelineWarnings = $derived(Object.entries({
@@ -329,7 +331,7 @@
   });
 
   const dirty = $derived(!!snapshot && memoJson(data.document) !== snapshot);
-  const busy = $derived(publishing || validating || applying || saving || organizing || reviewing || exportingKit || !!$flowBusy[Number(nodeId)] || !!data._dsFinishing);
+  const busy = $derived(publishing || validating || applying || saving || organizing || reviewing || exportingKit || !!$flow.busy[Number(nodeId)] || !!data._dsFinishing);
 
   $effect(() => {
     if (activeTab === "components" && catalogEntries.length && !selectedComp) {
@@ -1501,6 +1503,7 @@
       {/if}
       <div class="ds-canvas-empty" style:display={hasSelection ? "none" : "grid"}>Выберите мастер или предложение слева</div>
       <div class="ds-canvas-preview" data-ds-preview-host data-ds-preview-fixture={previewMeta?.fixture || fixtureProfile} bind:this={previewHost}></div>
+      {#if hasSelection}<CompositionParts ir={selectedComponentMaster(selectedComp, selectedVariant)} protectedRoot />{/if}
     </main>
 
     <aside class="ds-editor-inspector">

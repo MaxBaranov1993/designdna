@@ -3,6 +3,21 @@ import test from "node:test";
 
 import { DEFAULT_PROVIDER_LIMITS, ProviderGovernor, parseProviderLimits } from "../services/provider-governor.mjs";
 
+test("image jobs share account slots, release on failure, and never start after queued cancellation", async () => {
+  const governor = new ProviderGovernor({ limits: { codex: 1 } });
+  const held = await governor.acquire("codex"), abort = new AbortController();
+  let calls = 0;
+  const queued = governor.run("codex", () => { calls++; }, { signal: abort.signal });
+  abort.abort();
+  await assert.rejects(queued, /cancelled/);
+  assert.equal(calls, 0);
+  held.release();
+  await assert.rejects(governor.run("codex", () => { calls++; throw new Error("image failed"); }), /image failed/);
+  assert.equal(governor.snapshot().codex.active, 0);
+  assert.equal(await governor.run("codex", () => "image"), "image");
+  assert.equal(governor.snapshot().codex.active, 0);
+});
+
 test("limits come from the env spec with safe defaults", () => {
   assert.deepEqual(parseProviderLimits(""), DEFAULT_PROVIDER_LIMITS);
   const parsed = parseProviderLimits("claude=1, codex=3, bogus, openai=99, glm=abc");

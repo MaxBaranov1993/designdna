@@ -1,8 +1,10 @@
 <script lang="ts">
   import { NODE_DEFS } from "../flow/ports";
-  import { flowBusy, flowNodes, flowProgresses } from "../flow/state";
-  import { useFlowStore } from "../flow/store";
+  import { flow } from "../flow/state";
+  import { useFlowStore, bindPageState } from "../flow/store";
+  import { focusFlowNode } from "../flow/graphdev";
   import { buildExportPayload, downloadJson, parseLegacyPayload } from "../flow/serialize";
+  import { embedGraphAssets, restoreGraphAssets } from "../flow/portable-assets";
   import { toast } from "../flow/toast";
   import { selectOnlyNode } from "../flow/ui";
   import { subscribeTick } from "../flow/ticker";
@@ -13,17 +15,28 @@
    * меню экспорта/импорта и очередь запусков нод с прогрессом и отменой. */
   let menuOpen = $state(false);
   let tasksOpen = $state(false);
+  let transferBusy = $state(false);
   let fileInput: HTMLInputElement | null = null;
 
   let tasks = $derived.by(() => {
-    const busy = $flowBusy;
-    const progresses = $flowProgresses;
-    return Object.keys(busy).filter((id) => busy[Number(id)]).map((id) => {
-      const node = $flowNodes.find((n) => Number(n.id) === Number(id));
-      const def = node?.type ? NODE_DEFS[node.type as NodeType] : null;
-      return { id: Number(id), title: def?.title || `Нода ${id}`, progress: progresses[Number(id)] || null };
+    const state = $flow;
+    return state.pages.flatMap(page => {
+      const runtime = page.id === state.activePageId ? state : state.pageRuntimes[page.id];
+      const nodes = page.id === state.activePageId ? state.nodes : page.nodes;
+      return Object.keys(runtime?.busy || {}).filter(id => runtime!.busy[Number(id)]).flatMap(id => {
+        const node = nodes.find(n => Number(n.id) === Number(id));
+        if (!node) return [];
+        const def = node.type ? NODE_DEFS[node.type as NodeType] : null;
+        return [{ id: Number(id), pageId: page.id, pageName: page.name,
+          key: JSON.stringify([page.id, id]), title: def?.title || `Нода ${id}`, progress: runtime!.progresses[Number(id)] || null }];
+      });
     });
   });
+  const showTask = (task: { id: number; pageId: string }) => {
+    useFlowStore.getState().switchPage(task.pageId);
+    selectOnlyNode(task.id);
+    void focusFlowNode(String(task.id), () => useFlowStore.getState().activePageId === task.pageId);
+  };
   let now = $state(Date.now());
   $effect(() => {
     if (!tasks.length) return;
@@ -34,22 +47,31 @@
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
   };
 
-  const onExport = () => {
-    downloadJson("designai-graph.json", buildExportPayload(useFlowStore.getState()));
+  const onExport = async () => {
     menuOpen = false;
+    transferBusy = true;
+    try { downloadJson("designai-graph.json", await embedGraphAssets(buildExportPayload(useFlowStore.getState()))); }
+    catch (error) { toast("Экспорт не завершён: " + (error instanceof Error ? error.message : String(error)), "error"); }
+    finally { transferBusy = false; }
   };
   const onImportFile = (event: Event) => {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    const get = bindPageState();
+    const initial = get();
+    reader.onload = async () => {
+      transferBusy = true;
       try {
-        useFlowStore.getState().loadGraph(parseLegacyPayload(JSON.parse(String(reader.result))));
+        const restored = await restoreGraphAssets(JSON.parse(String(reader.result)));
+        const now = get();
+        if (now.nodes !== initial.nodes || now.edges !== initial.edges || now.activePageId !== initial.activePageId) throw new Error("Граф изменился во время импорта. Повторите импорт в нужном листе");
+        now.loadGraph(parseLegacyPayload(restored));
         toast("Граф загружен", "ok");
       } catch (error) {
         toast("Не удалось прочитать JSON: " + (error instanceof Error ? error.message : String(error)), "error");
-      }
+      } finally { transferBusy = false; }
     };
     reader.readAsText(file);
     input.value = "";
@@ -67,7 +89,7 @@
   <div style="padding: 0 6px 0 4px"><EngineStatus /></div>
   <span class="pc-vsep"></span>
   <div style="position: relative">
-    <button class="sc-btn" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>Экспорт ▾</button>
+    <button class="sc-btn" disabled={transferBusy} aria-busy={transferBusy} aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>{transferBusy ? "Ресурсы…" : "Экспорт ▾"}</button>
     {#if menuOpen}
       <div class="sc-menu" role="menu">
         <button class="pc-item" id="btn-export" role="menuitem" onclick={onExport}><span class="name">Экспорт графа · JSON</span></button>
@@ -89,11 +111,11 @@
       {#if !tasks.length}
         <div class="task-row"><span>Сейчас ничего не выполняется.</span></div>
       {/if}
-      {#each tasks as task (task.id)}
+      {#each tasks as task (task.key)}
         {@const measured = !!task.progress && Number.isFinite(task.progress.percent)}
-        <div class="task-row" role="button" tabindex="0" title="Показать ноду" onclick={() => selectOnlyNode(task.id)} onkeydown={(event) => event.key === "Enter" && selectOnlyNode(task.id)}>
-          <b>{task.title}</b>
-          <button class="task-x" title="Отменить" aria-label="Отменить задачу" onclick={(event) => { event.stopPropagation(); void useFlowStore.getState().cancelRun(task.id); }}>✕</button>
+        <div class="task-row" role="button" tabindex="0" title="Показать ноду" onclick={() => showTask(task)} onkeydown={(event) => event.key === "Enter" && showTask(task)}>
+          <b>{task.pageName} · {task.title}</b>
+          <button class="task-x" title="Отменить" aria-label="Отменить задачу" onclick={(event) => { event.stopPropagation(); void bindPageState(task.pageId)().cancelRun(task.id); }}>✕</button>
           <span>{task.progress ? `${task.progress.label}${task.progress.stage ? ` · ${task.progress.stage}` : ""} · ${clock(task.progress.startedAt)}` : "выполняется…"}</span>
           <div class="task-bar" class:indeterminate={!measured}><i style={measured ? `width: ${Math.round(Number(task.progress!.percent))}%` : ""}></i></div>
         </div>

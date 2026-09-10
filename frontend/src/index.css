@@ -376,6 +376,7 @@ html[data-desktop] .motion-workspace {
   top: calc(var(--tb) + 14px);
 }
 .float-card.tr {
+  z-index: 16; /* Export menu must sit above the Tasks sibling stacking context. */
   right: 14px;
   top: calc(var(--tb) + 14px);
 }

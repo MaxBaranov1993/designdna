@@ -21,6 +21,7 @@ import { LlmTrace, traceRecord } from "./services/llm-trace.mjs";
 import { McpManager } from "./services/mcp-manager.mjs";
 import { canonicalMcpSpec, createMcpActivationApprover } from "./services/mcp-activation-approval.mjs";
 import { ApiScheduler } from "./services/api-scheduler.mjs";
+import { ApiRequestManager } from "./services/api-request-manager.mjs";
 import { attachSourceAuthCookies, sourceAuthIntent, validateSourceAuthUrl } from "./services/source-auth.mjs";
 import { putContentAddressedBlob, readBlobBatch, readBlobObject, safeBlobName } from "./services/blob-store.mjs";
 import { LiveCommandRegistry } from "./services/live-command-registry.mjs";
@@ -252,9 +253,7 @@ function prewarmWorkers() {
 
 /* Активные /api-запросы по requestId рендерера: отмена адресует cancel-фрейм
  * конкретному запросу воркера вместо убийства процесса. */
-const apiRequests = new Map();
-let apiSequence = 0;
-const CANCEL_GRACE_MS = 8_000;
+const apiRequests = new ApiRequestManager();
 const SOURCE_AUTH_PARTITION = "designdna-source-auth";
 let sourceAuthWindow = null;
 let quitting = false;
@@ -608,7 +607,8 @@ function createWorkers() {
     // Интерактивные вызовы короткие: таймаут = мёртвый канал. Авто-респаун
     // вместо «перезапустите приложение» (симптом: все /api/generate и
     // editor/assist виснут по 120с при живом и свободном воркере).
-    restartOnTimeout: true,
+    // Per-request deadlines cannot terminate unrelated work.
+    restartOnTimeout: false,
   });
   // Лимиты параллельной полосы = размер ThreadPoolExecutor воркера (3);
   // интерактивному оставляем слот под серийную project-полосу.
@@ -757,40 +757,10 @@ function registerIpc() {
   });
   // Скачать бинарник (видео Motion и т.п.): в desktop нет HTTP, якорь href
   // "/api/.../download" под file:// не работает — сохраняем через диалог.
-  // Отмена длинных задач (Source Import / generate / quality-pass минутами
-  // держат воркер). С requestId — кооперативно: воркеру уходит служебный
-  // фрейм {type:"cancel", requestId}, хендлер прерывается на следующей
-  // стадии и отвечает error.code=cancelled; соседние запросы живут. Если за
-  // CANCEL_GRACE_MS ответа нет (хендлер застрял в сетевом вызове) — прежний
-  // рубеж: abort процесса, все его запросы отклоняются как cancelled, кэш и
-  // проект живут в SQLite/файлах; супервизор тут же поднимает свежий процесс.
-  handleTrusted("api:cancel", async (_event, payload) => {
-    const scope = String(payload?.scope || "long");
-    const requestId = payload?.requestId == null ? "" : String(payload.requestId);
-    const tracked = requestId ? apiRequests.get(requestId) : null;
-    if (tracked) {
-      const { worker, frameId, settled } = tracked;
-      if (worker.alive && worker.sendControl({ type: "cancel", requestId: frameId })) {
-        const outcome = await Promise.race([
-          settled.then(() => "settled"),
-          new Promise((resolve) => setTimeout(() => resolve("timeout"), CANCEL_GRACE_MS)),
-        ]);
-        if (outcome === "settled") return { cancelled: true, scope: tracked.scope, requestId, mode: "cooperative" };
-        console.warn(`[api:cancel] ${requestId}: воркер не подтвердил отмену за ${CANCEL_GRACE_MS} мс — abort`);
-      }
-      if (apiRequests.has(requestId)) worker.abort("cancelled by user");
-      return { cancelled: true, scope: tracked.scope, requestId, mode: "abort" };
-    }
-    // Без requestId (legacy-вызов) — как раньше: scope "long" (по умолчанию)
-    // рестартует длинный воркер; "interactive" трогает интерактивный только по
-    // явной просьбе — он держит project-полосу.
-    if (scope === "interactive") {
-      pythonInteractiveWorker.abort("cancelled by user");
-    } else {
-      pythonWorker.abort("cancelled by user");
-    }
-    return { cancelled: true, scope, mode: "abort" };
-  });
+  // Cancellation is always addressed. A missing/completed request cannot
+  // restart a shared worker or affect a neighbouring node.
+  handleTrusted("api:cancel", (_event, payload) =>
+    apiRequests.cancel(String(payload?.requestId || "")));
   handleTrusted("engine:status:get", () => engineSnapshot());
   handleTrusted("engine:restart", (_event, payload) => {
     const scope = String(payload?.scope || "all");
@@ -831,7 +801,9 @@ function registerIpc() {
     // Полосы: exclusive (block-parse) и /api/project/* — серийные (Chromium
     // дорог; projects.db single-writer + монотонные ревизии Live Project
     // Session), остальное — параллельно с семафором на воркер.
-    return apiScheduler.run(requestPath, worker, async () => {
+    const requestId = String(validatedRequest.requestId || "").slice(0, 128);
+    return apiRequests.run(requestId, interactive ? "interactive" : "long", worker, ({ signal, dispatch }) =>
+      apiScheduler.run(requestPath, worker, async () => {
       // Capture/validate the live session only after preceding project responses
       // have synchronized. Capacity resets can dispose a previously captured
       // session, and a preceding save can advance the authoritative revision.
@@ -859,6 +831,7 @@ function registerIpc() {
         preparedRequest = attachSourceAuthCookies(validatedRequest, cookies, authIntent.url);
       }
       await ensureWorkerConfigured(worker);
+      signal.throwIfAborted();
       // Source Import / generation pipelines legitimately take minutes
       // (Playwright captures multiple viewports, font downloads, LLM steps),
       // so the HTTP call gets a wider budget than the default worker timeout.
@@ -870,24 +843,8 @@ function registerIpc() {
         delete requestParams.body;
         delete requestParams.encoding;
       }
-      // requestId рендерера (опционально) → id фрейма воркера: api:cancel
-      // адресует cancel-фрейм именно этому запросу.
-      const rendererRequestId = requestParams.requestId == null ? "" : String(requestParams.requestId).slice(0, 128);
       delete requestParams.requestId;
-      const frameId = `api-${++apiSequence}`;
-      const pending = worker.request("http.request", requestParams, interactive ? 120_000 : 600_000, { id: frameId });
-      if (rendererRequestId) {
-        apiRequests.set(rendererRequestId, {
-          worker, frameId, scope: interactive ? "interactive" : "long",
-          settled: pending.then(() => undefined, () => undefined),
-        });
-      }
-      let response;
-      try {
-        response = await pending;
-      } finally {
-        if (rendererRequestId && apiRequests.get(rendererRequestId)?.frameId === frameId) apiRequests.delete(rendererRequestId);
-      }
+      const response = await dispatch(requestParams, interactive ? 120_000 : 600_000);
       liveProjects.synchronize(liveProjectContext, response);
       if (response && response.bodyBytes instanceof Uint8Array) {
         return { ...response, body: response.bodyBytes, encoding: "raw" };
@@ -897,7 +854,7 @@ function registerIpc() {
         return { ...response, body: Buffer.from(response.body, "base64") };
       }
       return response;
-    });
+    }, signal));
   });
   handleTrusted("repo-canvas:snapshot", () => repoCanvasQueue.run(() => repoCanvasWorker.request("snapshot")));
   handleTrusted("repo-canvas:check", () => repoCanvasQueue.run(() => repoCanvasWorker.request("check")));
@@ -986,8 +943,9 @@ function registerIpc() {
     const abort = new AbortController();
     providerChats.set(id, abort);
     try {
-      return await codex.generateImage({ prompt: payload.prompt, referenceImage: payload.referenceImage, model: payload.model,
-        removeBackground: payload.removeBackground === true }, { signal: abort.signal });
+      return await providerGovernor.run("codex", () => codex.generateImage({ prompt: payload.prompt,
+        referenceImage: payload.referenceImage, model: payload.model,
+        removeBackground: payload.removeBackground === true }, { signal: abort.signal }), { signal: abort.signal });
     } finally {
       if (providerChats.get(id) === abort) providerChats.delete(id);
     }

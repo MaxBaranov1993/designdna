@@ -36,13 +36,13 @@ def err(status: int, message: str) -> JSONResponse:
 # прямые вызовы хендлеров в одной сессии не зависят от порядка. Модули
 # обращаются к пулам через common.EXECUTOR, а не через импорт имени.
 EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-SOURCE_IMPORT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+SOURCE_IMPORT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 
 def fresh_executors() -> None:
     global EXECUTOR, SOURCE_IMPORT_EXECUTOR
     EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-    SOURCE_IMPORT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    SOURCE_IMPORT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 
 def ensure_executors() -> None:

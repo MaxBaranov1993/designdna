@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import server
-from test_qualitygate import BASE_IR
+from quality_test_fixtures import QUALITY_IR as BASE_IR
 
 FAILS = []
 

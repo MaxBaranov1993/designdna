@@ -80,6 +80,7 @@ export type FeatureFlags = {
 
 export type PromptNodeData = { text: string };
 export type ReferenceNodeData = {
+  role?: import("./generator-visual").ReferenceRole;
   brief: string;
   image: string | null;
   fileName: string;
@@ -91,6 +92,13 @@ export type ReferenceNodeData = {
  *  подписке через локальный CLI (OAuth живёт внутри самого CLI). */
 export type NodeProvider = "openai" | "astra" | "codex" | "claude";
 export type GeneratorNodeData = {
+  referenceRole?: import("./generator-visual").ReferenceRole;
+  conceptMode?: "off" | "on";
+  conceptRuns?: import("./generator-visual").ConceptRun[];
+  assetConsistency?: "series" | "independent";
+  assetMode?: "auto" | "codex" | "off";
+  assetModel?: string;
+  assetRuns?: import("./generator-assets").AssetRun[];
   surface?: string;
   designStyle?: string;
   provider: NodeProvider;
@@ -102,7 +110,7 @@ export type GeneratorNodeData = {
   active: number;
   /** Оценки встроенного Quality Pass по вариантам (null — судья не ответил). */
   qualityScores?: (number | null)[];
-  generationContext?: { inputKey: string; pageId: string; brief: string; startedAt: number };
+  generationContext?: { inputKey: string; baseInputKey?: string; pageId: string; brief: string; startedAt: number; designSystem?: Record<string, unknown> | null };
   /** Режим использования ДС для этой ноды: strict | extend | style-only (иначе — из пикера проекта). */
   designSystemUsageMode?: string;
   /** Журнал решений последней генерации: ДС, мастера в контексте, линт, автофиксы. */
@@ -501,6 +509,13 @@ export type VideoChatMessage = {
   kind?: "message" | "question" | "error" | "preview" | "applied" | "cancelled";
 };
 export type TimelineNodeData = {
+  aiPreview?: {
+    chatMessageId: string; prompt: string; provider: "codex" | "claude"; effort: VideoEffort; model: string;
+    timeline: Record<string, any>; changeSet: Record<string, any>; baseTimeline: Record<string, any>;
+    intent: string; planSource: string; warning: string | null; operations: number;
+  } | null;
+  directorRunId?: string | null;
+  directorStartedAt?: number;
   chatMessages?: VideoChatMessage[];
   inputs?: string[];
   pageNames?: Record<string, string>;
@@ -564,7 +579,7 @@ export type MotionDesignNodeData = {
 
 /* `png` is the legacy asset field: a PNG/JPEG data URL or desktop blob URL. */
 export type ImageStyle = "vector" | "texture" | "icon";
-export type ImageVariant = { png: string; svg?: string; width: number; height: number; createdAt: number; format?: "png" | "jpeg"; transparent?: boolean };
+export type ImageVariant = { png: string; svg?: string; width: number; height: number; createdAt: number; format?: "png" | "jpeg"; transparent?: boolean; mask?: string; edge?: string; method?: 'chroma'; keyColor?: string };
 export type ImageNodeData = {
   engine: "raster" | "svg";
   model?: string;
@@ -582,6 +597,11 @@ export type ImageNodeData = {
 };
 
 export type RemoveBackgroundNodeData = {
+  method?: 'ai' | 'chroma';
+  keyColor?: string;
+  tolerance?: number;
+  softness?: number;
+  despill?: boolean;
   image: string | null;
   fileName: string;
   prompt: string;

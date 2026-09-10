@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { useFlowStore, captureNodeScope } from "../flow/store";
+  import { captureNodeScope } from "../flow/store";
   import { IRHistory } from "../engine/irhistory";
   import { compositionFrame, COMP_CARD_STYLE } from "./motion-composition";
   import { untrack } from "svelte";
   import { api, apiGet } from "../flow/api";
-  import { flow, flowBusy } from "../flow/state";
+  import { pageFlow } from "../flow/state";
+  const flow = pageFlow();
   import { bodyPortal } from "../lib/bodyPortal";
   import type { MotionCompLayer, MotionNodeData, MotionRenderJob, MotionSceneSettings } from "../flow/types";
   import { durationOf, interpProp, keyIdxAt, layerVals, scenesOf, type InterpMode, type LayerValues } from "./motion-utils";
@@ -41,7 +42,7 @@
   const toolProp: Record<string, PropKey> = { move: "p", scale: "s", rotate: "r", opacity: "o" };
 
   /* ---------- базовое состояние ---------- */
-  let busy = $derived(Boolean($flowBusy[nodeId]));
+  let busy = $derived(Boolean($flow.busy[nodeId]));
   let scenes = $derived(scenesOf(data));
   let total = $derived(durationOf(data));
   let playing = $state(false);
@@ -267,7 +268,7 @@
   const onUpload = (event: Event) => {
     const input = event.currentTarget as HTMLInputElement;
     const files = Array.from(input.files || []);
-    const scope = captureNodeScope(useFlowStore.getState, nodeId);
+    const scope = captureNodeScope(() => $flow, nodeId);
     const sceneId = activeScene?.id;
     files.forEach((file) => {
       const reader = new FileReader();
@@ -582,7 +583,7 @@
     startingRender = true;
     const sourceRevision = $flow.getNodeIrRevision(nodeId);
     const sourcePage = $flow.activePageId;
-    const isCurrent = () => useFlowStore.getState().activePageId === sourcePage && $flow.getNodeIrRevision(nodeId) === sourceRevision;
+    const isCurrent = () => $flow.activePageId === sourcePage && $flow.getNodeIrRevision(nodeId) === sourceRevision;
     const snapshot = JSON.parse(JSON.stringify(data)) as MotionNodeData;
     const layers = JSON.parse(JSON.stringify(baselineLayers)) as MotionCompLayer[];
     try {

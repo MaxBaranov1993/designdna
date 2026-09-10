@@ -18,12 +18,14 @@
   let result = $derived(
     data.result as {
       passed?: boolean;
+      acceptance?: { status?: string };
+      resourceEvidence?: { errors?: { problem: string }[] };
       scorecard?: { score?: number; verdict?: string; summary?: string; issues?: Array<{ severity?: string; problem?: string }> };
       repair?: { applied?: boolean; error?: string | null };
     } | null,
   );
   let score = $derived(result?.scorecard?.score);
-  let issues = $derived(result?.scorecard?.issues || []);
+  let issues = $derived([...(result?.resourceEvidence?.errors || []).map(issue => ({ ...issue, severity: "major" })), ...(result?.scorecard?.issues || [])]);
 </script>
 
 <NodeShell {id} type="qualitypass" {selected}>
@@ -73,7 +75,7 @@
   </div>
   {#if result}
     <div class={"qp-score " + (result.passed ? "pass" : "warn")}>
-      <strong>{score ?? "?"}/100</strong> · {result.passed ? "готово" : "нужна правка"}{result.repair?.applied ? " · repair применён" : ""}
+      <strong>{score ?? "?"}/100</strong> · {result.acceptance?.status === "unverified" ? "проверено не полностью" : result.passed ? "готово" : "нужна правка"}{result.repair?.applied ? " · repair применён" : ""}
     </div>
   {/if}
   {#if result?.scorecard?.summary}

@@ -2,6 +2,10 @@ import { defaultData, portsOfNode } from "./ports";
 import { edgeKindOf, outValue, reachable, WIRE_COLORS } from "./dataflow";
 import { isDesktopBlobUrl, offloadBlobsInPlace } from "../desktop/blobStore";
 import { toast } from "./toast";
+import { settleInterruptedAssets } from "./generator-assets";
+import type { AssetRun } from "./generator-assets";
+import { settleInterruptedConcepts } from "./generator-visual";
+import type { ConceptRun } from "./generator-visual";
 import type { ProjectLoadResp } from "./api";
 import type {
   AnyNodeData,
@@ -442,6 +446,8 @@ function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
   const merged = { ...defaults, ...saved };
   // Existing image nodes were SVG-only; do not change their generation engine.
   if (type === "image" && saved.engine == null) merged.engine = "svg";
+  if (["generator", "derive", "mix", "reskin"].includes(type) && Array.isArray(saved.assetRuns)) merged.assetRuns = settleInterruptedAssets(saved.assetRuns as AssetRun[]);
+  if (type === "generator" && Array.isArray(saved.conceptRuns)) merged.conceptRuns = settleInterruptedConcepts(saved.conceptRuns as ConceptRun[]);
   // Older documents can contain only part of a node or its settings.
   for (const key of ["settings", "composition", "renderSettings", "mask"]) {
     if (defaults[key] && typeof defaults[key] === "object") {

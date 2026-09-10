@@ -52,6 +52,17 @@ function check(name, fn) {
   console.log("OK", name);
 }
 
+check("generated gallery and alternating assets render actual images with escaped attributes", () => {
+  for (const type of ["gallery", "feature-alternating"]) {
+    const html = IRRendererTest.renderSection({ type, props: {}, children: [
+      { type: "image", src: 'ddna://blobs/photo.png', alt: 'Cup "blue"', imagePrompt: "placeholder should disappear" },
+    ] }, 3, false);
+    assert(html.includes('<img src="ddna://blobs/photo.png"'));
+    assert(html.includes('Cup &quot;blue&quot;'));
+    assert(!html.includes('placeholder should disappear'));
+  }
+});
+
 check("captured font families do not load extra Google weights", () => {
   const tokens = { font: { body: { family: "Open Sans", weight: 500 }, display: { family: "Inter", weight: 700 } } };
   const captured = { meta: { fontFaces: [{ family: "Open Sans", weight: "400", url: "/fonts/source.woff2" }] } };

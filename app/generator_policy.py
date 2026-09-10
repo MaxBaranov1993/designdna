@@ -13,7 +13,7 @@ from config import settings
 POLICY_VERSION = "generator-design/1.0"
 KNOWLEDGE_PATH = settings.app_dir() / "prompts" / "generator-policy.json"
 SURFACES = ("auto", "landing", "catalog", "detail", "checkout", "dashboard", "form",
-            "editor", "ai-workspace", "article", "feed", "component")
+            "editor", "ai-workspace", "article", "feed", "component", "diagram")
 STYLE_IDS = ("auto", "minimal", "enterprise", "marketplace", "editorial", "swiss",
              "product-led", "luxury", "organic", "playful", "brutal", "industrial",
              "soft-pastel", "bento", "glass", "immersive", "retro")
@@ -50,6 +50,7 @@ def surface_for(brief: str, requested: str = "auto", ir: dict | None = None) -> 
     # Explicit surfaces win over incidental domain words (a property search landing).
     for surface, pattern in (
         ("landing", r"лендинг|landing|промо.?страниц|hero"),
+        ("diagram", r"схем[аыуе]\b|инфографик|flowchart|infographic|process.diagram|architecture.diagram"),
         ("component", r"компонент|component|(?:^|\s)(?:кнопк|button|badge|tooltip|modal)\w*"),
         ("ai-workspace", r"ai.workspace|ai.assistant|чат.?бот|ai.?чат|ии.?ассистент|ai.?ассистент"),
         ("editor", r"редактор|canvas|editor\b"),
@@ -155,6 +156,9 @@ def has_masters(ir: dict) -> bool:
 
 def repair_guard(before: dict, after: dict, surface: str, ds: dict | None = None, *, brief: str = "") -> str | None:
     """Reject new defects, changed foundations and changed/removed exact instances."""
+    from asset_quality import preserves_resources
+    if not preserves_resources(before, after):
+        return "Quality Pass: repair удалил или заменил готовое изображение"
     if before.get("tokens") != after.get("tokens"):
         return "Quality Pass: repair изменил зафиксированные foundations"
     def referenced(value):

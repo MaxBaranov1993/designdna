@@ -22,6 +22,8 @@ async function harness({ offload = async () => {} } = {}) {
   runInNewContext(compiled, {
     exports,
     require: (id) => {
+      if (id === "./generator-assets") return { settleInterruptedAssets: value => value };
+      if (id === "./generator-visual") return { settleInterruptedConcepts: value => value };
       if (id.endsWith("blobStore")) return { isDesktopBlobUrl: () => false, offloadBlobsInPlace: offload };
       if (id.endsWith("toast")) return { toast() {} };
       if (id === "./ports" || id === "./dataflow") return {};

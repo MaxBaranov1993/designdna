@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
+  import AssetRunDetails from "../components/AssetRunDetails.svelte";
+  import ConceptRunDetails from "../components/ConceptRunDetails.svelte";
   import ProviderPicker from "../components/ProviderPicker.svelte";
   import { flow, flowBusy, flowDesignSystemPicker, flowDesignSystems, flowEdges, flowNodes } from "../flow/state";
   import { pinnedDesignSystemRef } from "../flow/store";
@@ -232,6 +234,8 @@
       onChange={(next) => $flow.setNodeData(Number(id), next)}
     />
   </div>
+  <AssetRunDetails runs={data.assetRuns} generationStartedAt={data.generationContext?.startedAt} {busy} onRetry={(slotId) => void $flow.retryGeneratorAssets(Number(id), slotId)} />
+  <ConceptRunDetails runs={data.conceptRuns} />
   {#if dsRef}
     <div class="gen-ds-row nodrag" data-ds-source={dsRef.wired ? "wire" : "project"}
       title={dsRef.wired ? "Дизайн-система пришла по проводу: генерация собирается из её токенов и мастеров" : "Дизайн-система придёт в генерацию из глобального выбора проекта"}>

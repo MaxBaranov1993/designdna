@@ -780,7 +780,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         s.push("width:auto", `flex:1 1 ${basis}px`, `min-width:min(100%,${basis}px)`);
       } else if (pDir === "row") s.push("width:100%", "flex:1 1 auto", "min-width:0");
       else s.push("width:100%", "min-width:0");
-    } else if (f.width === "hug") s.push("width:fit-content");
+    } else if (f.width === "hug") s.push("width:fit-content", "flex-shrink:0");
     if (typeof f.height === "number") s.push(`height:${f.height}px`);
     else if (f.height === "fill") {
       if (parentFree) s.push("height:100%");
@@ -838,7 +838,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const clipText = (el.type === "text" || el.type === "heading") && el.frame && typeof el.frame.height === "number" ? "overflow:hidden" : "";
       const flexShare = (el.type === "image" || el.type === "heading" || el.type === "text") && !parentFree && parentFrame && parentFrame.layout === "auto" && parentFrame.direction === "row" && !(el.frame && (typeof el.frame.width === "number" || el.frame.width === "hug" || el.frame.width === "fill"));
       const flexImage = flexShare ? el.type === "image" ? "flex:1 1 0;min-width:0" : "flex:1 1 0;min-width:min-content" : "";
-      const extra = [clipText, flexImage].filter(Boolean).join(";");
+      const hugText = (el.type === "text" || el.type === "heading") && el.frame && el.frame.width === "hug" ? "white-space:nowrap" : "";
+      const extra = [clipText, flexImage, hugText].filter(Boolean).join(";");
       const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, extra);
       out = wrapped === html && irPath ? flexImage ? `<div data-ir-path="${esc(irPath)}" style="${flexImage}">${html}</div>` : `<span data-ir-path="${esc(irPath)}" style="display:inline-block">${html}</span>` : wrapped;
     }
@@ -1178,7 +1179,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     if (t === "feature-alternating") {
       const rows = (sec.children || []).map((c, i) => {
-        const media = `<div class="img-ph" style="min-height:240px">${esc(c.imagePrompt || c.alt || "изображение")}</div>`;
+        const media = c.src ? `<div class="img-ph" style="min-height:240px;padding:0;overflow:hidden"><img src="${esc(c.src)}" alt="${esc(c.alt || "")}" style="display:block;width:100%;height:240px;object-fit:cover" decoding="sync"></div>` : `<div class="img-ph" style="min-height:240px">${esc(c.imagePrompt || c.alt || "изображение")}</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center;gap:12px">
           ${c.title || c.text ? `<h3>${esc(c.title || "")}</h3><p class="muted">${esc(c.text || "")}</p>` : renderElement(c, uid, false, sec.frame)}
           ${(c.children || []).map((ch) => renderElement(ch, uid, !!(c.frame && c.frame.layout === "free"), c.frame)).join("")}</div>`;
@@ -1202,7 +1203,10 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     if (t === "gallery") {
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:16px">
-        ${(sec.children || []).map((c, i) => `<div class="img-ph" style="min-height:${v === "masonry" ? 140 + i * 67 % 120 : 200}px">${esc(c.imagePrompt || c.alt || "фото")}</div>`).join("")}</div></div></section>`;
+        ${(sec.children || []).map((c, i) => {
+        const height = v === "masonry" ? 140 + i * 67 % 120 : 200;
+        return c.src ? `<div class="img-ph" style="min-height:${height}px;padding:0;overflow:hidden"><img src="${esc(c.src)}" alt="${esc(c.alt || "")}" style="display:block;width:100%;height:${height}px;object-fit:cover" decoding="sync"></div>` : `<div class="img-ph" style="min-height:${height}px">${esc(c.imagePrompt || c.alt || "фото")}</div>`;
+      }).join("")}</div></div></section>`;
     }
     if (t === "testimonials") {
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
