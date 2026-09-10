@@ -119,7 +119,9 @@ def test_generated_layout_becomes_fluid_and_row_labels_hug() -> None:
         _section({"contentMaxWidth": 1120}, [form, free, master, diptych])]})
     form_out, free_out, master_out, diptych_out = out["tree"][0]["children"]
     assert form_out["frame"]["width"] == "fill" and form_out["frame"]["maxWidth"] == 640
-    prefix, field, button, long_text = form_out["children"][0]["children"]
+    inline_row = form_out["children"][0]
+    assert inline_row["frame"]["wrap"] is True  # на 390px кнопка уходит под поле, а не сжимается
+    prefix, field, button, long_text = inline_row["children"]
     assert prefix["frame"] == {"width": "hug"}
     assert field["frame"] == {"width": "fill"}
     assert button["frame"] == {"width": "hug"}

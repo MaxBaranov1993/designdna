@@ -435,6 +435,11 @@ def _normalize_generated_layout(section: object) -> None:
             node["frame"] = {**(frame or {}), "width": "hug"}
         child_frame = node.get("frame") if isinstance(node.get("frame"), dict) else None
         children = [child for child in (node.get("children") or []) if isinstance(child, dict)]
+        # Ряд inline-формы должен переноситься на узком экране: иначе кнопка
+        # и префикс сжимаются до нечитаемости на 390px.
+        if (child_frame is not None and child_frame.get("layout") == "auto" and child_frame.get("direction") == "row"
+                and any(child.get("type") == "input" for child in children) and "wrap" not in child_frame):
+            child_frame["wrap"] = True
         for child in children:
             visit(child, child_frame, children, depth + 1)
 

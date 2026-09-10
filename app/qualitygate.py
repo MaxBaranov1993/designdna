@@ -519,6 +519,83 @@ def _fix_min_font_size(ir, minimum: int = MIN_FONT_SIZE) -> list:
 MIN_FONT_SIZE_FLOOR = 6
 
 
+# ---------- правило: невидимый текст (цвет = фон) ----------
+#
+# Модель пишет ссылке цвет роли background, судья видит контраст 1:1 и
+# требует починки, а починка не всегда попадает по пути. Это детерминировано:
+# цвет текста совпадает с фоном ближайшего залитого предка (или страницы).
+
+_TEXT_TYPES = {"text", "heading", "link", "button"}
+
+
+def _hex6(value) -> str | None:
+    """'#abc' / '#aabbcc' / '#aabbccdd' → '#aabbcc' без альфы; иначе None."""
+    normalized = _norm_hex(value)
+    return normalized[0] if normalized else None
+
+
+def _role_hex(colors: dict, value) -> str | None:
+    """Роль токена (background/surface/…) или hex → нормализованный hex."""
+    if not isinstance(value, str):
+        return None
+    if value in colors:
+        return _hex6(colors.get(value))
+    return _hex6(value)
+
+
+def _iter_text_with_background(ir):
+    """(path, узел, фон под текстом) для текстовых узлов всех секций, в порядке документа."""
+    tokens = ir.get("tokens") if isinstance(ir.get("tokens"), dict) else {}
+    colors = tokens.get("color") if isinstance(tokens.get("color"), dict) else {}
+    page_bg = _hex6(colors.get("background")) if colors else None
+
+    def walk(node, path, bg):
+        style = node.get("style") if isinstance(node.get("style"), dict) else {}
+        effective = _hex6(style.get("background") or style.get("backgroundColor")) or bg
+        if str(node.get("type") or "") in _TEXT_TYPES and isinstance(node.get("text"), str) and node["text"].strip():
+            yield path, node, effective
+        for j, child in enumerate(node.get("children") or []):
+            if isinstance(child, dict):
+                yield from walk(child, f"{path}.children.{j}", effective)
+
+    for _i, base, sec in _iter_sections(ir):
+        sec_style = sec.get("style") if isinstance(sec.get("style"), dict) else {}
+        sec_props = sec.get("props") if isinstance(sec.get("props"), dict) else {}
+        sec_bg = (_hex6(sec_style.get("background")) or _role_hex(colors, sec_props.get("background")) or page_bg)
+        for j, child in enumerate(sec.get("children") or []):
+            if isinstance(child, dict):
+                yield from walk(child, f"{base}.children.{j}", sec_bg)
+
+
+def _check_invisible_text(ir) -> list:
+    out = []
+    for path, node, bg in _iter_text_with_background(ir):
+        color = _hex6((node.get("style") or {}).get("color"))
+        if color and bg and color == bg:
+            out.append({"path": f"{path}.style.color",
+                        "message": f"цвет текста {color} совпадает с фоном — текст невидим"})
+    return out
+
+
+def _fix_invisible_text(ir) -> list:
+    tokens = ir.get("tokens") if isinstance(ir.get("tokens"), dict) else {}
+    colors = tokens.get("color") if isinstance(tokens.get("color"), dict) else {}
+    journal = []
+    for path, node, bg in _iter_text_with_background(ir):
+        style = node.get("style") or {}
+        color = _hex6(style.get("color"))
+        if not (color and bg and color == bg):
+            continue
+        candidates = [colors.get("text"), colors.get("textMuted"), colors.get("primary"), "#ffffff", "#111111"]
+        replacement = next((c for c in candidates if _hex6(c) and _hex6(c) != bg), None)
+        if replacement is None:
+            continue
+        old = style.get("color")
+        style["color"] = replacement
+        journal.append(f"rule invisible-text починило {path}.style.color: {old} -> {replacement}")
+    return journal
+
+
 def min_font_rule(minimum: int) -> dict:
     """Правило min-font-size с другим порогом (не ниже MIN_FONT_SIZE_FLOOR).
 
@@ -942,6 +1019,9 @@ RULES = [
     {"id": "min-font-size", "severity": SEVERITY_ERROR,
      "description": f"текст не мельче {MIN_FONT_SIZE}px",
      "check": _check_min_font_size, "fix": _fix_min_font_size},
+    {"id": "invisible-text", "severity": SEVERITY_ERROR,
+     "description": "цвет текста не совпадает с фоном под ним",
+     "check": _check_invisible_text, "fix": _fix_invisible_text},
     {"id": "free-overlap", "severity": SEVERITY_ERROR,
      "description": "во free-раскладке дети не перекрываются и не выходят за границы родителя",
      "check": _check_free_overlap},

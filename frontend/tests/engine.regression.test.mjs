@@ -520,3 +520,12 @@ check("text in an auto row shares width but never shrinks below min-content", ()
   const hug = IRRendererTest.renderElement({ type: "text", text: "https://", frame: { width: "hug" } }, 5, false, row);
   assert(!hug.includes("flex:1 1 0"), "explicit hug opts out of sharing");
 });
+
+check("hug elements keep their content size and hug text never wraps", () => {
+  const row = { layout: "auto", direction: "row", gap: 10 };
+  const text = IRRendererTest.renderElement({ type: "text", text: "https://", frame: { width: "hug" } }, 6, false, row);
+  assert(text.includes("width:fit-content") && text.includes("flex-shrink:0"), "hug text does not shrink");
+  assert(text.includes("white-space:nowrap"), "hug text does not wrap inside the word");
+  const button = IRRendererTest.renderElement({ type: "button", text: "Запустить →", frame: { width: "hug" } }, 6, false, row);
+  assert(button.includes("flex-shrink:0"), "hug button does not shrink into a circle");
+});

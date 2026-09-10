@@ -114,3 +114,14 @@ def test_server_quality_pass_loops_rounds(monkeypatch):
     assert calls == ["quality_judge", "quality_repair", "quality_judge", "quality_repair", "quality_judge"]
     assert result["passed"] is True and result["ir"]["meta"]["name"] == "round-2"
     assert [item["score"] for item in result["repair"]["rounds"]] == [68, 88]
+
+
+def test_codex_step_continues_on_an_equal_score_until_max_rounds(monkeypatch):
+    _forbid_server_llm(monkeypatch)
+    low, same = _judge(50), _judge(70)
+    step = _step({"judge": low, "repairs": [_repaired("r1"), _repaired("r2")], "rejudges": [same, same]})
+    assert step["pending"]["stage"] == "repair" and step["pending"]["round"] == 3  # равный балл — ещё раунд
+    final = _step({"judge": low, "repairs": [_repaired("r1"), _repaired("r2"), _repaired("r3")],
+                   "rejudges": [same, same, same]})
+    assert "pending" not in final and final["scorecard"]["score"] == 70
+    assert [item["round"] for item in final["repair"]["rounds"]] == [1, 2, 3]

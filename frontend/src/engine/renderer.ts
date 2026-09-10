@@ -530,7 +530,9 @@ import { isLockedNode } from "./locked";
       else if (pDir === "row") s.push("width:100%", "flex:1 1 auto", "min-width:0");
       else s.push("width:100%", "min-width:0");
     }
-    else if (f.width === "hug") s.push("width:fit-content");
+    // hug — размер по содержимому и никакого сжатия в ряду: кнопка inline-формы
+    // на 390px превращалась в круг с текстом в три строки.
+    else if (f.width === "hug") s.push("width:fit-content", "flex-shrink:0");
     if (typeof f.height === "number") s.push(`height:${f.height}px`);
     else if (f.height === "fill") {
       if (parentFree) s.push("height:100%");
@@ -620,7 +622,10 @@ import { isLockedNode } from "./locked";
         parentFrame && parentFrame.layout === "auto" && parentFrame.direction === "row" &&
         !(el.frame && (typeof el.frame.width === "number" || el.frame.width === "hug" || el.frame.width === "fill"));
       const flexImage = flexShare ? (el.type === "image" ? "flex:1 1 0;min-width:0" : "flex:1 1 0;min-width:min-content") : "";
-      const extra = [clipText, flexImage].filter(Boolean).join(";");
+      // hug-текст (префикс «https://», короткий лейбл) не переносится внутри слова
+      const hugText = (el.type === "text" || el.type === "heading") && el.frame && el.frame.width === "hug"
+        ? "white-space:nowrap" : "";
+      const extra = [clipText, flexImage, hugText].filter(Boolean).join(";");
       const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, extra);
       // если frame пустой и withFrame не обернул — добавляем span-обёртку с path
       out = (wrapped === html && irPath)

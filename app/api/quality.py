@@ -332,6 +332,9 @@ def _parse_quality_repair(raw: str) -> tuple[dict | None, str | None]:
         # Те же нормализации, что у генератора: frame секций, плотность, резиновые
         # ширины — иначе починка возвращает дефекты, которые санитайзер уже снимал.
         repaired = sanitize_generated_ir(repaired)
+        # Невидимый текст (цвет = фон) чинится детерминированно и после починки модели.
+        repaired, _journal = qualitygate.autofix(
+            repaired, rules=[rule for rule in qualitygate.RULES if rule["id"] == "invisible-text"])
         schema_errors = validate_ir(repaired)
         if schema_errors:
             return None, "; ".join(schema_errors[:5])
@@ -532,11 +535,13 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
             break
         repair["rounds"].append({"round": index, "applied": True, "score": scorecard["score"],
                                  "issues": len(scorecard["issues"])})
-        improved = _better(scorecard, current)
+        regressed = int(scorecard["score"]) < int(current.get("score", 0))
         current_ir, current = repaired, scorecard
         if _better(scorecard, final):
             output_ir, final, repair["applied"] = repaired, scorecard, True
-        if _passes(scorecard, min_score) or not improved:
+        # Равный балл — не повод останавливаться: судья колеблется на ±5, а
+        # список замечаний обычно меняется; стоп только на падении балла.
+        if _passes(scorecard, min_score) or regressed:
             break
     return _quality_finish(req, output_ir, initial, final, repair, visual=True)
 
@@ -623,11 +628,11 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
         consumed = index
         repair["rounds"].append({"round": index, "applied": True, "score": scorecard["score"],
                                  "issues": len(scorecard["issues"])})
-        improved = _better(scorecard, current)
+        regressed = int(scorecard["score"]) < int(current.get("score", 0))
         current_ir, current = repaired, scorecard
         if _better(scorecard, final):
             output_ir, final, repair["applied"] = repaired, scorecard, True
-        if _passes(scorecard, min_score) or not improved:
+        if _passes(scorecard, min_score) or regressed:
             break
 
     if rejudges and consumed == 0 and not repair["applied"]:
