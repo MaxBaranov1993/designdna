@@ -78,3 +78,56 @@ def test_design_brief_density_words_map_to_section_density() -> None:
         section["props"]["density"] = density
     out = sanitize_generated_ir({"version": "1.1", "tokens": {}, "tree": sections})
     assert [section["props"]["density"] for section in out["tree"]] == ["normal", "tight", "airy", "wild"]
+
+
+def test_duplicate_section_heading_is_dropped_from_props() -> None:
+    section = _section({"contentMaxWidth": 1120}, [
+        {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 12}, "children": [
+            {"type": "heading", "level": 2, "text": "Всё делаем за вас —  по шагам."},
+            {"type": "text", "text": "Подзаголовок секции"},
+        ]},
+    ])
+    section["props"].update({"heading": "Всё делаем за вас — по шагам.", "subheading": "Подзаголовок секции"})
+    kept = _section({"contentMaxWidth": 1120}, [{"type": "text", "text": "другой текст"}])
+    kept["props"]["heading"] = "Уникальный заголовок"
+    out = sanitize_generated_ir({"version": "1.1", "tokens": {}, "tree": [section, kept]})
+    assert "heading" not in out["tree"][0]["props"] and "subheading" not in out["tree"][0]["props"]
+    assert out["tree"][1]["props"]["heading"] == "Уникальный заголовок"
+
+
+def test_generated_layout_becomes_fluid_and_row_labels_hug() -> None:
+    row = {"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 10, "align": "center"}, "children": [
+        {"type": "text", "text": "https://"},
+        {"type": "input", "placeholder": "yourcompany.com", "frame": {"width": "fill"}},
+        {"type": "button", "text": "Запустить →", "frame": {"width": "fill"}},
+        {"type": "text", "text": "Довольно длинный пояснительный текст в ряду", "frame": {}},
+    ]}
+    form = {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 20, "width": 640}, "children": [row]}
+    free = {"type": "frame", "frame": {"layout": "free", "height": 300}, "children": [
+        {"type": "card", "frame": {"x": 10, "y": 10, "width": 500, "height": 100}},
+        {"type": "text", "text": "ok", "frame": {"x": 0, "y": 0}},
+    ]}
+    master = {"type": "card", "frame": {"width": 840, "height": 345}, "sourceMeta": {"componentRef": {"componentKey": "list-item"}},
+              "children": [{"type": "text", "text": "DAY 1", "frame": {"width": 60}}]}
+    diptych = {"type": "frame", "frame": {"layout": "auto", "direction": "row", "gap": 48, "wrap": True}, "children": [
+        {"type": "frame", "frame": {"layout": "auto", "direction": "column", "gap": 16, "width": 560},
+         "children": [{"type": "heading", "level": 2, "text": "Колонка"}, {"type": "text", "text": "Цена"}]},
+        {"type": "image", "imagePrompt": "x", "frame": {"width": 480}},
+        {"type": "button", "text": "Подробнее →"},
+    ]}
+    out = sanitize_generated_ir({"version": "1.1", "tokens": {}, "tree": [
+        _section({"contentMaxWidth": 1120}, [form, free, master, diptych])]})
+    form_out, free_out, master_out, diptych_out = out["tree"][0]["children"]
+    assert form_out["frame"]["width"] == "fill" and form_out["frame"]["maxWidth"] == 640
+    prefix, field, button, long_text = form_out["children"][0]["children"]
+    assert prefix["frame"] == {"width": "hug"}
+    assert field["frame"] == {"width": "fill"}
+    assert button["frame"] == {"width": "hug"}
+    assert long_text["frame"] == {}  # длинный текст в ряду по-прежнему делит ширину
+    assert free_out["children"][0]["frame"]["width"] == 500  # free-раскладка не трогается
+    assert master_out["frame"]["width"] == 840  # точная копия мастера неприкосновенна
+    # ряд без поля ввода: фиксированные ширины колонок и кнопка без ширины остаются как есть
+    assert diptych_out["children"][0]["frame"]["width"] == 560
+    assert diptych_out["children"][1]["frame"]["width"] == 480
+    assert "frame" not in diptych_out["children"][2]
+    assert diptych_out["children"][0]["children"][1] == {"type": "text", "text": "Цена"}

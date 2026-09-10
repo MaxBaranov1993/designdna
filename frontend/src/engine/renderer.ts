@@ -614,10 +614,12 @@ import { isLockedNode } from "./locked";
       // складывался в столбик, а без wrap выдавливал колонку за край.
       // То же для текста и заголовков: строка «H2 + колонка 400» в wrap-ряду
       // складывалась, потому что заголовок брал max-content на всю ширину.
-      const flexImage = (el.type === "image" || el.type === "heading" || el.type === "text") && !parentFree &&
+      // Текст и заголовок сжимаются не ниже min-content: иначе короткий лейбл
+      // в ряду с полем «fill» (префикс «https://» inline-формы) урезался до «h».
+      const flexShare = (el.type === "image" || el.type === "heading" || el.type === "text") && !parentFree &&
         parentFrame && parentFrame.layout === "auto" && parentFrame.direction === "row" &&
-        !(el.frame && (typeof el.frame.width === "number" || el.frame.width === "hug" || el.frame.width === "fill"))
-        ? "flex:1 1 0;min-width:0" : "";
+        !(el.frame && (typeof el.frame.width === "number" || el.frame.width === "hug" || el.frame.width === "fill"));
+      const flexImage = flexShare ? (el.type === "image" ? "flex:1 1 0;min-width:0" : "flex:1 1 0;min-width:min-content") : "";
       const extra = [clipText, flexImage].filter(Boolean).join(";");
       const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, extra);
       // если frame пустой и withFrame не обернул — добавляем span-обёртку с path

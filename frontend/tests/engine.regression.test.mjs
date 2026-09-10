@@ -506,3 +506,17 @@ check("input primitives preserve control type, values and escaped content", () =
 });
 
 console.log(`ALL ENGINE REGRESSION CHECKS PASSED (${passed})`);
+
+/* ---------- auto-row: короткий текст не сжимается до нуля ---------- */
+
+check("text in an auto row shares width but never shrinks below min-content", () => {
+  const row = { layout: "auto", direction: "row", gap: 10 };
+  const text = IRRendererTest.renderElement({ type: "text", text: "https://" }, 5, false, row);
+  assert(text.includes("flex:1 1 0"), "text still shares the row");
+  assert(text.includes("min-width:min-content"), "text keeps its min-content width");
+  assert(!text.includes("min-width:0"), "text no longer collapses to zero");
+  const image = IRRendererTest.renderElement({ type: "image", imagePrompt: "x" }, 5, false, row);
+  assert(image.includes("min-width:0"), "images keep the old share rule");
+  const hug = IRRendererTest.renderElement({ type: "text", text: "https://", frame: { width: "hug" } }, 5, false, row);
+  assert(!hug.includes("flex:1 1 0"), "explicit hug opts out of sharing");
+});

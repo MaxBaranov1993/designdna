@@ -341,7 +341,9 @@ def _root_spec(root: dict) -> dict:
         spec["layout"] = " ".join(layout)
     bindings = root.get("styleBindings") if isinstance(root.get("styleBindings"), dict) else {}
     tokens = {}
-    for prop in ("background", "borderColor", "color", "borderRadius"):
+    # color намеренно не включаем: цвет текста уже есть у каждого текста в анатомии,
+    # а привязка корня бывает ошибочной (ссылка «semantic.background» → невидимая ссылка).
+    for prop in ("background", "borderColor", "borderRadius"):
         binding = bindings.get(prop)
         token = binding.get("token") if isinstance(binding, dict) else binding
         if isinstance(token, str) and token:

@@ -304,6 +304,8 @@ def sanitize_generated_ir(ir: dict) -> dict:
         for section in tree:
             normalize_node(section)
             _normalize_composition_frame(section)
+            _drop_duplicate_section_heading(section)
+            _normalize_generated_layout(section)
 
     # Артборд. Промпты (DESIGN.md) просят компоновать под 1440px, а рендер без
     # корневого frame берёт холст 960px и масштабирует его 1.5×: контейнер
@@ -350,6 +352,97 @@ def _normalize_composition_frame(section: object) -> None:
         return
     wrapper_frame = {"layout": "auto", "direction": str(stray.get("direction") or "column"), **layout, "width": "fill"}
     section["children"] = [{"type": "frame", "frame": wrapper_frame, "children": children}]
+
+
+GENERATED_FLUID_WIDTH = 360     # шире — не помещается в мобильный вьюпорт 390px
+GENERATED_SHORT_LABEL = 16      # короткий текст в ряду не должен сжиматься до нуля
+
+
+def _normalized_text(value: object) -> str:
+    return " ".join(str(value or "").split()).strip().lower()
+
+
+def _is_master_instance(node: dict) -> bool:
+    source_meta = node.get("sourceMeta") if isinstance(node.get("sourceMeta"), dict) else {}
+    return isinstance(source_meta.get("componentRef"), dict)
+
+
+def _drop_duplicate_section_heading(section: object) -> None:
+    """props.heading/subheading композиции, повторённые дочерним заголовком/текстом,
+    рендерились дважды (слева белым и ещё раз в дереве). Дерево модели важнее."""
+    if not isinstance(section, dict) or section.get("type") != "composition":
+        return
+    props = section.get("props")
+    if not isinstance(props, dict):
+        return
+    texts: set[str] = set()
+
+    def collect(node: object, depth: int = 0) -> None:
+        if depth > 6 or not isinstance(node, dict):
+            return
+        if node.get("type") in ("heading", "text"):
+            normalized = _normalized_text(node.get("text"))
+            if normalized:
+                texts.add(normalized)
+        for child in node.get("children") or []:
+            collect(child, depth + 1)
+
+    for child in section.get("children") or []:
+        collect(child)
+    for key in ("heading", "subheading"):
+        value = props.get(key)
+        if isinstance(value, str) and _normalized_text(value) and _normalized_text(value) in texts:
+            props.pop(key, None)
+
+
+def _normalize_generated_layout(section: object) -> None:
+    """Раскладочные привычки модели, ломавшие адаптив и ряды (по вердиктам судьи):
+
+    - фиксированная ширина > 360px у контейнера/поля/кнопки в колонке вылезает
+      за мобильный экран — становится width:"fill" с maxWidth (в ряду фиксированная
+      ширина делит место между соседями, её не трогаем);
+    - в ряду с полем ввода (inline-форма) короткий текст без ширины рендерер
+      сжимал до нуля («https://» → «h»), а кнопка с width:"fill" переносила
+      текст на две строки — такие лейблы и кнопки получают hug.
+    Точные копии мастеров (sourceMeta.componentRef), free-раскладки и эталоны
+    из app/exemplars не меняются.
+    """
+
+    def visit(node: object, parent_frame: dict | None, parent_children: list, depth: int = 0) -> None:
+        if depth > 14 or not isinstance(node, dict) or _is_master_instance(node):
+            return
+        frame = node.get("frame") if isinstance(node.get("frame"), dict) else None
+        kind = str(node.get("type") or "")
+        parent_layout = str((parent_frame or {}).get("layout") or "auto")
+        parent_free = parent_layout == "free"
+        parent_row = parent_layout == "auto" and (parent_frame or {}).get("direction") == "row"
+        # Ряд с полем ввода — inline-форма: её лейблы и кнопка не должны сжиматься.
+        inline_form_row = parent_row and any(
+            isinstance(sibling, dict) and sibling.get("type") == "input" for sibling in parent_children)
+        # Фиксированная ширина в колонке (а не в ряду, где она делит ширину между
+        # соседями) — это «форма 640px», которая вылезает за экран 390px.
+        if not parent_free and not parent_row and frame is not None:
+            width = frame.get("width")
+            if (kind in ("frame", "card", "input", "button", "image") and _is_number(width)
+                    and width > GENERATED_FLUID_WIDTH and not (frame.get("absolute") or _is_number(frame.get("x")))):
+                frame["width"] = "fill"
+                frame.setdefault("maxWidth", width)
+        if inline_form_row and kind in ("text", "heading"):
+            text = _normalized_text(node.get("text"))
+            if text and len(text) <= GENERATED_SHORT_LABEL and (frame is None or frame.get("width") in (None, "fill")):
+                node["frame"] = {**(frame or {}), "width": "hug"}
+        if inline_form_row and kind == "button" and (frame is None or frame.get("width") in (None, "fill")):
+            node["frame"] = {**(frame or {}), "width": "hug"}
+        child_frame = node.get("frame") if isinstance(node.get("frame"), dict) else None
+        children = [child for child in (node.get("children") or []) if isinstance(child, dict)]
+        for child in children:
+            visit(child, child_frame, children, depth + 1)
+
+    if isinstance(section, dict) and section.get("type") == "composition":
+        section_frame = section.get("frame") if isinstance(section.get("frame"), dict) else None
+        children = [child for child in (section.get("children") or []) if isinstance(child, dict)]
+        for child in children:
+            visit(child, section_frame, children)
 
 
 def _is_number(value: object) -> bool:
