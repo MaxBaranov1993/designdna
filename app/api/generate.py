@@ -531,6 +531,8 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
     ds_reference_candidates: list[dict] = []
     ds_reference_parts: list[dict] = []
     ds_reference_note = ""
+    ds_min_font_size = 0
+    ds_font_faces: list[dict] = []
     if isinstance(req.designSystem, dict) and req.designSystem.get("systemId"):
         from design_system import compiler as ds_compiler, reference_images as ds_reference_images
         from design_system import resolver as ds_resolver, store as ds_store
@@ -656,6 +658,8 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             ds_style_review.ir_tokens(ds_doc.get("foundations") or {}))
         if ds_dna:
             dna, complete_dna = ds_dna, ds_complete_dna
+        ds_min_font_size = ds_style_review.label_size_floor(ds_doc.get("foundations") or {})
+        ds_font_faces = ds_style_review.font_faces(ds_doc)
         ds_prompt_block += "\n\n" + ds_style_review.profile_prompt(ds_doc)
         ds_prompt_block += _embed_mode_block(ds_usage_mode)
         # Визуальные референсы: блоки исходника, где живут релевантные мастера,
@@ -832,6 +836,13 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
         qa = None
         if ir is not None:
             ir = sanitize_generated_ir(ir)
+            if ds_font_faces:
+                # Шрифты системы (включая моно для лейблов) — в meta.fontFaces:
+                # DS-lint признаёт их своими, рендер и редактор грузят файлы.
+                meta = ir.get("meta")
+                if not isinstance(meta, dict):
+                    meta = ir["meta"] = {}
+                meta["fontFaces"] = ds_style_review.merge_font_faces(meta.get("fontFaces"), ds_font_faces)
             # A model can return a schema-valid refusal as empty composition frames.
             # It is not a generated design and must not enter previews or Quality Pass.
             def empty_composition(node):
@@ -873,8 +884,14 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             if protected_masters:
                 fixlog = []  # Exact masters are validated, never snapped/reflowed by generic fixes.
             else:
-                ir, fixlog = qualitygate.autofix(ir, rules=[r for r in qualitygate.RULES
-                    if r["id"] not in {"grid-8"} and not (surface == "component" and r["id"] in {"single-h1", "frame-overflow"})])
+                fix_rules = [r for r in qualitygate.RULES
+                             if r["id"] not in {"grid-8"} and not (surface == "component" and r["id"] in {"single-h1", "frame-overflow"})]
+                if ds_min_font_size:
+                    # Дизайн-система с 9–11px моно-лейблами: стандартный порог 12px
+                    # ломал её labelStyle сразу после генерации.
+                    fix_rules = [qualitygate.min_font_rule(ds_min_font_size) if r["id"] == "min-font-size" else r
+                                 for r in fix_rules]
+                ir, fixlog = qualitygate.autofix(ir, rules=fix_rules)
             if dna and not protected_masters:
                 # Deterministically update model-provided inline styles. Without
                 # this, a black button from the LLM overrides primary in renderer.

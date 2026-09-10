@@ -366,6 +366,65 @@ def _typography_character(foundations: dict) -> str:
     return f"{kind} display ({display or '—'}, {heaviness} {weight}); {pairing}"
 
 
+MAX_FONT_FACES = 48
+
+
+def font_faces(document: dict, *, limit: int = MAX_FONT_FACES) -> list[dict]:
+    """Захваченные шрифты системы (masterIr.meta.fontFaces мастеров) без дублей.
+
+    IR-токены знают только display/body, поэтому третья гарнитура сайта
+    (моно для лейблов) без faces снималась DS-lint'ом как «чужая», а рендер
+    и редактор показывали сгенерированную страницу запасными шрифтами."""
+    families = [str(f) for f in ((document.get("foundations") or {}).get("typography") or {}).get("families") or []]
+    order = {family.lower(): index for index, family in enumerate(families)}
+    seen: set[tuple] = set()
+    faces: list[dict] = []
+    for pool in ("components", "reviewComponents"):
+        for component in (document.get(pool) or {}).values():
+            master = component.get("masterIr") if isinstance(component, dict) else None
+            meta = master.get("meta") if isinstance(master, dict) and isinstance(master.get("meta"), dict) else {}
+            for face in meta.get("fontFaces") or []:
+                if not isinstance(face, dict) or not face.get("family") or not face.get("url"):
+                    continue
+                ident = (str(face.get("family")), str(face.get("weight")), str(face.get("style")), str(face.get("url")))
+                if ident in seen:
+                    continue
+                seen.add(ident)
+                faces.append(dict(face))
+    faces.sort(key=lambda face: (order.get(str(face.get("family")).lower(), len(order)), str(face.get("family")),
+                                 str(face.get("weight")), str(face.get("style"))))
+    return faces[:limit]
+
+
+def merge_font_faces(existing: Any, extra: list[dict], *, limit: int = MAX_FONT_FACES) -> list[dict]:
+    """meta.fontFaces результата: свои faces модели (если были) плюс faces системы."""
+    seen: set[tuple] = set()
+    merged: list[dict] = []
+    for face in [*(existing if isinstance(existing, list) else []), *extra]:
+        if not isinstance(face, dict):
+            continue
+        ident = (str(face.get("family")), str(face.get("weight")), str(face.get("style")), str(face.get("url")))
+        if ident in seen:
+            continue
+        seen.add(ident)
+        merged.append(face)
+    return merged[:limit]
+
+
+def label_size_floor(foundations: dict) -> int:
+    """Нижняя граница кегля для автофикса min-font-size генератора.
+
+    Наименьшая ступень измеренной шкалы сайта, не ниже 9px; 0 — шкала не
+    мельче стандартных 12px и порог менять не нужно."""
+    scale = ((foundations.get("typography") or {}).get("scale") or {}) if isinstance(foundations, dict) else {}
+    sizes = [float(value) for value in scale.values()
+             if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0]
+    if not sizes:
+        return 0
+    floor = int(round(min(sizes)))
+    return max(9, floor) if floor < 12 else 0
+
+
 def style_profile(document: dict) -> dict:
     """Детерминированный профиль стиля сайта: атмосфера без участия модели.
 

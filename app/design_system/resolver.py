@@ -220,6 +220,11 @@ def validate_generation(ir: dict, context: dict) -> dict:
     allowed_colors = {str(v).lower() for v in {**semantic, **primitives}.values() if isinstance(v, str)}
     families = {f.lower() for f in (foundations.get("typography") or {}).get("families") or []}
     radii = {round(float(r)) for r in (foundations.get("radii") or [])}
+    # Пилюля — это «радиус больше половины высоты», а не число из шкалы:
+    # 999/1000 при наблюдённых 50/99 и radius-button=999 не считаются отступлением.
+    button_radius = ((context.get("styleGuide") or {}).get("tokens") or {}).get("radius-button")
+    pill_scale = any(r >= 50 for r in radii) or (
+        isinstance(button_radius, (int, float)) and not isinstance(button_radius, bool) and button_radius >= 50)
     registered = {
         str(c.get("componentKey")): c
         for c in context.get("components") or []
@@ -248,7 +253,8 @@ def validate_generation(ir: dict, context: dict) -> dict:
                 (errors if mode == "strict" else warnings).append(
                     {"code": "off-system-font", "message": f"Шрифт «{fam}» не входит в систему"})
             radius = style.get("borderRadius")
-            if isinstance(radius, (int, float)) and radii and round(float(radius)) not in radii:
+            if (isinstance(radius, (int, float)) and radii and round(float(radius)) not in radii
+                    and not (pill_scale and float(radius) >= 50)):
                 warnings.append({"code": "off-system-radius", "message": f"Радиус {radius} вне шкалы системы"})
         if mode == "strict" and node.get("type") in ("card", "button") and node.get("sourceMeta", {}).get("componentRole"):
             pass  # строгая проверка компонентов — по componentRef ниже

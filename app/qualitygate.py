@@ -496,24 +496,39 @@ def _iter_text_styles(ir):
             yield path, style
 
 
-def _check_min_font_size(ir) -> list:
+def _check_min_font_size(ir, minimum: int = MIN_FONT_SIZE) -> list:
     out = []
     for path, style in _iter_text_styles(ir):
         size = style["fontSize"]
-        if 0 < size < MIN_FONT_SIZE:
+        if 0 < size < minimum:
             out.append({"path": f"{path}.style.fontSize",
-                        "message": f"fontSize {size}px < {MIN_FONT_SIZE}px"})
+                        "message": f"fontSize {size}px < {minimum}px"})
     return out
 
 
-def _fix_min_font_size(ir) -> list:
+def _fix_min_font_size(ir, minimum: int = MIN_FONT_SIZE) -> list:
     journal = []
     for path, style in _iter_text_styles(ir):
         size = style["fontSize"]
-        if 0 < size < MIN_FONT_SIZE:
-            style["fontSize"] = MIN_FONT_SIZE
-            journal.append(f"rule min-font-size починило {path}.style.fontSize: {size} -> {MIN_FONT_SIZE}")
+        if 0 < size < minimum:
+            style["fontSize"] = minimum
+            journal.append(f"rule min-font-size починило {path}.style.fontSize: {size} -> {minimum}")
     return journal
+
+
+MIN_FONT_SIZE_FLOOR = 6
+
+
+def min_font_rule(minimum: int) -> dict:
+    """Правило min-font-size с другим порогом (не ниже MIN_FONT_SIZE_FLOOR).
+
+    Дизайн-система с измеренными 9–11px моно-лейблами не должна «лечиться»
+    до 12px: генератору только что велели воспроизвести её labelStyle."""
+    floor = max(MIN_FONT_SIZE_FLOOR, int(minimum))
+    return {"id": "min-font-size", "severity": SEVERITY_ERROR,
+            "description": f"текст не мельче {floor}px",
+            "check": lambda ir: _check_min_font_size(ir, floor),
+            "fix": lambda ir: _fix_min_font_size(ir, floor)}
 
 # ---------- реестр правил ----------
 

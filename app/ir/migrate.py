@@ -293,6 +293,7 @@ def sanitize_generated_ir(ir: dict) -> dict:
     if isinstance(tree, list):
         for section in tree:
             normalize_node(section)
+            _normalize_composition_frame(section)
 
     # Артборд. Промпты (DESIGN.md) просят компоновать под 1440px, а рендер без
     # корневого frame берёт холст 960px и масштабирует его 1.5×: контейнер
@@ -305,6 +306,40 @@ def sanitize_generated_ir(ir: dict) -> dict:
         frame = dict(frame, width=GENERATED_ARTBOARD_WIDTH)
     out["frame"] = frame
     return out
+
+
+_COMPOSITION_RAIL_KEYS = ("contentMaxWidth", "contentGutter")
+_COMPOSITION_LAYOUT_KEYS = ("direction", "gap", "justify", "align", "wrap")
+
+
+def _normalize_composition_frame(section: object) -> None:
+    """Frame секции-композиции — только рельс контента или свободный холст.
+
+    Модель иногда пишет auto-layout прямо на секции (direction/gap/align/
+    padding/width). Рендерер применяет frame секции к обёртке ВОКРУГ <section>:
+    между секциями появляются поля цвета страницы, а дети остаются без колонки
+    и зазора и наезжают друг на друга. Раскладка переезжает в дочерний frame,
+    как того требует BLOCKS.md; padding секции задаёт props.density.
+    """
+    if not isinstance(section, dict) or section.get("type") != "composition":
+        return
+    frame = section.get("frame")
+    if not isinstance(frame, dict) or frame.get("layout") == "free":
+        return
+    stray = {key: value for key, value in frame.items() if key not in _COMPOSITION_RAIL_KEYS}
+    if not stray:
+        return
+    rail = {key: frame[key] for key in _COMPOSITION_RAIL_KEYS if key in frame}
+    if rail:
+        section["frame"] = rail
+    else:
+        section.pop("frame", None)
+    children = section.get("children")
+    layout = {key: stray[key] for key in _COMPOSITION_LAYOUT_KEYS if key in stray}
+    if not isinstance(children, list) or not children or not (layout or stray.get("layout") == "auto"):
+        return
+    wrapper_frame = {"layout": "auto", "direction": str(stray.get("direction") or "column"), **layout, "width": "fill"}
+    section["children"] = [{"type": "frame", "frame": wrapper_frame, "children": children}]
 
 
 def _is_number(value: object) -> bool:

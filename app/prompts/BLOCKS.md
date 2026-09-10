@@ -12,6 +12,7 @@ A section with no semantic props: everything lives in `children`.
 
 - `props`: `heading`, `subheading` (both optional, rendered left-aligned above the tree), `background` (`background` | `surface` | `primary` | `accent` | `none` — token roles only, never a hex), `density` (`tight` | `normal` | `airy`, scales the section's vertical rhythm).
 - `children`: any primitive from the list below. `frame` is the container — it carries auto-layout (`frame.layout:"auto"` with `direction`/`gap`/`padding`/`justify`/`align`/`wrap`) or a free canvas (`frame.layout:"free"`, children positioned by `frame.x`/`frame.y`; a free parent needs a numeric `frame.height`).
+- The section's own `frame` is only the content rail: `contentMaxWidth`/`contentGutter` (or `layout:"free"` for a free canvas). Never put `direction`/`gap`/`align`/`padding`/`width` on the section itself — that auto-layout belongs to a child `frame`; the section's vertical rhythm comes from `props.density`.
 - The tree is edited in the DNA editor exactly like ordinary frame children: every child gets a layer, a selection box, drag/resize and an inspector.
 - Reach for it when the section is a manifesto, a price ladder, a table of contents, a full-bleed quote, an offset diptych — anything that is not "heading + a row of cards".
 - `variant` остаётся обязательным полем, но для `composition` это свободная подпись композиции (`menu-column`, `ledger-strip`, `offset-diptych`): она попадает в редактор и в слои, поэтому называйте по смыслу, а не «custom».
