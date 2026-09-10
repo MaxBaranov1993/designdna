@@ -64,3 +64,17 @@ def test_semantic_sections_keep_their_frames() -> None:
             "frame": {"layout": "auto", "direction": "row", "gap": 24}}
     out = sanitize_generated_ir({"version": "1.1", "tokens": {}, "tree": [hero]})
     assert out["tree"][0]["frame"] == {"layout": "auto", "direction": "row", "gap": 24}
+
+
+def test_design_brief_density_words_map_to_section_density() -> None:
+    """Арт-направление говорит airy/balanced/dense, схема секции ждёт tight/normal/airy."""
+    sections = [
+        _section({"contentMaxWidth": 1120}, [{"type": "text", "text": "a"}]),
+        _section({"contentMaxWidth": 1120}, [{"type": "text", "text": "b"}]),
+        _section({"contentMaxWidth": 1120}, [{"type": "text", "text": "c"}]),
+        _section({"contentMaxWidth": 1120}, [{"type": "text", "text": "d"}]),
+    ]
+    for section, density in zip(sections, ("balanced", "dense", "airy", "wild")):
+        section["props"]["density"] = density
+    out = sanitize_generated_ir({"version": "1.1", "tokens": {}, "tree": sections})
+    assert [section["props"]["density"] for section in out["tree"]] == ["normal", "tight", "airy", "wild"]

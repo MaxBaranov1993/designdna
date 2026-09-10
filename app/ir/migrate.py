@@ -28,6 +28,10 @@ _GENERATED_META_KEYS = {
     "sourceTokenLock", "sourceTokenNodeId", "exactServiceCardEmbedded", "direction",
     "strictRecoveryReason", "contentRewrite",
 }
+_GENERATED_DENSITY_ALIASES = {
+    "balanced": "normal", "dense": "tight", "compact": "tight",
+    "spacious": "airy", "loose": "airy", "relaxed": "airy",
+}
 _GENERATED_SIZE_ALIASES = {
     "h1": "display", "h2": "xl", "h3": "lg", "h4": "md",
     "body": "md", "caption": "sm", "small": "sm", "large": "lg",
@@ -284,6 +288,12 @@ def sanitize_generated_ir(ir: dict) -> dict:
         props = node.get("props")
         if isinstance(props, dict):
             strip_invented_src(props.get("media"))
+            # Арт-направление описывает ритм словами airy/balanced/dense (design-brief),
+            # а плотность секции в IR — tight/normal/airy: модель переносит слова
+            # брифа в props.density, и схема отклоняла весь вариант.
+            density = props.get("density")
+            if isinstance(density, str) and density in _GENERATED_DENSITY_ALIASES:
+                props["density"] = _GENERATED_DENSITY_ALIASES[density]
         children = node.get("children")
         if isinstance(children, list):
             for child in children:
