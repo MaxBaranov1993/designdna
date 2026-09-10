@@ -325,3 +325,23 @@ def test_default_budgets_and_resolver_passthrough() -> None:
     compiled = resolver.compiled_context(context, brief="лендинг", token_budget=8000, surface="landing")
     assert compiled["archetypeSelection"] == "page"
     assert set(compiled["summarizedMasterKeys"]) == {"trust-card", "search-field", "process-step"}
+
+
+def test_direction_digest_is_compact_and_locks_the_system() -> None:
+    context = _context("extend")
+    digest = compiler.direction_digest(context, brief="Лендинг для сервиса", surface="landing")
+    assert digest["locked"] == compiler.DIRECTION_LOCK
+    assert digest["soul"].startswith("выразительный контраст")
+    assert digest["styleProfile"]["labelStyle"].startswith("моноширинный")
+    assert digest["decor"] and any("JetBrains Mono" in rule for rule in digest["decor"])
+    assert digest["do"][0].startswith("Do rule 0") and len(digest["do"]) == 6 and len(digest["dont"]) == 6
+    assert digest["site"]["summary"].startswith("Slsbmb") and len(digest["siteSections"]) == 8
+    assert digest["copyVoice"] == {"heading": ["Everything's done for you."], "cta": ["Prove it →"]}
+    assert "Pricing" in digest["sectionArchetypes"] and "Gallery" in digest["sectionArchetypes"]
+    assert digest["families"] == ["Hanken Grotesk", "JetBrains Mono", "Bricolage Grotesque"]
+    assert len(digest["masters"]) == compiler.DIRECTION_DIGEST_MASTERS
+    assert digest["masters"][0]["key"] == "trust-card" and len(digest["masters"][0]["anatomy"]) <= 4
+    assert len(json.dumps(digest, ensure_ascii=False)) < 7000
+    component_digest = compiler.direction_digest(context, brief="Карточка тарифа", surface="component")
+    assert component_digest["sectionArchetypes"] == ["Pricing"]
+    assert "masters" not in compiler.direction_digest({"components": []})

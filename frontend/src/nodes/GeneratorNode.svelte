@@ -57,6 +57,7 @@
       summariesInContext?: string[]; decorSignatures?: string[]; archetypeSelection?: string;
       estimatedTokens?: number; tokenBudget?: number;
       referenceImages?: Array<{ kind?: string; componentKey?: string; label?: string; attached?: boolean; skipped?: string }>;
+      identityScores?: Array<number | null>; artDirectionAware?: boolean;
       pinnedMaster?: string | null; strictReady?: boolean; errors?: number; warnings?: number; recovered?: unknown;
     } | null;
     variants?: LogVariant[];
@@ -318,6 +319,10 @@
             {#if (generationLog.designSystem.referenceImages || []).length}
               <dt>Референсы ДС</dt>
               <dd>{(generationLog.designSystem.referenceImages || []).map((item) => `${item.attached === false ? "✗ " : ""}${item.label || item.componentKey || ""}${item.skipped ? ` (${item.skipped})` : ""}`).join("; ")}</dd>
+            {/if}
+            {#if (generationLog.designSystem.identityScores || []).some((score) => typeof score === "number")}
+              <dt>Identity</dt>
+              <dd>{(generationLog.designSystem.identityScores || []).map((score, i) => `вариант ${i + 1}: ${typeof score === "number" ? `${score}/100` : "—"}`).join(", ")}{(generationLog.designSystem.identityScores || []).some((score) => typeof score === "number" && score < 70) ? " · ниже 70: результат отходит от характера системы" : ""}</dd>
             {/if}
             {#if generationLog.designSystem.pinnedMaster}
               <dt>Референс</dt><dd>пиннутый мастер: {generationLog.designSystem.pinnedMaster}</dd>

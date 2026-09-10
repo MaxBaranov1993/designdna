@@ -85,6 +85,19 @@ def _prompt(brief: Any, product_type: str, style_dna: dict | None, count: int) -
                                           style=style_dna.get("style", "auto"))
         system += "\n" + generator_policy.prompt(policy)
         system += "\nAll alternatives must respect the selected style. The schema's rhythm.risk is a justified composition choice, never obligatory spectacle."
+    if isinstance(style_dna, dict) and isinstance(style_dna.get("designSystemDigest"), dict):
+        # Дизайн-система задаёт палитру, шрифты, геометрию и декор: направления
+        # различаются композицией, порядком секций, ритмом и углом копирайта,
+        # а не «другой палитрой», которую генератор всё равно не сможет применить.
+        system += (
+            "\nA design system is attached as styleDNA.designSystemDigest and it is the source of truth: every "
+            "direction keeps its palette, type families, radii, spacing, borders, shadows and decorative language. "
+            "Do not propose other palettes or type pairs: fill the palette seeds from the system's colors and pick the "
+            "curated typePair closest to its families (the generator locks the real fonts). Differentiate directions "
+            "by composition, section order, hero shape, rhythm, density and copy angle; in each motivation name the "
+            "masters, section archetypes and decorative traits (mono labels, status pills, arrow CTAs, numbered steps, "
+            "inline form) the direction leans on. Copy follows the site's voice samples and language."
+        )
     return [{"role": "system", "content": system},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
 
@@ -108,10 +121,14 @@ def create_design_brief(
     count = max(1, min(int(count), 3))
     key = cache_key(brief, product_type, style_dna, count=count, provider=provider)
     cached = cache_store.get(CACHE_KIND, key)
-    if count == 1 and isinstance(cached, dict):
+    if count == 1 and isinstance(cached, dict) and "directions" not in cached:
         return deepcopy(validate_design_brief(cached))
-    if count > 1 and isinstance(cached, list):
-        return deepcopy(_validate_directions(cached, count))
+    # cache_store хранит только объекты: список направлений лежит в {"directions": [...]}.
+    # Без обёртки запись молча отклонялась, и второй проход десктопа (rawOutputs)
+    # не находил направления, под которые был собран промпт.
+    cached_directions = cached.get("directions") if isinstance(cached, dict) else cached
+    if count > 1 and isinstance(cached_directions, list):
+        return deepcopy(_validate_directions(cached_directions, count))
     if not generate_if_missing:
         raise LookupError("art direction is not cached")
 
@@ -132,7 +149,7 @@ def create_design_brief(
 
     directions = result.get("directions") if isinstance(result, dict) else None
     directions = _validate_directions(directions, count)
-    cache_store.put(CACHE_KIND, key, directions)
+    cache_store.put(CACHE_KIND, key, {"directions": directions})
     return deepcopy(directions)
 
 

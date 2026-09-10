@@ -124,3 +124,26 @@ def test_generate_keeps_design_system_labels_fonts_pills_and_normalizes_section_
     journal = response["generationLog"]["variants"][0]["journal"]
     assert not any("min-font-size" in line or "token-font" in line for line in journal)
     assert not any(w["code"] == "off-system-radius" for w in response["designSystem"]["warnings"])
+
+
+def test_art_direction_receives_the_digest_and_the_ds_block_is_not_duplicated(monkeypatch) -> None:
+    document = _document()
+    monkeypatch.setattr(store, "resolve_ref", lambda _ref: (deepcopy(document), None))
+    captured: list[dict] = []
+
+    def fake_directions(*_args, **kwargs):
+        captured.append(kwargs)
+        return []
+
+    monkeypatch.setattr(art_direction, "create_design_brief", fake_directions)
+    response = server.generate(server.GenerateReq(
+        brief="Лендинг для сервиса рассылок", count=1, prepareOnly=True, surface="landing",
+        designSystem={"systemId": "ds-labels", "revision": 1, "usageMode": "extend"},
+    ))
+    assert captured and captured[0]["style_dna"]["designSystemDigest"]["systemRef"]["systemId"] == "ds-labels"
+    assert captured[0]["style_dna"]["designSystemDigest"]["locked"]
+    system_prompt, user_message = response["prompts"][0]["messages"]
+    user_text = user_message["content"] if isinstance(user_message["content"], str) else user_message["content"][0]["text"]
+    assert "DESIGN SYSTEM COMPILED PROFILE" in user_text and "Режим встраивания: EXTEND" in user_text
+    assert "DESIGN SYSTEM COMPILED PROFILE" not in system_prompt["content"]
+    assert "Режим встраивания" not in system_prompt["content"]

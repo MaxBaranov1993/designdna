@@ -248,6 +248,60 @@ def select_archetypes(archetypes: list, *, archetype_id: str = "", brief: str = 
     return [], "none"
 
 
+DIRECTION_DIGEST_MASTERS = 6
+DIRECTION_LOCK = ("palette, type families, radii, spacing, borders, shadows and decorative language are fixed "
+                  "by the design system; directions vary composition, section order, hero shape, rhythm, "
+                  "density and copy angle only")
+
+
+def direction_digest(context: dict, *, brief: str = "", surface: str = "") -> dict:
+    """Компактный дайджест системы для стадии арт-дирекции.
+
+    Раньше арт-направления получали только ссылку на систему и генерировали
+    общие идеи («яркий hero», «другая палитра»), которые генератор потом не мог
+    выполнить в токенах. Дайджест даёт душу, профиль стиля, декор-сигнатуры,
+    бриф сайта, голос копирайта, виды секций и анатомию главных мастеров —
+    и явно фиксирует, что варьировать можно только композицию и ритм."""
+    identity = context.get("identity") or {}
+    style_guide = context.get("styleGuide") or {}
+    profile = style_guide.get("profile") or {}
+    review = style_guide.get("review") or {}
+    site = context.get("siteBrief") or {}
+    foundations = context.get("foundations") or {}
+    components = [c for c in (context.get("components") or []) if isinstance(c, dict)]
+    archetypes, _reason = select_archetypes(identity.get("archetypes") or [], brief=brief, surface=surface)
+    voice = profile.get("copyVoice") or {}
+    digest: dict[str, Any] = {
+        "systemRef": context.get("systemRef") or {},
+        "locked": DIRECTION_LOCK,
+        "soul": ((identity.get("soul") or {}).get("oneLine") or {}).get("value") or "",
+        "styleProfile": {key: profile[key] for key in
+                         ("mode", "cornerCharacter", "density", "shadowUsage", "paletteCharacter",
+                          "typographyCharacter", "labelStyle", "accent") if profile.get(key)},
+        "designLanguage": {key: review[key] for key in ("tone", "colorUsage", "typographyCharacter", "imageryStyle")
+                           if review.get(key)},
+        "do": list(review.get("doRules") or [])[:6],
+        "dont": list(review.get("dontRules") or [])[:6],
+        "decor": [str(item.get("rule")) for item in master_summary.decorative_signatures(components)],
+        "site": {key: site[key] for key in ("summary", "audience", "offer", "tone") if site.get(key)},
+        "siteSections": list(site.get("sections") or [])[:8],
+        "copyVoice": {key: list(voice.get(key) or [])[:3] for key in ("heading", "eyebrow", "cta") if voice.get(key)},
+        "sectionArchetypes": [str(item.get("name") or item.get("id")) for item in archetypes],
+        "colors": ((foundations.get("colors") or {}).get("semantic") or {}),
+        "families": list(((foundations.get("typography") or {}).get("families")) or []),
+        "masters": [],
+    }
+    for component in components[:DIRECTION_DIGEST_MASTERS]:
+        if not isinstance(component.get("masterIr"), dict):
+            continue
+        summary = master_summary.summarize_master(component)
+        digest["masters"].append({
+            "key": summary.get("key"), "name": summary.get("name"), "category": summary.get("category"),
+            "anatomy": list(summary.get("anatomy") or [])[:4], "decor": list(summary.get("decor") or [])[:4],
+        })
+    return {key: value for key, value in digest.items() if value not in ("", [], {}, None)}
+
+
 def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", token_budget: int = 1200,
                     pinned_keys=None, surface: str = "") -> dict:
     token_budget = max(MIN_BUDGET, min(int(token_budget or 1200), MAX_BUDGET))

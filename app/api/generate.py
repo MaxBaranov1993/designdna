@@ -533,6 +533,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
     ds_reference_note = ""
     ds_min_font_size = 0
     ds_font_faces: list[dict] = []
+    ds_direction_digest: dict | None = None
     if isinstance(req.designSystem, dict) and req.designSystem.get("systemId"):
         from design_system import compiler as ds_compiler, reference_images as ds_reference_images
         from design_system import resolver as ds_resolver, store as ds_store
@@ -660,6 +661,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             dna, complete_dna = ds_dna, ds_complete_dna
         ds_min_font_size = ds_style_review.label_size_floor(ds_doc.get("foundations") or {})
         ds_font_faces = ds_style_review.font_faces(ds_doc)
+        ds_direction_digest = ds_compiler.direction_digest(ds_context, brief=brief, surface=surface)
         ds_prompt_block += "\n\n" + ds_style_review.profile_prompt(ds_doc)
         ds_prompt_block += _embed_mode_block(ds_usage_mode)
         # Визуальные референсы: блоки исходника, где живут релевантные мастера,
@@ -687,9 +689,14 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
     exemplars = ""
     if mode == "generate" and prepared is not None:
         directions = prepared.get("directions") or []
-    elif mode == "generate" and (surface != "landing" or policy_context["foundationsLocked"]):
+    elif mode == "generate" and (surface != "landing" or (policy_context["foundationsLocked"] and (
+            not ds_direction_digest or ds_usage_mode == "strict"))):
+        # strict копирует точные мастера: композицию задаёт система, а не направления модели
         directions = generator_policy.directions(policy_context)
     elif mode == "generate":
+        # С дайджестом ДС направления генерирует модель внутри языка системы
+        # (композиция, порядок секций, ритм, угол копирайта); фиксированный
+        # список политики остаётся запасным путём при отказе провайдера.
         run_registry.stage(run_id, "art-direction", "Формирую три арт-направления")
         try:
             import art_direction
@@ -697,7 +704,8 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
                 brief,
                 ptype,
                 style_dna={"tokens": dna, "designSystem": req.designSystem,
-                           "policyHash": policy_context["policyHash"], "surface": surface, "style": req.designStyle},
+                           "policyHash": policy_context["policyHash"], "surface": surface, "style": req.designStyle,
+                           **({"designSystemDigest": ds_direction_digest} if ds_direction_digest else {})},
                 provider=provider,
                 count=3,
                 generate_if_missing=req.rawOutputs is None,
@@ -708,6 +716,8 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             # Art direction raises the quality ceiling but is deliberately not
             # a dependency: provider/cache failures keep generation available.
             art_direction_error = str(exc)
+        if not directions and policy_context["foundationsLocked"]:
+            directions = generator_policy.directions(policy_context)
     if mode == "generate" and surface == "landing" and not ds_context:
         exemplars = llm.load_exemplars(ptype, limit=2)
 
@@ -746,7 +756,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
                     mode,
                     design_brief=(direction or {}).get("designBrief") or (direction or {}).get("plan") or "",
                     exemplars=exemplars,
-                    policy=policy_block + "\n\n" + ds_prompt_block,
+                    policy=policy_block,  # блок ДС идёт один раз, в user-сообщении рядом с задачей и референсами
                 )},
                 {"role": "user", "content": user_content},
             ], 0.8 if mode == "generate" else 0.3,
@@ -918,7 +928,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
                         mode,
                         design_brief=(prepared_directions[i] or {}).get("designBrief") or (prepared_directions[i] or {}).get("plan") or "",
                         exemplars=exemplars,
-                        policy=policy_block + "\n\n" + ds_prompt_block,
+                        policy=policy_block,  # блок ДС идёт один раз, в user-сообщении рядом с задачей и референсами
                     )},
                     {"role": "user", "content": gen_one(i + 1)[0]},
                 ]}
@@ -1066,6 +1076,8 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             "tokenBudget": (ds_compiled or {}).get("tokenBudget"),
             "referenceImages": ds_reference_images.describe(
                 ds_reference_candidates, ds_reference_parts if req.rawOutputs is None else None),
+            "identityScores": [(variant.get("meta") or {}).get("identityScore") for variant in variants],
+            "artDirectionAware": bool(ds_direction_digest),
             "pinnedMaster": pinned_master_keys[0] if pinned_master_keys else None,
             "strictReady": (ds_compiled or {}).get("strictReady"),
             "errors": len((design_system_report or {}).get("errors") or []),
