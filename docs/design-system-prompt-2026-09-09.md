@@ -58,6 +58,8 @@
 
 Блок ДС теперь входит в промпт один раз, в user-сообщении рядом с задачей и референсами; раньше он дублировался в system-промпте (~4k лишних токенов).
 
+Побочный эффект направлений: бриф описывает ритм словами `airy`/`balanced`/`dense`, а `props.density` секции принимает `tight`/`normal`/`airy`; модель переносила слова брифа в IR, и вариант целиком не проходил схему. `sanitize_generated_ir` сопоставляет эти синонимы. Список направлений в кэше хранится как объект `{"directions": [...]}` — `cache_store` не принимает списки, и без обёртки второй проход десктопа не находил направления, под которые собирался промпт.
+
 ## Что видно в ноде
 
 `generationLog.designSystem`: `mastersInContext` (точные), `summariesInContext`, `decorSignatures`, `archetypeSelection` и `archetypeIds`, `estimatedTokens`/`tokenBudget`, `referenceImages` (с `attached`/`skipped`), `identityScores` по вариантам и `artDirectionAware`. Нода генератора показывает число сводок, сигнатур, оценку контекста, список референсов и identity-оценку каждого варианта (ниже 70 помечается как отход от характера системы).
