@@ -147,7 +147,9 @@ def test_bad_repair_rolls_back_exactly(mutation):
     elif mutation == "new-defect":
         after["tree"] = []
     elif mutation == "new-issue":
-        final["issues"] = [{"category": "color", "path": "tree.0", "problem": "new", "severity": "minor"}]
+        # новое critical-замечание после починки — регрессия; minor судья часто
+        # просто переформулирует, это не повод откатывать починку
+        final["issues"] = [{"category": "color", "path": "tree.0", "problem": "new", "severity": "critical"}]
     elif mutation == "score-drop":
         final["score"] = 59
     request = server.QualityPassReq(ir=before, rejudge=mutation != "no-rejudge")
@@ -156,6 +158,17 @@ def test_bad_repair_rolls_back_exactly(mutation):
     assert result["ir"] == before
     assert result["passed"] is False and result["repair"]["applied"] is False
     assert result["repair"]["error"]
+
+
+def test_repair_with_a_rephrased_minor_issue_is_kept():
+    before = copy.deepcopy(BASE_IR)
+    after = copy.deepcopy(before)
+    after["tree"][0].setdefault("props", {})["heading"] = "Починенный заголовок"
+    initial, final = json.loads(LOW_JUDGE), json.loads(HIGH_JUDGE)
+    final["issues"] = [{"category": "color", "path": "tree.0", "problem": "rephrased", "severity": "minor"}]
+    result = server._quality_finish(server.QualityPassReq(ir=before), after, initial, final,
+        {"attempted": True, "applied": True, "error": None}, visual=True)
+    assert result["ir"] == after and result["repair"]["applied"] is True and result["repair"]["error"] is None
 
 
 def test_major_issue_blocks_pass_and_text_only_remains_unverified():
