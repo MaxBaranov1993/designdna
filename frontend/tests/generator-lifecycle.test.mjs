@@ -251,3 +251,38 @@ test('leaving during Motion Design planning settles without an unhandled rejecti
  store.getState().createPage('B');resolve({content:'Camera move'});
  await assert.doesNotReject(pending);assert.equal(submitted,0);
 });
+
+test('quality pass repeats repair rounds until the server accepts the result',async()=>{
+ const {id}=setup(); const calls=mock();
+ const base=globalThis.fetch;
+ globalThis.fetch=async(path,options)=>{
+  if(path!=='/api/quality-pass/codex-step') return base(path,options);
+  const outputs=JSON.parse(options.body).outputs||{};
+  calls.push(['qp',structuredClone(outputs)]);
+  if(!outputs.judge) return response({pending:{stage:'judge',profile:'quality_judge',messages:[]}});
+  const repairs=outputs.repairs||[], rejudges=outputs.rejudges||[];
+  if(repairs.length===rejudges.length&&repairs.length<2) return response({pending:{stage:'repair',profile:'quality_repair',round:repairs.length+1,messages:[]}});
+  if(rejudges.length<repairs.length) return response({pending:{stage:'rejudge',profile:'quality_judge',round:repairs.length,messages:[]}});
+  return response({ir:structuredClone(resultIr),scorecard:{score:84,issues:[]},passed:true,repair:{applied:true,rounds:[{score:70},{score:84}]}});
+ };
+ window.designDNA.providers.chatRequest=async request=>{calls.push(['chat',request]); return {content:`answer:${request.profile}`};};
+ await store.getState().runGenerator(id);
+ const profiles=calls.filter(c=>c[0]==='chat').map(c=>c[1].profile);
+ assert.deepEqual(profiles.filter(Boolean),['quality_judge','quality_repair','quality_judge','quality_repair','quality_judge']);
+ const last=calls.filter(c=>c[0]==='qp').at(-1)[1];
+ assert.equal(last.repairs.length,2); assert.equal(last.rejudges.length,2);
+ assert.equal(node(id).data.qualityScores[0],84);
+ assert.equal(store.getState().statuses[id].kind,'ok');
+});
+
+test('unfixed remarks end as a warning with the result kept, not an error',async()=>{
+ const {id}=setup(); mock();
+ const base=globalThis.fetch;
+ globalThis.fetch=async(path,options)=>path==='/api/quality-pass/codex-step'
+  ?response({ir:structuredClone(resultIr),scorecard:{score:61,issues:[{problem:'Кнопка сливается с фоном'}]},passed:false,repair:{applied:true,rounds:[{score:55},{score:61}]}})
+  :base(path,options);
+ await store.getState().runGenerator(id);
+ assert.equal(node(id).data.variants.length,1);
+ assert.equal(store.getState().statuses[id].kind,'warn');
+ assert.match(store.getState().statuses[id].text,/Готово с замечаниями.*Кнопка сливается/);
+});

@@ -187,7 +187,8 @@ def test_codex_step_pass_repair_rejudge_without_server_llm(monkeypatch):
         ir=copy.deepcopy(BASE_IR),
         outputs={"judge": LOW_JUDGE, "repair": json.dumps(BASE_IR), "rejudge": HIGH_JUDGE}))
     assert step["passed"] is True
-    assert step["repair"] == {"attempted": True, "applied": True, "error": None}
+    assert step["repair"]["attempted"] is True and step["repair"]["applied"] is True and step["repair"]["error"] is None
+    assert [round_["score"] for round_ in step["repair"]["rounds"]] == [93]
     assert step["scorecard"]["model_route"] == "Codex app-server / quality_judge"
 
 

@@ -135,6 +135,8 @@ export type QualityPassResp = {
   repair?: { attempted?: boolean; applied?: boolean; error?: string | null };
   pending?: {
     stage: "judge" | "repair" | "rejudge";
+    /* Номер раунда починки/повторной оценки (с 1); судья без раунда. */
+    round?: number;
     profile: "quality_judge" | "quality_repair";
     messages: ApiChatMessage[];
   };

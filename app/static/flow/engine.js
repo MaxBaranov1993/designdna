@@ -836,7 +836,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       out = html;
     } else {
       const clipText = (el.type === "text" || el.type === "heading") && el.frame && typeof el.frame.height === "number" ? "overflow:hidden" : "";
-      const flexImage = (el.type === "image" || el.type === "heading" || el.type === "text") && !parentFree && parentFrame && parentFrame.layout === "auto" && parentFrame.direction === "row" && !(el.frame && (typeof el.frame.width === "number" || el.frame.width === "hug" || el.frame.width === "fill")) ? "flex:1 1 0;min-width:0" : "";
+      const flexShare = (el.type === "image" || el.type === "heading" || el.type === "text") && !parentFree && parentFrame && parentFrame.layout === "auto" && parentFrame.direction === "row" && !(el.frame && (typeof el.frame.width === "number" || el.frame.width === "hug" || el.frame.width === "fill"));
+      const flexImage = flexShare ? el.type === "image" ? "flex:1 1 0;min-width:0" : "flex:1 1 0;min-width:min-content" : "";
       const extra = [clipText, flexImage].filter(Boolean).join(";");
       const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, extra);
       out = wrapped === html && irPath ? flexImage ? `<div data-ir-path="${esc(irPath)}" style="${flexImage}">${html}</div>` : `<span data-ir-path="${esc(irPath)}" style="display:inline-block">${html}</span>` : wrapped;

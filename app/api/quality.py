@@ -12,6 +12,7 @@ import run_registry
 import qualitygate
 import rules as project_rules
 from ir_render import render_png
+from ir import sanitize_generated_ir
 import generator_policy
 from fastapi import APIRouter
 from api.common import (  # noqa: F401
@@ -40,12 +41,18 @@ class QualityPassReq(BaseModel):
     surface: Literal["auto", "landing", "catalog", "detail", "checkout", "dashboard", "form", "editor", "ai-workspace", "article", "feed", "component"] = "auto"
     visualReview: bool = False
     runId: str | None = None
+    # Раунды «починка → повторная оценка», пока результат не пройдёт порог.
+    # Останавливаемся раньше, если раунд ничего не улучшил; итог — лучший IR.
+    max_rounds: int = 3
 
 
 class QualityPassCodexOutputs(BaseModel):
     judge: str | None = None
+    # repair/rejudge — первый раунд (старые клиенты); repairs/rejudges — все раунды по порядку.
     repair: str | None = None
     rejudge: str | None = None
+    repairs: list[str] = []
+    rejudges: list[str] = []
 
 
 class QualityPassCodexReq(QualityPassReq):
@@ -192,33 +199,129 @@ def _parse_quality_scorecard(raw: str, model_route: str) -> dict:
     }
 
 
-def _quality_repair_messages(ir: dict, scorecard: dict, brief: str, surface: str = "auto") -> tuple[list[dict] | None, str | None]:
-    """Готовит адресную починку только по замечаниям judge."""
-    instructions = scorecard.get("repair_instruction", "").strip()
-    if not instructions:
-        instructions = "\n".join(
-            str(issue.get("instruction", "")) for issue in scorecard.get("issues", [])
-            if issue.get("severity") in {"critical", "major"}
-        ).strip()
-    if not instructions:
+_SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2}
+REPAIR_DS_BUDGET = 3000
+
+
+def _repair_design_system_block(design_system: dict | None, brief: str, surface: str) -> str:
+    """Компактный профиль ДС для починки: токены, атмосфера, декор — чтобы починка
+    «поднимала контраст» токеном primary, а не новым цветом."""
+    if not isinstance(design_system, dict) or not design_system.get("systemId"):
+        return ""
+    try:
+        from design_system import compiler, resolver, store
+        document, error = store.resolve_ref(design_system)
+        if error or not document:
+            return ""
+        context = resolver.resolve_context(document, brief, usage_mode=str(design_system.get("usageMode") or "strict"))
+        compiled = compiler.compile_profile(context, brief=brief, token_budget=REPAIR_DS_BUDGET, surface=surface)
+        return compiled["promptBlock"]
+    except Exception:  # noqa: BLE001 — профиль ДС для починки желателен, но не обязателен
+        return ""
+
+
+def _repair_images(ir: dict, brief: str) -> list[str]:
+    """Первый экран desktop и mobile из кэша судьи: починка видит, что именно не так."""
+    evidence = cache_store.get("generator-visual", _quality_visual_key(ir, brief))
+    images = list((evidence or {}).get("images") or [])
+    if not images:
+        return []
+    # первая картинка — desktop 1440×900 1:1, последняя группа — mobile; берём по одной
+    picked = [images[0]]
+    if len(images) > 1:
+        picked.append(images[-1])
+    return picked
+
+
+def _quality_repair_messages(ir: dict, scorecard: dict, brief: str, surface: str = "auto", *,
+                             round_index: int = 1, history: list[dict] | None = None, min_score: int = 80,
+                             design_system: dict | None = None, images: list[str] | None = None,
+                             ) -> tuple[list[dict] | None, str | None]:
+    """Адресная починка по всем замечаниям judge: список с серьёзностью, путём,
+    проблемой и инструкцией, цель по баллу, история прошлых раундов, профиль ДС и
+    скриншоты текущего состояния (десктоп и мобильный)."""
+    issues = sorted(scorecard.get("issues", []), key=lambda item: _SEVERITY_ORDER.get(str(item.get("severity")), 3))
+    lines = []
+    for index, issue in enumerate(issues, start=1):
+        problem = str(issue.get("problem") or "").strip()
+        instruction = str(issue.get("instruction") or "").strip()
+        if not problem and not instruction:
+            continue
+        lines.append(f"{index}. [{issue.get('severity', 'minor')}] {issue.get('path') or '(root)'}: {problem}"
+                     + (f" → {instruction}" if instruction else ""))
+    general = str(scorecard.get("repair_instruction") or "").strip()
+    if not lines and not general:
         return None, "судья не дал инструкций для repair"
+    instructions = "\n".join(lines)
+    if general:
+        instructions = (instructions + "\n\n" if instructions else "") + f"Общая инструкция судьи: {general}"
+    score = scorecard.get("score")
+    goal = (f"Текущая оценка {score}/100, порог {min_score}. Закрой каждое замечание, начиная с critical и major; "
+            "minor тоже исправляй, если это не ломает раскладку.")
+    if history:
+        goal += "\nПрошлые раунды: " + "; ".join(
+            f"раунд {item.get('round')}: {item.get('score')}/100"
+            + (f", осталось замечаний {item.get('issues')}" if item.get("issues") is not None else "")
+            for item in history) + ". Не повторяй прежнюю правку, если она не помогла."
     user = (
-        "Исправь Design IR строго по замечаниям Quality Pass. Сохрани полезный контент, "
+        f"Исправь Design IR строго по замечаниям Quality Pass (раунд {round_index}). Сохрани полезный контент, "
         "не добавляй неупомянутые секции и верни только полный валидный JSON.\n"
         "Ограничения починки: элементы image с imagePrompt — штатные заглушки, их не заменять "
         "«нарисованным интерфейсом» из примитивов и не удалять; во free-раскладке дети не должны "
         "перекрываться и выходить за границы родителя — при сомнении переводи группу в auto-layout "
-        "(frame.layout row/column с gap), а не подбирай координаты.\n\n"
+        "(frame.layout row/column с gap), а не подбирай координаты. Цвета, шрифты и радиусы — только "
+        "из токенов документа: контраст поднимай ролями primary/text/surface, а не новым hex.\n\n"
+        f"## Цель\n{goal}\n\n"
         f"## Бриф\n{brief.strip() or '(не указан)'}\n\n"
-        f"## Инструкции\n{instructions}\n\n"
-        f"## Входной Design IR\n{json.dumps(ir, ensure_ascii=False)}"
+        f"## Замечания судьи\n{instructions}\n\n"
     )
+    ds_block = _repair_design_system_block(design_system, brief, surface)
+    if ds_block:
+        user += f"## Дизайн-система (соблюдать при починке)\n{ds_block}\n\n"
+    if images:
+        user += ("## Скриншоты текущего состояния\nПервый — первый экран desktop 1440×900, второй — мобильный 390px. "
+                 "Замечания судьи относятся к этим изображениям.\n\n")
+    user += f"## Входной Design IR\n{json.dumps(ir, ensure_ascii=False)}"
+    content: str | list = user
+    if images:
+        content = [{"type": "text", "text": user}] + [{"type": "image_url", "image_url": {"url": url}} for url in images]
     return [
             {"role": "system", "content": llm.build_system_prompt("edit", policy=generator_policy.judge_rules(brief, ir, surface)
              + "\nRepair must preserve all tokens, exact componentRefs, masters and their geometry/styles. "
                "A problem in a locked master is a DS gap; do not change the instance.")},
-            {"role": "user", "content": user},
+            {"role": "user", "content": content},
         ], None
+
+
+def _needs_repair(scorecard: dict, min_score: int, deterministic: list | None = None) -> bool:
+    important = any(issue.get("severity") in {"critical", "major"} for issue in scorecard.get("issues", []))
+    return bool(deterministic) or important or int(scorecard.get("score", 0)) < min_score
+
+
+def _passes(scorecard: dict, min_score: int) -> bool:
+    important = any(issue.get("severity") in {"critical", "major"} for issue in scorecard.get("issues", []))
+    return int(scorecard.get("score", 0)) >= min_score and scorecard.get("verdict") == "pass" and not important
+
+
+def _important_count(scorecard: dict) -> int:
+    return sum(1 for issue in scorecard.get("issues", []) if issue.get("severity") in {"critical", "major"})
+
+
+def _better(candidate: dict, best: dict) -> bool:
+    """Лучше — выше балл; при равном балле меньше critical/major замечаний."""
+    if int(candidate.get("score", 0)) != int(best.get("score", 0)):
+        return int(candidate.get("score", 0)) > int(best.get("score", 0))
+    return _important_count(candidate) < _important_count(best)
+
+
+def _round_outputs(outputs: QualityPassCodexOutputs) -> tuple[list[str], list[str]]:
+    repairs = list(outputs.repairs) if outputs.repairs else ([outputs.repair] if outputs.repair is not None else [])
+    rejudges = list(outputs.rejudges) if outputs.rejudges else ([outputs.rejudge] if outputs.rejudge is not None else [])
+    return repairs, rejudges
+
+
+def _max_rounds(req: QualityPassReq) -> int:
+    return max(0, min(int(req.max_rounds), 5)) if req.repair else 0
 
 
 def _parse_quality_repair(raw: str) -> tuple[dict | None, str | None]:
@@ -226,6 +329,9 @@ def _parse_quality_repair(raw: str) -> tuple[dict | None, str | None]:
         repaired, parse_error = parse_ir_response(raw)
         if repaired is None:
             return None, parse_error
+        # Те же нормализации, что у генератора: frame секций, плотность, резиновые
+        # ширины — иначе починка возвращает дефекты, которые санитайзер уже снимал.
+        repaired = sanitize_generated_ir(repaired)
         schema_errors = validate_ir(repaired)
         if schema_errors:
             return None, "; ".join(schema_errors[:5])
@@ -312,12 +418,14 @@ def _quality_finish(req, output_ir, initial, final, repair, *, visual=False):
     before = generator_policy.lint(req.ir, surface)
     if repair["applied"]:
         failure = generator_policy.repair_guard(req.ir, output_ir, surface, req.designSystem, brief=req.brief)
-        old_issues = {(i.get("category"), i.get("path"), i.get("problem")) for i in initial.get("issues", [])}
-        new_issues = [i for i in final.get("issues", [])
-                      if (i.get("category"), i.get("path"), i.get("problem")) not in old_issues]
         if not req.rejudge or final is initial:
             failure = failure or "Починка не прошла повторную оценку"
-        if final.get("score", 0) < initial.get("score", 0) or new_issues:
+        # Регрессия — ниже балл или новые critical-замечания. Раньше любое
+        # переформулированное судьёй замечание считалось «новым» и откатывало
+        # починку, поэтому результат оставался с первой оценкой.
+        old_critical = sum(1 for i in initial.get("issues", []) if i.get("severity") == "critical")
+        new_critical = sum(1 for i in final.get("issues", []) if i.get("severity") == "critical")
+        if final.get("score", 0) < initial.get("score", 0) or new_critical > old_critical:
             failure = failure or "Повторная оценка выявила регрессию; починка отменена"
         if failure:
             output_ir, final = copy.deepcopy(req.ir), initial
@@ -345,9 +453,13 @@ def _quality_finish(req, output_ir, initial, final, repair, *, visual=False):
                                                    surface=surface, ds_check=ds_check)}
 
 
-def _quality_repair(ir: dict, scorecard: dict, brief: str, *, provider: str = "auto", effort: str = "medium", surface: str = "auto") -> tuple[dict | None, str | None]:
+def _quality_repair(ir: dict, scorecard: dict, brief: str, *, provider: str = "auto", effort: str = "medium",
+                    surface: str = "auto", round_index: int = 1, history: list[dict] | None = None,
+                    min_score: int = 80, design_system: dict | None = None) -> tuple[dict | None, str | None]:
     """Серверный LLM-путь standalone веб-сервера (Sol по ключу или Codex/Claude CLI)."""
-    messages, error = _quality_repair_messages(ir, scorecard, brief, surface)
+    messages, error = _quality_repair_messages(
+        ir, scorecard, brief, surface, round_index=round_index, history=history, min_score=min_score,
+        design_system=design_system, images=_repair_images(ir, brief))
     if messages is None:
         return None, error
     try:
@@ -386,28 +498,46 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
     if run_registry.is_cancelled(run_id):
         return err(CANCELLED_STATUS, "Quality Pass отменён")
     min_score = max(0, min(int(req.min_score), 100))
-    important = any(i["severity"] in {"critical", "major"} for i in initial["issues"])
-    needs_repair = bool(deterministic_before) or important or initial["score"] < min_score
+    surface = generator_policy.surface_for(req.brief, req.surface, req.ir)
     output_ir = copy.deepcopy(req.ir)
-    repair = {"attempted": False, "applied": False, "error": None}
+    repair = {"attempted": False, "applied": False, "error": None, "rounds": []}
     final = initial
-    if req.repair and needs_repair:
+    current_ir, current = copy.deepcopy(req.ir), initial
+    max_rounds = _max_rounds(req)
+    for index in range(1, max_rounds + 1):
+        deterministic = deterministic_before if index == 1 else generator_policy.lint(current_ir, surface)
+        if not _needs_repair(current, min_score, deterministic):
+            break
         repair["attempted"] = True
-        run_registry.stage(run_id, "repair", "Починка по замечаниям судьи")
-        repaired, repair_error = _quality_repair(req.ir, initial, req.brief, provider=req.provider, effort=req.effort, surface=req.surface)
+        run_registry.stage(run_id, "repair", f"Починка по замечаниям судьи ({index}/{max_rounds})")
+        repaired, repair_error = _quality_repair(
+            current_ir, current, req.brief, provider=req.provider, effort=req.effort, surface=req.surface,
+            round_index=index, history=repair["rounds"], min_score=min_score, design_system=req.designSystem)
         if repaired is None:
             repair["error"] = repair_error
-        else:
-            output_ir = repaired
-            repair["applied"] = True
-            if req.rejudge:
-                if run_registry.is_cancelled(run_id):
-                    return err(CANCELLED_STATUS, "Quality Pass отменён")
-                run_registry.stage(run_id, "rejudge", "Повторная оценка")
-                try:
-                    final = _quality_scorecard(output_ir, req.brief, run_id, provider=req.provider, effort=req.effort, surface=req.surface)
-                except Exception as e:
-                    repair["error"] = f"rejudge недоступен: {e}"
+            repair["rounds"].append({"round": index, "applied": False, "error": repair_error})
+            break
+        if not req.rejudge:
+            output_ir, repair["applied"] = repaired, True
+            repair["rounds"].append({"round": index, "applied": True, "score": None, "issues": None})
+            break
+        if run_registry.is_cancelled(run_id):
+            return err(CANCELLED_STATUS, "Quality Pass отменён")
+        run_registry.stage(run_id, "rejudge", f"Повторная оценка ({index}/{max_rounds})")
+        try:
+            scorecard = _quality_scorecard(repaired, req.brief, run_id, provider=req.provider, effort=req.effort, surface=req.surface)
+        except Exception as e:
+            repair["error"] = f"rejudge недоступен: {e}"
+            repair["rounds"].append({"round": index, "applied": False, "error": repair["error"]})
+            break
+        repair["rounds"].append({"round": index, "applied": True, "score": scorecard["score"],
+                                 "issues": len(scorecard["issues"])})
+        improved = _better(scorecard, current)
+        current_ir, current = repaired, scorecard
+        if _better(scorecard, final):
+            output_ir, final, repair["applied"] = repaired, scorecard, True
+        if _passes(scorecard, min_score) or not improved:
+            break
     return _quality_finish(req, output_ir, initial, final, repair, visual=True)
 
 
@@ -423,16 +553,17 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
     if schema_errors:
         return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
     outputs = req.outputs
-    for stage in ("judge", "repair", "rejudge"):
-        raw = getattr(outputs, stage)
+    repairs, rejudges = _round_outputs(outputs)
+    for stage, raw in [("judge", outputs.judge), *(("repair", item) for item in repairs), *(("rejudge", item) for item in rejudges)]:
         if raw is not None and len(raw.encode("utf-8")) > 2 * 1024 * 1024:
             return err(413, f"Quality Pass {stage}: ответ Codex слишком большой")
-    if outputs.judge is None and (outputs.repair is not None or outputs.rejudge is not None):
+    if outputs.judge is None and (repairs or rejudges):
         return err(422, "Quality Pass: repair/rejudge без judge — неконсистентное состояние Codex")
-    if outputs.rejudge is not None and outputs.repair is None:
+    if len(rejudges) > len(repairs):
         return err(422, "Quality Pass: rejudge без repair — неконсистентное состояние Codex")
 
-    deterministic_before = generator_policy.lint(req.ir, generator_policy.surface_for(req.brief, req.surface, req.ir))
+    surface = generator_policy.surface_for(req.brief, req.surface, req.ir)
+    deterministic_before = generator_policy.lint(req.ir, surface)
     if outputs.judge is None:
         return {"pending": {
             "stage": "judge",
@@ -446,48 +577,60 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
         return err(502, f"Quality Pass judge вернул неверный ответ: {e}")
 
     min_score = max(0, min(int(req.min_score), 100))
-    important = any(i["severity"] in {"critical", "major"} for i in initial["issues"])
-    needs_repair = bool(deterministic_before) or important or initial["score"] < min_score
-    if outputs.repair is not None and (not req.repair or not needs_repair):
+    needs_repair = _needs_repair(initial, min_score, deterministic_before)
+    if repairs and (not req.repair or not needs_repair):
         return err(422, "Quality Pass: repair не запрашивался — неконсистентное состояние Codex")
     output_ir = copy.deepcopy(req.ir)
-    repair = {"attempted": False, "applied": False, "error": None}
+    repair = {"attempted": False, "applied": False, "error": None, "rounds": []}
     final = initial
+    current_ir, current = copy.deepcopy(req.ir), initial
+    max_rounds = _max_rounds(req)
+    consumed = 0  # сколько rejudge-ответов действительно вошли в раунды
 
-    if req.repair and needs_repair:
-        repair["attempted"] = True
-        messages, message_error = _quality_repair_messages(req.ir, initial, req.brief, req.surface)
+    for index in range(1, max_rounds + 1):
+        deterministic = deterministic_before if index == 1 else generator_policy.lint(current_ir, surface)
+        if not _needs_repair(current, min_score, deterministic):
+            break
+        messages, message_error = _quality_repair_messages(
+            current_ir, current, req.brief, req.surface, round_index=index, history=repair["rounds"],
+            min_score=min_score, design_system=req.designSystem,
+            images=_repair_images(current_ir, req.brief) if req.visualReview else None)
         if messages is None:
             repair["error"] = message_error
-        elif outputs.repair is None:
+            break
+        repair["attempted"] = True
+        if index > len(repairs):
+            return {"pending": {"stage": "repair", "profile": "quality_repair", "round": index, "messages": messages}}
+        repaired, repair_error = _parse_quality_repair(repairs[index - 1])
+        if repaired is None:
+            repair["error"] = repair_error
+            repair["rounds"].append({"round": index, "applied": False, "error": repair_error})
+            break
+        if not req.rejudge:
+            output_ir, repair["applied"] = repaired, True
+            repair["rounds"].append({"round": index, "applied": True, "score": None, "issues": None})
+            break
+        if index > len(rejudges):
             return {"pending": {
-                "stage": "repair",
-                "profile": "quality_repair",
-                "messages": messages,
+                "stage": "rejudge", "profile": "quality_judge", "round": index,
+                "messages": _quality_desktop_messages(repaired, req.brief, req.visualReview, req.surface),
             }}
-        else:
-            repaired, repair_error = _parse_quality_repair(outputs.repair)
-            if repaired is None:
-                repair["error"] = repair_error
-            else:
-                output_ir = repaired
-                repair["applied"] = True
-                if req.rejudge:
-                    if outputs.rejudge is None:
-                        return {"pending": {
-                            "stage": "rejudge",
-                            "profile": "quality_judge",
-                            "messages": _quality_desktop_messages(output_ir, req.brief, req.visualReview, req.surface),
-                        }}
-                    try:
-                        final = _parse_quality_scorecard(
-                            outputs.rejudge, "Codex app-server / quality_judge"
-                        )
-                        final["mode"] = "component" if _component_quality_mode(output_ir) else "page"
-                    except Exception as e:
-                        return err(502, f"Quality Pass rejudge вернул неверный ответ: {e}")
+        try:
+            scorecard = _parse_quality_scorecard(rejudges[index - 1], "Codex app-server / quality_judge")
+            scorecard["mode"] = "component" if _component_quality_mode(repaired) else "page"
+        except Exception as e:
+            return err(502, f"Quality Pass rejudge вернул неверный ответ: {e}")
+        consumed = index
+        repair["rounds"].append({"round": index, "applied": True, "score": scorecard["score"],
+                                 "issues": len(scorecard["issues"])})
+        improved = _better(scorecard, current)
+        current_ir, current = repaired, scorecard
+        if _better(scorecard, final):
+            output_ir, final, repair["applied"] = repaired, scorecard, True
+        if _passes(scorecard, min_score) or not improved:
+            break
 
-    if outputs.rejudge is not None and not repair["applied"]:
+    if rejudges and consumed == 0 and not repair["applied"]:
         return err(422, "Quality Pass: rejudge без применённого repair — неконсистентное состояние Codex")
     visual = bool(req.visualReview and cache_store.get("generator-visual", _quality_visual_key(output_ir, req.brief)))
     return _quality_finish(req, output_ir, initial, final, repair, visual=visual)

@@ -18,8 +18,8 @@
 </script>
 
 <div class="n-status-row">
-  {#if status?.kind === "err" && status.text.length > 220}
-    <details class="n-status err nodrag"><summary>Есть замечания · диагностика</summary><div class="status-details">{status.text}</div></details>
+  {#if (status?.kind === "err" || status?.kind === "warn") && status.text.length > 220}
+    <details class={cn("n-status nodrag", status.kind)}><summary>{status.kind === "warn" ? "Готово с замечаниями · подробности" : "Есть замечания · диагностика"}</summary><div class="status-details">{status.text}</div></details>
   {:else}
     <div class={cn("n-status", status?.kind)}>{status?.text || ""}</div>
   {/if}

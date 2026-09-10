@@ -460,6 +460,11 @@ async function cancellableChat(request: Parameters<NonNullable<Window["designDNA
  * генератора (отдельная нода снята с палитры создания; легаси-графы с нодой
  * продолжают работать). Web-режим судит сервером; desktop гоняет этапы через
  * подключённый аккаунт ноды с профилями quality_judge/quality_repair. */
+/* Раундов починки в Quality Pass: судья → починка → повторная оценка, пока
+ * результат не пройдёт порог; сервер останавливается раньше, если раунд
+ * ничего не улучшил, и отдаёт лучший вариант. */
+const QUALITY_PASS_MAX_ROUNDS = 3;
+
 async function qualityPassCycle(
   ir: IRObject,
   brief: string,
@@ -471,22 +476,26 @@ async function qualityPassCycle(
     designSystem?: Record<string, unknown> | null; surface?: string; visualReview?: boolean;
   } = {},
 ): Promise<QualityPassResp> {
-  const request = { ir, brief, provider, effort, min_score: minScore, repair, rejudge: repair, designSystem, surface, visualReview };
+  const request = { ir, brief, provider, effort, min_score: minScore, repair, rejudge: repair, designSystem, surface, visualReview, max_rounds: QUALITY_PASS_MAX_ROUNDS };
   const desktop = window.designDNA;
   if (!desktop) return api<QualityPassResp>("/api/quality-pass", { ...request, runId }, { signal, runId });
-  const outputs: Partial<Record<"judge" | "repair" | "rejudge", string>> = {};
-  const seen = new Set<string>();
+  // Раунды «починка → повторная оценка» повторяются, пока сервер не примет
+  // результат или не исчерпает max_rounds; судья — один раз.
+  const outputs: { judge?: string; repairs: string[]; rejudges: string[] } = { repairs: [], rejudges: [] };
   for (;;) {
     if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
     const res = await api<QualityPassResp>("/api/quality-pass/codex-step", { ...request, outputs }, { signal });
     if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
     const pending = res.pending;
     if (!pending) return res;
-    if (seen.has(pending.stage) || seen.size >= 3) {
-      throw new Error("Quality Pass: некорректная последовательность этапов");
-    }
-    seen.add(pending.stage);
-    onStage(pending.stage);
+    const stage = pending.stage as "judge" | "repair" | "rejudge";
+    const inconsistent = (stage === "judge" && outputs.judge != null)
+      || (stage === "repair" && (outputs.repairs.length >= QUALITY_PASS_MAX_ROUNDS || outputs.repairs.length !== outputs.rejudges.length))
+      || (stage === "rejudge" && outputs.rejudges.length !== outputs.repairs.length - 1)
+      || !["judge", "repair", "rejudge"].includes(stage);
+    if (inconsistent) throw new Error("Quality Pass: некорректная последовательность этапов");
+    const round = typeof pending.round === "number" && pending.round > 1 ? ` ${pending.round}/${QUALITY_PASS_MAX_ROUNDS}` : "";
+    onStage(stage === "repair" ? `починка${round}` : stage === "rejudge" ? `повторная оценка${round}` : "судья");
     const answer = await cancellableChat({
       // Усилие судьи наследует ноду: на CLI-провайдерах high — это минуты
       // thinking на каждый вариант, выбор скорости/строгости за пользователем.
@@ -494,7 +503,9 @@ async function qualityPassCycle(
       profile: pending.profile,
       messages: pending.messages,
     }, signal);
-    outputs[pending.stage] = answer.content;
+    if (stage === "judge") outputs.judge = answer.content;
+    else if (stage === "repair") outputs.repairs.push(answer.content);
+    else outputs.rejudges.push(answer.content);
   }
 }
 
@@ -700,7 +711,7 @@ function sourceStructureDigest(response: BlockParseResp) {
 async function refineSourceWithAi(
   response: BlockParseResp,
   provider: NodeProvider,
-  setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
+  setStatus: (id: number, text: string, kind?: "ok" | "err" | "warn") => void,
   id: number,
   effort: NodeEffort = "high",
   guard: () => void = () => {},
@@ -770,7 +781,7 @@ type SegmentResp = {
 async function segmentScreenshotWithAi(
   image: string,
   provider: NodeProvider,
-  setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
+  setStatus: (id: number, text: string, kind?: "ok" | "err" | "warn") => void,
   id: number,
   effort: NodeEffort = "high",
   guard: () => void = () => {},
@@ -828,7 +839,7 @@ async function repairSourceWithAi(
   response: BlockParseResp,
   provider: NodeProvider,
   viewport: string,
-  setStatus: (id: number, text: string, kind?: "ok" | "err") => void,
+  setStatus: (id: number, text: string, kind?: "ok" | "err" | "warn") => void,
   id: number,
   effort: NodeEffort = "high",
   guard: () => void = () => {},
@@ -937,7 +948,7 @@ function renderableDesignSystemMaster(component: { templateIr?: IRObject; master
 }
 
 /* Статусная строка ноды — runtime-поле, в сейв не попадает (как .n-status в legacy) */
-export type NodeStatus = { text: string; kind?: "ok" | "err" };
+export type NodeStatus = { text: string; kind?: "ok" | "err" | "warn" };
 
 export type PersistedEditorDraft = {
   baseRevision: number;
@@ -985,7 +996,7 @@ export interface FlowStoreState {
   clearEditorDraft: (id: number) => void;
   commitTimeline: (id: number, expected: IRObject | null, irRevision: number, timeline: IRObject, change?: VideoRevisionChange) => boolean;
   commitEditorDraft: (id: number, expectedRevision: number, ir: IRObject) => boolean;
-  setStatus: (id: number, text: string, kind?: "ok" | "err") => void;
+  setStatus: (id: number, text: string, kind?: "ok" | "err" | "warn") => void;
   setBusy: (id: number, v: boolean) => void;
   setProgress: (id: number, progress: { expectedMs: number; label: string; percent?: number; stage?: string } | null) => void;
   /* Отмена идущего запроса ноды: в браузере — AbortController у fetch,
@@ -1250,7 +1261,7 @@ let localDirtySinceInit = false;
  * нативный undo, а смешивать их со структурой — терять текст по Ctrl+Z). */
 export type GraphSnapshot = { nodes: FlowNode[]; edges: FlowEdge[] };
 export type GraphHistory = { past: GraphSnapshot[]; future: GraphSnapshot[] };
-export type StatusLogEntry = { at: number; text: string; kind?: "ok" | "err" };
+export type StatusLogEntry = { at: number; text: string; kind?: "ok" | "err" | "warn" };
 const STATUS_LOG_LIMIT = 30;
 const EMPTY_GRAPH_HISTORY: GraphHistory = { past: [], future: [] };
 const GRAPH_HISTORY_LIMIT = 50;
@@ -2183,9 +2194,11 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
       if (strictFallback === "extend") {
         if (scope.owns()) get().setStatus(id, "strict: мастера не использованы, результат принят в режиме extend", "err");
       } else if (needsRevision.length) {
+        // Результат готов и показан: починка прошла все раунды, судья всё ещё
+        // видит замечания. Это предупреждение к готовому варианту, не ошибка.
         const reasons = needsRevision.flatMap(({ review }) => review.reasons).slice(0, 3);
-        const reasonNote = reasons.length ? `: ${reasons.join("; ")}` : "";
-        if (scope.owns()) get().setStatus(id, `Нужна доработка${reasonNote}`, "err");
+        const reasonNote = reasons.length ? ` · осталось: ${reasons.join("; ")}` : "";
+        if (scope.owns()) get().setStatus(id, `Готово с замечаниями${qpNote}${reasonNote}`, "warn");
       } else if (!variants.length || qualityReviews.some((review) => review.passed == null)) {
         if (scope.owns()) get().setStatus(id, "Предпросмотр создан · проверка не завершена", "err");
       } else {

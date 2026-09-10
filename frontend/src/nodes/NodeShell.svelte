@@ -34,7 +34,7 @@
   let def = $derived(NODE_DEFS[type]);
   let busy = $derived(Boolean($flowBusy[Number(id)]));
   let status = $derived((!busy && idleStatus) || $flowStatuses[Number(id)] || null);
-  let dotClass = $derived(busy ? "run" : status?.kind === "err" ? "err" : status?.kind === "ok" ? "ok" : "");
+  let dotClass = $derived(busy ? "run" : status?.kind === "err" ? "err" : status?.kind === "warn" ? "warn" : status?.kind === "ok" ? "ok" : "");
   let dotText = $derived(busy ? "выполняется" : status?.text || "готова");
 
   /* Измеренный прогресс приходит стадиями с бэкенда (Source Import); у

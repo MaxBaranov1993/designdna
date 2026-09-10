@@ -1316,6 +1316,10 @@ html[data-desktop] .motion-workspace {
   background: var(--dna-danger);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--dna-danger), transparent 82%);
 }
+.n-dot.warn {
+  background: var(--dna-warning, #d9a441);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dna-warning, #d9a441), transparent 82%);
+}
 .n-dot.run {
   background: var(--dna-action);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--dna-action), transparent 82%);
@@ -1520,6 +1524,9 @@ html[data-desktop] .motion-workspace {
 }
 .n-status.ok {
   color: var(--dna-success-text);
+}
+.n-status.warn {
+  color: var(--dna-warning-text, #c99a3a);
 }
 .n-cancel {
   flex: none;

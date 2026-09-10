@@ -80,7 +80,7 @@
     return String(value);
   }
 
-  const statusClass = () => busy ? "run" : status?.kind === "err" ? "err" : status?.kind === "ok" ? "ok" : "";
+  const statusClass = () => busy ? "run" : status?.kind === "err" ? "err" : status?.kind === "warn" ? "warn" : status?.kind === "ok" ? "ok" : "";
   const statusText = () => busy ? "выполняется" : status?.text || "готова";
   const canOpen = $derived(selectedNode?.type === "edit" || selectedNode?.type === "designsystem");
 
