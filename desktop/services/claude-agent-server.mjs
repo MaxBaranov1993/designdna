@@ -336,7 +336,7 @@ export class ClaudeAgentServer {
    *  - cwd — пустой каталог приложения (hermeticCwd).
    * Флаги, которых нет у установленной версии, не передаются (capabilities). */
   async chat(messages, {
-    timeoutMs = 180_000, profile = "generator", effort = "medium", signal = null, model = null,
+    timeoutMs = 600_000, profile = "generator", effort = "medium", signal = null, model = null,
     responseFormat = null, onResponseMetadata = null, cwd = null,
   } = {}) {
     if (!this.contract.hasRole(profile)) {

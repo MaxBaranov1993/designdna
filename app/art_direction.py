@@ -136,9 +136,23 @@ def create_design_brief(
         provider, _prompt(brief, product_type, style_dna, count), 0.2,
         timeout=30, role="art-direction", reasoning_effort="medium",
     )
+    return accept_raw(brief, product_type, style_dna=style_dna, provider=provider, count=count, raw=raw)
+
+
+def prompt_messages(brief: Any, product_type: str, style_dna: dict | None = None, count: int = 3) -> list[dict]:
+    """Сообщения арт-дирекции для внешнего транспорта: десктоп зовёт провайдера
+    сам (регулятор, трасса, GPT по подписке через Codex), а не Python-воркер."""
+    return _prompt(brief, product_type, style_dna, max(1, min(int(count), 3)))
+
+
+def accept_raw(brief: Any, product_type: str, *, style_dna: dict | None = None, provider: str | None = None,
+               count: int = 3, raw: Any) -> dict | list[dict]:
+    """Ответ модели (свой или полученный клиентом): валидация и тот же кэш."""
+    count = max(1, min(int(count), 3))
+    key = cache_key(brief, product_type, style_dna, count=count, provider=provider)
     try:
-        result = json.loads(llm.extract_json(raw))
-    except (TypeError, json.JSONDecodeError) as exc:
+        result = json.loads(llm.extract_json(str(raw or "")))
+    except (TypeError, ValueError) as exc:
         raise ValueError("art direction returned invalid JSON") from exc
     if count == 1:
         if not isinstance(result, dict):

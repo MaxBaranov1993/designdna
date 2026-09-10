@@ -210,7 +210,7 @@ export class CodexAppServer extends EventEmitter {
       }
     }
   }
-  async chat(messages, { timeoutMs = 180_000, profile = "generator", signal = null, model = null, effort = null, outputSchema = null, onResponseMetadata = null } = {}) {
+  async chat(messages, { timeoutMs = 600_000, profile = "generator", signal = null, model = null, effort = null, outputSchema = null, onResponseMetadata = null } = {}) {
     if (!this.contract.hasRole(profile)) throw new Error(`Unsupported Codex chat profile: ${profile}`);
     if (outputSchema != null && (typeof outputSchema !== "object" || Array.isArray(outputSchema))) {
       throw new Error("Codex outputSchema must be a JSON Schema object");

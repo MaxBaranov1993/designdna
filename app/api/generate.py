@@ -141,6 +141,11 @@ class GenerateReq(BaseModel):
     referenceIrs: list[dict] | None = None
     # Клиентский id запуска для стадий/отмены (run_registry); старые клиенты не шлют
     runId: str | None = None
+    # Десктоп: арт-направления считает провайдер через транспорт Electron
+    # (регулятор, трасса, GPT по подписке). Сервер отдаёт промпт в ответе
+    # `artDirection`, клиент возвращает ответ модели в artDirectionRaw.
+    clientArtDirection: bool = False
+    artDirectionRaw: str | None = None
 
 
 class MixReq(BaseModel):
@@ -180,7 +185,8 @@ def generate(req: GenerateReq):
         except ValueError as exc:
             return err(422, str(exc))
         prepared = None
-        request_key = generator_policy.digest(req.model_dump(exclude={"prepareOnly", "rawOutputs", "runId", "preparedContextId"}))
+        request_key = generator_policy.digest(req.model_dump(exclude={
+            "prepareOnly", "rawOutputs", "runId", "preparedContextId", "clientArtDirection", "artDirectionRaw"}))
         if req.preparedContextId:
             prepared = cache_store.get("generator-prepared", req.preparedContextId)
             if not prepared or prepared.get("requestKey") != request_key:
@@ -700,16 +706,30 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
         run_registry.stage(run_id, "art-direction", "Формирую три арт-направления")
         try:
             import art_direction
-            generated_directions = art_direction.create_design_brief(
-                brief,
-                ptype,
-                style_dna={"tokens": dna, "designSystem": req.designSystem,
-                           "policyHash": policy_context["policyHash"], "surface": surface, "style": req.designStyle,
-                           **({"designSystemDigest": ds_direction_digest} if ds_direction_digest else {})},
-                provider=provider,
-                count=3,
-                generate_if_missing=req.rawOutputs is None,
-            )
+            style_dna = {"tokens": dna, "designSystem": req.designSystem,
+                         "policyHash": policy_context["policyHash"], "surface": surface, "style": req.designStyle,
+                         **({"designSystemDigest": ds_direction_digest} if ds_direction_digest else {})}
+            if req.clientArtDirection and req.rawOutputs is None:
+                # Десктоп: провайдера зовёт клиент через транспорт Electron. Без
+                # кэша сервер отдаёт промпт арт-дирекции и ждёт artDirectionRaw.
+                try:
+                    generated_directions = art_direction.create_design_brief(
+                        brief, ptype, style_dna=style_dna, provider=provider, count=3, generate_if_missing=False)
+                except LookupError:
+                    if not req.artDirectionRaw:
+                        return {
+                            "artDirection": {"messages": art_direction.prompt_messages(brief, ptype, style_dna, 3),
+                                             "count": 3},
+                            "variants": [], "errors": [], "prompts": [], "directions": [],
+                            "design": {"type": ptype, "label": pinfo["label"]},
+                        }
+                    generated_directions = art_direction.accept_raw(
+                        brief, ptype, style_dna=style_dna, provider=provider, count=3, raw=req.artDirectionRaw)
+            else:
+                generated_directions = art_direction.create_design_brief(
+                    brief, ptype, style_dna=style_dna, provider=provider, count=3,
+                    generate_if_missing=req.rawOutputs is None,
+                )
             if isinstance(generated_directions, list):
                 directions = generated_directions
         except Exception as exc:

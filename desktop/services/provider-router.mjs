@@ -46,6 +46,26 @@ export function prepareProviderRequest(request, id) {
   return { provider, envelope };
 }
 
+/* Таймауты по профилю. Генератор с полным системным промптом, блоком
+ * дизайн-системы и референс-картинками занимает у CLI-провайдеров 2–4 минуты;
+ * прежний общий лимит 180 с ронял его и у Claude, и у Codex («generator timed
+ * out»). Явный source.timeoutMs конверта важнее таблицы. */
+export const PROFILE_TIMEOUTS_MS = Object.freeze({
+  generator: 600_000,
+  quality_repair: 600_000,
+  editor: 480_000,
+  art_direction: 300_000,
+  quality_judge: 300_000,
+  graphics: 300_000,
+  chat: 180_000,
+});
+
+export function profileTimeoutMs(profile, override = null) {
+  const explicit = Number(override);
+  if (override != null && Number.isFinite(explicit) && explicit > 0) return explicit;
+  return PROFILE_TIMEOUTS_MS[String(profile || "generator")] ?? PROFILE_TIMEOUTS_MS.generator;
+}
+
 async function chatViaCodex({ codex, source, messages, model, profile, signal, effort, requestedProvider, fallback }) {
   if (source.responseFormat != null && (source.responseFormat.type !== "json_schema"
     || !source.responseFormat.jsonSchema?.schema)) {
@@ -59,7 +79,7 @@ async function chatViaCodex({ codex, source, messages, model, profile, signal, e
     profile, signal, model, effort,
     ...(source.responseFormat ? { outputSchema: source.responseFormat.jsonSchema.schema } : {}),
     onResponseMetadata: (metadata) => { responseMetadata = metadata; },
-    ...(source.timeoutMs != null ? { timeoutMs: source.timeoutMs } : {}),
+    timeoutMs: profileTimeoutMs(profile, source.timeoutMs),
   });
   return {
     content,
@@ -120,7 +140,7 @@ export async function chatWithProvider({
         // иначе адаптер сообщает dropped, а промпт по-прежнему просит JSON.
         ...(source.responseFormat ? { responseFormat: source.responseFormat } : {}),
         onResponseMetadata: (metadata) => { claudeMetadata = metadata; },
-        ...(source.timeoutMs != null ? { timeoutMs: source.timeoutMs } : {}) });
+        timeoutMs: profileTimeoutMs(profile, source.timeoutMs) });
     return {
       content,
       toolCalls: [],

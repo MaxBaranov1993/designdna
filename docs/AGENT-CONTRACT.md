@@ -64,6 +64,19 @@ Codex app-server 0.153.2 (локальная проверка без вызов�
 
 Поведенческое изменение, которое стоит проверить реальной генерацией: системный промпт генератора теперь заменяет системный промпт Claude Code целиком, а у Codex уходит developer-сообщением. Это стандартный канал для обоих CLI, но качество конкретных ролей после переноса нужно посмотреть глазами.
 
+## 3a. Обновление 2026-09-10: таймауты и арт-дирекция
+
+Симптом: две ноды генератора (GPT-6 Astra и Claude Opus) падали с «Codex generator timed out» / «Claude generator timed out». Трасса показала: общий лимит адаптеров 180 с, а генерация с полным системным промптом, блоком дизайн-системы и референс-картинками занимает у Claude 90–220 с, у Codex дольше.
+
+| Файл | Изменение |
+| --- | --- |
+| [desktop/services/provider-router.mjs](../desktop/services/provider-router.mjs) | `PROFILE_TIMEOUTS_MS`: generator и quality_repair 600 с, editor 480 с, art_direction/quality_judge/graphics 300 с, chat 180 с; явный `timeoutMs` конверта важнее. Таймер адаптера стартует после получения слота регулятора, очередь в него не входит |
+| адаптеры Claude и Codex | значение по умолчанию `timeoutMs` поднято до 600 с |
+| [app/prompts/agent-contract/](../app/prompts/agent-contract/) | версия `agent-contract/1.1`, новая роль `art_direction` (output json, `roles/art_direction.md`) |
+| [app/api/generate.py](../app/api/generate.py), [frontend/src/flow/store.ts](../frontend/src/flow/store.ts) | арт-направления в десктопе идут через транспорт Electron: prepareOnly с `clientArtDirection: true` возвращает `artDirection.messages`, клиент зовёт провайдера с профилем `art_direction` и повторяет prepareOnly с `artDirectionRaw`; сервер валидирует ответ и кладёт в общий кэш. Раньше Python-воркер звал CLI сам: мимо регулятора и трассы, GPT-ноды получали «добавьте OPENAI_API_KEY», а интерактивный воркер с лимитом 120 с рисковал перезапуском |
+
+Параллельность: регулятор даёт по два слота Claude и Codex (`DESIGNDNA_PROVIDER_CONCURRENCY`), остальные запросы ждут в FIFO-очереди без расхода таймаута; несколько нод генератора работают одновременно, третья на том же провайдере встаёт в очередь.
+
 ## 4. Каналы доставки по провайдерам
 
 | Аспект | Claude Code | Codex |

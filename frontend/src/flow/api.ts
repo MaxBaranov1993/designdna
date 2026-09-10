@@ -46,6 +46,9 @@ export type GenerateResp = {
   qa?: { index: number; fixed: number; violations: string[] }[];
   design?: { type: string; label: string };
   prompts?: Array<{ messages: ApiChatMessage[] }>;
+  /* Десктоп: сервер просит клиента получить арт-направления у провайдера и
+   * повторить prepareOnly с artDirectionRaw. */
+  artDirection?: { messages: ApiChatMessage[]; count: number };
   designSystem?: Record<string, unknown>;
 };
 export type MixResp = { ir?: IRObject | null };

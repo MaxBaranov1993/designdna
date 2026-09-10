@@ -9,7 +9,7 @@ import { CodexAppServer } from "../services/codex-app-server.mjs";
 import { chatWithProvider } from "../services/provider-router.mjs";
 
 const contract = loadAgentContract();
-const ROLES = ["chat", "generator", "quality_judge", "quality_repair", "editor", "graphics"];
+const ROLES = ["chat", "generator", "quality_judge", "quality_repair", "editor", "graphics", "art_direction"];
 const CLAUDE_ENV = { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" };
 
 /** Дубль child_process для Claude: собирает stdin и системный промпт в момент spawn. */
@@ -53,7 +53,7 @@ function fakeCodex(threadId = "thread-contract") {
 }
 
 test("the pack loads from app/prompts/agent-contract with the expected roles", () => {
-  assert.match(contract.version, /^agent-contract\/1\.0$/);
+  assert.match(contract.version, /^agent-contract\/1\.1$/);
   assert.deepEqual(Object.keys(contract.roles).sort(), [...ROLES].sort());
   assert.equal(contract.dir, DEFAULT_AGENT_CONTRACT_DIR);
   assert.ok(existsSync(DEFAULT_AGENT_CONTRACT_DIR));

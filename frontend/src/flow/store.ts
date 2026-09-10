@@ -2081,7 +2081,20 @@ export const useFlowStore = createStore<FlowStoreState>()((set, get) => ({
           stopPoll();
         }
       } else {
-        const prepared = await scope.wait(api<GenerateResp>("/api/generate", { ...request, prepareOnly: true }, { signal }));
+        const prepareRequest = { ...request, prepareOnly: true, clientArtDirection: true };
+        let prepared = await scope.wait(api<GenerateResp>("/api/generate", prepareRequest, { signal }));
+        if (prepared.artDirection?.messages?.length) {
+          // Арт-направления идут через транспорт Electron (регулятор, трасса,
+          // GPT по подписке через Codex), а не из Python-воркера.
+          if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: progressLabel, stage: "Модель предлагает арт-направления" });
+          const directionsAnswer = await scope.wait(cancellableChat({
+            ...chatRoute(provider, "medium"),
+            profile: "art_direction",
+            messages: prepared.artDirection.messages,
+          }, signal));
+          if (signal.aborted) throw new DOMException("cancelled", "AbortError");
+          prepared = await scope.wait(api<GenerateResp>("/api/generate", { ...prepareRequest, artDirectionRaw: directionsAnswer.content }, { signal }));
+        }
         if (!prepared.prompts?.length && Array.isArray(prepared.variants) && prepared.variants.length) {
           // strict + пиннутый мастер, который не влезает в промпт: сервер уже
           // материализовал точную копию мастера, модель не нужна.

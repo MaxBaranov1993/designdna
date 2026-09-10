@@ -1,5 +1,5 @@
 {
-  "version": "agent-contract/1.0",
+  "version": "agent-contract/1.1",
   "description": "Единый источник инструкций ролей для подписочных CLI (Claude Code, Codex) и Python-пути. Текст роли + правило инструментов + правило вывода собираются адаптерами одинаково для всех провайдеров; различается только транспорт.",
   "roles": {
     "chat": {
@@ -25,6 +25,10 @@
     "graphics": {
       "output": "svg",
       "file": "roles/graphics.md"
+    },
+    "art_direction": {
+      "output": "json",
+      "file": "roles/art_direction.md"
     }
   },
   "toolRules": {

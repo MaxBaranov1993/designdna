@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { chatWithProvider, resolveProvider, SELECTABLE_PROVIDERS } from "../services/provider-router.mjs";
+import { chatWithProvider, PROFILE_TIMEOUTS_MS, profileTimeoutMs, resolveProvider, SELECTABLE_PROVIDERS } from "../services/provider-router.mjs";
 
 const credentials = (connected = true) => ({
   has: (provider) => connected && provider === "openai",
@@ -225,3 +225,27 @@ for (const provider of ["codex", "claude"]) {
     assert.equal(otherCalls, 0);
   });
 }
+
+test("router applies profile timeouts to both subscription transports", async () => {
+  for (const [profile, expected] of [["generator", 600_000], ["quality_judge", 300_000], ["art_direction", 300_000], ["unknown-profile", 600_000]]) {
+    let claudeSeen;
+    let codexSeen;
+    await chatWithProvider({
+      provider: "claude", profile,
+      envelope: { provider: "claude", messages: [{ role: "user", content: "hi" }] },
+      credentials: credentials(false),
+      claude: { chat: async (_messages, options) => { claudeSeen = options; return "ok"; } },
+    });
+    await chatWithProvider({
+      provider: "codex", profile,
+      envelope: { provider: "codex", messages: [{ role: "user", content: "hi" }] },
+      credentials: credentials(false),
+      codex: { chat: async (_messages, options) => { codexSeen = options; return "ok"; } },
+    });
+    assert.equal(claudeSeen.timeoutMs, expected, `claude ${profile}`);
+    assert.equal(codexSeen.timeoutMs, expected, `codex ${profile}`);
+  }
+  assert.equal(profileTimeoutMs("generator", 45_000), 45_000);
+  assert.equal(profileTimeoutMs("generator", "oops"), PROFILE_TIMEOUTS_MS.generator);
+  assert.equal(PROFILE_TIMEOUTS_MS.generator, 600_000);
+});

@@ -13,12 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import agent_contract
 
-ROLES = {"chat", "generator", "quality_judge", "quality_repair", "editor", "graphics"}
+ROLES = {"chat", "generator", "quality_judge", "quality_repair", "editor", "graphics", "art_direction"}
 
 
 def test_pack_loads_with_expected_roles():
     contract = agent_contract.load()
-    assert contract.version == "agent-contract/1.0"
+    assert contract.version == "agent-contract/1.1"
     assert set(contract.roles) == ROLES
     generator = contract.roles["generator"]
     assert contract.compose("generator", "none") == f"{generator.instructions} {contract.tool_rules['none']} {contract.output_rules['json']}"
