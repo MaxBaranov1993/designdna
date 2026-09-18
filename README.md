@@ -1,15 +1,93 @@
 # DesignDNA
 
-A local-first AI web-design studio. A node-graph pipeline generates, imports, edits and
-animates web designs around a canonical, schema-validated **Design IR** — the LLM never
-owns the truth, the schema does.
+**Local-first AI design studio for building, importing, editing, and animating production-ready web interfaces.**
 
-Runs fully on `127.0.0.1:8420`. No external services except the OpenAI / Kimi APIs for
-generation roles.
+DesignDNA combines a visual node graph, a Figma-like editor, deterministic rendering, and LLM-assisted generation around a schema-validated **Design IR**. The model proposes changes; the structured document remains the source of truth.
 
-## Desktop runtime
+> Active R&D project focused on AI-native design workflows, controllable generation, and editable design-to-code systems.
 
-DesignDNA now has a single desktop runtime: the SvelteKit editor and Project Map run in one Electron window, while the existing Python ASGI application and Repo Canvas execute as internal stdio workers. Production desktop mode opens no local HTTP ports.
+## Why DesignDNA
+
+Most AI design tools generate a one-shot result that becomes difficult to control once the first prompt is finished. DesignDNA takes a different approach: every design is represented as structured, versioned data that can be inspected, edited, transformed, validated, and rendered deterministically.
+
+The goal is to combine the speed of generative AI with the precision of professional design tools.
+
+## Core capabilities
+
+- **Node-based workflow** — compose generation, import, editing, reskinning, quality, motion, and video-render steps visually.
+- **Design IR** — versioned JSON schemas define sections, layout, tokens, responsive behavior, and semantic bindings.
+- **DNA Editor** — fullscreen visual editor with multi-select, smart guides, constraints, layers, rulers, color tools, clipboard actions, z-order, and undo/redo.
+- **Source Import** — capture existing web interfaces with computed styles, geometry, fonts, and deterministic QA checks.
+- **Style DNA** — extract and edit reusable design tokens and semantic style bindings.
+- **AI model routing** — role-based routing across OpenAI and Kimi models with fallback chains and caching.
+- **Quality pipeline** — deterministic validation and autofix followed by optional model-based review and repair.
+- **Motion pipeline** — convert captured interactions into structured Interaction IR and Motion IR for reproducible animation and video output.
+- **Local-first desktop runtime** — the editor and project map run as a single Electron application without exposing production HTTP ports.
+
+## Architecture
+
+```text
+Prompt / Imported Website
+          │
+          ▼
+     Node Graph
+          │
+          ▼
+   Schema-validated
+      Design IR
+     ┌────┼────┐
+     ▼    ▼    ▼
+  Editor Style Motion
+     │    DNA    │
+     └────┼──────┘
+          ▼
+ Deterministic Renderer
+          │
+          ▼
+   Web / Video Output
+```
+
+### Repository structure
+
+```text
+app/            Python backend, import pipeline, quality gates, rendering
+frontend/       Svelte 5 + TypeScript visual editor and node graph
+desktop/        Electron desktop runtime
+schema/         Design IR / Interaction IR / Motion IR schemas
+tools/          Project Map / repository intelligence tooling
+spike/          Generation experiments and evaluation scripts
+```
+
+## Technology
+
+**Frontend**
+- Svelte 5
+- TypeScript
+- Vite
+- Svelte Flow
+
+**Runtime & backend**
+- Python
+- FastAPI
+- Electron
+- SQLite
+
+**AI**
+- OpenAI API
+- Kimi API
+- Role-based model routing
+- Structured generation and validation
+
+**Quality & testing**
+- Playwright
+- Pytest
+- Pixel-fidelity checks
+- Schema validation
+- Deterministic repair pipelines
+
+## Desktop development
+
+Requirements: Python 3.11+, Node.js 22+, Playwright Chromium.
 
 ```bash
 npm run frontend:install
@@ -18,131 +96,41 @@ npm run desktop:install
 npm run desktop:start
 ```
 
-The standalone FastAPI and Repo Canvas server commands are retained only for browser development/compatibility. See [desktop runtime architecture](docs/architecture/desktop-runtime.md).
+For browser development, the standalone FastAPI runtime remains available for compatibility.
 
-## What it does
-
-- **Flow graph UI** (Svelte Flow): prompt → generate → edit → reskin → quality-pass →
-  motion → video-render nodes wired on a canvas; projects persist in SQLite.
-- **Design IR** (`schema/`): versioned JSON schema for semantic web documents
-  (sections, tokens, style bindings, responsive viewports). Every AI output is
-  validated, repaired and merged back through deterministic code.
-- **LLM generation** directly via the OpenAI and Kimi APIs with role-based model routing
-  (fallback chains, env-overridable; chain entries without a configured key are skipped,
-  so whichever account is connected is used) and a token-saving cache (`/api/cache/stats`).
-- **Quality pipeline**: deterministic Quality Gate (autofix without an LLM) plus an
-  LLM judge pass with a repair/re-judge loop.
-- **Source Import** (pixel-faithful DOM capture of real sites):
-  - captures computed styles, geometry and the site's own `@font-face` fonts into a
-    local font base (`data/fonts`, served at `/fonts/{name}`) so text metrics match
-    the source;
-  - collapses inline-flow paragraphs (`<p>` + `<strong>/<a>`) into single text runs;
-  - margin-aware layout: measured gaps for block containers, free-layout pinning when
-    margins are uneven or a flex row uses child margins;
-  - a deterministic QA pass pins containers to absolute coordinates whenever reflow
-    drift would overflow the captured size (`meta.qaWarnings` journal).
-- **Style DNA**: design-token panel with semantic bindings, normalize preview and
-  Tailwind projection/export.
-- **DNA Editor** (fullscreen canvas editor, Figma-grade): marquee & shift/ctrl
-  multi-select, smart guides with equal-spacing labels, constraints, groups,
-  z-order, clipboard (Ctrl+A/C/X/V, Ctrl+D duplicate), right-click context menu,
-  color picker (SV area + hue + HEX + IR token swatches), flyout tool rail,
-  nudge undo-batching, rulers, responsive viewport switching, layers panel with
-  search/hide/lock, undo/redo history.
-- **Motion**: live interaction capture on a source site → Interaction IR →
-  deterministic Motion IR → local video render (hash-linked integrity between IRs).
-
-## Repository layout
-
-```
-app/            FastAPI backend
-  server.py     all API routes (port 8420; serves /static and the font base at /fonts)
-  scraper.py    Source Import: DOM capture, font base, QA pass
-  blockparse.py block detection / LLM clone pipeline
-  llm_client.py OpenAI/Kimi client, role routing, system prompts
-  qualitygate.py, mergeback.py, reproduce.py, motion_render.py, ...
-  static/flow/  built SvelteKit app + engine.js (IIFE engine bundle for headless renders)
-frontend/       Svelte 5 + TS + Vite source (flow graph, DNA editor, inspector)
-  src/engine/   Design-IR engines as TS modules: renderer (IR→DOM), geoedit
-                (Figma geometry), irhistory (undo/redo), fontCatalog
-  src/editor/   DNA editor: session controller + Svelte panels
-schema/         Design IR / Interaction IR / Motion IR JSON schemas
-spike/          generation spike scripts + system prompt template
-app/*_test.py   Playwright UI suite (needs a running server)
-```
-
-## Quick start
-
-Requirements: Python 3.11+, Node 18+, Playwright Chromium.
-
-```bash
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt        # Windows
-.venv\Scripts\python -m playwright install chromium
-
-cd frontend && npm ci && npm run build && cd ..      # builds app/static/flow
-
-echo OPENAI_API_KEY=... > .env                     # and/or KIMI_API_KEY=...
-start.bat                                            # or: .venv\Scripts\python app\server.py
-```
-
-Open http://127.0.0.1:8420 — the flow graph is at `/flow`.
-
-Feature flags: `DESIGNAI_FLAG_<NAME>=0|1` environment variables
-(see `app/config/flags.py`). Model routing overrides: `LLM_MODELS_<ROLE>` env vars.
-
-## Tests
-
-Unit / IR tests (no server needed):
+## Testing
 
 ```bash
 .venv\Scripts\python -m pytest app/llm_client_test.py app/test_mergeback.py \
   app/test_qualitygate.py app/interaction_ir_test.py app/motion_ir_test.py \
   app/typography_test.py app/designkb_test.py app/urlguard_test.py
-.venv\Scripts\python app/source_import_qa_test.py
 ```
 
-Pixel / UI suite (start the server first, `app/server.py`):
+The repository also contains browser, editor, interaction, and pixel-fidelity test suites.
 
-```bash
-.venv\Scripts\python app/source_import_pixel_test.py   # capture fidelity <= 3px
-.venv\Scripts\python app/ui_editor_test.py             # DNA editor basics
-.venv\Scripts\python app/ui_editor_parity_test.py      # rulers/viewports/flyout/DNA
-.venv\Scripts\python app/ui_eq_marquee_test.py         # multi-select, guides, marquee
-# ...see app/ui_*_test.py for the full set
-```
+## Design principles
 
-## Project Map (Repo Canvas)
+1. **The schema owns the truth** — not the language model.
+2. **Generation must remain editable** — AI output should become a design system, not a dead image.
+3. **Deterministic operations first** — use model calls where they add value, not where normal code is more reliable.
+4. **Local-first by default** — project data and editing workflows stay on the user's machine.
+5. **One workflow from reference to production** — import, generate, edit, validate, animate, and export from the same structured representation.
 
-Repo Canvas is integrated as the **Project Map** surface inside the DesignDNA desktop
-window. Its event store and architect remain under `tools/repo-canvas/`, but the
-desktop app runs them through an internal stdio worker—there is no second production
-server or port.
+## Security
 
-```bash
-npm run repo-canvas:install
-npm run repo-canvas:setup
-npm run desktop:start
-```
-
-Use the root Repo Canvas CLI commands for diagnostics and maintenance. See
-[docs/repo-canvas.md](docs/repo-canvas.md) for provenance and operational details.
-
-## Security notes
-
-- Binds to localhost only; scrape endpoints are behind an SSRF guard
-  (`urlguard.validate_public_url`); live interaction capture requires an explicit
-  "this is my site / I have permission" confirmation in the UI.
-- `.env` (API keys) and `data/` (projects, caches, font base) are gitignored.
-
-## Acknowledgements
-
-Editor UX patterns (nudge batching, context menu, color picker, flyout tools) adapted
-from [OpenPencil](https://github.com/open-pencil/open-pencil) (MIT) and Figma
-conventions; the website-import pipeline was informed by
-[html.to.design](https://html.to.design).
+- Localhost-only development server.
+- SSRF protection for import endpoints.
+- API keys and local project data are excluded from Git.
+- Live-site interaction capture requires explicit permission confirmation.
 
 ## Status
 
-Personal R&D project, active development. Schemas are versioned (`design-ir 1.0/1.1`)
-and migrations live in `app/ir/migrate.py`.
+**Active development.** Design IR schemas are versioned and migration logic is maintained in the repository.
+
+## Acknowledgements
+
+Some editor interaction patterns are inspired by Figma conventions and OpenPencil. The website-import workflow was informed by tools such as html.to.design.
+
+---
+
+Built as an independent product experiment exploring the future of AI-native interface design.
