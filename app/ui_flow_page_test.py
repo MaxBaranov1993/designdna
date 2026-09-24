@@ -346,12 +346,14 @@ def main():
             const inner = document.querySelector('.svelte-flow__node[data-id="{page_id}"] .ir-preview-inner');
             const art = inner.querySelector('div[class^="ir-"]');
             const r = art.getBoundingClientRect();
-            return {{ innerW: inner.clientWidth, designW: Number(art.dataset.designWidth),
+            // Both widths in screen pixels: the canvas zoom scales the node and its preview alike.
+            return {{ innerW: inner.clientWidth, innerRectW: Math.round(inner.getBoundingClientRect().width),
+                      designW: Number(art.dataset.designWidth),
                       rectW: Math.round(r.width), scale: new DOMMatrix(getComputedStyle(art).transform).a }};
         }})()""")
         check("mobile Page preview uses fitPreview without upscaling",
               pv["designW"] == 390 and
-              0 < pv["rectW"] <= min(pv["designW"], pv["innerW"]) + 2 and
+              0 < pv["rectW"] <= pv["innerRectW"] + 2 and
               abs(pv["scale"] - min(1, pv["innerW"] / pv["designW"])) <= 0.01,
               str(pv))
 
