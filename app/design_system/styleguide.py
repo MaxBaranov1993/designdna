@@ -144,11 +144,11 @@ def inline_font_css(faces: list[dict], *, budget: int = FONT_BUDGET) -> tuple[st
             continue
         path = fonts_dir / filename
         if not path.is_file():
-            warnings.append(f"шрифт {family} {weight}: файл {filename} не найден")
+            warnings.append(f"font {family} {weight}: file {filename} not found")
             continue
         payload = path.read_bytes()
         if used + len(payload) > budget:
-            warnings.append(f"шрифт {family} {weight} пропущен: превышен бюджет шрифтов")
+            warnings.append(f"font {family} {weight} skipped: font budget exceeded")
             continue
         used += len(payload)
         suffix = path.suffix.lower()
@@ -188,7 +188,7 @@ def _inline_ir_assets(ir: dict) -> tuple[dict, list[str]]:
         warnings.extend(str(item) for item in errors or [])
     except Exception as exc:  # blob-хранилище недоступно — страница всё равно нужна
         resolved, _ = copy.deepcopy(ir), None
-        warnings.append(f"blob-ссылки не развёрнуты: {exc}")
+        warnings.append(f"blob references not expanded: {exc}")
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
@@ -196,7 +196,7 @@ def _inline_ir_assets(ir: dict) -> tuple[dict, list[str]]:
                 value = node.get(key)
                 if isinstance(value, str) and value and not value.startswith("data:"):
                     node[key] = BLANK_PNG
-                    warnings.append(f"ассет не встроен: {value[:60]}")
+                    warnings.append(f"asset not embedded: {value[:60]}")
             for child in node.values():
                 walk(child)
         elif isinstance(node, list):
@@ -250,12 +250,12 @@ def proof_crop(document: dict, component: dict, viewport: str = "desktop",
     source_ref = component.get("sourceRef") if isinstance(component.get("sourceRef"), dict) else {}
     evidence = (document.get("referenceAssets") or {}).get(source_ref.get("evidenceKey"))
     if not isinstance(evidence, dict):
-        return None, 0, "нет source-скриншота для этого компонента"
+        return None, 0, "no source screenshot for this component"
     previews = evidence.get("referencePreviews") if isinstance(evidence.get("referencePreviews"), dict) else {}
     reference = previews.get(viewport) or previews.get("desktop")
     raw = _decode_preview(reference)
     if not raw:
-        return None, 0, "source-скриншот не удалось прочитать"
+        return None, 0, "could not read source screenshot"
 
     bounds_by_viewport = source_ref.get("boundsByViewport") if isinstance(source_ref.get("boundsByViewport"), dict) else {}
     bounds = bounds_by_viewport.get(viewport) or source_ref.get("bounds") or {}
@@ -267,7 +267,7 @@ def proof_crop(document: dict, component: dict, viewport: str = "desktop",
         from PIL import Image
         image = Image.open(io.BytesIO(raw)).convert("RGB")
     except Exception as exc:
-        return None, 0, f"скриншот не декодируется: {exc}"
+        return None, 0, f"screenshot cannot be decoded: {exc}"
 
     note: str | None = None
     values = [_num(bounds.get(key)) for key in ("x", "y", "width", "height")]
@@ -284,9 +284,9 @@ def proof_crop(document: dict, component: dict, viewport: str = "desktop",
         if sw > 0 and sh > 0:
             image = image.crop((int(sx), int(sy), int(sx + sw), int(sy + sh)))
         else:
-            note = "границы компонента вне скриншота — показан весь блок"
+            note = "component bounds exceed the screenshot — showing the full block"
     else:
-        note = "нет измеренных границ — показан весь блок"
+        note = "no measured bounds — showing the full block"
 
     if image.width > 1200:
         ratio = 1200 / image.width
@@ -296,7 +296,7 @@ def proof_crop(document: dict, component: dict, viewport: str = "desktop",
     image.save(buffer, format="JPEG", quality=82, optimize=True)
     payload = buffer.getvalue()
     if len(payload) > budget_left:
-        return None, 0, "скриншот пропущен: превышен бюджет изображений"
+        return None, 0, "screenshot skipped: image budget exceeded"
     return "data:image/jpeg;base64," + base64.b64encode(payload).decode("ascii"), len(payload), note
 
 
@@ -310,11 +310,11 @@ def tokens_css(document: dict) -> str:
     for name, value in tokens.items():
         lines.append(f"  --ddna-{name}: {value};  /* styleGuide.tokens.{name} */")
     for name, value in (foundations.get("spacing") or {}).items():
-        lines.append(f"  --ddna-space-{name}: {value}px;  /* foundations.spacing.{name} · измерено */")
+        lines.append(f"  --ddna-space-{name}: {value}px;  /* foundations.spacing.{name} · measured */")
     for index, value in enumerate(foundations.get("radii") or [], start=1):
-        lines.append(f"  --ddna-radius-{index}: {value}px;  /* foundations.radii · измерено */")
+        lines.append(f"  --ddna-radius-{index}: {value}px;  /* foundations.radii · measured */")
     for index, value in enumerate(foundations.get("shadows") or [], start=1):
-        lines.append(f"  --ddna-shadow-{index}: {value};  /* foundations.shadows · измерено */")
+        lines.append(f"  --ddna-shadow-{index}: {value};  /* foundations.shadows · measured */")
     for name, value in ((foundations.get("typography") or {}).get("scale") or {}).items():
         lines.append(f"  --ddna-font-size-{name}: {value}px;  /* foundations.typography.scale.{name} */")
     lines.append("}")
@@ -367,10 +367,10 @@ def figma_tokens(document: dict) -> dict:
     for name, value in (foundations.get("spacing") or {}).items():
         if _num(value) is not None:
             out["dimension"][f"space-{name}"] = {"$type": "dimension", "$value": f"{value}px",
-                                                 "$description": "измеренный отступ источника"}
+                                                 "$description": "measured source spacing"}
     for index, value in enumerate(foundations.get("radii") or [], start=1):
         out["dimension"][f"radius-{index}"] = {"$type": "dimension", "$value": f"{value}px",
-                                               "$description": "измеренный радиус источника"}
+                                               "$description": "measured source radius"}
     typography = foundations.get("typography") or {}
     for role in ("display", "body"):
         family = (typography.get(role) or {}).get("family")
@@ -379,7 +379,7 @@ def figma_tokens(document: dict) -> dict:
                                        "$description": f"foundations.typography.{role}"}
     for index, value in enumerate(foundations.get("shadows") or [], start=1):
         out["shadow"][f"shadow-{index}"] = {"$type": "shadow", "$value": str(value),
-                                            "$description": "измеренная тень источника"}
+                                            "$description": "measured source shadow"}
     return {group: items for group, items in out.items() if items}
 
 
@@ -518,7 +518,7 @@ def component_cards(document: dict, *, include_proof: bool = False,
                                                           component.get("componentKey") or key}),
                 "usage": _usage_note(document, key, component),
                 "accuracy": _accuracy(fidelity.get("viewports") or {}),
-                "categoryLabel": _section_label(catalog, key) or category.title() or "Компоненты",
+                "categoryLabel": _section_label(catalog, key) or category.title() or "Components",
                 "level": str(level.get("key") or ""),
                 "levelLabel": str(level.get("label") or ""),
                 "section": _section_label(catalog, key),
@@ -739,50 +739,50 @@ def _swatch(name: str, value: str) -> str:
 # поэтому подписи переводятся — но только известные: незнакомое значение
 # показываем как есть, а не прячем.
 _PROFILE_LABELS = (
-    ("mode", "Тема"),
-    ("cornerCharacter", "Углы"),
-    ("density", "Плотность"),
-    ("shadowUsage", "Тени"),
-    ("paletteCharacter", "Палитра"),
-    ("accent", "Акцент"),
-    ("typographyCharacter", "Типографика"),
-    ("labelStyle", "Лейблы и надзаголовки"),
-    ("monoFamily", "Служебный шрифт"),
-    ("imageDirection", "Изображения"),
-    ("iconStyle", "Иконки"),
+    ("mode", "Theme"),
+    ("cornerCharacter", "Corners"),
+    ("density", "Density"),
+    ("shadowUsage", "Shadows"),
+    ("paletteCharacter", "Palette"),
+    ("accent", "Accent"),
+    ("typographyCharacter", "Typography"),
+    ("labelStyle", "Labels and overlines"),
+    ("monoFamily", "Utility font"),
+    ("imageDirection", "Images"),
+    ("iconStyle", "Icons"),
 )
 _PROFILE_VALUES = {
-    "mode": {"dark": "тёмная", "light": "светлая"},
-    "cornerCharacter": {"sharp": "острые", "subtle": "слегка скруглённые",
-                        "rounded": "скруглённые", "pill": "капсульные"},
-    "density": {"compact": "плотная", "comfortable": "комфортная", "airy": "просторная"},
-    "shadowUsage": {"none": "не используются", "subtle": "едва заметные", "layered": "многослойные"},
+    "mode": {"dark": "dark", "light": "light"},
+    "cornerCharacter": {"sharp": "sharp", "subtle": "slightly rounded",
+                        "rounded": "rounded", "pill": "pill-shaped"},
+    "density": {"compact": "dense", "comfortable": "comfortable", "airy": "spacious"},
+    "shadowUsage": {"none": "not used", "subtle": "subtle", "layered": "layered"},
 }
 _REVIEW_LABELS = (
-    ("tone", "Тон"),
-    ("density", "Плотность"),
-    ("cornerCharacter", "Формы"),
-    ("colorUsage", "Цвет"),
-    ("typographyCharacter", "Типографика"),
-    ("imageryStyle", "Изображения"),
+    ("tone", "Tone"),
+    ("density", "Density"),
+    ("cornerCharacter", "Shapes"),
+    ("colorUsage", "Color"),
+    ("typographyCharacter", "Typography"),
+    ("imageryStyle", "Images"),
 )
 _VOICE_LABELS = (
-    ("heading", "Заголовки"),
-    ("eyebrow", "Надзаголовки"),
-    ("cta", "Кнопки и CTA"),
-    ("badge", "Бейджи и цифры"),
-    ("text", "Текст"),
+    ("heading", "Headings"),
+    ("eyebrow", "Overlines"),
+    ("cta", "Buttons and CTAs"),
+    ("badge", "Badges and numbers"),
+    ("text", "Text"),
 )
 _CONTENT_LABELS = (
-    ("brand", "Бренд"),
-    ("nav", "Навигация"),
-    ("cta", "Призывы к действию"),
-    ("heading", "Заголовки"),
-    ("title", "Названия"),
-    ("category", "Категории"),
-    ("badge", "Бейджи"),
-    ("price", "Цены"),
-    ("question", "Вопросы"),
+    ("brand", "Brand"),
+    ("nav", "Navigation"),
+    ("cta", "Calls to action"),
+    ("heading", "Headings"),
+    ("title", "Names"),
+    ("category", "Categories"),
+    ("badge", "Badges"),
+    ("price", "Prices"),
+    ("question", "Questions"),
 )
 
 
@@ -837,12 +837,12 @@ def _style_html(document: dict, *, url: str = "", generated_at: str = "",
 
     parts = ['<section id="style"><header>',
              f'<h1>{_esc(document.get("name") or "UI Kit")}</h1>',
-             '<p class="lead">Как выглядит и звучит этот сайт. Новый компонент должен встраиваться '
-             'в этот язык, а не выделяться на его фоне.</p>',
+             '<p class="lead">How this site looks and sounds. New components should fit '
+             'this visual language.</p>',
              '</header>']
 
-    meta_bits = [f'Источник: {_esc(url)}' if url else "",
-                 f'ревизия {_esc(document.get("revision"))}',
+    meta_bits = [f'Source: {_esc(url)}' if url else "",
+                 f'revision {_esc(document.get("revision"))}',
                  _esc((document.get("contentHash") or "")[:19]),
                  _esc(generated_at) if generated_at else ""]
     parts.append('<p class="lead">' + " · ".join(bit for bit in meta_bits if bit) + "</p>")
@@ -860,18 +860,18 @@ def _style_html(document: dict, *, url: str = "", generated_at: str = "",
         if text:
             parts.append(f'<p class="prose">{_esc(text)}</p>')
 
-    brief_rows = [("Аудитория", " ".join(str(brief.get("audience") or "").split())),
-                  ("Тон", " ".join(str(brief.get("tone") or "").split()))]
+    brief_rows = [("Audience", " ".join(str(brief.get("audience") or "").split())),
+                  ("Tone", " ".join(str(brief.get("tone") or "").split()))]
     voice_text = brief.get("voice")
     if isinstance(voice_text, str) and voice_text.strip():
-        brief_rows.append(("Голос", " ".join(voice_text.split())))
+        brief_rows.append(("Voice", " ".join(voice_text.split())))
     rows = _kv_rows(brief_rows)
     if rows:
-        parts.append("<h3>О сайте</h3>" + rows)
+        parts.append("<h3>About the site</h3>" + rows)
 
     sections = _as_list(brief.get("sections"))
     if sections:
-        parts.append("<h3>Разделы сайта</h3><div class=\"chips\">")
+        parts.append("<h3>Site sections</h3><div class=\"chips\">")
         parts.extend(f'<span class="chip">{_esc(item)}</span>' for item in sections[:24])
         parts.append("</div>")
 
@@ -885,16 +885,16 @@ def _style_html(document: dict, *, url: str = "", generated_at: str = "",
     for field, label in _REVIEW_LABELS:
         text = " ".join(str(review.get(field) or "").split())
         if text:
-            language.append((f"{label} (ревью)", text))
+            language.append((f"{label} (review)", text))
     if language:
-        parts.append('<h3>Дизайн-язык</h3>' + _kv_rows(language))
+        parts.append('<h3>Design language</h3>' + _kv_rows(language))
 
     voice = profile.get("copyVoice") if isinstance(profile.get("copyVoice"), dict) else {}
     voice_rows = [(label, _quote_chips(_as_list(voice.get(field)))) for field, label in _VOICE_LABELS]
     voice_rows = [(label, chips) for label, chips in voice_rows if chips]
     if voice_rows:
-        parts.append('<h3>Голос копирайта</h3><p class="lead">Образцы взяты со страницы источника — '
-                     'новый текст пишется в том же регистре и той же длины.</p><div class="voice">')
+        parts.append('<h3>Copy voice</h3><p class="lead">Samples come from the source page — '
+                     'new text should match their register and length.</p><div class="voice">')
         parts.extend(f'<div class="row"><b>{_esc(label)}</b><div class="chips">{chips}</div></div>'
                      for label, chips in voice_rows)
         parts.append("</div>")
@@ -903,7 +903,7 @@ def _style_html(document: dict, *, url: str = "", generated_at: str = "",
                     for field, label in _CONTENT_LABELS]
     content_rows = [(label, chips) for label, chips in content_rows if chips]
     if content_rows:
-        parts.append('<h3>Слова сайта</h3><div class="voice">')
+        parts.append('<h3>Site vocabulary</h3><div class="voice">')
         parts.extend(f'<div class="row"><b>{_esc(label)}</b><div class="chips">{chips}</div></div>'
                      for label, chips in content_rows)
         parts.append("</div>")
@@ -925,11 +925,11 @@ def _foundations_html(document: dict) -> str:
     spacing = foundations.get("spacing") or {}
     measurement = foundations.get("measurement") or {}
 
-    parts = ['<section id="tokens"><header><h2>Токены</h2>'
-             '<p class="lead">Значения измерены на странице источника, а не подобраны на глаз. '
-             'Семантические роли следуют соглашению shadcn/ui — их и должен использовать генератор новых компонентов.</p></header>']
+    parts = ['<section id="tokens"><header><h2>Tokens</h2>'
+             '<p class="lead">Values were measured on the source page. '
+             'Semantic roles follow shadcn/ui conventions and should be used to generate new components.</p></header>']
 
-    parts.append("<h3>Семантические токены</h3><div class=\"grid\">")
+    parts.append("<h3>Semantic tokens</h3><div class=\"grid\">")
     for name, value in tokens.items():
         if isinstance(value, str) and value.startswith("#"):
             fg = tokens.get(f"{name}-foreground")
@@ -941,38 +941,38 @@ def _foundations_html(document: dict) -> str:
     parts.append("</div>")
 
     if semantic:
-        parts.append("<h3>Палитра источника</h3><div class=\"grid\">")
+        parts.append("<h3>Source palette</h3><div class=\"grid\">")
         parts.extend(_swatch(name, value) for name, value in semantic.items() if isinstance(value, str))
         parts.append("</div>")
     if primitives:
         brand = {k: v for k, v in primitives.items() if k.startswith("brand")}
         pixels = {k: v for k, v in primitives.items() if not k.startswith("brand")}
         if brand:
-            parts.append("<h3>Брендовые цвета (из токенов источника)</h3><div class=\"grid\">")
+            parts.append("<h3>Brand colors (from source tokens)</h3><div class=\"grid\">")
             parts.extend(_swatch(name, value) for name, value in brand.items())
             parts.append("</div>")
         if pixels:
-            parts.append("<h3>Измеренные цвета (частота в пикселях)</h3><div class=\"grid\">")
+            parts.append("<h3>Measured colors (pixel frequency)</h3><div class=\"grid\">")
             parts.extend(_swatch(name, value) for name, value in pixels.items())
             parts.append("</div>")
 
     if scale:
         display_family = (typography.get("display") or {}).get("family") or ""
         body_family = (typography.get("body") or {}).get("family") or ""
-        parts.append("<h3>Типографика</h3>")
+        parts.append("<h3>Typography</h3>")
         for name, size in scale.items():
             family = display_family if name in ("display", "h2", "h3") else body_family
             parts.append(
                 f'<div class="rowline"><code>{_esc(name)}</code>'
                 f'<div style="font-family:\'{_esc(family)}\',sans-serif;font-size:{_esc(size)}px;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-                f'Дизайн-система собрана из измерений</div>'
+                f'Design system built from measurements</div>'
                 f'<code>{_esc(family)} · {_esc(size)}px</code></div>')
         weights = ", ".join(str(w) for w in typography.get("weights") or [])
         if weights:
-            parts.append(f'<p class="lead">Начертания: {_esc(weights)}. Дисплейный шрифт — {_esc(display_family)}, текстовый — {_esc(body_family)}.</p>')
+            parts.append(f'<p class="lead">Weights: {_esc(weights)}. Display font — {_esc(display_family)}, body font — {_esc(body_family)}.</p>')
 
     if spacing:
-        parts.append("<h3>Отступы</h3>")
+        parts.append("<h3>Spacing</h3>")
         values = [v for v in spacing.values() if _num(v)]
         peak = max(values) if values else 1
         for name, value in spacing.items():
@@ -984,42 +984,42 @@ def _foundations_html(document: dict) -> str:
     radii = foundations.get("radii") or []
     radius_map = foundations.get("radius") or {}
     if radii or radius_map:
-        parts.append("<h3>Радиусы</h3><div class=\"chips\">")
-        parts.extend(f'<span class="chip"><small>измерено</small>{_esc(value)}px</span>' for value in radii)
+        parts.append("<h3>Radii</h3><div class=\"chips\">")
+        parts.extend(f'<span class="chip"><small>measured</small>{_esc(value)}px</span>' for value in radii)
         parts.extend(f'<span class="chip"><small>{_esc(name)}</small>{_esc(value)}px</span>'
                      for name, value in radius_map.items())
         parts.append("</div>")
 
     shadows = foundations.get("shadows") or []
     if shadows:
-        parts.append("<h3>Тени</h3><div class=\"grid\">")
+        parts.append("<h3>Shadows</h3><div class=\"grid\">")
         for index, shadow in enumerate(shadows[:8], start=1):
             parts.append(f'<div class="swatch"><i style="box-shadow:{_esc(shadow)};background:#151a23"></i>'
-                         f'<div><b>shadow-{index}</b><span>измерено</span></div></div>')
+                         f'<div><b>shadow-{index}</b><span>measured</span></div></div>')
         parts.append("</div>")
 
     breakpoints = foundations.get("breakpoints") or {}
     containers = foundations.get("containers") or {}
     if breakpoints or containers or measured:
-        parts.append("<h3>Сетка и характер</h3><div class=\"chips\">")
+        parts.append("<h3>Grid and character</h3><div class=\"chips\">")
         parts.extend(f'<span class="chip"><small>{_esc(name)}</small>{_esc(int(value))}px</span>'
                      for name, value in breakpoints.items() if _num(value))
-        parts.extend(f'<span class="chip"><small>контейнер</small>{_esc(int(value))}px</span>'
+        parts.extend(f'<span class="chip"><small>container</small>{_esc(int(value))}px</span>'
                      for value in containers.values() if _num(value))
         parts.extend(f'<span class="chip"><small>{_esc(name)}</small>{_esc(value)}</span>'
                      for name, value in measured.items())
         parts.append("</div>")
 
     if measurement:
-        parts.append(f'<p class="lead" style="margin-top:14px">Основа измерений: {_esc(measurement.get("basis"))} · '
-                     f'размеров шрифта {_esc(measurement.get("fontSizeCount"))} · '
-                     f'отступов {_esc(measurement.get("spacingCount"))} · '
-                     f'радиусов {_esc(measurement.get("radiusCount"))}.</p>')
+        parts.append(f'<p class="lead" style="margin-top:14px">Measurement basis: {_esc(measurement.get("basis"))} · '
+                     f'font sizes {_esc(measurement.get("fontSizeCount"))} · '
+                     f'spacing values {_esc(measurement.get("spacingCount"))} · '
+                     f'radii {_esc(measurement.get("radiusCount"))}.</p>')
 
     ir_tokens = guide.get("irTokens")
     if isinstance(ir_tokens, dict) and ir_tokens:
-        parts.append('<h3>Design IR tokens</h3><p class="lead">Полная форма токенов, которую лочит '
-                     'генератор: те же значения, но в схеме Design IR.</p>')
+        parts.append('<h3>Design IR tokens</h3><p class="lead">The full token structure locked by '
+                     'Generator: the same values in the Design IR schema.</p>')
         parts.append(_code_block("code-ir-tokens", "styleGuide.irTokens",
                                  json.dumps(ir_tokens, ensure_ascii=False, indent=2)))
     parts.append("</section>")
@@ -1039,7 +1039,7 @@ def _accuracy_note(card: dict) -> str:
             pairs.append(f"{name} {similarity:.1f}%")
     if not pairs:
         return ""
-    return f'<div class="foot">Точность: {_esc(" · ".join(pairs))}</div>'
+    return f'<div class="foot">Fidelity: {_esc(" · ".join(pairs))}</div>'
 
 
 def _snippet(card: dict) -> str:
@@ -1053,7 +1053,7 @@ def _snippet(card: dict) -> str:
     if card["props"]:
         payload["props"] = card["props"]
     return ('<div class="snippet">'
-            + _code_block(anchor, "Ссылка на мастер",
+            + _code_block(anchor, "Master reference",
                           json.dumps(payload, ensure_ascii=False, indent=2))
             + "</div>")
 
@@ -1073,9 +1073,9 @@ def _component_html(card: dict, ir_index: dict, *, include_fidelity: bool = Fals
     как выглядит, где встречается, какие варианты и как на него сослаться.
     """
     meta = [card["categoryLabel"], card["key"],
-            f'{card["occurrences"]}× на сайте']
+            f'{card["occurrences"]}× on site']
     if card["variantCount"] > 1:
-        meta.append(f'вариантов: {card["variantCount"]}')
+        meta.append(f'variants: {card["variantCount"]}')
     parts = [f'<article class="comp" id="c-{_esc(card["key"])}"'
              f' data-accuracy="{_esc(card["accuracy"])}"'
              f' data-component-key="{_esc(card["key"])}">',
@@ -1092,7 +1092,7 @@ def _component_html(card: dict, ir_index: dict, *, include_fidelity: bool = Fals
         parts.append('<div class="panes"><div class="pane">'
                      + _stage(renders[0], ir_index) + "</div></div>")
     elif renders:
-        parts.append('<h3 style="margin:14px 15px 8px">Варианты</h3><div class="variants">')
+        parts.append('<h3 style="margin:14px 15px 8px">Variants</h3><div class="variants">')
         for render in renders:
             style_rows = "".join(
                 f"<tr><td>{_esc(name)}</td><td>{_esc(value)}</td></tr>"
@@ -1108,19 +1108,19 @@ def _component_html(card: dict, ir_index: dict, *, include_fidelity: bool = Fals
     if card["states"]:
         items = "".join(f'<li>{_esc(state["label"])} — {_esc(state["description"])}</li>'
                         for state in card["states"])
-        parts.append('<div style="padding:0 15px"><h3>Состояния</h3>'
+        parts.append('<div style="padding:0 15px"><h3>States</h3>'
                      f'<ul class="states">{items}</ul>'
-                     '<p class="lead">Состояния не наблюдались в источнике: статичный захват страницы их не содержит. '
-                     'DesignDNA не рисует то, чего не измерил — подтвердите их вручную в редакторе системы.</p></div>')
+                     '<p class="lead">States were not observed in the source: a static page capture does not include them. '
+                     'DesignDNA does not invent unmeasured states — confirm them manually in the system editor.</p></div>')
 
     parts.append(_snippet(card))
 
     accessibility = card.get("accessibility") or {}
     parts.append(
         '<div class="foot">'
-        f'Блок источника: {_esc(card["sourceBlock"]) or "—"} · селектор <code>{_esc(card["selector"]) or "—"}</code>'
-        f'{" · роль " + _esc(accessibility.get("role")) if accessibility.get("role") else ""}'
-        f'{" · свойства: " + _esc(", ".join(card["props"])) if card["props"] else ""}'
+        f'Source block: {_esc(card["sourceBlock"]) or "—"} · selector <code>{_esc(card["selector"]) or "—"}</code>'
+        f'{" · role " + _esc(accessibility.get("role")) if accessibility.get("role") else ""}'
+        f'{" · properties: " + _esc(", ".join(card["props"])) if card["props"] else ""}'
         "</div>")
     if include_fidelity:
         parts.append(_accuracy_note(card))
@@ -1141,12 +1141,12 @@ def _rules_html(document: dict) -> str:
     do_list = list(dict.fromkeys(_as_list(review.get("doRules")) + _as_list(brief.get("doRules"))))
     dont_list = list(dict.fromkeys(_as_list(review.get("dontRules")) + _as_list(brief.get("dontRules"))))
 
-    parts = ['<section id="rules"><header><h2>Правила</h2>'
-             '<p class="lead">По ним новый компонент вписывается в существующий продукт, '
-             'а не выглядит вставкой из другого сайта.</p></header>']
+    parts = ['<section id="rules"><header><h2>Rules</h2>'
+             '<p class="lead">These rules help new components fit the existing product '
+             'and preserve its visual language.</p></header>']
 
-    labels = [("tone", "Тон"), ("density", "Плотность"), ("cornerCharacter", "Формы"),
-              ("colorUsage", "Цвет"), ("typographyCharacter", "Типографика"), ("imageryStyle", "Изображения")]
+    labels = [("tone", "Tone"), ("density", "Density"), ("cornerCharacter", "Shapes"),
+              ("colorUsage", "Color"), ("typographyCharacter", "Typography"), ("imageryStyle", "Images")]
     rows = _kv_rows([(label, " ".join(str(review.get(field) or "").split())) for field, label in labels])
     if rows:
         parts.append(rows)
@@ -1155,29 +1155,29 @@ def _rules_html(document: dict) -> str:
         do_rules = "".join(f"<li>{_esc(rule)}</li>" for rule in do_list)
         dont_rules = "".join(f"<li>{_esc(rule)}</li>" for rule in dont_list)
         parts.append('<div class="rules" style="margin-top:18px">'
-                     f'<div class="do"><h3>Делать</h3><ul>{do_rules}</ul></div>'
-                     f'<div class="dont"><h3>Не делать</h3><ul>{dont_rules}</ul></div></div>')
+                     f'<div class="do"><h3>Do</h3><ul>{do_rules}</ul></div>'
+                     f'<div class="dont"><h3>Avoid</h3><ul>{dont_rules}</ul></div></div>')
     elif not rows:
         chips = "".join(f'<span class="chip"><small>{_esc(name)}</small>{_esc(value)}</span>'
                         for name, value in measured.items())
         parts.append(f'<div class="chips">{chips}</div>'
-                     '<p class="lead" style="margin-top:12px">Правил в документе пока нет — показан только '
-                     'измеренный характер. Правила не выдумываются: пока сайт не описан, их здесь не будет.</p>')
+                     '<p class="lead" style="margin-top:12px">This document has no rules yet — only '
+                     'measured characteristics are shown. Rules will appear once the site has been described.</p>')
     parts.append("</section>")
     return "".join(parts)
 
 
 def _code_block(anchor: str, title: str, body: str, language: str = "") -> str:
     return (f'<div class="codehead"><h3 style="margin:0">{_esc(title)}</h3>'
-            f'<button class="copy" data-target="{_esc(anchor)}">Копировать</button></div>'
+            f'<button class="copy" data-target="{_esc(anchor)}">Copy</button></div>'
             f'<pre id="{_esc(anchor)}">{_esc(body)}</pre>')
 
 
 def _code_html(document: dict) -> str:
     tailwind = json.dumps(tailwind_theme(document), ensure_ascii=False, indent=2)
     figma = json.dumps(figma_tokens(document), ensure_ascii=False, indent=2)
-    return ('<section id="code"><header><h2>Код</h2>'
-            '<p class="lead">Значения те же, что на странице — они не переписаны руками, а собраны из документа системы.</p></header>'
+    return ('<section id="code"><header><h2>Code</h2>'
+            '<p class="lead">Values match the page and are generated directly from the system document.</p></header>'
             + _code_block("code-tokens", "tokens.css", tokens_css(document))
             + _code_block("code-tailwind", "tailwind.config — theme", tailwind)
             + _code_block("code-figma", "design-tokens.json (W3C / Tokens Studio)", figma)
@@ -1192,7 +1192,7 @@ def _viewport_bar(active: str) -> str:
         f'<button type="button" data-vp="{_esc(key)}" '
         f'aria-pressed="{"true" if key == active else "false"}">{_esc(label)}</button>'
         for key, label in VIEWPORTS)
-    return f'<div class="vpbar" role="group" aria-label="Вьюпорт">{buttons}</div>'
+    return f'<div class="vpbar" role="group" aria-label="Viewport">{buttons}</div>'
 
 
 def _components_html(cards: list[dict], ir_index: dict, *, viewport: str = "desktop",
@@ -1200,16 +1200,16 @@ def _components_html(cards: list[dict], ir_index: dict, *, viewport: str = "desk
     """«Компоненты»: каждый мастер как готовый к вставке блок, по категориям."""
     groups: dict[str, list[dict]] = {}
     for card in cards:
-        groups.setdefault(card["categoryLabel"] or "Компоненты", []).append(card)
+        groups.setdefault(card["categoryLabel"] or "Components", []).append(card)
 
     parts = ['<section id="components"><header>'
              '<div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap">'
-             '<div><h2>Компоненты</h2>'
-             '<p class="lead">Готовые блоки сайта: возьмите нужный, сошлитесь на его мастер и наполните '
-             'своим содержимым. Каждый отрисован движком редактора из точного захвата страницы.</p></div>'
+             '<div><h2>Components</h2>'
+             '<p class="lead">Ready-to-use site blocks: choose one, reference its master, and fill it '
+             'with your content. Each is rendered by the editor engine from an exact page capture.</p></div>'
              + _viewport_bar(viewport) + '</div></header>']
     if not cards:
-        parts.append('<p class="lead">В документе нет мастеров — соберите UI Kit из Source.</p></section>')
+        parts.append('<p class="lead">This document has no masters — build a UI Kit from Source.</p></section>')
         return "".join(parts)
     for label, items in groups.items():
         parts.append(f"<h3>{_esc(label)}</h3>")
@@ -1270,10 +1270,10 @@ def render_styleguide(document: dict, *, include_proof: bool = True,
             url = str(ref["url"])
             break
 
-    stats = [(str(summary["catalogComponents"]), "компонентов"),
-             (str(summary["catalogVariants"]), "вариантов"),
-             (str(len(((source.get("styleGuide") or {}).get("tokens") or {}))), "токенов"),
-             (str(len(font_specs)), "шрифтов встроено")]
+    stats = [(str(summary["catalogComponents"]), "components"),
+             (str(summary["catalogVariants"]), "variants"),
+             (str(len(((source.get("styleGuide") or {}).get("tokens") or {}))), "tokens"),
+             (str(len(font_specs)), "fonts embedded")]
 
     body = [
         _style_html(source, url=url, generated_at=generated_at, stats=stats),
@@ -1287,15 +1287,15 @@ def render_styleguide(document: dict, *, include_proof: bool = True,
                          ensure_ascii=False).replace("</", "<\\/")
     engine_js = ENGINE_JS.read_text(encoding="utf-8") if ENGINE_JS.is_file() else ""
     if not engine_js:
-        warnings.append("движок рендера не найден — компоненты не отрисуются")
+        warnings.append("render engine not found — components cannot render")
 
     toc = "".join(
         f'<a href="#{anchor}">{_esc(label)}</a>' for anchor, label in (
-            ("style", "Стиль сайта"), ("tokens", "Токены"), ("components", "Компоненты"),
-            ("rules", "Правила"), ("code", "Код")))
+            ("style", "Site style"), ("tokens", "Tokens"), ("components", "Components"),
+            ("rules", "Rules"), ("code", "Code")))
 
     html_text = (
-        "<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\">"
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         f"<title>{_esc(source.get('name') or 'UI Kit')}</title>"
         # Оба синглтона рендерера создаём заранее и в этом порядке: он найдёт
@@ -1313,6 +1313,6 @@ def render_styleguide(document: dict, *, include_proof: bool = True,
 
     report["bytes"] = len(html_text.encode("utf-8"))
     if report["bytes"] > max_bytes:
-        raise ValueError(f"страница получилась {report['bytes'] // 1_000_000} МБ — "
-                         f"больше лимита {max_bytes // 1_000_000} МБ")
+        raise ValueError(f"page size is {report['bytes'] // 1_000_000} MB — "
+                         f"exceeds limit {max_bytes // 1_000_000} MB")
     return html_text, report

@@ -24,7 +24,7 @@ test('kit presentation preserves distinct color roles, exact values and captured
   assert.equal(kitColors(doc)[0].value, '#AABBCC');
   const fonts = kitFonts(doc, [{ key: 'card', pool: 'review', component }]);
   assert.equal(fonts[0].faces.length, 2);
-  assert.equal(fonts[0].role, 'Основной текст');
+  assert.equal(fonts[0].role, 'Primary text');
   assert.equal(JSON.stringify({ doc, component }), before);
 });
 

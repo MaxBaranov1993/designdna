@@ -407,6 +407,17 @@ def test_invalid_repair_operations_never_save(op):
     assert store.get_revision(doc["id"], 0) == before
 
 
+def test_invalid_extra_operation_is_dropped_when_a_valid_fix_remains(monkeypatch):
+    doc = document()
+    first = apply(prepare(doc), doc, verdict(False))
+    monkeypatch.setattr(ai.master_repair, "_layout_acceptance", lambda *a, **k: (True, []))
+    ops = repair_output()["operations"] + [
+        {"op": "restore-layout", "sourceKey": "row", "property": "width", "value": 1000}]
+    second = apply(first["nextPreparation"], first["document"], {"operations": ops})
+    assert second["nextPreparation"]["stage"] == "master-verify"
+    assert second["results"][0].get("pendingVerification") is True
+
+
 def test_render_copy_mutation_never_touches_canonical_document():
     doc = document()
     comp = doc["reviewComponents"]["list-item-review"]
@@ -823,3 +834,19 @@ def test_fresh_desktop_review_does_not_present_historical_capture_offsets_as_cur
     assert "123.456" not in prompt
     assert "fresh, isolated renders" in prompt
     assert comp["fidelity"]["viewports"]["desktop"]["originError"] == 123.456
+
+
+def test_desktop_only_capture_reviews_desktop_and_skips_uncaptured_viewports():
+    """Source Import captures tablet/mobile on demand; a desktop-only kit must still be approvable."""
+    doc = document()
+    evidence = doc["referenceAssets"]["ev1"]
+    for viewport in ("tablet", "mobile"):
+        evidence["referencePreviews"].pop(viewport, None)
+        evidence["blockSizes"].pop(viewport, None)
+    prepared = prepare(doc, repair=False)
+    assert [t["viewport"] for t in prepared["tasks"]] == ["desktop"]
+    skipped = {item["viewport"]: item["reason"] for item in prepared.get("skippedViewports") or []}
+    assert skipped == {"tablet": "viewport-not-captured", "mobile": "viewport-not-captured"}
+    result = apply(prepared, doc)
+    assert result["complete"]
+    assert result["results"][0]["approved"], result["results"][0]

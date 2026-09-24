@@ -4,94 +4,93 @@ import type { AnyNodeData, EditNodeData, MixNodeData, NodeType, PageNodeData, Po
  * design_handoff_node_editor: sub — подзаголовок шапки, accent — цвет типа
  * (иконка, выделение, прогресс), ширины 300–334px по макету. */
 export const NODE_DEFS: Record<NodeType, { title: string; icon: string; w: number; sub: string; accent: string }> = {
-  prompt: { title: "Промпт", icon: "✎", w: 300, sub: "текст задачи", accent: "#FF691D" },
-  reference: { title: "Референс", icon: "▣", w: 300, sub: "лёгкая стилевая подсказка", accent: "#FF691D" },
-  generator: { title: "Генератор", icon: "◈", w: 322, sub: "LLM → варианты IR", accent: "#9B5CFF" },
-  edit: { title: "Редактор (DNA)", icon: "⬚", w: 330, sub: "DNA-редактор", accent: "#35B8A0" },
-  mix: { title: "Микс", icon: "⊕", w: 334, sub: "смешение вариантов по весам", accent: "#9B5CFF" },
-  page: { title: "Страница", icon: "▤", w: 330, sub: "merge: страница из блоков", accent: "#22C55E" },
-  sourceimport: { title: "Source Import", icon: "⌁", w: 322, sub: "URL/скрин → блоки + DNA", accent: "#FF691D" },
-  designui: { title: "Design UI (legacy)", icon: "UI", w: 380, sub: "legacy-артефакт", accent: "#35B8A0" },
-  derive: { title: "Derive", icon: "↳", w: 310, sub: "родственный компонент", accent: "#9B5CFF" },
-  reskin: { title: "Reskin", icon: "✦", w: 310, sub: "вариант с локом структуры", accent: "#9B5CFF" },
+  prompt: { title: "Prompt", icon: "✎", w: 300, sub: "task text", accent: "#FF691D" },
+  reference: { title: "Reference", icon: "▣", w: 300, sub: "lightweight style hint", accent: "#FF691D" },
+  generator: { title: "Generator", icon: "◈", w: 322, sub: "LLM → IR variants", accent: "#9B5CFF" },
+  edit: { title: "Editor (DNA)", icon: "⬚", w: 330, sub: "DNA editor", accent: "#35B8A0" },
+  mix: { title: "Mix", icon: "⊕", w: 334, sub: "blend variants by weight", accent: "#9B5CFF" },
+  page: { title: "Page", icon: "▤", w: 330, sub: "merge: page from blocks", accent: "#22C55E" },
+  sourceimport: { title: "Source Import", icon: "⌁", w: 322, sub: "URL/screenshot → blocks + Source", accent: "#FF691D" },
+  designui: { title: "Design UI (legacy)", icon: "UI", w: 380, sub: "legacy artifact", accent: "#35B8A0" },
+  derive: { title: "Derive", icon: "↳", w: 310, sub: "related component", accent: "#9B5CFF" },
+  reskin: { title: "Reskin", icon: "✦", w: 310, sub: "variant with locked structure", accent: "#9B5CFF" },
   qualitypass: { title: "Quality Pass", icon: "✓", w: 310, sub: "judge + repair + scorecard", accent: "#22C55E" },
   recorder: { title: "Interaction Recorder", icon: "REC", w: 334, sub: "IR actions → Interaction IR", accent: "#22C55E" },
   motion: { title: "Motion Editor", icon: "M", w: 322, sub: "Design IR → editable timeline", accent: "#E05FB0" },
   motiondesign: { title: "Motion Design", icon: "MD", w: 334, sub: "prompt / video → Seedance 2.5", accent: "#4F7CFF" },
-  timeline: { title: "Видео", icon: "▶", w: 350, sub: "страница · промпт · монтаж", accent: "#FF5F56" },
-  pagebridge: { title: "Page Bridge", icon: "↔", w: 300, sub: "передать компонент между страницами", accent: "#35B8A0" },
-  designsystem: { title: "Design System / UI Kit", icon: "◈", w: 300, sub: "Source → published DS", accent: "#9B5CFF" },
-  image: { title: "Изображение", icon: "◐", w: 320, sub: "GPT Image · PNG / JPEG", accent: "#3FB950" },
-  removebackground: { title: "Удалить фон", icon: "◒", w: 320, sub: "GPT Image · прозрачный PNG", accent: "#3FB950" },
+  timeline: { title: "Video", icon: "▶", w: 350, sub: "page · prompt · timeline", accent: "#FF5F56" },
+  pagebridge: { title: "Page Bridge", icon: "↔", w: 300, sub: "share a component between pages", accent: "#35B8A0" },
+  designsystem: { title: "Design System / UI Kit", icon: "◈", w: 300, sub: "Source → UI Kit → publish", accent: "#9B5CFF" },
+  image: { title: "Image", icon: "◐", w: 320, sub: "GPT Image · PNG / JPEG", accent: "#3FB950" },
+  removebackground: { title: "Remove background", icon: "◒", w: 320, sub: "GPT Image · transparent PNG", accent: "#3FB950" },
 };
 
 /* Зеркало PORTS (nodes.js:35-48); у mix входы динамические — из data.inputs (portsOfNode),
  * у Source Import выходы динамические — из выбранных блоков (portsOfNode, docs/NODES.md) */
 type RawPortDecl = Omit<PortDecl, "kinds"> & { kinds?: PortKind[] };
 const RAW_PORTS: Record<NodeType, { in: RawPortDecl[]; out: RawPortDecl[] }> = {
-  prompt: { in: [], out: [{ name: "out", label: "текст", kind: "text" }] },
+  prompt: { in: [], out: [{ name: "out", label: "text", kind: "text" }] },
   reference: {
     in: [
       { name: "ir", label: "IR", kind: "ir" },
-      { name: "image", label: "картинка", kind: "image" },
+      { name: "image", label: "image", kind: "image" },
     ],
     out: [
-      { name: "out", label: "стиль", kind: "text" },
-      { name: "image", label: "картинка", kind: "image" },
+      { name: "out", label: "style", kind: "text" },
+      { name: "image", label: "image", kind: "image" },
+      { name: "ir", label: "Reference IR", kind: "ir" },
     ],
   },
   generator: {
     in: [
-      { name: "prompt", label: "Промт", kind: "text", kinds: ["text"] },
-      { name: "designSystem", label: "Дизайн-система", kind: "ds", kinds: ["ds", "tokens"] },
-      { name: "reference", label: "Референс", kind: "ir", kinds: ["ir", "text", "image"] },
+      { name: "prompt", label: "Prompt", kind: "text", kinds: ["text"] },
+      { name: "designSystem", label: "Design system", kind: "ds", kinds: ["ds"] },
+      { name: "reference", label: "Reference", kind: "ir", kinds: ["ir", "text", "image"] },
     ],
-    out: [{ name: "ir", label: "варианты", kind: "ir" }],
+    out: [{ name: "ir", label: "active variant", kind: "ir" }],
   },
   edit: {
     in: [{ name: "ir", label: "IR", kind: "ir" }],
     out: [{ name: "ir", label: "IR", kind: "ir" }],
   },
   mix: { in: [], out: [{ name: "ir", label: "IR", kind: "ir" }] },
-  page: { in: [], out: [{ name: "ir", label: "страница", kind: "ir" }] },
+  page: { in: [], out: [{ name: "ir", label: "page", kind: "ir" }] },
   // Source Artifact enters as measured evidence. Consumption still happens
   // through project registry and DesignSystemPicker, so there is no output wire.
-  // Design System заменил отдельную ноду Style DNA: токены системы уходят
-  // проводом так же, как раньше уходили из неё. Потребление через реестр и
-  // DesignSystemPicker сохраняется — выход не заменяет их, а дополняет.
+  // Best practice: wire Design system → Generator. Tokens out is for Reskin/Derive/Page only.
   designsystem: {
-    in: [{ name: "artifact", label: "Source Artifact", kind: "artifact" }],
+    in: [{ name: "artifact", label: "Source", kind: "artifact" }],
     out: [
-      { name: "system", label: "ДС", kind: "ds" },
-      { name: "tokens", label: "style DNA", kind: "tokens" },
+      { name: "system", label: "Design system", kind: "ds" },
+      { name: "tokens", label: "Tokens", kind: "tokens" },
     ],
   },
   sourceimport: { in: [], out: [
-    { name: "artifact", label: "Source Artifact", kind: "artifact" },
-    { name: "tokens", label: "style DNA", kind: "tokens" },
+    { name: "artifact", label: "Source", kind: "artifact" },
+    { name: "tokens", label: "Tokens", kind: "tokens" },
   ] },
   designui: {
-    in: [{ name: "artifact", label: "Source Artifact", kind: "artifact" }],
+    in: [{ name: "artifact", label: "Source", kind: "artifact" }],
     out: [{ name: "artifact", label: "Design UI", kind: "artifact" }],
   },
   derive: {
     in: [
-      { name: "prompt", label: "что сделать", kind: "text" },
+      { name: "prompt", label: "task", kind: "text" },
       { name: "reference", label: "ref IR", kind: "ir" },
-      { name: "tokens", label: "style DNA", kind: "tokens" },
+      { name: "tokens", label: "Tokens", kind: "tokens" },
     ],
-    out: [{ name: "ir", label: "варианты", kind: "ir" }],
+    out: [{ name: "ir", label: "active variant", kind: "ir" }],
   },
   reskin: {
     in: [
       { name: "ir", label: "IR", kind: "ir" },
-      { name: "tokens", label: "токены", kind: "tokens" },
+      { name: "tokens", label: "Tokens", kind: "tokens" },
     ],
     out: [{ name: "ir", label: "IR", kind: "ir" }],
   },
   qualitypass: {
     in: [{ name: "ir", label: "IR", kind: "ir" }],
-    out: [{ name: "ir", label: "проверенный IR", kind: "ir" }],
+    out: [{ name: "ir", label: "reviewed IR", kind: "ir" }],
   },
   recorder: {
     in: [{ name: "ir", label: "Design IR", kind: "ir" }],
@@ -104,35 +103,35 @@ const RAW_PORTS: Record<NodeType, { in: RawPortDecl[]; out: RawPortDecl[] }> = {
     ],
     out: [
       { name: "motion", label: "Motion IR", kind: "motion" },
-      { name: "video", label: "готовое видео", kind: "video" },
+      { name: "video", label: "rendered video", kind: "video" },
     ],
   },
   motiondesign: {
     in: [
-      { name: "prompt", label: "промпт", kind: "text" },
+      { name: "prompt", label: "prompt", kind: "text" },
       { name: "motion", label: "Motion IR", kind: "motion" },
       { name: "timeline", label: "Timeline IR", kind: "timeline" },
-      { name: "video", label: "готовое видео", kind: "video" },
+      { name: "video", label: "rendered video", kind: "video" },
     ],
     out: [{ name: "video", label: "Seedance video", kind: "video" }],
   },
   timeline: {
-    in: [{ name: "ir", label: "Страница", kind: "ir" }],
+    in: [{ name: "ir", label: "Page", kind: "ir" }],
     out: [
-      { name: "timeline", label: "монтаж", kind: "timeline" },
-      { name: "video", label: "готовое видео", kind: "video" },
+      { name: "timeline", label: "timeline", kind: "timeline" },
+      { name: "video", label: "rendered video", kind: "video" },
     ],
   },
   image: {
     in: [
-      { name: "prompt", label: "Промт", kind: "text" },
-      { name: "reference", label: "референс", kind: "image" },
+      { name: "prompt", label: "Prompt", kind: "text" },
+      { name: "reference", label: "reference", kind: "image" },
     ],
-    out: [{ name: "image", label: "картинка", kind: "image" }],
+    out: [{ name: "image", label: "image", kind: "image" }],
   },
   removebackground: {
-    in: [{ name: "image", label: "изображение", kind: "image" }],
-    out: [{ name: "image", label: "без фона", kind: "image" }],
+    in: [{ name: "image", label: "image", kind: "image" }],
+    out: [{ name: "image", label: "transparent image", kind: "image" }],
   },
   pagebridge: {
     in: [{ name: "ir", label: "component", kind: "ir" }],
@@ -158,7 +157,7 @@ export function portsOfNode(n: {
 }): { in: PortDecl[]; out: PortDecl[] } {
   if (n.type === "timeline") {
     const data = n.data as TimelineNodeData | undefined;
-    return { in: (data?.inputs || ["ir"]).map((name, i) => normalizePort({ name, label: data?.pageNames?.[name] || `Страница ${i + 1}`, kind: "ir" })), out: PORTS.timeline.out };
+    return { in: (data?.inputs || ["ir"]).map((name, i) => normalizePort({ name, label: data?.pageNames?.[name] || `Page ${i + 1}`, kind: "ir" })), out: PORTS.timeline.out };
   }
   if (n.type === "mix") {
     const inputs = (n.data as MixNodeData | undefined)?.inputs || [];
@@ -178,7 +177,7 @@ export function portsOfNode(n: {
     const inputs = (n.data as PageNodeData | undefined)?.inputs || [];
     return {
       in: [
-        normalizePort({ name: "tokens", label: "style DNA", kind: "tokens" }),
+        normalizePort({ name: "tokens", label: "Tokens", kind: "tokens" }),
         ...inputs.map((name) => normalizePort({ name, label: name, kind: "ir" })),
       ],
       out: PORTS.page.out,
@@ -215,7 +214,7 @@ export function defaultData(type: NodeType): AnyNodeData {
       return { inputs: ["a", "b"], ir: null, activeViewport: "desktop" };
     case "sourceimport":
       /* Дизайн-хендофф: AI-уточнение включено по умолчанию (чекбокс из ноды убран). */
-      return { mode: "url", url: "", image: null, fileName: "", mine: false, authenticatedSession: false, activeViewport: "desktop", previewMode: "reference", importedUrl: null, blocks: [], tokens: null, sourceArtifact: null, aiRefine: true, aiProvider: "openai" };
+      return { mode: "url", url: "", image: null, fileName: "", mine: false, authenticatedSession: false, activeViewport: "desktop", previewMode: "reference", importedUrl: null, blocks: [], tokens: null, sourceArtifact: null, importProfile: "fast", aiRefine: true, aiProvider: "openai" };
     case "designui":
       return { artifact: null, selectedComponent: 0 };
     case "derive":
@@ -275,37 +274,37 @@ export function defaultData(type: NodeType): AnyNodeData {
  * Состав — реальный реестр CTX_ITEMS, сгруппированный (designui не создаётся). */
 export const CTX_GROUPS: { label: string; color: string; items: { type: NodeType; note: string }[] }[] = [
   {
-    label: "ИСТОЧНИК",
+    label: "SOURCE",
     color: "#FF691D",
     items: [
-      { type: "prompt", note: "текст задачи" },
-      { type: "reference", note: "лёгкая стилевая подсказка" },
-      { type: "sourceimport", note: "URL/скрин → блоки + DNA" },
+      { type: "prompt", note: "task text" },
+      { type: "reference", note: "lightweight style hint" },
+      { type: "sourceimport", note: "URL/screenshot → blocks + DNA" },
       { type: "image", note: "GPT Image · PNG / JPEG" },
-      { type: "removebackground", note: "delete background · прозрачный PNG" },
+      { type: "removebackground", note: "remove background · transparent PNG" },
     ],
   },
   {
-    label: "ГЕНЕРАЦИЯ",
+    label: "GENERATION",
     color: "#9B5CFF",
     items: [
-      { type: "generator", note: "LLM → варианты IR" },
-      { type: "derive", note: "родственный компонент" },
-      { type: "mix", note: "смешение по весам" },
-      { type: "reskin", note: "вариант с локом структуры" },
+      { type: "generator", note: "LLM → IR variants" },
+      { type: "derive", note: "related component" },
+      { type: "mix", note: "blend by weight" },
+      { type: "reskin", note: "variant with locked structure" },
     ],
   },
   {
-    label: "СБОРКА",
+    label: "ASSEMBLY",
     color: "#35B8A0",
     items: [
-      { type: "edit", note: "DNA-редактор" },
-      { type: "page", note: "страница из блоков" },
-      { type: "pagebridge", note: "передать компонент между страницами" },
+      { type: "edit", note: "DNA editor" },
+      { type: "page", note: "page from blocks" },
+      { type: "pagebridge", note: "share a component between pages" },
     ],
   },
   {
-    label: "КОНТРОЛЬ И ДВИЖЕНИЕ",
+    label: "QUALITY AND MOTION",
     color: "#22C55E",
     items: [
       // qualitypass снят с палитры: судья+починка встроены в прогон генератора
@@ -313,8 +312,8 @@ export const CTX_GROUPS: { label: string; color: string; items: { type: NodeType
       // recorder исключён из меню по хендоффу: Motion сам строит Interaction IR
       // из Design IR (легаси-графы с нодой Recorder по-прежнему загружаются).
       // Motion remains loadable for existing projects until lossless migration.
-      { type: "timeline", note: "страница → промпт → редактируемое видео" },
-      { type: "motiondesign", note: "prompt / готовое видео → Seedance 2.5" },
+      { type: "timeline", note: "page → prompt → editable video" },
+      { type: "motiondesign", note: "prompt / rendered video → Seedance 2.5" },
       { type: "designsystem", note: "Source → UI Kit → published Design System" },
     ],
   },
@@ -322,19 +321,19 @@ export const CTX_GROUPS: { label: string; color: string; items: { type: NodeType
 
 /* Зеркало CTX_ITEMS (nodes.js:1096-1104) — состав контекстного меню создания ноды */
 export const CTX_ITEMS: { type: NodeType; note: string }[] = [
-  { type: "prompt", note: "текст задачи" },
-  { type: "reference", note: "лёгкая стилевая подсказка" },
-  { type: "generator", note: "LLM → варианты IR" },
-  { type: "sourceimport", note: "URL/скрин → блоки + DNA" },
+  { type: "prompt", note: "task text" },
+  { type: "reference", note: "lightweight style hint" },
+  { type: "generator", note: "LLM → IR variants" },
+  { type: "sourceimport", note: "URL/screenshot → blocks + DNA" },
   { type: "image", note: "GPT Image · PNG / JPEG" },
-  { type: "removebackground", note: "delete background · прозрачный PNG" },
-  { type: "derive", note: "родственный компонент" },
-  { type: "edit", note: "DNA-редактор" },
-  { type: "mix", note: "смешение по весам" },
-  { type: "page", note: "страница из блоков" },
-  { type: "reskin", note: "вариант с локом структуры" },
-  { type: "timeline", note: "страница → промпт → редактируемое видео" },
-  { type: "motiondesign", note: "prompt / готовое видео -> Seedance 2.5" },
-  { type: "pagebridge", note: "передать компонент между страницами" },
+  { type: "removebackground", note: "remove background · transparent PNG" },
+  { type: "derive", note: "related component" },
+  { type: "edit", note: "DNA editor" },
+  { type: "mix", note: "blend by weight" },
+  { type: "page", note: "page from blocks" },
+  { type: "reskin", note: "variant with locked structure" },
+  { type: "timeline", note: "page → prompt → editable video" },
+  { type: "motiondesign", note: "prompt / rendered video -> Seedance 2.5" },
+  { type: "pagebridge", note: "share a component between pages" },
   { type: "designsystem", note: "Source → UI Kit → published Design System" },
 ];

@@ -93,7 +93,7 @@
     aiRunId = null;
     get().setNodeData(nodeId, { directorRunId: null });
     get().setBusy(nodeId, false);
-    appendChat("assistant", "Запрос остановлен. Можно изменить сообщение и отправить снова.", "cancelled");
+    appendChat("assistant", "Request stopped. You can edit the message and send it again.", "cancelled");
     void tick().then(() => chatInput?.focus());
   }
   let showVersions = $state(false);
@@ -245,7 +245,7 @@
 
   function mutate(fn: (d: AnyDoc) => void) {
     if (!doc || busy || aiBusy) return;
-    if (preview) { say("Сначала примените или отмените превью ИИ"); return; }
+    if (preview) { say("Apply or discard the AI preview first"); return; }
     const next = JSON.parse(JSON.stringify(doc)) as AnyDoc;
     fn(next);
     if (JSON.stringify(next) === JSON.stringify(doc)) return;
@@ -262,10 +262,10 @@
 
   function undo() {
     if (!doc || busy || aiBusy) return;
-    if (preview) { say("Сначала примените или отмените превью ИИ"); return; }
+    if (preview) { say("Apply or discard the AI preview first"); return; }
     const prev = history.pop();
     historyDepth = history.length;
-    if (!prev) { say("История пуста"); return; }
+    if (!prev) { say("History is empty"); return; }
     if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
     future.push(cloneDoc(doc));
     futureDepth = future.length;
@@ -273,7 +273,7 @@
     renderState = null;
     docSeq++;
     void syncNow();
-    say("Отменено");
+    say("Cancelled");
   }
 
   function redo() {
@@ -287,7 +287,7 @@
     renderState = null;
     docSeq++;
     void syncNow();
-    say("Повторено");
+    say("Redone");
   }
 
   /* ---------- синхронизация локальных правок с контрактом ---------- */
@@ -313,11 +313,11 @@
       if (seq === lastValidSeq) return true;
       const errors = resp.errors || [];
       if (errors.length) {
-        say("Правки не прошли валидацию: " + errors[0]);
+        say("Changes failed validation: " + errors[0]);
         return false; // keep the last valid canonical document
       }
       if (!nodeScope.owns() || !$flow.commitTimeline(nodeId, canonical, sourceRevision, payload, pendingRevision)) {
-        say("Вход или таймлайн изменился вне редактора. Скопируйте черновик перед повторным открытием.");
+        say("The input or timeline changed outside the editor. Copy your draft before reopening.");
         return false;
       }
       canonical = payload;
@@ -408,7 +408,7 @@
       track.keyframes.push({ t, value: Number(value.toFixed(4)), easing: "ease-in-out" });
       track.keyframes.sort((a: AnyDoc, b: AnyDoc) => a.t - b.t);
     });
-    say(`Кейфрейм ${prop} @ ${(playhead / 1000).toFixed(2)}s`);
+    say(`Keyframe ${prop} @ ${(playhead / 1000).toFixed(2)}s`);
   }
 
   function removeKeyframe(layerId: string, prop: string, t: number) {
@@ -448,29 +448,29 @@
     const signal = beginRunAbort(nodeId, get().activePageId);
     get().setNodeData(nodeId, { directorRunId: runId, directorStartedAt: Date.now() });
     get().setBusy(nodeId, true);
-    get().setStatus(nodeId, "ИИ-режиссёр готовит монтаж…");
+    get().setStatus(nodeId, "AI director is preparing the edit…");
     aiStartedAt = Date.now(); aiElapsed = 0;
     const conversation = chatMessages.filter(entry => entry.kind !== "error").slice(-24)
-      .map(entry => ({ role: entry.role, content: entry.content.slice(0, 15800) + (entry.kind === "preview" ? "\n[Предложение не применено]" : entry.kind === "applied" ? "\n[Применено]" : entry.kind === "cancelled" ? "\n[Отменено]" : "") }));
+      .map(entry => ({ role: entry.role, content: entry.content.slice(0, 15800) + (entry.kind === "preview" ? "\n[Suggestion not applied]" : entry.kind === "applied" ? "\n[Applied]" : entry.kind === "cancelled" ? "\n[Cancelled]" : "") }));
     const provider = accountProvider;
     const effort = data.effort || "medium";
     const model = data.model || (provider === "claude" ? "opus" : "gpt-5.6-sol");
     appendChat("user", prompt);
     aiPrompt = "";
     $flow.setNodeData(nodeId, { prompt: "", provider });
-    say("Изучаю визуал, структуру и содержимое страницы, затем готовлю монтаж…");
+    say("Reviewing the page visuals, structure, and content, then preparing the edit…");
     try {
-      if (!await syncNow()) throw new Error("Сначала сохраните текущие правки");
+      if (!await syncNow()) throw new Error("Save your current changes first");
       if (!nodeScope.owns() || signal.aborted || requestSequence !== aiRequestSequence) return;
       const resp = await api<{
         timeline?: AnyDoc; changeSet?: AnyDoc; planSource?: string; warning?: string | null; error?: string; understanding?: string;
-      }>("/api/timeline/assist", { timeline: doc, prompt, provider, effort, model, require_llm: true, conversation }, { signal, runId });
+      }>("/api/timeline/assist", { timeline: doc, prompt, provider, effort, model, require_llm: true, conversation, pageHeights: storyPlayer?.pageHeights() || undefined }, { signal, runId });
       if (!nodeScope.owns() || signal.aborted || requestSequence !== aiRequestSequence) return;
-      if ($flow.getNodeIrRevision(nodeId) !== sourceRevision) throw new Error("Исходная страница изменилась во время запроса. Откройте редактор заново и повторите сообщение.");
-      if (resp.error || !resp.timeline || !resp.changeSet) throw new Error(resp.error || "пустой ответ");
+      if ($flow.getNodeIrRevision(nodeId) !== sourceRevision) throw new Error("The source page changed during the request. Reopen the editor and send the message again.");
+      if (resp.error || !resp.timeline || !resp.changeSet) throw new Error(resp.error || "empty response");
       const nextPreview: AiPreview = {
         baseTimeline: cloneDoc(canonical || doc!),
-        chatMessageId: appendChat("assistant", (resp.understanding ? "Понял страницу: " + resp.understanding + "\n\n" : "") + String(resp.changeSet.intent || "Подготовил изменения монтажа.") + (resp.warning ? "\n\n" + resp.warning : ""), "preview", provider),
+        chatMessageId: appendChat("assistant", (resp.understanding ? "Page analysis: " + resp.understanding + "\n\n" : "") + String(resp.changeSet.intent || "Timeline changes prepared.") + (resp.warning ? "\n\n" + resp.warning : ""), "preview", provider),
         prompt, provider, effort, model,
         timeline: resp.timeline,
         changeSet: resp.changeSet,
@@ -480,14 +480,14 @@
         operations: Array.isArray(resp.changeSet.operations) ? resp.changeSet.operations.length : 0,
       };
       get().setNodeData(nodeId, { aiPreview: nextPreview });
-      get().setStatus(nodeId, "Превью монтажа готово · откройте редактор для применения", "ok");
-      say("Превью готово — проверьте монтаж и примените или отмените");
+      get().setStatus(nodeId, "Timeline preview ready · open the editor to apply", "ok");
+      say("Preview ready — review the timeline and apply or discard");
     } catch (error) {
       if (!nodeScope.owns() || signal.aborted || requestSequence !== aiRequestSequence) return;
       const msg = error instanceof Error ? error.message : String(error);
-      const question = msg.startsWith("Нужно уточнить:");
+      const question = msg.startsWith("Clarification needed:");
       appendChat("assistant", question ? msg.replace(/^Нужно уточнить:\s*/, "") : msg, question ? "question" : "error", provider);
-      say("ИИ-режиссёр: " + msg);
+      say("AI director: " + msg);
     } finally {
       if (nodeScope.owns() && currentData()?.directorRunId === runId) {
         get().setNodeData(nodeId, { directorRunId: null });
@@ -502,14 +502,14 @@
     if (!preview || !doc || busy) return;
     const applied = preview;
     if (!nodeScope.owns() || JSON.stringify(currentData()?.timeline) !== JSON.stringify(applied.baseTimeline)) {
-      say("Таймлайн изменился после запроса. Подготовьте новое превью."); return;
+      say("The timeline changed after the request. Prepare a new preview."); return;
     }
     localBusy = true;
-    say("Применение ИИ-монтажа...");
+    say("Applying AI timeline changes…");
     try {
       const resp = await api<{ timeline?: AnyDoc; error?: string }>(
         "/api/timeline/apply", { timeline: doc, changeSet: applied.changeSet });
-      if (resp.error || !resp.timeline) throw new Error(resp.error || "пустой ответ");
+      if (resp.error || !resp.timeline) throw new Error(resp.error || "empty response");
       snapshot();
       doc = resp.timeline;
       renderState = null;
@@ -519,13 +519,13 @@
       markChat(applied.chatMessageId, "applied");
       get().setNodeData(nodeId, { aiPreview: null });
       aiPrompt = "";
-      say("Применено: " + applied.intent);
+      say("Applied: " + applied.intent);
       await syncNow();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      appendChat("assistant", "Не удалось применить монтаж: " + msg, "error");
-      say("Применение: " + msg);
-      toast("ИИ-режиссёр: " + msg, "error");
+      appendChat("assistant", "Could not apply timeline changes: " + msg, "error");
+      say("Apply: " + msg);
+      toast("AI director: " + msg, "error");
     } finally {
       localBusy = false;
     }
@@ -534,13 +534,13 @@
   function cancelPreview() {
     if (preview) markChat(preview.chatMessageId, "cancelled");
     get().setNodeData(nodeId, { aiPreview: null });
-    say("Превью отменено — таймлайн не изменён");
+    say("Preview discarded — timeline unchanged");
   }
 
   async function restoreVersion(version: VideoRevision) {
     if (!doc || busy || aiBusy || preview) return;
     if (JSON.stringify(version.sourceIr) !== JSON.stringify(data.ir)) {
-      say("Эта версия создана для другой исходной страницы. Подключите прежнюю страницу перед восстановлением.");
+      say("This version was created for a different source page. Connect the original page before restoring.");
       return;
     }
     localBusy = true;
@@ -550,9 +550,9 @@
       if (result.errors?.length) throw new Error(result.errors[0]);
       const next = JSON.parse(JSON.stringify(version.timeline));
       if (!nodeScope.owns() || !$flow.commitTimeline(nodeId, canonical, sourceRevision, next, {
-        kind: "restore", label: "Возврат: " + version.label, restoredFrom: version.id,
+        kind: "restore", label: "Restore: " + version.label, restoredFrom: version.id,
         prompt: version.prompt, provider: version.provider, effort: version.effort, model: version.model,
-      })) throw new Error("Страница или монтаж изменились вне редактора. Откройте редактор заново.");
+      })) throw new Error("The page or timeline changed outside the editor. Reopen the editor.");
       snapshot();
       doc = next;
       canonical = JSON.parse(JSON.stringify(next));
@@ -565,7 +565,7 @@
       lastChangeSet = null;
       playing = false;
       playhead = Math.min(playhead, Number(next.composition.duration));
-      say("Версия восстановлена. Можно продолжить новым промптом; прежние версии сохранены.");
+      say("Version restored. Continue with a new prompt; previous versions are preserved.");
     } catch (error) {
       say(error instanceof Error ? error.message : String(error));
     } finally {
@@ -584,11 +584,11 @@
         doc = resp.timeline;
         docSeq++;
         lastChangeSet = null;
-        say("ИИ-патч откатан");
+        say("AI patch reverted");
         scheduleSync();
       }
     } catch (error) {
-      say("Откат: " + (error instanceof Error ? error.message : String(error)));
+      say("Revert: " + (error instanceof Error ? error.message : String(error)));
     } finally {
       localBusy = false;
     }
@@ -607,7 +607,7 @@
       let binary = "";
       for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
       await files.save(renderState?.filename || "timeline.mp4", btoa(binary));
-    } catch (error) { say("Скачивание: " + (error instanceof Error ? error.message : String(error))); }
+    } catch (error) { say("Download: " + (error instanceof Error ? error.message : String(error))); }
   }
 
   function downloadText(filename: string, text: string, mime: string) {
@@ -626,12 +626,12 @@
     try {
       const resp = await api<{ files?: Record<string, string>; error?: string }>(
         "/api/timeline/export", { timeline: doc, mode: "css" });
-      if (resp.error || !resp.files?.["timeline.css"]) throw new Error(resp.error || "пустой экспорт");
+      if (resp.error || !resp.files?.["timeline.css"]) throw new Error(resp.error || "empty export");
       downloadText("timeline.css", resp.files["timeline.css"], "text/css");
-      say("CSS-анимация выгружена: подключите файл и разметку с data-timeline-layer");
+      say("CSS animation exported: include the file and markup with data-timeline-layer");
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      say("Экспорт: " + msg);
+      say("Export: " + msg);
     } finally {
       localBusy = false;
     }
@@ -663,16 +663,16 @@
 
   async function renderVideo(format: string) {
     if (!doc || busy || aiBusy || preview) return;
-    if (!designIr) { say("Нет входного Design IR для рендера"); return; }
+    if (!designIr) { say("No input Design IR to render"); return; }
     if (!await syncNow()) return;
     localBusy = true;
     renderState = { status: "starting" };
     renderId = null;
-    say("Рендер запущен...");
+    say("Render started…");
     try {
       const resp = await api<{ renderId?: string; error?: string }>(
         "/api/timeline/render", { timeline: doc, ir: designIr, format });
-      if (resp.error || !resp.renderId) throw new Error(resp.error || "нет renderId");
+      if (resp.error || !resp.renderId) throw new Error(resp.error || "missing renderId");
       renderId = resp.renderId;
       publishRenderJob(renderId, { status: "queued", progress: 0 }, format);
       for (let i = 0; i < 600 && nodeScope.owns(); i++) {
@@ -683,13 +683,13 @@
         publishRenderJob(renderId, st, format);
         if (st.status === "done" || st.status === "error" || st.status === "cancelled") break;
       }
-      if (renderState?.status === "done") say("Ролик готов — скачайте файл");
-      else say("Рендер: " + (renderState?.error || renderState?.status || "неизвестно"));
+      if (renderState?.status === "done") say("Video ready — download the file");
+      else say("Render: " + (renderState?.error || renderState?.status || "unknown"));
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       renderState = { status: "error", error: msg };
       publishRenderJob(renderId || "failed", renderState, format);
-      say("Рендер: " + msg);
+      say("Render: " + msg);
     } finally {
       localBusy = false;
       renderId = null;
@@ -701,10 +701,10 @@
     if (!id) return;
     try {
       await api<{ status?: string }>(`/api/timeline/render/${id}/cancel`, {});
-      say("Отмена рендера запрошена");
+      say("Render cancellation requested");
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      say("Отмена рендера: " + msg);
+      say("Cancel render: " + msg);
     }
   }
 
@@ -730,7 +730,7 @@
 
   function beginDrag(state: DragState, mutatesDoc: boolean) {
     if (mutatesDoc && (busy || aiBusy)) return;
-    if (preview) { say("Сначала примените или отмените превью ИИ"); return; }
+    if (preview) { say("Apply or discard the AI preview first"); return; }
     // скраб (mutatesDoc=false) не трогает документ — снапшот не нужен;
     // драг кейфрейма/клипа даёт один снапшот на весь жест
     coalescing = true;
@@ -827,12 +827,13 @@
 
   /* ---------- композиция ---------- */
 
-  const PROPS = ["x", "y", "scale", "rotation", "opacity"] as const;
+  const PROPS = ["x", "y", "scale", "rotation", "opacity", "blur", "clip"] as const;
   // Семантика свойств (x/y/scale/rotation/opacity) намеренно разноцветная —
   // сами значения объявлены в .tlw-root как --tlw-prop-*, здесь только ссылки.
   const PROP_COLORS: Record<string, string> = {
     x: "var(--tlw-prop-x)", y: "var(--tlw-prop-y)", scale: "var(--tlw-prop-scale)",
     rotation: "var(--tlw-prop-rotation)", opacity: "var(--tlw-prop-opacity)",
+    blur: "var(--tlw-prop-blur, #7dd3fc)", clip: "var(--tlw-prop-clip, #fbbf24)",
   };
   const FORMATS = [
     { label: "16:9 · 1920×1080", width: 1920, height: 1080 },
@@ -886,17 +887,17 @@
 <div class="tlw-root" role="dialog" aria-modal="true" aria-label="Video Editor"
   aria-busy={busy || aiBusy} onkeydown={workspaceKey} tabindex="-1" use:bodyPortal>
   <div class="tlw-top">
-    <button class="tlw-btn" data-act="close" aria-label="Закрыть редактор и вернуться к графу"
-      onclick={closeWorkspace}>← Граф</button>
-    <span class="tlw-title">Видео</span>
+    <button class="tlw-btn" data-act="close" aria-label="Close editor and return to graph"
+      onclick={closeWorkspace}>← Graph</button>
+    <span class="tlw-title">Video</span>
     <button class="tlw-btn" data-act="video-history" aria-expanded={showVersions}
-      onclick={() => (showVersions = !showVersions)}>История · {data.revisions?.length || 0}</button>
+      onclick={() => (showVersions = !showVersions)}>History · {data.revisions?.length || 0}</button>
     <button class="tlw-btn primary" data-act="play" disabled={!duration}
-      aria-label={playing ? "Пауза" : "Проиграть"} aria-pressed={playing} onclick={togglePlay}>
+      aria-label={playing ? "Pause" : "Play"} aria-pressed={playing} onclick={togglePlay}>
       {playing ? "❚❚" : "▶"}
     </button>
     <span class="tlw-time">{timeLabel(playhead)} / {timeLabel(duration)}</span>
-    <select class="tlw-select" aria-label="Формат кадра"
+    <select class="tlw-select" aria-label="Frame format"
       value={FORMATS.find((f) => f.width === width && f.height === height)?.label || "custom"}
       onchange={(e) => {
         const f = FORMATS.find((x) => x.label === (e.currentTarget as HTMLSelectElement).value);
@@ -905,45 +906,45 @@
       {#each FORMATS as f (f.label)}<option value={f.label}>{f.label}</option>{/each}
       {#if !FORMATS.some((f) => f.width === width && f.height === height)}<option value="custom">{width}×{height}</option>{/if}
     </select>
-    <label class="tlw-inline">Длительность, с
+    <label class="tlw-inline">Duration, sec
       <input class="tlw-input" type="number" min="0.25" step="0.5" value={(duration / 1000).toFixed(2)}
         onchange={(e) => setDuration(Number(e.currentTarget.value) * 1000)} />
     </label>
     <span class="tlw-spacer"></span>
     <button class="tlw-btn" data-act="undo" disabled={busy || aiBusy || Boolean(preview) || !doc || historyDepth === 0}
-      onclick={undo}>Отменить</button>
+      onclick={undo}>Undo</button>
     <button class="tlw-btn" data-act="redo" disabled={busy || aiBusy || Boolean(preview) || futureDepth === 0}
-      onclick={redo}>Повторить</button>
+      onclick={redo}>Redo</button>
     <button class="tlw-btn" data-act="save-draft" disabled={!doc}
-      onclick={() => doc && downloadText("timeline-draft.json", JSON.stringify(cloneDoc(doc), null, 2), "application/json")}>Скачать черновик</button>
+      onclick={() => doc && downloadText("timeline-draft.json", JSON.stringify(cloneDoc(doc), null, 2), "application/json")}>Download draft</button>
     {#if message && docSeq !== lastValidSeq}
-      <button class="tlw-btn" disabled={busy || aiBusy} onclick={discardAndClose}>Закрыть без последних правок</button>
+      <button class="tlw-btn" disabled={busy || aiBusy} onclick={discardAndClose}>Close without latest changes</button>
     {/if}
     {#if lastChangeSet}
-      <button class="tlw-btn" data-act="ai-revert" disabled={busy || Boolean(preview)} onclick={() => void undoAi()}>Откатить ИИ-патч</button>
+      <button class="tlw-btn" data-act="ai-revert" disabled={busy || Boolean(preview)} onclick={() => void undoAi()}>Revert AI patch</button>
     {/if}
     <button class="tlw-btn" data-act="render-mp4" disabled={busy || !doc || Boolean(preview)}
-      onclick={() => void renderVideo("mp4")}>Рендер MP4</button>
-    <button class="tlw-btn" data-act="export-css" title={doc?.story?.actions.length ? "Сценарий действий экспортируется в MP4" : "Экспорт анимации компонентов"} disabled={busy || !doc || Boolean(preview) || Boolean(doc?.story?.actions.length)}
-      onclick={() => void exportCss()}>Экспорт CSS</button>
+      onclick={() => void renderVideo("mp4")}>Render MP4</button>
+    <button class="tlw-btn" data-act="export-css" title={doc?.story?.actions.length ? "Export the action sequence to MP4" : "Export component animation"} disabled={busy || !doc || Boolean(preview) || Boolean(doc?.story?.actions.length)}
+      onclick={() => void exportCss()}>Export CSS</button>
   </div>
 
   <div class="tlw-workspace">
   <div class="tlw-editor">
   {#if showVersions}
-    <section class="video-versions" aria-label="История монтажа">
-      <div class="video-versions-title">Вернитесь к версии и продолжите новым промптом. Последующие версии сохранятся.</div>
+    <section class="video-versions" aria-label="Edit history">
+      <div class="video-versions-title">Restore a version and continue with a new prompt. Later versions will be preserved.</div>
       {#each [...(data.revisions || [])].reverse() as version (version.id)}
         <div class="video-version" class:current={version.id === data.activeRevisionId}>
           <div><strong>{version.label}</strong>
             {#if version.prompt && version.prompt !== version.label}<p>{version.prompt}</p>{/if}
-            <small>{new Date(version.createdAt).toLocaleString("ru-RU")}{version.provider ? ` · ${version.provider === "claude" ? "Claude" : "GPT"}` : ""}{version.kind === "restore" ? " · новая ветка" : ""}</small>
+            <small>{new Date(version.createdAt).toLocaleString("en-US")}{version.provider ? ` · ${version.provider === "claude" ? "Claude" : "GPT"}` : ""}{version.kind === "restore" ? " · new branch" : ""}</small>
           </div>
           <button class="tlw-btn" data-act="restore-version" disabled={busy || aiBusy || Boolean(preview)}
-            onclick={() => void restoreVersion(version)}>Вернуться</button>
+            onclick={() => void restoreVersion(version)}>Restore</button>
         </div>
       {:else}
-        <p>После применения первого промпта здесь появятся исходный монтаж и результат.</p>
+        <p>The original edit and result will appear here after applying the first prompt.</p>
       {/each}
     </section>
   {/if}
@@ -952,16 +953,16 @@
     <div class="tlw-layers">
       {#if activeDoc?.story}
         <button type="button" data-act="assembly-scene" disabled={busy || aiBusy || Boolean(preview)}
-          title="Последовательное появление свободных слоёв в первые две секунды. Доступна отмена."
-          onclick={() => { try { let count = 0; mutate(d => { count = assembleLayers(d); }); say(`Сборка: ${count} слоёв`); } catch (error) { say(String(error)); } }}>Сборка из слоёв</button>
+          title="Reveal unlocked layers in sequence during the first two seconds. Undo is available."
+          onclick={() => { try { let count = 0; mutate(d => { count = assembleLayers(d); }); say(`Assembly: ${count} layers`); } catch (error) { say(String(error)); } }}>Assemble from layers</button>
         <VideoStoryPanel story={activeDoc.story} disabled={busy || aiBusy || Boolean(preview)}
           onChange={(story) => void editStory(story)} onPolish={(story) => void editStory(story, true)} onSeek={(time) => { playing = false; playhead = time; }} />
         <VideoStatesPanel story={activeDoc.story} disabled={busy || aiBusy || Boolean(preview)}
           onChange={(story) => void editStory(story)} onSeek={(time) => { playing = false; playhead = time; }} />
       {/if}
-      <div class="tlw-panel-title">Слои и группы</div>
+      <div class="tlw-panel-title">Layers and groups</div>
       {#if !activeDoc}
-        <div class="tlw-empty">Соберите таймлайн из входного Design IR</div>
+        <div class="tlw-empty">Build a timeline from the input Design IR</div>
       {:else}
         {#each groups as group (group.id)}
           <div class="tlw-group">{group.name}</div>
@@ -978,25 +979,25 @@
     </div>
 
     <div class="tlw-stage" bind:clientWidth={boxW} bind:clientHeight={boxH}>
-      {#if playerError}<div class="tlw-player-error" role="alert">Не удалось показать монтаж: {playerError}</div>{/if}
+      {#if playerError}<div class="tlw-player-error" role="alert">Could not display the edit: {playerError}</div>{/if}
       <div class="tlw-artboard" style="width:{width}px; height:{height}px; transform:scale({fitScale}); background:{composition.background || '#111116'}">
-        <div class="tlw-irhost" bind:this={irHost}></div>
+        <div class="tlw-camera" data-timeline-camera><div class="tlw-irhost" bind:this={irHost}></div></div>
       </div>
     </div>
 
     <div class="tlw-inspector">
-      <div class="tlw-panel-title">Инспектор</div>
+      <div class="tlw-panel-title">Inspector</div>
       {#if selectedLayer}
         <div class="tlw-insp-name">{selectedLayer.name}</div>
-        <label class="tlw-inline">in, с
+        <label class="tlw-inline">in, sec
           <input class="tlw-input" type="number" step="0.1" value={(selectedLayer.in / 1000).toFixed(2)}
             onchange={(e) => setLayerTiming(selectedLayer.id, "in", Number(e.currentTarget.value) * 1000)} />
         </label>
-        <label class="tlw-inline">out, с
+        <label class="tlw-inline">out, sec
           <input class="tlw-input" type="number" step="0.1" value={(selectedLayer.out / 1000).toFixed(2)}
             onchange={(e) => setLayerTiming(selectedLayer.id, "out", Number(e.currentTarget.value) * 1000)} />
         </label>
-        <div class="tlw-prop-pick" role="group" aria-label="Свойство анимации">
+        <div class="tlw-prop-pick" role="group" aria-label="Animation property">
           {#each PROPS as prop (prop)}
             <button class="tlw-prop-chip" type="button" style="--pc:{PROP_COLORS[prop]}"
               aria-pressed={selectedProp === prop}
@@ -1005,7 +1006,7 @@
         </div>
         <button class="tlw-btn primary wide" data-act="add-keyframe" disabled={busy || aiBusy || Boolean(preview)}
           onclick={() => addKeyframe(selectedLayer.id, selectedProp)}>
-          ◆ Кейфрейм {selectedProp} @ {timeLabel(playhead)}
+          ◆ Keyframe {selectedProp} @ {timeLabel(playhead)}
         </button>
         <div class="tlw-kf-list">
           {#each (selectedLayer.transform?.properties?.[selectedProp]?.keyframes || []) as kf (kf.t)}
@@ -1013,30 +1014,30 @@
               <span style="color:{PROP_COLORS[selectedProp]}">◆</span>
               <span>{timeLabel(kf.t)}</span>
               <input class="tlw-input" data-act="keyframe-value" type="number"
-                aria-label="Значение {selectedProp} в {timeLabel(kf.t)}" value={kf.value}
+                aria-label="Value {selectedProp} at {timeLabel(kf.t)}" value={kf.value}
                 step={selectedProp === "opacity" || selectedProp === "scale" ? 0.05 : 1}
-                min={selectedProp === "opacity" || selectedProp === "scale" ? 0 : undefined}
-                max={selectedProp === "opacity" ? 1 : undefined}
+                min={["opacity", "scale", "blur", "clip"].includes(selectedProp) ? 0 : undefined}
+                max={selectedProp === "opacity" ? 1 : selectedProp === "blur" ? 64 : selectedProp === "clip" ? 100 : undefined}
                 disabled={busy || aiBusy || Boolean(preview)}
                 onchange={(e) => mutate((d) => setTimelineKeyValue(d, selectedLayer.id, selectedProp, kf.t, Number(e.currentTarget.value)))} />
-              <select class="tlw-select small" aria-label="Изинг кейфрейма {timeLabel(kf.t)}" value={kf.easing || "linear"}
+              <select class="tlw-select small" aria-label="Keyframe easing {timeLabel(kf.t)}" value={kf.easing || "linear"}
                 onchange={(e) => setKeyframeEasing(selectedLayer.id, selectedProp, kf.t, (e.currentTarget as HTMLSelectElement).value)}>
                 {#each ["linear", "ease", "ease-in", "ease-out", "ease-in-out"] as ez (ez)}<option value={ez}>{ez}</option>{/each}
               </select>
-              <button class="tlw-btn danger small" type="button" aria-label="Удалить кейфрейм {timeLabel(kf.t)}"
+              <button class="tlw-btn danger small" type="button" aria-label="Delete keyframe {timeLabel(kf.t)}"
                 onclick={() => removeKeyframe(selectedLayer.id, selectedProp, kf.t)}>✕</button>
             </div>
           {/each}
         </div>
       {:else}
-        <div class="tlw-empty">Выберите слой слева</div>
+        <div class="tlw-empty">Select a layer on the left</div>
       {/if}
     </div>
   </div>
 
   <div class="tlw-timeline">
     {#if activeDoc?.story?.actions.length}
-      <div class="story-strip" aria-label="Действия на таймлайне">
+      <div class="story-strip" aria-label="Timeline actions">
         {#each storySchedule(activeDoc.story) as action (action.id)}
           <button class:active={playhead >= action.start && playhead < action.end}
             style:width={`${action.duration * pxPerMs}px`}
@@ -1046,9 +1047,9 @@
       </div>
     {/if}
     <div class="tlw-ruler" data-act="ruler" role="slider" tabindex="0"
-      aria-label="Позиция воспроизведения"
+      aria-label="Playback position"
       aria-valuemin={0} aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(playhead)}
-      aria-valuetext="{timeLabel(playhead)} из {timeLabel(duration)}"
+      aria-valuetext="{timeLabel(playhead)} of {timeLabel(duration)}"
       onpointerdown={onRulerDown} onkeydown={onRulerKey}>
       <div class="tlw-ruler-track" bind:this={rulerTrack} style="width:{duration * pxPerMs}px">
         {#each Array.from({ length: Math.ceil(duration / 1000) + 1 }) as _, sec}
@@ -1065,13 +1066,13 @@
           <div class="tlw-track-lane" style="width:{duration * pxPerMs}px">
             <div class="tlw-clip" style="left:{layer.in * pxPerMs}px; width:{Math.max(4, (layer.out - layer.in) * pxPerMs)}px">
               <button class="tlw-trim" type="button" disabled={Boolean(layer.locked)}
-                aria-label="Начало клипа: {layer.name}"
+                aria-label="Clip start: {layer.name}"
                 onpointerdown={(e) => onTrimDown(e, layer.id, "trim-in")}
                 onkeydown={(e) => onTrimKey(e, layer.id, "trim-in")}></button>
               {#each PROPS as prop (prop)}
                 {#each (layer.transform?.properties?.[prop]?.keyframes || []) as kf (prop + ":" + kf.t)}
                   <button class="tlw-key" type="button" title="{prop} {timeLabel(kf.t)}"
-                    aria-label="Кейфрейм {prop} слоя {layer.name} в {timeLabel(kf.t)}"
+                    aria-label="Keyframe {prop} of layer {layer.name} at {timeLabel(kf.t)}"
                     disabled={Boolean(layer.locked)}
                     style="left:{(kf.t - layer.in) * pxPerMs}px; top:{2 + PROPS.indexOf(prop) * 7}px; background:{PROP_COLORS[prop]}"
                     onpointerdown={(e) => onKeyDown(e, layer.id, prop, kf.t)}
@@ -1080,7 +1081,7 @@
                 {/each}
               {/each}
               <button class="tlw-trim right" type="button" disabled={Boolean(layer.locked)}
-                aria-label="Конец клипа: {layer.name}"
+                aria-label="Clip end: {layer.name}"
                 onpointerdown={(e) => onTrimDown(e, layer.id, "trim-out")}
                 onkeydown={(e) => onTrimKey(e, layer.id, "trim-out")}></button>
             </div>
@@ -1093,89 +1094,92 @@
       <span class="tlw-message" role="status" aria-live="polite">{message}</span>
       {#if busy && renderState}
         <span class="tlw-render-info">
-          рендер: {renderState.status}{renderState.framesTotal ? " " + (renderState.framesDone || 0) + "/" + renderState.framesTotal : ""}
+          render: {renderState.status}{renderState.framesTotal ? " " + (renderState.framesDone || 0) + "/" + renderState.framesTotal : ""}
         </span>
         {#if renderId}
-          <button class="tlw-btn danger small" data-act="render-cancel" onclick={() => void cancelRender()}>Отменить рендер</button>
+          <button class="tlw-btn danger small" data-act="render-cancel" onclick={() => void cancelRender()}>Cancel render</button>
         {/if}
       {/if}
       {#if renderState?.status === "done" && renderState?.downloadUrl}
         {#if window.designDNA?.files}
-          <button class="tlw-btn" data-act="render-download" onclick={() => void downloadVideo()}>Скачать ролик</button>
+          <button class="tlw-btn" data-act="render-download" onclick={() => void downloadVideo()}>Download video</button>
         {:else}
-          <a class="tlw-download" data-act="render-download" href={renderState.downloadUrl} download>Скачать ролик</a>
+          <a class="tlw-download" data-act="render-download" href={renderState.downloadUrl} download>Download video</a>
         {/if}
       {/if}
-      <span class="tlw-hint">клик по линейке — скраб (←/→ — кадр) · ◆ — кейфрейм (тянуть, ←/→ — сдвиг, Del — удалить)</span>
+      <span class="tlw-hint">Click the ruler to scrub (←/→ for one frame) · ◆ keyframe (drag, ←/→ to move, Del to delete)</span>
     </div>
   </div>
   </div>
-  <aside class="video-chat" aria-label="Чат с ИИ-режиссёром" data-act="video-chat">
+  <aside class="video-chat" aria-label="Chat with AI director" data-act="video-chat">
     <header class="video-chat-header">
-      <div><strong>Чат о видео</strong><span>Сценарий, правки и уточнения</span></div>
-      <span class="video-chat-presence" class:working={aiBusy}>{aiBusy ? "Думает" : "На связи"}</span>
+      <div><strong>Video chat</strong><span>Script, edits, and clarifications</span></div>
+      <span class="video-chat-presence" class:working={aiBusy}>{aiBusy ? "Thinking" : "Ready"}</span>
     </header>
     <div class="video-chat-model" inert={aiBusy || busy || Boolean(preview)}>
       <VideoModelPicker provider={accountProvider} model={data.model} effort={data.effort || "medium"}
         onChange={(choice) => $flow.setNodeData(nodeId, choice)} />
     </div>
-    <div class="video-chat-log" role="log" aria-label="Переписка о видео" aria-live="polite" aria-relevant="additions text"
+    <div class="video-chat-log" role="log" aria-label="Video conversation" aria-live="polite" aria-relevant="additions text"
       bind:this={chatLog} onscroll={() => { if (chatLog) followChat = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 60; }}>
       {#if !chatMessages.length}
         <div class="video-chat-welcome">
           <span class="video-chat-symbol" aria-hidden="true">↗</span>
-          <h2>Давайте соберём историю</h2>
-          <p>Опишите, что должно происходить на странице. Здесь появятся ответ, вопросы и предложенный монтаж.</p>
-          <button type="button" onclick={() => { aiPrompt = "Плавно проведи курсор к основной кнопке, нажми её и задержись на результате."; chatInput?.focus(); }}>Курсор и нажатие <span aria-hidden="true">↗</span></button>
-          <button type="button" onclick={() => { aiPrompt = "Сделай движения мягче: плавный разгон и торможение, больше пауз между действиями."; chatInput?.focus(); }}>Смягчить анимацию <span aria-hidden="true">↗</span></button>
+          <h2>Build your story</h2>
+          <p>Describe what should happen on the page. Replies, questions, and proposed edits will appear here.</p>
+          <button type="button" onclick={() => { aiPrompt = "Move the cursor smoothly to the primary button, click it, and pause on the result."; chatInput?.focus(); }}>Cursor and click <span aria-hidden="true">↗</span></button>
+          <button type="button" onclick={() => { aiPrompt = "Make the motion softer: smooth acceleration and deceleration, with longer pauses between actions."; chatInput?.focus(); }}>Soften animation <span aria-hidden="true">↗</span></button>
+          <button type="button" onclick={() => { aiPrompt = "Product showcase: slow camera push-in, hero reveals first with a soft overshoot, then the other sections cascade in, finish on the call to action."; chatInput?.focus(); }}>Product showcase <span aria-hidden="true">↗</span></button>
+          <button type="button" onclick={() => { aiPrompt = "Presentation: reveal the sections one by one like slides while the camera pans down the page, end with a gentle focus on the last block."; chatInput?.focus(); }}>Presentation <span aria-hidden="true">↗</span></button>
+          <button type="button" onclick={() => { aiPrompt = "Cinematic camera: slow push-in and pan, images drift with parallax, headings settle with a subtle tilt."; chatInput?.focus(); }}>Cinematic camera <span aria-hidden="true">↗</span></button>
         </div>
       {/if}
       {#each chatMessages as entry (entry.id)}
         <article class="video-chat-message" class:user={entry.role === "user"} class:error={entry.kind === "error"} data-act="chat-message" data-role={entry.role}>
-          <div class="video-chat-author">{entry.role === "user" ? "Вы" : entry.provider === "claude" ? "Claude" : "GPT"}
+          <div class="video-chat-author">{entry.role === "user" ? "You" : entry.provider === "claude" ? "Claude" : "GPT"}
             <time datetime={entry.createdAt}>{new Date(entry.createdAt).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})}</time>
           </div>
-          {#if entry.kind === "question"}<span class="video-chat-label">Уточнение</span>{/if}
-          {#if entry.kind === "error"}<span class="video-chat-label">Не удалось выполнить запрос</span>{/if}
+          {#if entry.kind === "question"}<span class="video-chat-label">Clarification</span>{/if}
+          {#if entry.kind === "error"}<span class="video-chat-label">Could not complete the request</span>{/if}
           <div class="video-chat-text">{entry.content}</div>
           {#if preview?.chatMessageId === entry.id}
-            <div class="tlw-preview" role="region" aria-label="Превью ИИ-монтажа" data-act="ai-preview">
-              <span>{playerError ? `Монтаж не воспроизводится: ${playerError}` : "Монтаж показан в плеере. Проверьте результат перед применением."}</span>
+            <div class="tlw-preview" role="region" aria-label="AI edit preview" data-act="ai-preview">
+              <span>{playerError ? `Cannot play the edit: ${playerError}` : "The edit is shown in the player. Review it before applying."}</span>
               <div class="video-chat-actions">
-                <button class="tlw-btn" disabled={Boolean(playerError)} onclick={() => { playhead = 0; playing = true; }}>▶ Смотреть</button>
-                <button class="tlw-btn primary" data-act="ai-apply" disabled={busy || aiBusy || Boolean(playerError)} onclick={() => void applyPreview()}>{busy ? "Применяю…" : "Применить"}</button>
-                <button class="tlw-btn" data-act="ai-cancel" disabled={busy || aiBusy} onclick={cancelPreview}>Отменить</button>
+                <button class="tlw-btn" disabled={Boolean(playerError)} onclick={() => { playhead = 0; playing = true; }}>▶ Preview</button>
+                <button class="tlw-btn primary" data-act="ai-apply" disabled={busy || aiBusy || Boolean(playerError)} onclick={() => void applyPreview()}>{busy ? "Applying…" : "Apply"}</button>
+                <button class="tlw-btn" data-act="ai-cancel" disabled={busy || aiBusy} onclick={cancelPreview}>Cancel</button>
               </div>
             </div>
-          {:else if entry.kind === "applied"}<span class="video-chat-outcome">✓ Изменения применены</span>
-          {:else if entry.kind === "preview"}<span class="video-chat-outcome">Предложение не применено</span>
-          {:else if entry.kind === "cancelled"}<span class="video-chat-outcome">Отменено</span>{/if}
+          {:else if entry.kind === "applied"}<span class="video-chat-outcome">✓ Changes applied</span>
+          {:else if entry.kind === "preview"}<span class="video-chat-outcome">Suggestion not applied</span>
+          {:else if entry.kind === "cancelled"}<span class="video-chat-outcome">Cancelled</span>{/if}
           {#if entry.role === "user" && !aiBusy && !preview}
-            <button class="video-chat-reuse" aria-label="Редактировать сообщение" onclick={() => { aiPrompt = entry.content; chatInput?.focus(); }}>Повторить или изменить</button>
+            <button class="video-chat-reuse" aria-label="Edit message" onclick={() => { aiPrompt = entry.content; chatInput?.focus(); }}>Retry or edit</button>
           {/if}
         </article>
       {/each}
       {#if aiBusy}
-        <div class="video-chat-thinking" role="status"><span class="video-chat-pulse"></span>{accountProvider === "claude" ? "Claude" : "GPT"} готовит ответ <span>{aiElapsed} с</span></div>
+        <div class="video-chat-thinking" role="status"><span class="video-chat-pulse"></span>{accountProvider === "claude" ? "Claude" : "GPT"} preparing a reply <span>{aiElapsed} s</span></div>
       {/if}
     </div>
     <div class="video-chat-composer">
       {#if !followChat && chatMessages.length}
-        <button class="video-chat-latest" onclick={() => { followChat = true; if (chatLog) chatLog.scrollTop = chatLog.scrollHeight; }}>К последнему ответу ↓</button>
+        <button class="video-chat-latest" onclick={() => { followChat = true; if (chatLog) chatLog.scrollTop = chatLog.scrollHeight; }}>Latest reply ↓</button>
       {/if}
-      {#if preview}<p class="video-chat-compose-hint">Примените или отмените предложенный монтаж, чтобы продолжить.</p>{/if}
+      {#if preview}<p class="video-chat-compose-hint">Apply or discard the proposed edit to continue.</p>{/if}
       <div class="video-chat-input-box">
-        <textarea class="tlw-ai-input" data-act="ai-prompt" bind:this={chatInput} aria-label="Промпт ИИ-режиссёра" rows="3" maxlength="6000"
-          placeholder={chatMessages.length ? "Ответьте или опишите следующую правку…" : "Что должно происходить в ролике?"}
+        <textarea class="tlw-ai-input" data-act="ai-prompt" bind:this={chatInput} aria-label="AI director prompt" rows="3" maxlength="6000"
+          placeholder={chatMessages.length ? "Reply or describe the next edit…" : "What should happen in the video?"}
           bind:value={aiPrompt} disabled={busy || !doc || Boolean(preview)}
           oninput={(event) => $flow.setNodeData(nodeId, { prompt: event.currentTarget.value })}
           onkeydown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); void runAiDirector(); } }}></textarea>
-        <div class="video-chat-send-row"><span>Enter — отправить · Shift+Enter — строка</span>
-          {#if aiBusy}<button class="tlw-btn" data-act="ai-stop" aria-label="Остановить ответ" onclick={stopAiDirector}>■ Стоп</button>
-          {:else}<button class="tlw-btn primary" data-act="ai-run" aria-label="Отправить сообщение" disabled={busy || !doc || !aiPrompt.trim() || Boolean(preview)} onclick={() => void runAiDirector()}>↑ Отправить</button>{/if}
+        <div class="video-chat-send-row"><span>Enter to send · Shift+Enter for a new line</span>
+          {#if aiBusy}<button class="tlw-btn" data-act="ai-stop" aria-label="Stop response" onclick={stopAiDirector}>■ Stop</button>
+          {:else}<button class="tlw-btn primary" data-act="ai-run" aria-label="Send message" disabled={busy || !doc || !aiPrompt.trim() || Boolean(preview)} onclick={() => void runAiDirector()}>↑ Send</button>{/if}
         </div>
       </div>
-      <p class="video-chat-footnote">Переписка сохраняется в этой видеоноде.</p>
+      <p class="video-chat-footnote">This conversation is saved in this Video node.</p>
     </div>
   </aside>
   </div>
@@ -1292,6 +1296,7 @@
   .tlw-player-error { position: absolute; z-index: 10; max-width: 80%; padding: 16px; border: 1px solid var(--dna-border-strong); border-radius: 8px; background: var(--dna-panel); color: var(--dna-text); font-size: 13px; }
   .tlw-stage { display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--dna-bg); }
   .tlw-artboard { position: relative; transform-origin: center center; box-shadow: 0 0 0 1px var(--dna-border-strong); flex: none; }
+  .tlw-camera { position: absolute; inset: 0; transform-origin: 50% 50%; }
   .tlw-irhost { position: absolute; inset: 0; overflow: hidden; }
   .tlw-empty { color: var(--dna-faint); padding: 12px 6px; }
   .tlw-insp-name { font-weight: 600; margin-bottom: 8px; }

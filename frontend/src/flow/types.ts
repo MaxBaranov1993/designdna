@@ -7,8 +7,8 @@ export const PAGE_INPUT_NAMES = Array.from({ length: PAGE_INPUT_LIMIT }, (_, ind
 /* Типы данных актуальных нод графа (см. docs/NODES.md).
  * Runtime-поля legacy (el/geo/history) в React Flow state не переносятся. */
 
-/* kind tokens: design-токены из Source Import/Style DNA в Reskin/Derive. */
-/* ds — ссылка на опубликованную дизайн-систему (systemId@revision), чтобы ДС шла в Генератор проводом, а не «из воздуха» */
+/* kind tokens: palette/type only → Reskin, Derive, Page. */
+/* kind ds: full Design System (systemId@revision) → Generator. Best practice: wire ds, not bare tokens. */
 export type PortKind = "text" | "ir" | "tokens" | "artifact" | "interaction" | "motion" | "timeline" | "video" | "ds" | "image";
 export type PortDecl = { name: string; label: string; kind: PortKind; kinds: PortKind[] };
 
@@ -294,6 +294,12 @@ export type SourceImportNodeData = {
   blocks: BlockParseBlock[];
   tokens: Record<string, unknown> | null;
   sourceArtifact?: SourceArtifact | null;
+  /** Legacy switch kept for saved projects: "precise" = tablet + mobile + AI repair. */
+  importProfile?: "fast" | "precise";
+  /** Extra viewports captured with the always-on desktop pass (on demand). */
+  captureViewports?: ("tablet" | "mobile")[];
+  /** AI repair of blocks that fail the fidelity gate (off by default: the snapshot capture is exact). */
+  aiRepair?: boolean;
   /** Опциональный AI-проход: уточняет имена компонентов и роли блоков. */
   aiRefine?: boolean;
   aiProvider?: NodeProvider;

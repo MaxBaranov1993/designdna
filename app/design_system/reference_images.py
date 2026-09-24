@@ -94,12 +94,12 @@ def _block_image(evidence: dict, budget_left: int) -> tuple[str | None, int, str
     reference = previews.get("desktop") or previews.get("tablet") or previews.get("mobile")
     raw = styleguide._decode_preview(reference)
     if not raw:
-        return None, 0, "скриншот блока не удалось прочитать"
+        return None, 0, "could not read block screenshot"
     try:
         from PIL import Image
         image = Image.open(io.BytesIO(raw)).convert("RGB")
     except Exception as exc:  # noqa: BLE001
-        return None, 0, f"скриншот не декодируется: {exc}"
+        return None, 0, f"screenshot cannot be decoded: {exc}"
     if image.height > BLOCK_MAX_HEIGHT:
         image = image.crop((0, 0, image.width, BLOCK_MAX_HEIGHT))
     if image.width > BLOCK_MAX_WIDTH:
@@ -109,7 +109,7 @@ def _block_image(evidence: dict, budget_left: int) -> tuple[str | None, int, str
     image.save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
     payload = buffer.getvalue()
     if len(payload) > budget_left:
-        return None, 0, "скриншот пропущен: превышен бюджет изображений"
+        return None, 0, "screenshot skipped: image budget exceeded"
     return "data:image/jpeg;base64," + base64.b64encode(payload).decode("ascii"), len(payload), None
 
 
@@ -121,13 +121,13 @@ def render(document: dict, candidates: list[dict], *, max_total_bytes: int = MAX
     for candidate in candidates:
         if candidate.get("kind") == "block":
             evidence = (document.get("referenceAssets") or {}).get(str(candidate.get("evidenceKey") or ""))
-            url, size, note = _block_image(evidence, budget) if isinstance(evidence, dict) else (None, 0, "нет evidence")
+            url, size, note = _block_image(evidence, budget) if isinstance(evidence, dict) else (None, 0, "no evidence")
         else:
             component = _component_lookup(document, str(candidate.get("componentKey") or ""))
             url, size, note = (styleguide.proof_crop(document, component, budget_left=budget)
-                               if component is not None else (None, 0, "нет компонента"))
+                               if component is not None else (None, 0, "no component"))
         if not url:
-            candidate["skipped"] = note or "не отрисован"
+            candidate["skipped"] = note or "not rendered"
             continue
         budget -= size
         rendered.append({"part": {"type": "image_url", "image_url": {"url": url}},

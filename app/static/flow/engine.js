@@ -697,7 +697,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         line-height:var(--t-small-lh,1.5); font-weight:var(--t-small-weight,var(--fw-body)); }
       .ir-${uid} h1.t-eyebrow, .ir-${uid} h2.t-eyebrow, .ir-${uid} h3.t-eyebrow, .ir-${uid} h4.t-eyebrow { font-family:var(--font-body); font-size:var(--t-eyebrow-size, calc(12px * var(--fs)));
         line-height:var(--t-eyebrow-lh,1.2); letter-spacing:var(--t-eyebrow-tracking,.12em); font-weight:var(--t-eyebrow-weight,600); text-transform:uppercase; }
-      .ir-${uid} .sec, .ir-${uid} .sec-free { padding:var(--sec-py) 32px; position:relative; }
+      .ir-${uid} .sec, .ir-${uid} .sec-free { padding:var(--sec-py) var(--sec-px,32px); position:relative; }
       .ir-${uid} .sec-source { padding:0; position:relative; margin:0; }
       /* Источник объявляет лишние веса поверх одного файла (JetBrains Mono 400/500/600
          → один woff2), браузер там не синтезирует жирность. Захват хранит только
@@ -724,7 +724,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       .ir-${uid} .badge.tone-primary { background:var(--c-primary); color:#fff; border-color:transparent; }
       .ir-${uid} .badge.tone-accent { background:var(--c-accent); color:#fff; border-color:transparent; }
       .ir-${uid} .input { width:100%; padding:12px 16px; border-radius:var(--r-input); border:1px solid var(--c-border);
-        background:var(--c-bg); color:var(--c-text); font-size:calc(14px * var(--fs)); }
+        background:var(--c-bg); color:var(--c-text); font-family:inherit; font-size:calc(14px * var(--fs)); }
       .ir-${uid} .source-control, .ir-${uid} .source-input { appearance:none; background:transparent; border:0;
         color:inherit; font:inherit; text-decoration:none; }
       .ir-${uid} .icon-dot { width:34px; height:34px; border-radius:var(--r-btn); background:var(--c-primary);
@@ -815,6 +815,13 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     return s.join(";");
   }
+  function ownPaddingCss(frame) {
+    const p = frame && frame.padding;
+    if (typeof p === "number") return `padding:${p}px`;
+    if (Array.isArray(p) && p.length === 4) return `padding:${p.map((n) => Number(n) + "px").join(" ")}`;
+    if (Array.isArray(p) && p.length === 2) return `padding:${Number(p[0])}px ${Number(p[1])}px`;
+    return "";
+  }
   function withFrame(html, frame, parentFree, container, irPath, cls, parentFrame, extraCss) {
     const css = [frameCss(frame, parentFree, container, parentFrame), extraCss || ""].filter(Boolean).join(";");
     if (!css && !cls) return html;
@@ -840,7 +847,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const flexImage = flexShare ? el.type === "image" ? "flex:1 1 0;min-width:0" : "flex:1 1 0;min-width:min-content" : "";
       const hugText = (el.type === "text" || el.type === "heading") && el.frame && el.frame.width === "hug" ? "white-space:nowrap" : "";
       const extra = [clipText, flexImage, hugText].filter(Boolean).join(";");
-      const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, extra);
+      const wrapFrame = (el.type === "button" || el.type === "badge") && el.frame && el.frame.padding != null ? { ...el.frame, padding: void 0 } : el.frame;
+      const wrapped = withFrame(html, wrapFrame, parentFree, false, irPath, "", parentFrame, extra);
       out = wrapped === html && irPath ? flexImage ? `<div data-ir-path="${esc(irPath)}" style="${flexImage}">${html}</div>` : `<span data-ir-path="${esc(irPath)}" style="display:inline-block">${html}</span>` : wrapped;
     }
     if (isLockedNode(el)) {
@@ -901,10 +909,14 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         }
         const textCss = visualTextCss(el.style);
         const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
-        return `<a class="btn btn-${el.variant || "primary"}"${path}${styleAttr(el.style)}><span${textCss ? ` style="${textCss}"` : ""}>${esc(el.text || "")}</span></a>`;
+        const bf = el.frame || {};
+        const pad = ownPaddingCss(bf);
+        const fill = typeof bf.height === "number" ? "box-sizing:border-box;height:100%" : "";
+        const own = [pad, fill].filter(Boolean).join(";");
+        return `<a class="btn btn-${el.variant || "primary"}"${path}${styleAttr(el.style, own)}><span${textCss ? ` style="${textCss}"` : ""}>${esc(el.text || "")}</span></a>`;
       }
       case "badge":
-        return `<span class="badge${el.tone && el.tone !== "default" ? " tone-" + el.tone : ""}">${esc(el.text || el.label || "")}</span>`;
+        return `<span class="badge${el.tone && el.tone !== "default" ? " tone-" + el.tone : ""}"${styleAttr(el.style, ownPaddingCss(el.frame || {}))}>${esc(el.text || el.label || "")}</span>`;
       case "icon":
         return `<span class="icon-dot">${esc((el.icon || "✦").slice(0, 2))}</span>`;
       case "image":
@@ -914,7 +926,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         {
           const ratio = ASPECT_RATIO[el.aspect];
           const css = ratio ? ` style="aspect-ratio:${ratio};min-height:0"` : "";
-          return `<div class="img-ph"${css}><span>${esc(el.imagePrompt || el.alt || "изображение")}</span></div>`;
+          return `<div class="img-ph"${css}><span>${esc(el.imagePrompt || el.alt || "image")}</span></div>`;
         }
       case "divider":
         return `<div class="divider"></div>`;
@@ -945,12 +957,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           return `<div class="source-input"${path}${transformAttr(el.frame)}${css ? ` style="${css}"` : ""}>${kids}</div>`;
         }
         if (el.inputType === "textarea") {
-          return `<textarea class="input" placeholder="${esc(el.placeholder || el.label || "")}">${esc(el.value ?? "")}</textarea>`;
+          const f = el.frame || {};
+          const tall = [typeof f.minHeight === "number" ? f.minHeight : 0, typeof f.height === "number" ? f.height : 0].filter((v) => v > 0 && v <= 4e3);
+          const size = tall.length ? `min-height:${Math.max(...tall)}px;resize:vertical` : "";
+          return `<textarea class="input"${styleAttr(el.style, size)} placeholder="${esc(el.placeholder || el.label || "")}">${esc(el.value ?? "")}</textarea>`;
         }
         if (el.inputType === "select") {
-          return `<select class="input" aria-label="${esc(el.label || el.placeholder || "")}">${(el.items || []).map((item) => `<option${String(item) === String(el.value) ? " selected" : ""}>${esc(item)}</option>`).join("")}</select>`;
+          return `<select class="input"${styleAttr(el.style)} aria-label="${esc(el.label || el.placeholder || "")}">${(el.items || []).map((item) => `<option${String(item) === String(el.value) ? " selected" : ""}>${esc(item)}</option>`).join("")}</select>`;
         }
-        return `<input class="input" type="${["text", "search", "email", "tel", "url", "password", "number", "checkbox"].includes(el.inputType) ? el.inputType : "text"}" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value ?? "")}">`;
+        return `<input class="input"${styleAttr(el.style)} type="${["text", "search", "email", "tel", "url", "password", "number", "checkbox"].includes(el.inputType) ? el.inputType : "text"}" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value ?? "")}">`;
       case "frame": {
         const free = el.frame && el.frame.layout === "free";
         const inner = (el.children || []).map((c) => renderElement(c, uid, free, el.frame)).join("");
@@ -1018,7 +1033,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     const underlay = "";
     const combined = underlay + html + childrenHtml;
     const secStyle = visualCss(sec.style);
-    const railCss = sec.frame && typeof sec.frame.contentMaxWidth === "number" ? `--content-max-width:${sec.frame.contentMaxWidth}px;--content-gutter:${typeof sec.frame.contentGutter === "number" ? sec.frame.contentGutter : 0}px` : "";
+    const railCss = sec.frame && typeof sec.frame.contentMaxWidth === "number" ? `--content-max-width:${sec.frame.contentMaxWidth}px;--content-gutter:${typeof sec.frame.contentGutter === "number" ? sec.frame.contentGutter : 0}px` + // contentGutter — отступ контента от края страницы (колонка сайта из
+    // оболочки секции); боковой padding .sec сдвигал бы колонку ещё на 32px
+    (typeof sec.frame.contentGutter === "number" && sec.frame.contentGutter > 0 ? ";--sec-px:0px" : "") : "";
     const extraCss = [secStyle, railCss, absChildren ? "position:relative" : ""].filter(Boolean).join(";");
     return withFrame(
       combined,
@@ -1113,7 +1130,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
             </div></div></div></section>`;
       }
       if (v === "split-offset") {
-        const media = heroMedia(420, "margin-top:-64px;border-top-right-radius:0;border-bottom-right-radius:0") || `<div class="img-ph" style="min-height:420px;margin-top:-64px">${esc("медиа")}</div>`;
+        const media = heroMedia(420, "margin-top:-64px;border-top-right-radius:0;border-bottom-right-radius:0") || `<div class="img-ph" style="min-height:420px;margin-top:-64px">${esc("media")}</div>`;
         return `<section class="sec ${base}" style="overflow:hidden"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:56px;align-items:start">
           <div style="display:flex;flex-direction:column;padding-top:24px">${badge}${head}${sub}${btns}</div>
           <div style="position:relative;left:72px">${media}</div></div></section>`;
@@ -1127,7 +1144,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           <div>${items}</div></div></section>`;
       }
       if (v === "split" || v === "split-reverse") {
-        const media = p.media ? p.media.src ? `<div class="img-ph" style="min-height:320px;overflow:hidden;padding:0"><img src="${esc(p.media.src)}" alt="${esc(p.media.alt || "")}" style="display:block;width:100%;height:320px;object-fit:cover" decoding="sync"></div>` : `<div class="img-ph" style="min-height:320px">${esc(p.media.imagePrompt || p.media.alt || "")}</div>` : `<div class="img-ph" style="min-height:320px">медиа</div>`;
+        const media = p.media ? p.media.src ? `<div class="img-ph" style="min-height:320px;overflow:hidden;padding:0"><img src="${esc(p.media.src)}" alt="${esc(p.media.alt || "")}" style="display:block;width:100%;height:320px;object-fit:cover" decoding="sync"></div>` : `<div class="img-ph" style="min-height:320px">${esc(p.media.imagePrompt || p.media.alt || "")}</div>` : `<div class="img-ph" style="min-height:320px">media</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center">${badge}${head}${sub}${btns}</div>`;
         return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:48px;align-items:center">
           ${v === "split" ? txt + media : media + txt}</div></section>`;
@@ -1142,7 +1159,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         ${badge}${head}${sub}${btns}</div></section>`;
     }
     if (t === "logo-cloud") {
-      const logos = (sec.children && sec.children.length ? sec.children : [{ type: "text", text: "Партнёр" }, { type: "text", text: "Бренд" }, { type: "text", text: "Компания" }, { type: "text", text: "Сервис" }]).map((c) => `<span class="muted" style="font-family:var(--font-display);font-weight:700;font-size:calc(18px*var(--fs));opacity:.7">${esc(c.text || c.title || c.alt || "logo")}</span>`).join("");
+      const logos = (sec.children && sec.children.length ? sec.children : [{ type: "text", text: "Partner" }, { type: "text", text: "Brand" }, { type: "text", text: "Company" }, { type: "text", text: "Service" }]).map((c) => `<span class="muted" style="font-family:var(--font-display);font-weight:700;font-size:calc(18px*var(--fs));opacity:.7">${esc(c.text || c.title || c.alt || "logo")}</span>`).join("");
       const marquee = v === "marquee" ? ";overflow:hidden;white-space:nowrap" : "";
       return `<section class="sec ${base}" style="padding-top:32px;padding-bottom:32px${marquee}"><div class="wrap" style="text-align:center">
         ${p.heading ? `<p class="muted" data-ir-path="props.heading" style="margin-bottom:20px;font-size:calc(13px*var(--fs));text-transform:uppercase;letter-spacing:.08em">${esc(p.heading)}</p>` : ""}
@@ -1179,7 +1196,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     if (t === "feature-alternating") {
       const rows = (sec.children || []).map((c, i) => {
-        const media = c.src ? `<div class="img-ph" style="min-height:240px;padding:0;overflow:hidden"><img src="${esc(c.src)}" alt="${esc(c.alt || "")}" style="display:block;width:100%;height:240px;object-fit:cover" decoding="sync"></div>` : `<div class="img-ph" style="min-height:240px">${esc(c.imagePrompt || c.alt || "изображение")}</div>`;
+        const media = c.src ? `<div class="img-ph" style="min-height:240px;padding:0;overflow:hidden"><img src="${esc(c.src)}" alt="${esc(c.alt || "")}" style="display:block;width:100%;height:240px;object-fit:cover" decoding="sync"></div>` : `<div class="img-ph" style="min-height:240px">${esc(c.imagePrompt || c.alt || "image")}</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center;gap:12px">
           ${c.title || c.text ? `<h3>${esc(c.title || "")}</h3><p class="muted">${esc(c.text || "")}</p>` : renderElement(c, uid, false, sec.frame)}
           ${(c.children || []).map((ch) => renderElement(ch, uid, !!(c.frame && c.frame.layout === "free"), c.frame)).join("")}</div>`;
@@ -1198,14 +1215,14 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:20px">
         ${(sec.children || []).map((c, i) => `<div class="card"><div class="icon-dot" style="margin-bottom:12px">${i + 1}</div>
-          <h3 style="margin-bottom:8px">${esc(c.title || c.text || "Шаг " + (i + 1))}</h3><p class="muted">${esc(c.text || "")}</p></div>`).join("")}</div></div></section>`;
+          <h3 style="margin-bottom:8px">${esc(c.title || c.text || "Step " + (i + 1))}</h3><p class="muted">${esc(c.text || "")}</p></div>`).join("")}</div></div></section>`;
     }
     if (t === "gallery") {
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:16px">
         ${(sec.children || []).map((c, i) => {
         const height = v === "masonry" ? 140 + i * 67 % 120 : 200;
-        return c.src ? `<div class="img-ph" style="min-height:${height}px;padding:0;overflow:hidden"><img src="${esc(c.src)}" alt="${esc(c.alt || "")}" style="display:block;width:100%;height:${height}px;object-fit:cover" decoding="sync"></div>` : `<div class="img-ph" style="min-height:${height}px">${esc(c.imagePrompt || c.alt || "фото")}</div>`;
+        return c.src ? `<div class="img-ph" style="min-height:${height}px;padding:0;overflow:hidden"><img src="${esc(c.src)}" alt="${esc(c.alt || "")}" style="display:block;width:100%;height:${height}px;object-fit:cover" decoding="sync"></div>` : `<div class="img-ph" style="min-height:${height}px">${esc(c.imagePrompt || c.alt || "photo")}</div>`;
       }).join("")}</div></div></section>`;
     }
     if (t === "testimonials") {
@@ -1221,7 +1238,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:20px;align-items:stretch">
         ${(p.tiers || []).map((tier, i) => `<div class="card" style="display:flex;flex-direction:column;${tier.highlighted ? "border-color:var(--c-primary);box-shadow:var(--shadow);position:relative" : ""}">
-          ${tier.highlighted ? '<span class="badge tone-primary" style="position:absolute;top:-12px;left:50%;transform:translateX(-50%)">Популярный</span>' : ""}
+          ${tier.highlighted ? '<span class="badge tone-primary" style="position:absolute;top:-12px;left:50%;transform:translateX(-50%)">Popular</span>' : ""}
           <h3 data-ir-path="props.tiers.${i}.name">${esc(tier.name)}</h3>
           <div style="margin:12px 0"><span data-ir-path="props.tiers.${i}.price" style="font-family:var(--font-display);font-weight:var(--fw-display);font-size:calc(34px*var(--fs))">${esc(tier.price)}</span>
           ${tier.period ? `<span class="muted" data-ir-path="props.tiers.${i}.period"> ${esc(tier.period)}</span>` : ""}</div>
@@ -1250,7 +1267,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     if (t === "newsletter") {
       const form = `<div style="display:flex;gap:10px;${v === "minimal" ? "" : "justify-content:center;"}max-width:440px;margin:0 auto">
         <input class="input" placeholder="${esc(p.placeholder || "Email")}" data-ir-path="props.placeholder" style="flex:1">
-        <a class="btn btn-primary"><span data-ir-path="props.submitText">${esc(p.submitText || "Подписаться")}</span></a></div>`;
+        <a class="btn btn-primary"><span data-ir-path="props.submitText">${esc(p.submitText || "Subscribe")}</span></a></div>`;
       return `<section class="sec ${base}" style="${v === "boxed" ? "" : ""}"><div class="wrap" style="${v === "boxed" ? "background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--r-card);padding:48px;box-shadow:var(--shadow);" : ""}text-align:center">
         <h2 data-ir-path="props.heading" style="margin-bottom:10px">${esc(p.heading || "")}</h2>
         ${p.subheading ? `<p class="muted" data-ir-path="props.subheading" style="margin-bottom:24px">${esc(p.subheading)}</p>` : '<div style="margin-bottom:24px"></div>'}
@@ -1260,7 +1277,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const submit = p.submit || {};
       const submitFrame = sec._frames && sec._frames["props.submit"] || {};
       const submitCss = ["justify-content:center", frameCss(submitFrame, false, false), visualCss(submit.style)].filter(Boolean).join(";");
-      const submitText = submit.text ?? p.submitText ?? "Отправить";
+      const submitText = submit.text ?? p.submitText ?? "Send";
       const form = `<div class="card" style="display:flex;flex-direction:column;gap:14px">
         ${(p.fields || []).map((f, i) => {
         const path = `props.fields.${i}`;
@@ -1316,7 +1333,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         <span data-ir-path="props.text">${esc(p.text || "")}</span>${btnHtml(p.cta, "outline", "props.cta.text")}</div></section>`;
     }
     return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
-      ${renderChildren(sec.children, uid, Math.min(3, (sec.children || []).length || 0), sec.frame) || `<div class="card muted">Секция «${esc(t)}» (${esc(v)}): нет children для предпросмотра</div>`}</div></section>`;
+      ${renderChildren(sec.children, uid, Math.min(3, (sec.children || []).length || 0), sec.frame) || `<div class="card muted">Section “${esc(t)}» (${esc(v)}): no children to preview</div>`}</div></section>`;
   }
   function secHead(p) {
     if (!p.heading && !p.subheading) return "";
@@ -1553,6 +1570,11 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       else if (Array.isArray(rootFrame.padding) && rootFrame.padding.length === 4) artStyle.push(`padding:${rootFrame.padding.map((n) => n + "px").join(" ")}`);
       if (rootFree) artStyle.push("position:relative");
     }
+    const pageBackground = ir.meta && typeof ir.meta.pageBackground === "string" ? ir.meta.pageBackground.trim() : "";
+    const singleSourceBlock = legacySourceFrame !== null;
+    if (pageBackground && !singleSourceBlock && pageBackground.length <= 800 && !/[;{}<>"'\\\r\n]/.test(pageBackground) && !/url\s*\(|expression/i.test(pageBackground) && (safeColor(pageBackground) || /gradient\(/i.test(pageBackground))) {
+      artStyle.push(`background:${pageBackground}`);
+    }
     const css = `.ir-${uid}{${cssVars(tokens)}}` + baseCss(uid);
     const rootSourcePreview = ir.sourcePreview || ir.meta && ir.meta.sourcePreview;
     const sections = tree.map((sec, i) => {
@@ -1763,7 +1785,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   .geo-overlay.geo-handling { cursor:grabbing; }
   .geo-overlay * { pointer-events:none; }
   .geo-overlay .geo-h, .geo-overlay .geo-pad { pointer-events:auto; }
-  .geo-box { position:absolute; border:calc(1.5px * var(--geo-inv,1)) solid transparent; pointer-events:none; }
+  .geo-box { position:absolute; border:calc(1.5px * var(--geo-inv,1)) solid transparent; pointer-events:none; overflow:visible; }
   .geo-box.hover { border-color:rgba(120,120,160,.55); border-style:dashed; }
   .geo-box.selected { border-color:#0D99FF; }
   .geo-chip { position:absolute; top:calc(-20px * var(--geo-inv,1)); left:calc(-1px * var(--geo-inv,1));
@@ -1782,27 +1804,51 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   .geo-h.h-s  { bottom:calc(-4px * var(--geo-inv,1)); left:calc(50% - 4px * var(--geo-inv,1)); cursor:ns-resize; }
   .geo-h.h-sw { bottom:calc(-4px * var(--geo-inv,1)); left:calc(-4px * var(--geo-inv,1)); cursor:nesw-resize; }
   .geo-h.h-w  { top:calc(50% - 4px * var(--geo-inv,1)); left:calc(-4px * var(--geo-inv,1)); cursor:ew-resize; }
-  .geo-pad-guide { position:absolute; pointer-events:none; z-index:1; background:rgba(151,71,255,.72); }
-  .geo-pad-guide.pad-top, .geo-pad-guide.pad-bottom { height:calc(1px * var(--geo-inv,1)); }
-  .geo-pad-guide.pad-left, .geo-pad-guide.pad-right { width:calc(1px * var(--geo-inv,1)); }
-  .geo-pad { position:absolute; z-index:4; box-sizing:border-box; pointer-events:auto;
-    background:#9747ff; border:calc(1px * var(--geo-inv,1)) solid #fff;
-    box-shadow:0 0 0 calc(1px * var(--geo-inv,1)) rgba(151,71,255,.45); }
-  .geo-pad.pad-top, .geo-pad.pad-bottom { width:calc(34px * var(--geo-inv,1)); height:calc(7px * var(--geo-inv,1));
-    margin-left:calc(-17px * var(--geo-inv,1)); margin-top:calc(-3.5px * var(--geo-inv,1));
-    border-radius:calc(4px * var(--geo-inv,1)); cursor:ns-resize; }
-  .geo-pad.pad-left, .geo-pad.pad-right { width:calc(7px * var(--geo-inv,1)); height:calc(34px * var(--geo-inv,1));
-    margin-left:calc(-3.5px * var(--geo-inv,1)); margin-top:calc(-17px * var(--geo-inv,1));
-    border-radius:calc(4px * var(--geo-inv,1)); cursor:ew-resize; }
-  .geo-pad::after { content:attr(data-value); position:absolute; opacity:0; pointer-events:none; transition:opacity 80ms linear;
-    min-width:calc(22px * var(--geo-inv,1)); padding:calc(2px * var(--geo-inv,1)) calc(5px * var(--geo-inv,1));
-    border-radius:calc(4px * var(--geo-inv,1)); background:#9747ff; color:#fff;
-    font:600 calc(10px * var(--geo-inv,1))/1.2 'Inter',system-ui,sans-serif; text-align:center; white-space:nowrap; }
+  /* Padding UX: fills inside, grips + value chips OUTSIDE the frame */
+  .geo-pad-fill { position:absolute; pointer-events:none; z-index:1;
+    background:rgba(151,71,255,.22); }
+  .geo-pad-guide { position:absolute; pointer-events:none; z-index:2;
+    background:rgba(151,71,255,.85); }
+  .geo-pad-guide.pad-top, .geo-pad-guide.pad-bottom { height:calc(1.5px * var(--geo-inv,1));
+    margin-top:calc(-0.75px * var(--geo-inv,1)); }
+  .geo-pad-guide.pad-left, .geo-pad-guide.pad-right { width:calc(1.5px * var(--geo-inv,1));
+    margin-left:calc(-0.75px * var(--geo-inv,1)); }
+  .geo-pad { position:absolute; z-index:5; box-sizing:border-box; pointer-events:auto;
+    background:#9747ff; border:calc(1.5px * var(--geo-inv,1)) solid #fff;
+    box-shadow:0 0 0 calc(1px * var(--geo-inv,1)) rgba(151,71,255,.35),
+      0 calc(2px * var(--geo-inv,1)) calc(6px * var(--geo-inv,1)) rgba(0,0,0,.28); }
+  .geo-pad.pad-top, .geo-pad.pad-bottom { width:calc(48px * var(--geo-inv,1)); height:calc(12px * var(--geo-inv,1));
+    margin-left:calc(-24px * var(--geo-inv,1)); margin-top:calc(-6px * var(--geo-inv,1));
+    border-radius:calc(999px * var(--geo-inv,1)); cursor:ns-resize; }
+  .geo-pad.pad-left, .geo-pad.pad-right { width:calc(12px * var(--geo-inv,1)); height:calc(48px * var(--geo-inv,1));
+    margin-left:calc(-6px * var(--geo-inv,1)); margin-top:calc(-24px * var(--geo-inv,1));
+    border-radius:calc(999px * var(--geo-inv,1)); cursor:ew-resize; }
+  .geo-pad::before { content:''; position:absolute; pointer-events:auto; }
+  .geo-pad.pad-top::before, .geo-pad.pad-bottom::before {
+    left:calc(-12px * var(--geo-inv,1)); right:calc(-12px * var(--geo-inv,1));
+    top:calc(-10px * var(--geo-inv,1)); bottom:calc(-10px * var(--geo-inv,1)); }
+  .geo-pad.pad-left::before, .geo-pad.pad-right::before {
+    top:calc(-12px * var(--geo-inv,1)); bottom:calc(-12px * var(--geo-inv,1));
+    left:calc(-10px * var(--geo-inv,1)); right:calc(-10px * var(--geo-inv,1)); }
+  .geo-pad::after { content:attr(data-value); position:absolute; opacity:.95; pointer-events:none;
+    transition:opacity 80ms linear;
+    min-width:calc(28px * var(--geo-inv,1)); padding:calc(3px * var(--geo-inv,1)) calc(7px * var(--geo-inv,1));
+    border-radius:calc(6px * var(--geo-inv,1)); background:rgba(24,24,27,.96); color:#fff;
+    border:1px solid rgba(151,71,255,.55);
+    font:600 calc(11px * var(--geo-inv,1))/1.2 'Inter',system-ui,sans-serif; text-align:center; white-space:nowrap;
+    box-shadow:0 calc(2px * var(--geo-inv,1)) calc(8px * var(--geo-inv,1)) rgba(0,0,0,.3); }
+  .geo-pad[data-zero='1']::after { opacity:0; }
   .geo-pad:hover::after, .geo-pad.active::after { opacity:1; }
-  .geo-pad.pad-top::after, .geo-pad.pad-bottom::after { left:50%; transform:translateX(-50%); top:calc(9px * var(--geo-inv,1)); }
-  .geo-pad.pad-bottom::after { top:auto; bottom:calc(9px * var(--geo-inv,1)); }
-  .geo-pad.pad-left::after, .geo-pad.pad-right::after { top:50%; transform:translateY(-50%); left:calc(9px * var(--geo-inv,1)); }
-  .geo-pad.pad-right::after { left:auto; right:calc(9px * var(--geo-inv,1)); }
+  /* value chips sit further outside so they never cover content */
+  .geo-pad.pad-top::after { left:50%; transform:translateX(-50%);
+    bottom:calc(100% + 6px * var(--geo-inv,1)); top:auto; }
+  .geo-pad.pad-bottom::after { left:50%; transform:translateX(-50%);
+    top:calc(100% + 6px * var(--geo-inv,1)); bottom:auto; }
+  .geo-pad.pad-left::after { top:50%; transform:translateY(-50%);
+    right:calc(100% + 6px * var(--geo-inv,1)); left:auto; }
+  .geo-pad.pad-right::after { top:50%; transform:translateY(-50%);
+    left:calc(100% + 6px * var(--geo-inv,1)); right:auto; }
+  .geo-pad:hover, .geo-pad.active { background:#a855ff; }
   .geo-marquee { position:absolute; border:calc(1px * var(--geo-inv,1)) solid #0D99FF; background:rgba(13,153,255,.08);
     pointer-events:none; z-index:60; }
   .geo-guide { position:absolute; pointer-events:none; z-index:58; }
@@ -1967,7 +2013,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     function refuseLocked(ref) {
       const node = lockedNodeFor(ref);
       if (!node) return false;
-      hint("Слой заблокирован: " + lockedReason(node));
+      hint("Layer locked: " + lockedReason(node));
       return true;
     }
     function getFrame(ref) {
@@ -2023,14 +2069,14 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     function labelOf(ref) {
       const node = irNodeAt(ref);
-      if (ref.secIdx == null) return "артборд";
+      if (ref.secIdx == null) return "artboard";
       if (ref.path == null) return "section · " + (node ? node.type : "?");
-      if (/^props\.fields\.\d+$/.test(ref.path)) return "поле формы · " + String(node && (node.label || node.placeholder) || "без названия");
-      if (/^props\.fields\.\d+\.parts\.label$/.test(ref.path)) return "подпись поля";
-      if (/^props\.fields\.\d+\.parts\.control$/.test(ref.path)) return "поле ввода";
-      if (ref.path === "props.submit") return "кнопка формы · " + String(node && node.text || "Отправить");
+      if (/^props\.fields\.\d+$/.test(ref.path)) return "form field · " + String(node && (node.label || node.placeholder) || "untitled");
+      if (/^props\.fields\.\d+\.parts\.label$/.test(ref.path)) return "field label";
+      if (/^props\.fields\.\d+\.parts\.control$/.test(ref.path)) return "input field";
+      if (ref.path === "props.submit") return "form button · " + String(node && node.text || "Send");
       if (ref.path && ref.path.startsWith("props.")) return ref.path.replace("props.", "");
-      return node && node.type ? node.type : "узел";
+      return node && node.type ? node.type : "node";
     }
     function screenToCanvas(clientX, clientY) {
       const base = previewEl.getBoundingClientRect();
@@ -2103,9 +2149,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }
       return null;
     }
-    function hitTest(clientX, clientY, deep) {
+    function hitTest(clientX, clientY, deep, cachedTargets) {
       const pt = screenToCanvas(clientX, clientY);
-      const targets = collectHitTargets();
+      const targets = cachedTargets || collectHitTargets();
       const hits = [];
       for (let i = targets.length - 1; i >= 0; i--) {
         const t = targets[i];
@@ -2175,9 +2221,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       return null;
     }
     const SNAP_THRESHOLD = 4;
-    function computeGuides(movingRef, movingRect) {
+    function computeGuides(movingRef, movingRect, cachedTargets) {
       const snapThr = SNAP_THRESHOLD / scale();
-      const targets = collectHitTargets().filter((t) => refKey(t.ref) !== refKey(movingRef));
+      const targets = (cachedTargets || collectHitTargets()).filter((t) => refKey(t.ref) !== refKey(movingRef));
       const guides = [];
       const distances = [];
       let snapDx = 0, snapDy = 0;
@@ -2312,19 +2358,31 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       });
       return { guides: uniqueGuides, snaps: { dx: snapDx, dy: snapDy }, distances: Object.values(closestDist), eq };
     }
+    function guidesLayer() {
+      let layer = overlay().querySelector(":scope > .geo-guides-layer");
+      if (!layer) {
+        layer = document.createElement("div");
+        layer.className = "geo-guides-layer";
+        layer.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:58;";
+        overlay().appendChild(layer);
+      }
+      return layer;
+    }
     function renderGuides(guidesData) {
-      overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line, .geo-eq, .geo-eq-label").forEach((el) => el.remove());
+      const layer = guidesLayer();
+      layer.innerHTML = "";
       if (!guidesData) return;
       const k = canvasK();
       const inv = 1 / overlayScale();
+      const light = guidesData.distances && guidesData.distances.length > 6 || (guidesData.eq || []).length > 4;
       guidesData.guides.forEach((g) => {
         const el = document.createElement("div");
         el.className = "geo-guide " + (g.axis === "h" ? "geo-guide-h" : "geo-guide-v");
         if (g.axis === "h") el.style.top = g.pos * k + "px";
         else el.style.left = g.pos * k + "px";
-        overlay().appendChild(el);
+        layer.appendChild(el);
       });
-      guidesData.distances.forEach((d) => {
+      if (!light) guidesData.distances.forEach((d) => {
         const line = document.createElement("div");
         line.className = "geo-dist-line " + (d.type === "h" ? "geo-dist-line-h" : "geo-dist-line-v");
         if (d.type === "h") {
@@ -2336,7 +2394,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           line.style.height = (d.to - d.from) * k + "px";
           line.style.left = d.x * k + "px";
         }
-        overlay().appendChild(line);
+        layer.appendChild(line);
         const label = document.createElement("div");
         label.className = "geo-dist";
         label.textContent = Math.round(d.val) + "px";
@@ -2347,9 +2405,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           label.style.left = d.x * k + 4 * inv + "px";
           label.style.top = (d.from + d.to) / 2 * k - 6 * inv + "px";
         }
-        overlay().appendChild(label);
+        layer.appendChild(label);
       });
-      (guidesData.eq || []).forEach((d) => {
+      if (!light) (guidesData.eq || []).forEach((d) => {
         const region = document.createElement("div");
         region.className = "geo-eq";
         if (d.type === "h") {
@@ -2363,7 +2421,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           region.style.left = d.cross0 * k + "px";
           region.style.width = Math.max(2, d.cross1 - d.cross0) * k + "px";
         }
-        overlay().appendChild(region);
+        layer.appendChild(region);
         const label = document.createElement("div");
         label.className = "geo-eq-label";
         label.textContent = Math.round(d.val) + "px";
@@ -2374,11 +2432,13 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           label.style.left = d.cross0 * k + 4 * inv + "px";
           label.style.top = (d.from + d.to) / 2 * k - 6 * inv + "px";
         }
-        overlay().appendChild(label);
+        layer.appendChild(label);
       });
     }
     function clearGuides() {
-      overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line, .geo-eq, .geo-eq-label").forEach((el) => el.remove());
+      const layer = overlay().querySelector(":scope > .geo-guides-layer");
+      if (layer) layer.innerHTML = "";
+      else overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line, .geo-eq, .geo-eq-label").forEach((el) => el.remove());
     }
     function parentOf(ref) {
       const ir = getIR();
@@ -2462,9 +2522,23 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     function boxRect(el) {
       const base = previewEl.getBoundingClientRect();
-      const r = el.getBoundingClientRect();
-      const ow = previewEl.offsetWidth;
-      const s = ow > 0 ? previewEl.getBoundingClientRect().width / ow : 1;
+      let s = overlayScale();
+      const gs = scale();
+      if (!(s > 0)) s = 1;
+      if (gs > 0 && Math.abs(gs - s) / s > 0.02) s = gs;
+      let r = el.getBoundingClientRect();
+      try {
+        const onlyText = el.childNodes.length && [...el.childNodes].every(
+          (n) => n.nodeType === 3 || n.nodeType === 1 && ["BR", "WBR"].includes(n.nodeName)
+        );
+        if (onlyText && (el.textContent || "").trim()) {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const tr = range.getBoundingClientRect();
+          if (tr.width >= 1 && tr.height >= 1) r = tr;
+        }
+      } catch (_) {
+      }
       return {
         left: (r.left - base.left) / s,
         top: (r.top - base.top) / s,
@@ -2473,18 +2547,23 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       };
     }
     function placeBox(box, r) {
+      box.style.transform = "";
+      box.style.willChange = "";
       box.style.left = r.left + "px";
       box.style.top = r.top + "px";
-      box.style.width = r.width + "px";
-      box.style.height = r.height + "px";
+      box.style.width = Math.max(1, r.width) + "px";
+      box.style.height = Math.max(1, r.height) + "px";
       box.hidden = false;
     }
     function chipText(ref) {
-      const f = (irNodeAt(ref) || {}).frame || {};
       const el = domAt(ref);
-      const s = scale();
-      const w = typeof f.width === "number" ? f.width : el ? Math.round(el.getBoundingClientRect().width / s) : "?";
-      const h = typeof f.height === "number" ? f.height : el ? Math.round(el.getBoundingClientRect().height / s) : "?";
+      if (el) {
+        const r = boxRect(el);
+        return `${labelOf(ref)} · ${Math.round(r.width)}×${Math.round(r.height)}`;
+      }
+      const f = (irNodeAt(ref) || {}).frame || {};
+      const w = typeof f.width === "number" ? Math.round(f.width) : "?";
+      const h = typeof f.height === "number" ? Math.round(f.height) : "?";
       return `${labelOf(ref)} · ${w}×${h}`;
     }
     function addHandles(box) {
@@ -2524,30 +2603,39 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     function positionPaddingHandles(box, pads) {
       const [top, right, bottom, left] = pads;
       const values = { top, right, bottom, left };
-      const insetPx = 10 / overlayScale();
-      const insetY = Math.min(insetPx, Math.max(2, (box.offsetHeight || 40) * 0.2));
-      const insetX = Math.min(insetPx, Math.max(2, (box.offsetWidth || 40) * 0.2));
+      const out = 16 / overlayScale();
       ["top", "right", "bottom", "left"].forEach((side) => {
+        const fill = box.querySelector(`.geo-pad-fill.pad-${side}`);
         const guide = box.querySelector(`.geo-pad-guide.pad-${side}`);
         const handle = box.querySelector(`.geo-pad.pad-${side}`);
         const value = Math.max(0, values[side]);
         if (!guide || !handle) return;
-        handle.dataset.value = `${Math.round(value)} px`;
+        const rounded = Math.round(value);
+        handle.dataset.value = `${rounded}`;
+        handle.dataset.zero = rounded === 0 ? "1" : "0";
+        handle.style.top = "";
+        handle.style.right = "";
+        handle.style.bottom = "";
+        handle.style.left = "";
         if (side === "top") {
+          if (fill) fill.style.cssText = `top:0;left:0;right:0;height:${value}px`;
           guide.style.cssText = `top:${value}px;left:${left}px;right:${right}px`;
-          handle.style.top = value + insetY + "px";
+          handle.style.top = -out + "px";
           handle.style.left = "50%";
         } else if (side === "bottom") {
+          if (fill) fill.style.cssText = `bottom:0;left:0;right:0;height:${value}px`;
           guide.style.cssText = `bottom:${value}px;left:${left}px;right:${right}px`;
-          handle.style.bottom = value + insetY + "px";
+          handle.style.bottom = -out + "px";
           handle.style.left = "50%";
         } else if (side === "left") {
+          if (fill) fill.style.cssText = `left:0;top:${top}px;bottom:${bottom}px;width:${value}px`;
           guide.style.cssText = `left:${value}px;top:${top}px;bottom:${bottom}px`;
-          handle.style.left = value + insetX + "px";
+          handle.style.left = -out + "px";
           handle.style.top = "50%";
         } else {
+          if (fill) fill.style.cssText = `right:0;top:${top}px;bottom:${bottom}px;width:${value}px`;
           guide.style.cssText = `right:${value}px;top:${top}px;bottom:${bottom}px`;
-          handle.style.right = value + insetX + "px";
+          handle.style.right = -out + "px";
           handle.style.top = "50%";
         }
       });
@@ -2555,6 +2643,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     function addPaddingHandles(box, ref, el) {
       if (!canEditPadding(ref)) return;
       ["top", "right", "bottom", "left"].forEach((side) => {
+        const fill = document.createElement("span");
+        fill.className = `geo-pad-fill pad-${side}`;
+        box.appendChild(fill);
         const guide = document.createElement("span");
         guide.className = `geo-pad-guide pad-${side}`;
         box.appendChild(guide);
@@ -2619,20 +2710,36 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const box = overlay().querySelector(".geo-box.hover");
       if (box) box.hidden = true;
     }
+    let hoverRaf = null;
+    let hoverPointer = null;
+    let hoverTargets = null;
+    let hoverTargetsAt = 0;
     function onHover(e) {
       if (drag || marquee) return;
-      const box = overlay().querySelector(".geo-box.hover");
-      const ref = hitTest(e.clientX, e.clientY);
-      if (!ref || selections.some((s) => refKey(s.ref) === refKey(ref))) {
-        box.hidden = true;
-        overlay().style.cursor = "default";
-        return;
-      }
-      const el = domAt(ref);
-      if (el) {
-        placeBox(box, boxRect(el));
-        overlay().style.cursor = "move";
-      }
+      hoverPointer = e;
+      if (hoverRaf) return;
+      hoverRaf = requestAnimationFrame(() => {
+        hoverRaf = null;
+        if (!hoverPointer || drag || marquee) return;
+        const ev = hoverPointer;
+        const box = overlay().querySelector(".geo-box.hover");
+        const now = performance.now();
+        if (!hoverTargets || now - hoverTargetsAt > 120) {
+          hoverTargets = collectHitTargets();
+          hoverTargetsAt = now;
+        }
+        const ref = hitTest(ev.clientX, ev.clientY, false, hoverTargets);
+        if (!ref || selections.some((s) => refKey(s.ref) === refKey(ref))) {
+          box.hidden = true;
+          overlay().style.cursor = "default";
+          return;
+        }
+        const el = domAt(ref);
+        if (el) {
+          placeBox(box, boxRect(el));
+          overlay().style.cursor = "move";
+        }
+      });
     }
     function select(ref) {
       if (!ref) return clear();
@@ -2816,7 +2923,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const pt = screenToCanvas(e.clientX, e.clientY);
       const cont = containerAt(pt) || rootSectionFallback();
       if (!cont) {
-        notice("Рисовать можно внутри артборда — начните перетаскивание на макете.");
+        notice("Draw inside the artboard — start dragging on the layout.");
         return;
       }
       const el = document.createElement("div");
@@ -2884,9 +2991,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       } else if (tool === "image") {
         fr.width = Math.round(clicked ? 240 : Math.max(40, rw));
         fr.height = Math.round(clicked ? 160 : Math.max(40, rh));
-        child = { type: "image", sourceKey: nextUid(), alt: "изображение", frame: fr };
+        child = { type: "image", sourceKey: nextUid(), alt: "image", frame: fr };
       } else if (tool === "text") {
-        child = { type: "text", sourceKey: nextUid(), text: "Новый текст", frame: fr };
+        child = { type: "text", sourceKey: nextUid(), text: "New text", frame: fr };
       } else {
         fr.width = Math.round(clicked ? 240 : Math.max(40, rw));
         fr.height = Math.round(clicked ? 160 : Math.max(40, rh));
@@ -3032,10 +3139,6 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         tx = 0;
         ty = 0;
       }
-      d.wLive = w;
-      d.hLive = h;
-      d.txLive = tx;
-      d.tyLive = ty;
       if (dir.includes("e") || dir.includes("w")) {
         d.el.style.minWidth = "0px";
         d.el.style.maxWidth = "none";
@@ -3044,20 +3147,35 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         d.el.style.minHeight = "0px";
         d.el.style.maxHeight = "none";
       }
-      d.el.style.width = w + "px";
-      d.el.style.height = h + "px";
-      const node = irNodeAt(d.ref);
-      const hasKids = node && Array.isArray(node.children) && node.children.length;
-      if (d.dir.length === 2 && hasKids && d.w0 > 0 && d.h0 > 0) {
-        const ksx = Math.max(0.1, w / d.w0), ksy = Math.max(0.1, h / d.h0);
-        const origin = { se: "0 0", sw: "100% 0", ne: "0 100%", nw: "100% 100%" }[d.dir] || "0 0";
-        d.el.style.transformOrigin = origin;
-        d.el.style.transform = `translate(${tx}px, ${ty}px) scale(${ksx}, ${ksy})`;
-      } else {
-        d.el.style.transform = tx || ty ? `translate(${tx}px, ${ty}px)` : "";
-      }
+      w = Math.round(w);
+      h = Math.round(h);
+      d.wLive = w;
+      d.hLive = h;
+      d.txLive = Math.round(tx);
+      d.tyLive = Math.round(ty);
+      const ksx = d.w0 > 0 ? Math.max(0.05, w / d.w0) : 1;
+      const ksy = d.h0 > 0 ? Math.max(0.05, h / d.h0) : 1;
+      const origin = {
+        e: "0 50%",
+        w: "100% 50%",
+        n: "50% 100%",
+        s: "50% 0",
+        se: "0 0",
+        sw: "100% 0",
+        ne: "0 100%",
+        nw: "100% 100%"
+      }[d.dir] || "0 0";
+      d.el.style.transformOrigin = origin;
+      d.el.style.willChange = "transform";
+      d.el.style.transform = `translate3d(${Math.round(tx)}px, ${Math.round(ty)}px, 0) scale(${ksx}, ${ksy})`;
       const chip = overlay().querySelector(".geo-box.selected:last-child .geo-chip");
-      if (chip) chip.textContent = `${Math.round(w)}×${Math.round(h)}`;
+      if (chip) chip.textContent = `${w}×${h}`;
+      const box = overlay().querySelector(".geo-box.selected:last-child");
+      if (box && d.boxW0 != null) {
+        box.style.width = d.boxW0 * ksx + "px";
+        box.style.height = d.boxH0 * ksy + "px";
+        if (tx || ty) box.style.transform = `translate3d(${Math.round(tx) * canvasK()}px, ${Math.round(ty) * canvasK()}px, 0)`;
+      }
     }
     function livePadding(d, dx, dy, e) {
       const pads = d.padding0.slice();
@@ -3387,6 +3505,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       if (!el) return;
       const s = scale();
       const r = el.getBoundingClientRect();
+      const box = overlay().querySelector(".geo-box.selected:last-child");
+      const br = box ? box.getBoundingClientRect() : null;
       drag = {
         ref: primary.ref,
         type: "resize",
@@ -3396,7 +3516,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         moved: true,
         el,
         w0: r.width / s,
-        h0: r.height / s
+        h0: r.height / s,
+        boxW0: br ? br.width / overlayScale() : r.width / overlayScale(),
+        boxH0: br ? br.height / overlayScale() : r.height / overlayScale()
       };
       overlay().setPointerCapture(e.pointerId);
       overlay().addEventListener("pointermove", onDragMove);
@@ -3451,10 +3573,14 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         drag.moved = true;
         if (drag.type === "move") {
           drag.els = selections.filter((s2) => s2.ref.secIdx != null).map((s2) => ({ ref: s2.ref, el: domAt(s2.ref) })).filter((d) => d.el);
+          drag.guideTargets = collectHitTargets();
           if (drag.els.length === 1) {
-            const t = collectHitTargets().find((tt) => refKey(tt.ref) === refKey(drag.els[0].ref));
+            const t = drag.guideTargets.find((tt) => refKey(tt.ref) === refKey(drag.els[0].ref));
             if (t) drag.originRect = { x: t.x, y: t.y, w: t.w, h: t.h };
           }
+          drag.els.forEach((d) => {
+            if (d.el) d.el.style.willChange = "transform";
+          });
         }
       }
       const s = scale();
@@ -3476,7 +3602,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
             const r = boxRect(d0.el);
             moving = { x: r.left + tx, y: r.top + ty, w: r.width, h: r.height };
           }
-          const guidesData = computeGuides(d0.ref, moving);
+          const guidesData = computeGuides(d0.ref, moving, drag.guideTargets);
           tx += guidesData.snaps.dx;
           ty += guidesData.snaps.dy;
           drag.smartSnapped = !!(guidesData.snaps.dx || guidesData.snaps.dy || guidesData.eq && guidesData.eq.length);
@@ -3486,11 +3612,21 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         } else {
           clearGuides();
         }
+        const vtx = Math.round(tx), vty = Math.round(ty);
+        drag.liveTx = vtx;
+        drag.liveTy = vty;
+        const xf = `translate3d(${vtx}px, ${vty}px, 0)`;
         drag.els.forEach((d) => {
-          d.el.style.transform = `translate(${tx}px, ${ty}px)`;
+          d.el.style.transform = xf;
+        });
+        const k = canvasK();
+        const boxXf = `translate3d(${vtx * k}px, ${vty * k}px, 0)`;
+        overlay().querySelectorAll(".geo-box.selected").forEach((box) => {
+          box.style.transform = boxXf;
+          box.style.willChange = "transform";
         });
         const chip = overlay().querySelector(".geo-box.selected:last-child .geo-chip");
-        if (chip) chip.textContent = `Δ ${Math.round(tx)} · ${Math.round(ty)}`;
+        if (chip) chip.textContent = `Δ ${vtx} · ${vty}`;
       } else if (drag.type === "padding") {
         livePadding(drag, dx / s, dy / s, e);
       } else if (drag.type === "resize-multi") {
@@ -3535,17 +3671,43 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }
       if (d.type === "move") {
         d.els && d.els.forEach((de) => {
-          if (de.el) de.el.style.transform = "";
+          if (de.el) {
+            de.el.style.transform = "";
+            de.el.style.willChange = "";
+          }
+        });
+        overlay().querySelectorAll(".geo-box.selected").forEach((box) => {
+          box.style.transform = "";
+          box.style.willChange = "";
         });
         clearGuides();
+        if (d.liveTx != null && d.liveTy != null && !d.altKey) {
+          dx = d.liveTx;
+          dy = d.liveTy;
+        }
         if (d.altKey) commitDuplicateMove(dx, dy);
         else commitMoveAll(dx, dy);
       } else if (d.type === "padding") commitPadding(d);
       else if (d.type === "resize-multi") {
-        if (d.el) d.el.style.transform = "";
+        if (d.el) {
+          d.el.style.transform = "";
+          d.el.style.willChange = "";
+        }
+        overlay().querySelectorAll(".geo-box.selected").forEach((box) => {
+          box.style.transform = "";
+          box.style.willChange = "";
+        });
         commitResizeMulti(d);
       } else {
-        d.el.style.transform = "";
+        if (d.el) {
+          d.el.style.transform = "";
+          d.el.style.willChange = "";
+          d.el.style.transformOrigin = "";
+        }
+        overlay().querySelectorAll(".geo-box.selected").forEach((box) => {
+          box.style.transform = "";
+          box.style.willChange = "";
+        });
         commitResize(d);
       }
     }
@@ -3695,7 +3857,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     function groupSelection() {
       if (selections.some((s2) => s2.ref.secIdx != null && s2.ref.path == null)) {
-        hint("Группировка недоступна для секций верхнего уровня");
+        hint("Top-level sections cannot be grouped");
         return;
       }
       const refs = selections.map((s2) => s2.ref).filter((r) => r.secIdx != null && r.path != null && !r.path.startsWith("props.") && !lockedNodeFor(r));
@@ -3704,7 +3866,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const parents = refs.map((r) => r.secIdx === secIdx ? parentOf(r) : null);
       const parent = parents[0];
       if (!parent || !parent.dom || parents.some((p) => !p || p.siblings !== parent.siblings)) {
-        hint("Группировка возможна только для сиблингов одного контейнера");
+        hint("Only siblings in the same container can be grouped");
         return;
       }
       const s = scale();
@@ -4272,27 +4434,27 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const canUngroup = hasSel && !multiSel && lastNode && Array.isArray(lastNode.children) && lastNode.children.length > 0 && lastNode.frame && lastNode.frame.layout === "free";
       const groupable = !selections.some((s) => s.ref.secIdx != null && s.ref.path == null) && selections.filter((s) => s.ref.secIdx != null && s.ref.path != null && !s.ref.path.startsWith("props.") && !lockedNodeFor(s.ref)).length >= 2;
       const items = [
-        { label: "Копировать", hint: "Ctrl+C", disabled: !hasSel, run: copySelection },
-        { label: "Вырезать", hint: "Ctrl+X", disabled: !hasSel, run: cutSelection },
-        { label: "Вставить", hint: "Ctrl+V", disabled: !geoClipboard.length, run: pasteClipboard },
-        { label: "Дублировать", hint: "Ctrl+D", disabled: !hasSel, run: duplicateSelection },
+        { label: "Copy", hint: "Ctrl+C", disabled: !hasSel, run: copySelection },
+        { label: "Cut", hint: "Ctrl+X", disabled: !hasSel, run: cutSelection },
+        { label: "Insert", hint: "Ctrl+V", disabled: !geoClipboard.length, run: pasteClipboard },
+        { label: "Duplicate", hint: "Ctrl+D", disabled: !hasSel, run: duplicateSelection },
         { sep: true },
-        { label: "Выше", hint: "]", disabled: !hasSel, run: bringForward },
-        { label: "Ниже", hint: "[", disabled: !hasSel, run: sendBackward },
-        { label: "Группа", hint: "Ctrl+G", disabled: !groupable, run: groupSelection },
-        { label: "Разгруппировать", hint: "Ctrl+Shift+G", disabled: !canUngroup, run: ungroupSelection },
+        { label: "Bring forward", hint: "]", disabled: !hasSel, run: bringForward },
+        { label: "Send backward", hint: "[", disabled: !hasSel, run: sendBackward },
+        { label: "Group", hint: "Ctrl+G", disabled: !groupable, run: groupSelection },
+        { label: "Ungroup", hint: "Ctrl+Shift+G", disabled: !canUngroup, run: ungroupSelection },
         { sep: true },
-        { label: "Удалить", hint: "Del", disabled: !hasSel, run: deleteSelections }
+        { label: "Delete", hint: "Del", disabled: !hasSel, run: deleteSelections }
       ];
       if (hasSel && !multiSel && last) {
         const pathLabel = last.ref.path == null ? `tree[${last.ref.secIdx}]` : `tree[${last.ref.secIdx}].${last.ref.path}`;
         items.push({ sep: true });
         items.push({
-          label: "Копировать IR-путь",
+          label: "Copy IR path",
           hint: pathLabel,
           run: () => {
             if (navigator.clipboard) navigator.clipboard.writeText(pathLabel);
-            hint("IR-путь скопирован");
+            hint("IR path copied");
           }
         });
       }
@@ -4527,7 +4689,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         overlay().appendChild(badge);
       }
       const node = irNodeAt(containerCtx);
-      badge.textContent = `✎ ${node ? node.type : "container"} (Esc — выйти)`;
+      badge.textContent = `✎ ${node ? node.type : "container"} (Esc to exit)`;
     }
     blockContentEarly();
     overlay().addEventListener("pointerdown", onPointerDown);
@@ -4679,8 +4841,16 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     y: 0,
     scale: 1,
     rotation: 0,
-    opacity: 1
+    opacity: 1,
+    blur: 0,
+    clip: 0
   };
+  function clipCss(state) {
+    return state.clip && state.clip > 1e-3 ? `inset(0 0 ${state.clip.toFixed(3)}% 0)` : "";
+  }
+  function filterCss(state) {
+    return state.blur && state.blur > 1e-3 ? `blur(${state.blur.toFixed(3)}px)` : "";
+  }
   const EASING_BEZIERS = {
     linear: [0, 0, 1, 1],
     ease: [0.25, 0.1, 0.25, 1],
@@ -4759,6 +4929,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       scale: Math.max(0, solveTrack(props.scale, t, TIMELINE_PROPERTY_DEFAULTS.scale)),
       rotation: solveTrack(props.rotation, t, TIMELINE_PROPERTY_DEFAULTS.rotation),
       opacity: Math.min(1, Math.max(0, solveTrack(props.opacity, t, TIMELINE_PROPERTY_DEFAULTS.opacity))),
+      blur: Math.max(0, solveTrack(props.blur, t, TIMELINE_PROPERTY_DEFAULTS.blur)),
+      clip: Math.min(100, Math.max(0, solveTrack(props.clip, t, TIMELINE_PROPERTY_DEFAULTS.clip))),
       visible: t >= layer.in && t <= layer.out
     };
   }
@@ -4809,7 +4981,22 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       return out;
     }
   }
+  const CAMERA_LAYER_ID = "camera";
+  function applyCameraToDom(root, solved) {
+    var _a;
+    const state = solved[CAMERA_LAYER_ID];
+    const element = ((_a = root.closest) == null ? void 0 : _a.call(root, "[data-timeline-camera]")) || root.querySelector("[data-timeline-camera]");
+    if (!element) return;
+    const el = element;
+    if (!state) {
+      el.style.transform = "";
+      return;
+    }
+    el.style.transformOrigin = "50% 50%";
+    el.style.transform = `translate3d(${state.x.toFixed(3)}px, ${state.y.toFixed(3)}px, 0) rotate(${state.rotation.toFixed(4)}deg) scale(${state.scale.toFixed(6)})`;
+  }
   function applySolvedToDom(root, solved) {
+    applyCameraToDom(root, solved);
     const nodes = root.querySelectorAll("[data-timeline-layer]");
     nodes.forEach((node) => {
       const el = node;
@@ -4821,6 +5008,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }
       el.style.visibility = state.visible ? "visible" : "hidden";
       el.style.opacity = state.opacity.toFixed(4);
+      el.style.filter = filterCss(state);
+      el.style.clipPath = clipCss(state);
       el.style.transform = `translate3d(${state.x.toFixed(3)}px, ${state.y.toFixed(3)}px, 0) rotate(${state.rotation.toFixed(4)}deg) scale(${state.scale.toFixed(6)})`;
     });
   }
@@ -4829,6 +5018,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     solveTrack,
     solveLayer,
     applySolvedToDom,
+    applyCameraToDom,
+    cameraLayerId: CAMERA_LAYER_ID,
     propertyDefaults: TIMELINE_PROPERTY_DEFAULTS
   };
   function motionEase(value, easing = "soft") {
@@ -4844,7 +5035,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     const panels = [];
     for (const overlay of overlays) {
       const anchor = find(root, overlay.anchorTarget);
-      if (!anchor) throw new Error(`Не найден элемент для окна: ${overlay.anchorTarget}`);
+      if (!anchor) throw new Error(`No element found for window: ${overlay.anchorTarget}`);
       const style = getComputedStyle(anchor), color = ((_a = ir.tokens) == null ? void 0 : _a.color) || {};
       const panel = document.createElement("div");
       panel.dataset.storyTarget = `overlay.${overlay.id}`;
@@ -4951,13 +5142,17 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       this.engine = new TimelineEngine(document2);
       host.replaceChildren();
       Object.assign(host.style, { width: `${document2.composition.width}px`, height: `${document2.composition.height}px`, position: "relative", overflow: "hidden", pointerEvents: "none", background: document2.composition.background });
+      const camera = window.document.createElement("div");
+      camera.dataset.timelineCamera = "";
+      Object.assign(camera.style, { position: "absolute", inset: "0", transformOrigin: "50% 50%" });
+      host.append(camera);
       for (const page of this.story.pages) {
         const outer = window.document.createElement("div");
         outer.dataset.storyPage = page.id;
         Object.assign(outer.style, { position: "absolute", inset: "0", overflow: "hidden", background: document2.composition.background });
         const inner = window.document.createElement("div");
         outer.append(inner);
-        host.append(outer);
+        camera.append(outer);
         IRRenderer.renderIR(inner, page.ir, { viewport: "desktop", fit: false, offline });
         bindStoryTargets(inner, page.ir);
         const artWidth = Number((_a = inner.querySelector("[data-design-width]")) == null ? void 0 : _a.dataset.designWidth) || Number((_b = page.ir.frame) == null ? void 0 : _b.width) || 1440;
@@ -4988,7 +5183,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         if (this.fields.has(key)) continue;
         const root = (_c = this.roots.get(action.pageId)) == null ? void 0 : _c.inner;
         const target = root && storyTarget(root, action.target || "");
-        if (!target) throw new Error(`Не найдено поле ${action.target} на странице ${action.pageId}`);
+        if (!target) throw new Error(`Field not found ${action.target} on page ${action.pageId}`);
         const input = target.matches("input,textarea") ? target : target.querySelector("input,textarea");
         if (input) {
           this.fields.set(key, { el: input, initial: input.value });
@@ -5003,7 +5198,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }
       for (const action of this.story.actions.filter((a) => a.target)) {
         const root = (_d = this.roots.get(action.pageId)) == null ? void 0 : _d.inner;
-        if (!root || !storyTarget(root, action.target)) throw new Error(`Не найден элемент ${action.target} на странице ${action.pageId}`);
+        if (!root || !storyTarget(root, action.target)) throw new Error(`Element not found ${action.target} on page ${action.pageId}`);
       }
       this.cursor = window.document.createElement("div");
       this.cursor.dataset.storyCursor = "true";
@@ -5025,14 +5220,28 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         field.overlay.textContent = text || "";
       }
     }
+    /** Реальная высота каждой страницы в px макета (после раскладки), для пролёта камеры. */
+    pageHeights() {
+      const out = {};
+      for (const [id, root] of this.roots) {
+        const height = Math.max(root.inner.scrollHeight, root.inner.getBoundingClientRect().height / (root.scale || 1) || 0);
+        if (height > 0) out[id] = Math.round(height);
+      }
+      return out;
+    }
     seek(time) {
       const t = Math.max(0, Math.min(this.document.composition.duration, time));
       const solved = this.engine.seek(t);
+      const cameraState = solved[CAMERA_LAYER_ID];
+      const panY = cameraState ? cameraState.y : 0;
+      applyCameraToDom(this.host, cameraState ? { ...solved, [CAMERA_LAYER_ID]: { ...cameraState, y: 0 } } : solved);
       for (const base of this.mapped) {
         const state = solved[base.id];
         base.el.style.visibility = state.visible ? base.visibility : "hidden";
         base.el.style.opacity = String(state.visible ? state.opacity * base.opacity : 0);
         base.el.style.transform = `translate3d(${state.x}px,${state.y}px,0) rotate(${state.rotation}deg) scale(${state.scale}) ${base.transform}`;
+        base.el.style.filter = filterCss(state);
+        base.el.style.clipPath = clipCss(state);
       }
       for (const key of this.fields.keys()) this.writeField(key, null);
       const scrolls = {};
@@ -5041,7 +5250,11 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       let x = this.document.composition.width / 2, y = this.document.composition.height / 2, visible = false, pulse = 0, cursorOpacity = 0, cursorScale = 1;
       let fade = null;
       const applyScroll = () => {
-        for (const [id, root] of this.roots) root.inner.style.transform = `scale(${root.scale}) translateY(${-(scrolls[id] || 0)}px)`;
+        for (const [id, root] of this.roots) {
+          const max = Math.max(0, root.inner.scrollHeight - this.document.composition.height / root.scale);
+          const offset = Math.min(max, Math.max(0, (scrolls[id] || 0) - panY / root.scale));
+          root.inner.style.transform = `scale(${root.scale}) translateY(${-offset}px)`;
+        }
       };
       for (const root of this.roots.values()) {
         root.outer.style.transform = "none";
@@ -5055,7 +5268,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         if (action.type === "navigate") {
           const to = action.toPageId;
           const samePageState = action.transition === "state";
-          fade = action.transition !== "cut" && p < 1 ? { from: pageId, to, progress: ease(p), motion: action.transition === "motion", state: samePageState } : null;
+          fade = action.transition !== "cut" && p < 1 ? { from: pageId, to, progress: ease(p), motion: action.transition === "motion", state: samePageState, kind: action.transition || "motion" } : null;
           if (samePageState) {
             scrolls[to] = scrolls[pageId] || 0;
             applyScroll();
@@ -5103,11 +5316,20 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         if (p < 1) break;
       }
       for (const [id, root] of this.roots) {
-        const opacity = fade ? id === fade.from ? 1 : id === fade.to ? fade.progress : 0 : id === pageId ? 1 : 0;
+        let opacity = fade ? id === fade.from ? 1 : id === fade.to ? fade.progress : 0 : id === pageId ? 1 : 0;
         if (fade == null ? void 0 : fade.motion) {
           const q = fade.progress;
           root.outer.style.transformOrigin = "center center";
           root.outer.style.transform = id === fade.to ? `translateY(${Math.min(10, this.document.composition.height * 0.012) * (1 - q)}px) scale(${1 + 0.035 * (1 - q)})` : "none";
+        } else if ((fade == null ? void 0 : fade.kind) === "slide") {
+          const q = fade.progress, h = this.document.composition.height;
+          root.outer.style.transformOrigin = "center center";
+          root.outer.style.transform = id === fade.to ? `translateY(${h * (1 - q)}px)` : id === fade.from ? `translateY(${-h * 0.18 * q}px)` : "none";
+          if (id === fade.to || id === fade.from) opacity = 1;
+        } else if ((fade == null ? void 0 : fade.kind) === "zoom") {
+          const q = fade.progress;
+          root.outer.style.transformOrigin = "center center";
+          root.outer.style.transform = id === fade.to ? `scale(${1.12 - 0.12 * q})` : id === fade.from ? `scale(${1 - 0.06 * q})` : "none";
         }
         root.outer.style.zIndex = fade ? id === fade.to ? "2" : id === fade.from ? "1" : "0" : "0";
         root.outer.style.opacity = String(opacity);

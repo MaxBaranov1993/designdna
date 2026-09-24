@@ -35,7 +35,7 @@
   let busy = $derived(Boolean($flowBusy[Number(id)]));
   let status = $derived((!busy && idleStatus) || $flowStatuses[Number(id)] || null);
   let dotClass = $derived(busy ? "run" : status?.kind === "err" ? "err" : status?.kind === "warn" ? "warn" : status?.kind === "ok" ? "ok" : "");
-  let dotText = $derived(busy ? "выполняется" : status?.text || "готова");
+  let dotText = $derived(busy ? "running" : status?.text || "ready");
 
   /* Измеренный прогресс приходит стадиями с бэкенда (Source Import); у
    * остальных операций — indeterminate-линия и честная подсказка «до N мин». */
@@ -52,7 +52,7 @@
   const expectedHint = $derived((() => {
     if (!progress) return "";
     const min = Math.max(1, Math.round(progress.expectedMs / 60_000));
-    return overdue ? "дольше обычного" : `обычно до ${min} мин`;
+    return overdue ? "taking longer than usual" : `usually up to ${min} min`;
   })());
   const clock = $derived((() => {
     const total = Math.floor(elapsedMs / 1000);
@@ -74,8 +74,8 @@
       <span class="n-sub">{def.sub}</span>
     </span>
     <span class={`n-dot ${dotClass}`} role="img" aria-label={dotText} title={status?.text || dotText}></span>
-    <button class="n-x nodrag" title="Удалить ноду (Del)" aria-label="Удалить ноду" onclick={() => $flow.deleteNode(Number(id))}>✕</button>
-    <button class="n-more nodrag" title="Действия ноды" aria-label="Действия ноды" aria-haspopup="menu" onclick={openActions}>···</button>
+    <button class="n-x nodrag" title="Delete node (Del)" aria-label="Delete node" onclick={() => $flow.deleteNode(Number(id))}>✕</button>
+    <button class="n-more nodrag" title="Node actions" aria-label="Node actions" aria-haspopup="menu" onclick={openActions}>···</button>
   </div>
   {#if progress}
     <div

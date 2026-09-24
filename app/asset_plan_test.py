@@ -63,7 +63,7 @@ def test_explicit_replacement_is_local_stale_guarded_and_never_replaces_a_master
     expected['tree'][0]['children'][1]['src'] = applied['tree'][0]['children'][1]['src']
     assert applied == expected and original == before
     node['src'] = 'manually-changed.png'
-    with pytest.raises(ValueError, match='план ресурсов'):
+    with pytest.raises(ValueError, match='asset plan'):
         asset_plan.apply(original, slot, png())
     node['componentRef'] = {'masterHash': 'exact'}
     assert len(asset_plan.prepare([original], {'replaceImages': True})['slots']) == 1
@@ -95,7 +95,7 @@ def test_protected_ancestors_are_not_planned_and_cannot_be_forged(protected):
     slot = asset_plan.prepare([original])["slots"][0]
     original["tree"][0].update(protected)
     assert asset_plan.prepare([original])["slots"] == []
-    with pytest.raises(ValueError, match="защищено"):
+    with pytest.raises(ValueError, match="protected"):
         asset_plan.apply(original, slot, png())
 
 
@@ -130,7 +130,7 @@ def test_real_alpha_is_required_and_invalid_raster_cannot_be_applied():
     original["tree"][0]["children"][1]["imagePrompt"] = "Чашка на прозрачном фоне"
     slot = asset_plan.prepare([original])["slots"][0]
     assert slot["requiresAlpha"]
-    with pytest.raises(ValueError, match="прозрачном"):
+    with pytest.raises(ValueError, match="transparent"):
         asset_plan.apply(original, slot, png())
     with pytest.raises(ValueError):
         asset_plan.apply(original, slot, "data:image/png;base64,AAAA")

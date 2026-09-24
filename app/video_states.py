@@ -31,7 +31,7 @@ def overlay_targets(overlays: list) -> list[dict]:
     result = []
     for overlay in overlays:
         root = "overlay." + overlay["id"]
-        result.append({"id": root, "label": overlay.get("title") or "Меню", "kind": "card"})
+        result.append({"id": root, "label": overlay.get("title") or "Menu", "kind": "card"})
         result.extend({"id": root + "." + item["id"], "label": item["text"], "kind": "button"} for item in overlay["items"])
     return result
 
@@ -39,82 +39,82 @@ def overlay_targets(overlays: list) -> list[dict]:
 def validate_overlays(page: dict, known_targets: set[str]) -> None:
     overlays = page.get("overlays", [])
     if not isinstance(overlays, list) or len(overlays) > 8:
-        raise ValueError("В состоянии может быть до восьми окон")
+        raise ValueError("A state can contain up to eight overlays")
     seen = set()
     for overlay in overlays:
         if not isinstance(overlay, dict) or set(overlay) - {"id", "anchorTarget", "title", "items", "width", "background", "color", "accent", "radius"}:
-            raise ValueError("Недопустимое описание окна состояния")
+            raise ValueError("Invalid state overlay description")
         ident = overlay.get("id")
         if not isinstance(ident, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", ident) or ident in seen:
-            raise ValueError("У окон должны быть уникальные ID")
+            raise ValueError("Overlays must have unique IDs")
         seen.add(ident)
         if overlay.get("anchorTarget") not in known_targets:
-            raise ValueError("Не найден элемент, рядом с которым нужно открыть окно")
+            raise ValueError("Element to anchor the overlay was not found")
         if not isinstance(overlay.get("title", ""), str) or len(overlay.get("title", "")) > 200:
-            raise ValueError("Слишком длинный заголовок окна")
+            raise ValueError("Overlay title too long")
         for key in ("background", "color", "accent"):
             if key in overlay and (not isinstance(overlay[key], str) or not COLOR.fullmatch(overlay[key])):
-                raise ValueError("Цвет окна должен быть HEX")
+                raise ValueError("Overlay color must be HEX")
         for key, low, high in (("width", 160, 640), ("radius", 0, 40)):
             if key in overlay and (isinstance(overlay[key], bool) or not isinstance(overlay[key], (int, float)) or not low <= overlay[key] <= high):
-                raise ValueError("Недопустимый размер окна")
+                raise ValueError("Invalid overlay size")
         items = overlay.get("items")
         if not isinstance(items, list) or not 1 <= len(items) <= 12:
-            raise ValueError("В окне нужны 1–12 пунктов")
+            raise ValueError("An overlay requires 1–12 items")
         item_ids = set()
         for item in items:
             if not isinstance(item, dict) or set(item) - {"id", "text", "selected"}:
-                raise ValueError("Недопустимый пункт окна")
+                raise ValueError("Invalid overlay item")
             item_id = item.get("id")
             if not isinstance(item_id, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", item_id) or item_id in item_ids:
-                raise ValueError("У пунктов окна должны быть уникальные ID")
+                raise ValueError("Overlay items must have unique IDs")
             item_ids.add(item_id)
             if not isinstance(item.get("text"), str) or not item["text"].strip() or len(item["text"]) > 500:
-                raise ValueError("Нужен текст пункта окна")
+                raise ValueError("Overlay item text is required")
             if "selected" in item and not isinstance(item["selected"], bool):
-                raise ValueError("Некорректное выделение пункта")
+                raise ValueError("Invalid item selection")
 
 
 def derive_states(story: dict, states: list) -> dict:
     from video_story import targets
     result = copy.deepcopy(story)
     if not isinstance(states, list) or len(states) > 12:
-        raise ValueError("За один запрос можно создать до 12 состояний")
+        raise ValueError("Up to 12 states can be created per request")
     seen = set()
     for state in states:
         if not isinstance(state, dict) or set(state) - {"id", "name", "fromPageId", "text", "overlays"}:
-            raise ValueError("Недопустимое описание состояния страницы")
+            raise ValueError("Invalid page state description")
         ident, source_id = state.get("id"), state.get("fromPageId")
         if not isinstance(ident, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", ident) or ident in seen or ident == source_id:
-            raise ValueError("Состоянию нужен отдельный уникальный ID")
+            raise ValueError("A state requires its own unique ID")
         seen.add(ident)
         source = next((p for p in result["pages"] if p["id"] == source_id), None)
         existing = next((p for p in result["pages"] if p["id"] == ident), None)
         if not source or (existing and not existing.get("generatedFrom")):
-            raise ValueError("Нельзя заменять исходную подключённую страницу")
+            raise ValueError("Cannot replace the original connected page")
         if existing and existing["generatedFrom"] != source_id:
-            raise ValueError("Нельзя менять источник существующего состояния")
+            raise ValueError("Cannot change the source of an existing state")
         # Refuse cycles, including a new revision derived from its own descendant.
         ancestor = source
         visited = {ident}
         while ancestor:
             if ancestor["id"] in visited:
-                raise ValueError("Циклическая зависимость состояний")
+                raise ValueError("Circular state dependency")
             visited.add(ancestor["id"])
             ancestor = next((p for p in result["pages"] if p["id"] == ancestor.get("generatedFrom")), None)
         name = state.get("name")
         if not isinstance(name, str) or not name.strip() or len(name) > 120:
-            raise ValueError("Укажите название состояния")
+            raise ValueError("Enter a state name")
         # Revisions extend the saved state; unspecified manual edits survive.
         page = copy.deepcopy(existing or source)
         page.update(id=ident, name=name, generatedFrom=source_id)
         changes = state.get("text", {})
         available = {field["path"] for field in text_fields(page["ir"])}
         if not isinstance(changes, dict) or len(changes) > 2000:
-            raise ValueError("Некорректный список текстовых изменений")
+            raise ValueError("Invalid list of text changes")
         for path, text in changes.items():
             if path not in available or not isinstance(text, str) or len(text) > 8000:
-                raise ValueError(f"Нельзя изменить текст по пути {str(path)[:120]}")
+                raise ValueError(f"Cannot change text at path {str(path)[:120]}")
             parts = path.split(".")
             node = page["ir"]
             for part in parts[:-1]:
@@ -128,7 +128,7 @@ def derive_states(story: dict, states: list) -> dict:
         else:
             result["pages"].append(page)
     if len(result["pages"]) > 24:
-        raise ValueError("В ролике может быть до 24 страниц и состояний")
+        raise ValueError("A video can contain up to 24 pages and states")
     return result
 
 

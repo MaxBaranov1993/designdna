@@ -7,7 +7,7 @@
   let {
     ir,
     height = 180,
-    empty = "IR появится после запуска",
+    empty = "Run the node to create IR",
     class: className = undefined,
     viewport = undefined,
     fitHeight = false,

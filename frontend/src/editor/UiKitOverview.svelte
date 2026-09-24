@@ -13,7 +13,7 @@
   const previewEntries = $derived(entries.filter(e => !!e.component.masterIr).slice(0, 6));
   const verified = $derived(entries.filter(e => e.pool === 'components' && e.component.status === 'verified').length);
   const sourceUrl = $derived(String(doc.sourceRefs?.[0]?.url || ''));
-  let sample = $state('The quick brown fox · Дизайн начинается с деталей');
+  let sample = $state('The quick brown fox · Design begins with details');
   let fontState = $state<Record<string, { alias: string; loaded: boolean; missing: number }>>({});
   let notice = $state('');
 
@@ -43,8 +43,8 @@
     return () => { alive = false; registered.forEach(face => window.document.fonts.delete(face)); };
   });
   async function copy(value: string) {
-    try { await navigator.clipboard.writeText(value); notice = `Скопировано: ${value}`; }
-    catch { notice = `Не удалось скопировать. Значение: ${value}`; }
+    try { await navigator.clipboard.writeText(value); notice = `Copied: ${value}`; }
+    catch { notice = `Could not copy. Value: ${value}`; }
   }
   const fontStyle = (family: string) => fontState[family]?.loaded ? `"${fontState[family].alias}", sans-serif` : 'sans-serif';
 </script>
@@ -52,64 +52,64 @@
 <div class="kit-workspace" data-kit-section={section}>
   {#if section === 'overview'}
     <header class="kit-intro">
-      <div><p class="eyebrow">ВАША БИБЛИОТЕКА САЙТА</p><h1>Компоненты и стиль сайта</h1>
-        <p>Компоненты для сборки страниц, цвета и шрифты для новых идей.</p>
+      <div><p class="eyebrow">YOUR SITE LIBRARY</p><h1>Site components and style</h1>
+        <p>Components for building pages, colors and fonts for new ideas.</p>
         {#if sourceUrl}<span class="source-address">{sourceUrl}</span>{/if}
       </div>
-      <div class="kit-readiness"><strong>{entries.length} компонентов в библиотеке</strong>
-        <span>{verified} проверены · {entries.length - verified} требуют проверки</span>
-        <small>Компоненты доступны для ручной работы. Проверка определяет готовность к строгой генерации.</small>
+      <div class="kit-readiness"><strong>{entries.length} components in the library</strong>
+        <span>{verified} verified · {entries.length - verified} need review</span>
+        <small>Components are available for manual editing. Validation determines readiness for strict generation.</small>
       </div>
     </header>
     <div class="identity-board">
-      <section class="concept-summary"><p class="eyebrow">КОНЦЕПЦИЯ И ХАРАКТЕР</p>
-        <h2>{brief.summary || concept.summary || 'Знакомство со стилем сайта'}</h2>
-        <p>{concept.hasAnalysis ? 'Описание стиля дополнено AI. Исходные компоненты сохранены отдельно.' : 'Краткая интерпретация измерений. AI может дополнить её правилами и описанием концепции.'}</p>
-        <button class="text-button" onclick={() => onSection('concept')}>О концепции сайта <span>↗</span></button>
+      <section class="concept-summary"><p class="eyebrow">CONCEPT AND CHARACTER</p>
+        <h2>{brief.summary || concept.summary || 'Meet the site style'}</h2>
+        <p>{concept.hasAnalysis ? 'AI has enriched the style description. Source components are preserved separately.' : 'A brief interpretation of measurements. AI can add rules and a concept description.'}</p>
+        <button class="text-button" onclick={() => onSection('concept')}>About the site concept <span>↗</span></button>
       </section>
-      <section class="type-poster"><p class="eyebrow">ТИПОГРАФИКА</p>
-        <div class="type-specimen" style:font-family={fontStyle(fonts.find(f => f.role === 'Заголовки')?.family || fonts[0]?.family || '')}>Aa Бб</div>
-        <p>{fonts.map(f => f.family).join(' · ') || 'Сведения о шрифтах не найдены'}</p>
-        <button class="text-button" onclick={() => onSection('fonts')}>Посмотреть шрифты <span>↗</span></button>
+      <section class="type-poster"><p class="eyebrow">TYPOGRAPHY</p>
+        <div class="type-specimen" style:font-family={fontStyle(fonts.find(f => f.role === 'Headings')?.family || fonts[0]?.family || '')}>Aa Bb</div>
+        <p>{fonts.map(f => f.family).join(' · ') || 'No font information found'}</p>
+        <button class="text-button" onclick={() => onSection('fonts')}>View fonts <span>↗</span></button>
       </section>
     </div>
-    <section class="palette-section"><div class="section-head"><div><h2>Палитра сайта</h2><p>Роли цветов и их значения — рядом.</p></div><button class="text-button" onclick={() => onSection('colors')}>Все цвета и токены →</button></div>
-      <div class="palette-ribbon">{#each colors.slice(0, 8) as color}<button title={`Скопировать ${color.value}`} onclick={() => copy(color.value)}><i style:background={color.value}></i><span>{color.label}</span><code>{color.value}</code></button>{:else}<p class="empty">Цвета появятся после сборки из Source.</p>{/each}</div>
+    <section class="palette-section"><div class="section-head"><div><h2>Site palette</h2><p>Color roles and their values, side by side.</p></div><button class="text-button" onclick={() => onSection('colors')}>All colors and tokens →</button></div>
+      <div class="palette-ribbon">{#each colors.slice(0, 8) as color}<button title={`Copy ${color.value}`} onclick={() => copy(color.value)}><i style:background={color.value}></i><span>{color.label}</span><code>{color.value}</code></button>{:else}<p class="empty">Colors will appear after building from Source.</p>{/each}</div>
     </section>
-    <section><div class="section-head"><div><h2>Компоненты из источника</h2><p>Откройте компонент, чтобы увидеть варианты и сравнить с оригиналом.</p></div><button class="text-button" onclick={onComponents}>Все компоненты →</button></div>
-      <div class="preview-grid">{#each previewEntries as entry}<button class="component-tile" onclick={() => onOpen(entry.key, entry.pool)}><ComponentCatalogPreview component={entry.component} /><span>{doc.catalog?.componentMeta?.[entry.key]?.label || entry.component.name || entry.key}</span><small>{entry.pool === 'components' ? 'В библиотеке' : 'Требует проверки'} · {Object.keys(entry.component.variants || {}).length || 1} вариант(ов)</small></button>{:else}<p class="empty">В этом документе пока нет извлечённых компонентов. Соберите UI Kit из Source.</p>{/each}</div>
+    <section><div class="section-head"><div><h2>Source components</h2><p>Open a component to explore variants and compare with the original.</p></div><button class="text-button" onclick={onComponents}>All components →</button></div>
+      <div class="preview-grid">{#each previewEntries as entry}<button class="component-tile" onclick={() => onOpen(entry.key, entry.pool)}><ComponentCatalogPreview component={entry.component} /><span>{doc.catalog?.componentMeta?.[entry.key]?.label || entry.component.name || entry.key}</span><small>{entry.pool === 'components' ? 'In the library' : 'Needs review'} · {Object.keys(entry.component.variants || {}).length || 1} variant(s)</small></button>{:else}<p class="empty">No extracted components in this document yet. Build a UI Kit from Source.</p>{/each}</div>
     </section>
   {:else if section === 'colors'}
-    <header class="page-heading"><p class="eyebrow">ОСНОВЫ ДИЗАЙН-СИСТЕМЫ</p><h1>Цвета и токены</h1><p>Токены — сохранённые значения оформления, которые можно использовать повторно. Названия ролей определены автоматически.</p></header>
-    <section><h2>Цветовые роли</h2><div class="color-grid">{#each colors as color}<button class="color-tile" onclick={() => copy(color.value)} title="Скопировать значение"><i style:background={color.value}></i><span>{color.label}</span><code>{color.value}</code><small>{color.key}</small></button>{:else}<p class="empty">Цветовые роли не найдены в документе.</p>{/each}</div></section>
-    {#if Object.keys(foundations.colors?.primitives || {}).length}<details class="token-details"><summary>Все измеренные оттенки</summary><div class="primitive-list">{#each Object.entries(foundations.colors.primitives) as [name, value]}<button onclick={() => copy(String(value))}><i style:background={String(value)}></i><code>{String(value)}</code><small>{name}</small></button>{/each}</div></details>{/if}
+    <header class="page-heading"><p class="eyebrow">DESIGN SYSTEM FOUNDATIONS</p><h1>Colors and tokens</h1><p>Tokens are reusable saved style values. Role names are detected automatically.</p></header>
+    <section><h2>Color roles</h2><div class="color-grid">{#each colors as color}<button class="color-tile" onclick={() => copy(color.value)} title="Copy value"><i style:background={color.value}></i><span>{color.label}</span><code>{color.value}</code><small>{color.key}</small></button>{:else}<p class="empty">No color roles found in the document.</p>{/each}</div></section>
+    {#if Object.keys(foundations.colors?.primitives || {}).length}<details class="token-details"><summary>All measured shades</summary><div class="primitive-list">{#each Object.entries(foundations.colors.primitives) as [name, value]}<button onclick={() => copy(String(value))}><i style:background={String(value)}></i><code>{String(value)}</code><small>{name}</small></button>{/each}</div></details>{/if}
     <div class="token-columns">
-      <section><h2>Отступы</h2><p>Расстояния между элементами в пикселях.</p><div class="spacing-list">{#each Object.entries(foundations.spacing || {}) as [name, value]}<div><code>{name}</code><i style:width={`${Math.min(180, Math.max(0, Number(value) || 0))}px`}></i><span>{String(value)} px</span></div>{:else}<p class="empty">Измерения отсутствуют.</p>{/each}</div></section>
-      <section><h2>Скругления</h2><p>Форма углов карточек и элементов.</p><div class="radius-list">{#each foundations.radii || [] as radius}<div><i style:border-radius={`${Number(radius) || 0}px`}></i><span>{radius} px</span></div>{:else}<p class="empty">Измерения отсутствуют.</p>{/each}</div>
-        <h2 class="subheading">Размеры экранов</h2><div class="breakpoints">{#each Object.entries(foundations.breakpoints || {}) as [name, size]}<span>{name}<strong>{String(size)} px</strong></span>{/each}</div>
-        {#if foundations.shadows?.length}<h2 class="subheading">Тени</h2><div class="shadow-list">{#each foundations.shadows as shadow}<button onclick={() => copy(String(shadow))}><i style:box-shadow={String(shadow)}></i><code>{shadow}</code></button>{/each}</div>{/if}
+      <section><h2>Spacing</h2><p>Spacing between elements in pixels.</p><div class="spacing-list">{#each Object.entries(foundations.spacing || {}) as [name, value]}<div><code>{name}</code><i style:width={`${Math.min(180, Math.max(0, Number(value) || 0))}px`}></i><span>{String(value)} px</span></div>{:else}<p class="empty">No measurements available.</p>{/each}</div></section>
+      <section><h2>Corner radii</h2><p>Corner shapes for cards and elements.</p><div class="radius-list">{#each foundations.radii || [] as radius}<div><i style:border-radius={`${Number(radius) || 0}px`}></i><span>{radius} px</span></div>{:else}<p class="empty">No measurements available.</p>{/each}</div>
+        <h2 class="subheading">Screen sizes</h2><div class="breakpoints">{#each Object.entries(foundations.breakpoints || {}) as [name, size]}<span>{name}<strong>{String(size)} px</strong></span>{/each}</div>
+        {#if foundations.shadows?.length}<h2 class="subheading">Shadows</h2><div class="shadow-list">{#each foundations.shadows as shadow}<button onclick={() => copy(String(shadow))}><i style:box-shadow={String(shadow)}></i><code>{shadow}</code></button>{/each}</div>{/if}
       </section>
     </div>
   {:else if section === 'fonts'}
-    <header class="page-heading"><p class="eyebrow">ТИПОГРАФИКА САЙТА</p><h1>Шрифты вживую</h1><p>Пример отображается захваченным шрифтом, если его файл доступен. Свой текст можно проверить ниже.</p></header>
-    <label class="sample-input">Текст для примера<input bind:value={sample} maxlength="240" placeholder="Введите текст" /></label>
-    <div class="font-list">{#each fonts as font}<section class="font-card" data-kit-font={font.family}><header><div><span class="eyebrow">{font.role}</span><h2>{font.family}</h2></div><span class="font-status">{!fontState[font.family] ? 'Загрузка образца…' : fontState[font.family].loaded ? fontState[font.family].missing ? 'Часть начертаний недоступна' : 'Файл из Source загружен' : 'Файл недоступен · показан системный шрифт'}</span></header>
-      <p class="font-sample" style:font-family={fontStyle(font.family)}>{sample || 'Aa Бб 0123456789'}</p>
-      <footer><span>Начертания: {[...new Set(font.faces.map(f => String(f.weight || '400')))].join(' · ') || 'не определены'}</span><button class="text-button" onclick={() => copy(font.family)}>Скопировать название</button></footer></section>{:else}<p class="empty">В этом источнике нет сведений о шрифтах. По одному скриншоту точное название определить нельзя.</p>{/each}</div>
-    {#if Object.keys(foundations.typography?.scale || {}).length}<details class="token-details"><summary>Измеренные размеры текста</summary><div class="breakpoints">{#each Object.entries(foundations.typography.scale) as [name, size]}<span>{name}<strong>{String(size)} px</strong></span>{/each}</div></details>{/if}
+    <header class="page-heading"><p class="eyebrow">SITE TYPOGRAPHY</p><h1>Live font samples</h1><p>The sample uses the captured font when its file is available. Try your own text below.</p></header>
+    <label class="sample-input">Sample text<input bind:value={sample} maxlength="240" placeholder="Enter text" /></label>
+    <div class="font-list">{#each fonts as font}<section class="font-card" data-kit-font={font.family}><header><div><span class="eyebrow">{font.role}</span><h2>{font.family}</h2></div><span class="font-status">{!fontState[font.family] ? 'Loading sample…' : fontState[font.family].loaded ? fontState[font.family].missing ? 'Some font weights are unavailable' : 'Source file loaded' : 'File unavailable · showing a system font'}</span></header>
+      <p class="font-sample" style:font-family={fontStyle(font.family)}>{sample || 'Aa Bb 0123456789'}</p>
+      <footer><span>Weights: {[...new Set(font.faces.map(f => String(f.weight || '400')))].join(' · ') || 'not detected'}</span><button class="text-button" onclick={() => copy(font.family)}>Copy name</button></footer></section>{:else}<p class="empty">This source has no font information. A screenshot alone cannot identify the exact font name.</p>{/each}</div>
+    {#if Object.keys(foundations.typography?.scale || {}).length}<details class="token-details"><summary>Measured text sizes</summary><div class="breakpoints">{#each Object.entries(foundations.typography.scale) as [name, size]}<span>{name}<strong>{String(size)} px</strong></span>{/each}</div></details>{/if}
   {:else}
-    <header class="page-heading"><p class="eyebrow">КОНЦЕПЦИЯ САЙТА</p><h1>Что делает этот стиль узнаваемым</h1><p>Описание помогает создавать новые страницы с тем же характером. Интерпретация AI не заменяет измерения и исходные компоненты.</p></header>
+    <header class="page-heading"><p class="eyebrow">SITE CONCEPT</p><h1>What makes this style recognizable</h1><p>The description helps create new pages with the same character. AI interpretation does not replace measurements or source components.</p></header>
     {#if brief.summary || brief.audience || brief.offer}
-      <section class="site-brief"><p class="eyebrow">О САЙТЕ · {brief.origin === 'ai' ? 'AI-АНАЛИЗ' : 'ОПИСАНИЕ'}</p>
+      <section class="site-brief"><p class="eyebrow">ABOUT THE SITE · {brief.origin === 'ai' ? 'AI ANALYSIS' : 'DESCRIPTION'}</p>
         {#if brief.summary}<h2>{brief.summary}</h2>{/if}
-        <div class="trait-grid">{#if brief.audience}<div><h3>Для кого</h3><p>{brief.audience}</p></div>{/if}{#if brief.offer}<div><h3>Что предлагает</h3><p>{brief.offer}</p></div>{/if}</div>
+        <div class="trait-grid">{#if brief.audience}<div><h3>Audience</h3><p>{brief.audience}</p></div>{/if}{#if brief.offer}<div><h3>Offering</h3><p>{brief.offer}</p></div>{/if}</div>
       </section>
     {:else if brief.headings?.length}
-      <section class="site-brief"><p class="eyebrow">ЗАГОЛОВКИ ИЗ ИСХОДНОГО САЙТА</p><ul>{#each brief.headings.slice(0, 4) as heading}<li>{heading}</li>{/each}</ul><p>Это исходные тексты. AI-анализ дополнит их описанием назначения сайта и аудитории.</p></section>
+      <section class="site-brief"><p class="eyebrow">HEADINGS FROM THE SOURCE SITE</p><ul>{#each brief.headings.slice(0, 4) as heading}<li>{heading}</li>{/each}</ul><p>These are the original texts. AI analysis will add a description of the site purpose and audience.</p></section>
     {/if}
-    <section class="concept-lead"><span class="eyebrow">КРАТКОЕ ОПИСАНИЕ · ИНТЕРПРЕТАЦИЯ</span><h2>{concept.summary || 'Описание ещё не подготовлено'}</h2><p>{concept.hasAnalysis ? 'Ниже — анализ выбранной модели и рекомендации по использованию.' : 'Базовый UI Kit уже доступен. Запустите AI-анализ, чтобы получить описание концепции и правила оформления.'}</p><button class="analyze-button" onclick={onAnalyze} disabled={busy}>{busy ? 'Выполняется…' : concept.hasAnalysis ? 'Обновить AI-анализ' : 'Описать стиль с AI'}</button></section>
+    <section class="concept-lead"><span class="eyebrow">BRIEF DESCRIPTION · INTERPRETATION</span><h2>{concept.summary || 'Description not prepared yet'}</h2><p>{concept.hasAnalysis ? 'Analysis from the selected model and usage recommendations appear below.' : 'The basic UI Kit is already available. Run AI analysis to get a concept description and styling rules.'}</p><button class="analyze-button" onclick={onAnalyze} disabled={busy}>{busy ? 'Running…' : concept.hasAnalysis ? 'Refresh AI analysis' : 'Describe style with AI'}</button></section>
     {#if concept.traits.length}<div class="trait-grid">{#each concept.traits as trait}<section><h2>{trait.label}</h2><p>{trait.text}</p></section>{/each}</div>{/if}
-    {#if concept.doRules.length || concept.dontRules.length}<div class="token-columns"><section><h2>Сохранять в новых страницах</h2><ul>{#each concept.doRules as rule}<li>{rule}</li>{/each}</ul></section><section><h2>Избегать</h2><ul>{#each concept.dontRules as rule}<li>{rule}</li>{/each}</ul></section></div>{/if}
+    {#if concept.doRules.length || concept.dontRules.length}<div class="token-columns"><section><h2>Preserve in new pages</h2><ul>{#each concept.doRules as rule}<li>{rule}</li>{/each}</ul></section><section><h2>Avoid</h2><ul>{#each concept.dontRules as rule}<li>{rule}</li>{/each}</ul></section></div>{/if}
   {/if}
   <p class="copy-notice" role="status">{notice}</p>
 </div>

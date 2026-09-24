@@ -23,7 +23,7 @@ def prepare(reference: VisualReference | None) -> dict | None:
     if reference is None:
         return None
     if reference.conceptOnly and reference.role != "composition":
-        raise ValueError("Эскиз может задавать только композицию")
+        raise ValueError("A sketch may define composition only")
     converted = convert_image(reference.image)
     raw = base64.b64decode(converted["png"].split(",", 1)[1])
     info = {"role": reference.role, "origin": reference.origin, "notes": reference.notes, "conceptOnly": reference.conceptOnly,

@@ -516,7 +516,6 @@ check("input primitives preserve control type, values and escaped content", () =
   assert.match(render({inputType: 'file" onclick="evil()'}), /type="text"/);
 });
 
-console.log(`ALL ENGINE REGRESSION CHECKS PASSED (${passed})`);
 
 /* ---------- auto-row: короткий текст не сжимается до нуля ---------- */
 
@@ -540,3 +539,33 @@ check("hug elements keep their content size and hug text never wraps", () => {
   const button = IRRendererTest.renderElement({ type: "button", text: "Запустить →", frame: { width: "hug" } }, 6, false, row);
   assert(button.includes("flex-shrink:0"), "hug button does not shrink into a circle");
 });
+
+check("leaf form controls, badges and buttons carry their own style and padding", () => {
+  const col = { layout: "auto", direction: "column" };
+  const area = IRRendererTest.renderElement({ type: "input", inputType: "textarea", placeholder: "Task",
+    style: { background: "#ffffff", borderRadius: 8, fontFamily: "commissioner, sans-serif", fontSize: 17 },
+    frame: { width: "fill", height: "hug", minHeight: 160 } }, 7, false, col);
+  assert(/<textarea[^>]*min-height:160px/.test(area), "the textarea itself takes the frame height");
+  assert(/<textarea[^>]*border-radius:8px/.test(area) && /<textarea[^>]*font-size:17px/.test(area), "node style reaches the control");
+  const input = IRRendererTest.renderElement({ type: "input", inputType: "email", style: { background: "#fbf6ea" },
+    frame: { width: "fill" } }, 7, false, col);
+  assert(/<input[^>]*background:#fbf6ea/.test(input));
+  const badge = IRRendererTest.renderElement({ type: "badge", text: "CONTACT", style: { color: "#0a67ff", borderWidth: 0 },
+    frame: { width: "hug", padding: 0 } }, 7, false, col);
+  assert(/<span class="badge"[^>]*padding:0px/.test(badge) && badge.includes("color:#0a67ff"), "badge padding and style on the badge");
+  const button = IRRendererTest.renderElement({ type: "button", text: "Send", variant: "primary",
+    frame: { width: "hug", height: 49, padding: [0, 22] } }, 7, false, col);
+  assert(/<a class="btn[^>]*padding:0px 22px/.test(button), "button padding is inside the button");
+  assert(!/data-ir-frame[^>]*padding/.test(button), "the wrapper does not shift the button");
+});
+
+check("composition gutter is the content offset from the page edge", () => {
+  const html = IRRendererTest.renderSection({ type: "composition", variant: "contact", props: {},
+    frame: { contentMaxWidth: 1068, contentGutter: 186 }, children: [{ type: "text", text: "Hi" }] }, 8, false);
+  assert(html.includes("--content-gutter:186px") && html.includes("--sec-px:0px"), "no extra 32px side padding under a gutter");
+  const plain = IRRendererTest.renderSection({ type: "composition", variant: "x", props: {},
+    frame: { contentMaxWidth: 1068 }, children: [{ type: "text", text: "Hi" }] }, 8, false);
+  assert(!plain.includes("--sec-px"), "sections without a gutter keep the default padding");
+});
+
+console.log(`ALL ENGINE REGRESSION CHECKS PASSED (${passed})`);

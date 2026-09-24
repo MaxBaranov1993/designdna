@@ -360,7 +360,7 @@ def main():
         run_node_type(pg, "derive")
         pg.wait_for_selector('.n-derive .f-preview .ir-preview-inner div[class^="ir-"]', timeout=8000)
         derive_payload = CAPTURED.get("generate", [{}, {}])[-1]
-        check("Derive passes reference DNA in styleHint", "Style DNA" in derive_payload.get("styleHint", "")
+        check("Derive passes reference DNA in styleHint", "Design tokens" in derive_payload.get("styleHint", "")
               and "Reference IR" in derive_payload.get("styleHint", ""))
 
         check("connect Source Import hero → Mix.a", connect_types(pg, "sourceimport", "hero", "mix", "a"))

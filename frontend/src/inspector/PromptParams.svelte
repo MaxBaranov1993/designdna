@@ -9,11 +9,11 @@
 
 <div class="dna-insp-fields">
   <div class="dna-field">
-    <div class="dna-field-cap">Текст задачи</div>
+    <div class="dna-field-cap">Task text</div>
     <textarea
       rows="6"
       value={data.text}
-      placeholder="Что нужно сделать? Например: шапка маркетплейса объявлений…"
+      placeholder="What would you like to create? For example: a marketplace header…"
       oninput={(e) => {
         const value = e.currentTarget.value;
         commitNodeText(key, () => {
@@ -23,6 +23,6 @@
       }}
       onblur={() => flushNodeText(key)}
     ></textarea>
-    <div class="dna-field-hint">{(data.text || "").length} симв. · уходит в провод «текст»</div>
+    <div class="dna-field-hint">{(data.text || "").length} chars · sent through the text output</div>
   </div>
 </div>

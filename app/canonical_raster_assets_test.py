@@ -479,7 +479,7 @@ def test_capture_pipeline_calls_viewport_helper_before_compile_and_reference(mon
             captures = scraper.capture_block_irs(
                 f"http://127.0.0.1:{local.server_port}/start",
                 [{"name": "card", "selector": "#block", "kind": "section"}],
-                viewports=[{"name": "tablet", "width": 768, "height": 844}])
+                viewports=[{"name": "tablet", "width": 768, "height": 844}], engine="legacy")
         finally:
             local.shutdown()
             thread.join(timeout=5)

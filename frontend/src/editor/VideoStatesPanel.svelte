@@ -33,18 +33,18 @@
 </script>
 
 {#if states.length}
-  <section class="video-states" aria-label="Созданные состояния" data-act="video-states">
-    <strong>Созданные состояния · {states.length}</strong>
-    <p>Копии для ролика. Исходная страница сохранена.</p>
-    <label>Состояние<select aria-label="Состояние страницы" value={page?.id} onchange={(event) => { selected = event.currentTarget.value; selectedField = ""; }}>
+  <section class="video-states" aria-label="Generated states" data-act="video-states">
+    <strong>Generated states · {states.length}</strong>
+    <p>Copies for the video. The source page is preserved.</p>
+    <label>State<select aria-label="Page state" value={page?.id} onchange={(event) => { selected = event.currentTarget.value; selectedField = ""; }}>
       {#each states as state}<option value={state.id}>{state.name}</option>{/each}
     </select></label>
-    <button disabled={!entry} onclick={() => entry && onSeek(entry.end + 1)}>Показать в ролике</button>
+    <button disabled={!entry} onclick={() => entry && onSeek(entry.end + 1)}>Show in video</button>
     {#if fields.length}
-      <label>Текст<select aria-label="Текст состояния" value={field?.path} onchange={(event) => selectedField = event.currentTarget.value}>
-        {#each fields as item}<option value={item.path}>{item.text.slice(0, 70) || "Пустой текст"}</option>{/each}
+      <label>Text<select aria-label="State text" value={field?.path} onchange={(event) => selectedField = event.currentTarget.value}>
+        {#each fields as item}<option value={item.path}>{item.text.slice(0, 70) || "Empty text"}</option>{/each}
       </select></label>
-      <textarea aria-label="Изменить текст состояния" disabled={disabled} maxlength="8000" rows="3" value={field?.text || ""} onchange={(event) => editText(event.currentTarget.value)}></textarea>
+      <textarea aria-label="Edit state text" disabled={disabled} maxlength="8000" rows="3" value={field?.text || ""} onchange={(event) => editText(event.currentTarget.value)}></textarea>
     {/if}
   </section>
 {/if}

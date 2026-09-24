@@ -70,7 +70,7 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
     const nodeSources = n ? ((n.data as { nodeSources?: Record<string, string> }).nodeSources || {}) : {};
     const layoutEvidence = n ? ((n.data as { layoutEvidence?: unknown[] }).layoutEvidence || []) : [];
     if (!ir) {
-      toast("Сначала подключите IR к входу ноды", "error");
+      toast("Connect IR to the node input first", "error");
       return true; // ошибка показана
     }
 
@@ -106,11 +106,11 @@ export const useEditorStore = createStore<EditorUIState>()((set) => ({
       (savedIr: IRObject, expectedRevision: number) => {
         const fst = get();
         if (!scope.owns() || !fst.commitEditorDraft(nodeId, expectedRevision, savedIr)) {
-          toast("IR изменился во входном графе. Черновик сохранён; обновите или перенесите правки вручную.", "error");
+          toast("The input IR changed. Your draft is saved; refresh it or transfer your edits manually.", "error");
           return false;
         }
         fst.propagate(nodeId);
-        toast("IR сохранён из редактора", "ok");
+        toast("IR saved from editor", "ok");
         return true;
       },
       (saved) => {

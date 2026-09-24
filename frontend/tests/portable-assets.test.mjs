@@ -40,11 +40,11 @@ test('export/import in a fresh blob store preserves exact IR, master hashes and 
 test('missing/corrupt embedded resources cannot replace the graph or write partial imports', async () => {
   bridge();
   const graph = { nodes: [{ data: { src: ref } }] };
-  await assert.rejects(embedGraphAssets(graph), /отсутствует/);
+  await assert.rejects(embedGraphAssets(graph), /missing/);
   const fresh = bridge();
-  await assert.rejects(restoreGraphAssets({ ...graph, embeddedBlobs: { version: 'design-assets-export/1.0', objects: { [name]: 'data:image/png;base64,AA==' } } }), /повреждён/);
+  await assert.rejects(restoreGraphAssets({ ...graph, embeddedBlobs: { version: 'design-assets-export/1.0', objects: { [name]: 'data:image/png;base64,AA==' } } }), /Corrupted/);
   assert.equal(fresh.calls.length, 0);
-  await assert.rejects(restoreGraphAssets(graph), /отсутствует/);
+  await assert.rejects(restoreGraphAssets(graph), /missing/);
 });
 test('legacy inline-only graph remains compatible without a desktop bridge', async () => {
   globalThis.window = {};

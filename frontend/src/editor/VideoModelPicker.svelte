@@ -21,8 +21,8 @@
   onMount(() => {
     let alive = true;
     apiGet<{models: Choice[]; source: string}>("/api/timeline/models").then(result => {
-      if (alive && result.models?.length) { choices = result.models; hint = result.source === "codex-cache" ? "" : "Базовый список моделей"; }
-    }).catch(() => { if (alive) hint = "Каталог недоступен · базовый список"; });
+      if (alive && result.models?.length) { choices = result.models; hint = result.source === "codex-cache" ? "" : "Default model list"; }
+    }).catch(() => { if (alive) hint = "Catalog unavailable · default list"; });
     return () => { alive = false; };
   });
   function pick(nextProvider: "codex" | "claude", nextModel?: string) {
@@ -33,15 +33,15 @@
 </script>
 
 <div class="video-model-picker nodrag">
-  <select class="account" aria-label="Провайдер" value={provider} onchange={event => pick(event.currentTarget.value as "codex" | "claude")}>
-    <option value="codex">GPT · мой аккаунт</option><option value="claude">Claude · мой аккаунт</option>
+  <select class="account" aria-label="Provider" value={provider} onchange={event => pick(event.currentTarget.value as "codex" | "claude")}>
+    <option value="codex">GPT · my account</option><option value="claude">Claude · my account</option>
   </select>
-  <label>Модель<select aria-label="Модель видео" value={selected} onchange={event => pick(provider, event.currentTarget.value)}>
-    {#if !current}<option value={selected} disabled>{selected} · недоступна</option>{/if}
+  <label>Model<select aria-label="Video model" value={selected} onchange={event => pick(provider, event.currentTarget.value)}>
+    {#if !current}<option value={selected} disabled>{selected} · unavailable</option>{/if}
     {#each models as choice}<option value={choice.id}>{choice.label}</option>{/each}
   </select></label>
-  <label>Рассуждение<select aria-label="Уровень рассуждения" value={effort} onchange={event => onChange({provider, model: selected, effort: event.currentTarget.value as VideoEffort})}>
-    {#if !levels.includes(effort)}<option value={effort} disabled>{labels[effort]} · недоступно</option>{/if}
+  <label>Reasoning<select aria-label="Reasoning level" value={effort} onchange={event => onChange({provider, model: selected, effort: event.currentTarget.value as VideoEffort})}>
+    {#if !levels.includes(effort)}<option value={effort} disabled>{labels[effort]} · unavailable</option>{/if}
     {#each levels as level}<option value={level}>{labels[level]}</option>{/each}
   </select></label>
   {#if hint}<span class="hint">{hint}</span>{/if}

@@ -37,6 +37,7 @@ def test_undeclared_families_parsed_from_readiness_errors():
         'шрифт "roboto slab" недоступен офлайн: добавьте локальный шрифт (meta.fontFaces, /fonts/<имя>) вместо внешнего каталога',
         "render attempted network access: https://x",
         'шрифт "Golos Text" недоступен офлайн: …',
+        'font "Bebas Neue" is unavailable offline: add a local font (meta.fontFaces, /fonts/<name>) instead of an external catalog',
     ]
-    assert ir_render._undeclared_families(problems) == {"roboto slab", "Golos Text"}
+    assert ir_render._undeclared_families(problems) == {"roboto slab", "Golos Text", "Bebas Neue"}
     assert ir_render._undeclared_families([]) == set()

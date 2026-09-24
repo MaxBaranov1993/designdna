@@ -6,8 +6,8 @@ export type CompositionPart = {
   image?: string; protected: boolean; kind: 'text' | 'pixels' | 'structure';
 };
 export const PART_GROUPS: Array<[PartGroup, string]> = [
-  ['background', 'Подложки'], ['image', 'Изображения'], ['text', 'Тексты'],
-  ['decoration', 'Декор'], ['container', 'Контейнеры'],
+  ['background', 'Backgrounds'], ['image', 'Images'], ['text', 'Text'],
+  ['decoration', 'Decoration'], ['container', 'Containers'],
 ];
 
 /** Inventory only: no normalization, flattening, or mutation of canonical masters. */
@@ -25,18 +25,18 @@ export function compositionParts(ir: IRObject | null | undefined, protectedRoot 
     };
     const background = style.backgroundImage;
     const backgroundUrl = typeof background === 'string' ? /^url\(["']?(.*?)["']?\)$/.exec(background)?.[1] : '';
-    if (backgroundUrl) add('background', 'Фоновое изображение', 'pixels', backgroundUrl);
-    else if (background || style.background || style.backgroundColor || node.fill) add('background', 'Заливка', 'structure');
+    if (backgroundUrl) add('background', 'Background image', 'pixels', backgroundUrl);
+    else if (background || style.background || style.backgroundColor || node.fill) add('background', 'Fill', 'structure');
     const image = node.src || props.src || props.media?.src;
-    if (typeof image === 'string' && image) add('image', String(node.alt || props.alt || props.media?.alt || 'Изображение'), 'pixels', image);
-    else if (node.type === 'image' || node.imagePrompt || props.imagePrompt) add('image', 'Изображение отсутствует', 'pixels');
+    if (typeof image === 'string' && image) add('image', String(node.alt || props.alt || props.media?.alt || 'Image'), 'pixels', image);
+    else if (node.type === 'image' || node.imagePrompt || props.imagePrompt) add('image', 'No image', 'pixels');
     const texts = [node.text, ...['text', 'heading', 'title', 'subheading', 'label', 'caption', 'description'].map(key => props[key])]
       .filter((value): value is string => typeof value === 'string' && !!value.trim());
     for (const value of [...new Set(texts)]) add('text', value, 'text');
     if (['icon', 'svg', 'path', 'shape', 'line', 'divider', 'rect', 'ellipse'].includes(node.type)) {
       add('decoration', String(node.name || props.name || node.type), 'structure');
     } else if (node.children?.length || (!image && !texts.length && node.type !== 'image')) {
-      add('container', String(node.name || node.type || 'Группа'), 'structure');
+      add('container', String(node.name || node.type || 'Group'), 'structure');
     }
     for (const [index, child] of (node.children || []).entries()) walk(child, `${path}.children.${index}`, protectedPart);
   }

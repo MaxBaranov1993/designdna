@@ -48,7 +48,7 @@ def scrape(req: ScrapeReq):
     """Полный анализ реального сайта: контент + стили + структура + скриншот."""
     url = req.url.strip()
     if not url:
-        return err(422, "Укажите URL сайта.")
+        return err(422, "Enter the site URL.")
     try:
         validate_public_url(url)  # SSRF-гард (422, а не 502)
     except ValueError as e:
@@ -56,7 +56,7 @@ def scrape(req: ScrapeReq):
     try:
         data = analyze_url(url, use_playwright=req.use_playwright)
     except Exception as e:
-        return err(502, f"Ошибка анализа: {e}")
+        return err(502, f"Analysis error: {e}")
 
     return {
         "url": data.url,
@@ -127,12 +127,12 @@ def reproduce(req: ReproduceReq):
         try:
             page = analyze_url(url, use_playwright=True)
         except Exception as e:
-            return err(502, f"Не удалось снять скриншот {url}: {e}")
+            return err(502, f"Could not capture screenshot {url}: {e}")
         if not page.screenshot_b64:
-            return err(502, "Пустой скриншот сайта.")
+            return err(502, "Empty site screenshot.")
         image = f"data:image/png;base64,{page.screenshot_b64}"
     if not image:
-        return err(422, "Нужно изображение (base64 data URL) или URL сайта.")
+        return err(422, "An image (base64 data URL) or site URL is required.")
 
     # кэш по хэшу изображения: тот же скриншот от любого пользователя — бесплатно
     img_key = cache_store.key_image(image)
@@ -157,7 +157,7 @@ def reproduce(req: ReproduceReq):
         )
     except Exception as e:
         traceback.print_exc()
-        return err(502, f"Ошибка пайплайна: {e}")
+        return err(502, f"Pipeline error: {e}")
 
     payload = {
         "structure": result.get("structure", {}),
@@ -195,16 +195,16 @@ def reproduce_segment(req: SegmentReq):
 
     image = req.image or ""
     if not image.startswith("data:image"):
-        return err(422, "Нужен скриншот как base64 data URL.")
+        return err(422, "Screenshot as a base64 data URL is required.")
     try:
         raw = base64.b64decode(image.split(",", 1)[1])
         img = PILImage.open(io.BytesIO(raw)).convert("RGB")
     except Exception as e:
-        return err(422, f"Не удалось декодировать изображение: {e}")
+        return err(422, f"Could not decode image: {e}")
     width, height = img.size
     tiles = seg.tile_grid(width, height)
     if not tiles:
-        return err(422, "Пустое изображение.")
+        return err(422, "Empty image.")
 
     if req.prepareOnly:
         tasks = []

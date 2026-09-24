@@ -178,7 +178,7 @@ class ReskinReq(BaseModel):
 def generate(req: GenerateReq):
     """Обёртка: регистрирует запуск (стадии/отмена) и закрывает его по итогу."""
     run_id = run_registry.start(req.runId, "generate")
-    run_registry.stage(run_id, "prompt", "Собираю промпт")
+    run_registry.stage(run_id, "prompt", "Preparing prompt")
     resp = None
     try:
         try:
@@ -192,7 +192,7 @@ def generate(req: GenerateReq):
         if req.preparedContextId:
             prepared = cache_store.get("generator-prepared", req.preparedContextId)
             if not prepared or prepared.get("requestKey") != request_key:
-                return err(409, "Контекст генератора изменился или истёк. Запустите генерацию заново.")
+                return err(409, "Generator context changed or expired. Generate again.")
         # Pin the same resolved revision in both phases, including refs that omitted a revision.
         resolved = None
         if req.designSystem:
@@ -205,7 +205,7 @@ def generate(req: GenerateReq):
             "rules": project_rules.prompt_block("generation"),
             "promptFiles": [llm._file_stamp(llm.ROOT / name) for name in llm._PROMPT_FILES]})
         if prepared and prepared.get("contextKey") != context_key:
-            return err(409, "Дизайн-система или правила изменились после подготовки. Запустите генерацию заново.")
+            return err(409, "Design system or rules changed after preparation. Generate again.")
         resp = _generate(req, run_id, prepared=prepared, resolved_document=resolved)
         if isinstance(resp, dict):
             records = resp.pop("_directionRecords", [])
@@ -469,10 +469,10 @@ def _apply_content_answer(ir: dict, slots: list[dict], raw: str) -> tuple[dict, 
     try:
         parsed = json.loads(llm.extract_json(raw or ""))
     except Exception as exc:  # noqa: BLE001 — ответ модели произвольный
-        return out, 0, f"ответ не JSON: {exc}"
+        return out, 0, f"response is not JSON: {exc}"
     items = parsed.get("slots") if isinstance(parsed, dict) else parsed
     if not isinstance(items, list):
-        return out, 0, "в ответе нет slots"
+        return out, 0, "response has no slots"
     by_id = {str(item.get("id")): item.get("text") for item in items
              if isinstance(item, dict) and isinstance(item.get("text"), str)}
     replaced = 0
@@ -497,14 +497,14 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
     effort = req.effort if req.effort in ("medium", "high", "max") else "medium"
     brief = req.brief.strip()
     if not brief:
-        return err(422, "Пустой бриф: опишите, что нужно сгенерировать.")
+        return err(422, "Empty brief: describe what to generate.")
     try:
         visual = visual_reference.prepare(req.visualReference)
     except ValueError as exc:
         return err(422, str(exc))
     count = max(1, min(int(req.count or 1), 5))
     if req.rawOutputs is not None and len(req.rawOutputs) < count:
-        return err(422, "Модель вернула меньше ответов, чем запрошено вариантов.")
+        return err(422, "Model returned fewer responses than requested variants.")
     has_style = bool(req.styleHint and req.styleHint.strip())
     style = f"\n\n## Reference / style context\n{req.styleHint.strip()}" if has_style else ""
     memory_hint = project_store.build_prompt_memory_hint()
@@ -515,7 +515,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
     surface = policy_context["surface"]
     policy_block = generator_policy.prompt(policy_context)
     if run_registry.is_cancelled(run_id):
-        return err(CANCELLED_STATUS, "Генерация отменена")
+        return err(CANCELLED_STATUS, "Generation cancelled")
     rules_block = project_rules.prompt_block("generation")
     reference_block = _reference_screens_block(req.referenceIrs)
     dna, complete_dna = _locked_generation_dna(req.tokens)
@@ -558,7 +558,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
         ds_context = ds_resolver.resolve_context(
             ds_doc, brief, usage_mode=ds_usage_mode, pinned_keys=pinned_master_keys)
         if ds_usage_mode == "strict" and not ds_context.get("components"):
-            return err(422, "Design System Strict: нет опубликованных мастеров для этой задачи. Используйте Extend или добавьте мастер.")
+            return err(422, "Design System Strict: no published masters for this task. Use Extend or add a master.")
         # Strict обязан вместить exact master целой секции; extend/style-only —
         # сводки всех мастеров, ревью с DO/DON'T и декоративные сигнатуры
         # (на 1200 токенах всё это отрезалось, и модель рисовала общий шаблон).
@@ -579,9 +579,9 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
                 primary, ds_context, ds_compiled, "pinned-master-exceeds-context-budget")
                 if primary is not None else (None, None))
             if recovered is None:
-                return err(422, "Design System Strict: exact master не помещается в выбранный context budget. "
-                                "Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")
-            run_registry.stage(run_id, "design-system", "Материализую точный мастер ДС, модель переписывает контент")
+                return err(422, "Design System Strict: exact master exceeds the selected context budget. "
+                                "Switch DS mode to Extend/Style-only or disable DS for this node (× in the node DS row)")
+            run_registry.stage(run_id, "design-system", "Materializing exact DS master; model is rewriting content")
             recovered = ensure_current_ir(recovered, source="generate")
             key = str(primary.get("componentKey") or "")
             # Тот же мастер — другой контент: точная копия референса как результат
@@ -603,33 +603,33 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             for n in range(count):
                 if not slots:
                     variants_out.append(copy.deepcopy(recovered))
-                    journal_lines.append(["у мастера нет текстовых слотов — отдана точная копия"])
+                    journal_lines.append(["master has no text slots — exact copy returned"])
                     continue
                 if req.rawOutputs is not None:
                     raw = req.rawOutputs[n] if n < len(req.rawOutputs) else ""
                 else:
-                    run_registry.stage(run_id, "llm", f"Модель переписывает контент мастера ({n + 1}/{count})")
+                    run_registry.stage(run_id, "llm", f"Model is rewriting master content ({n + 1}/{count})")
                     try:
                         raw = llm.chat(provider, content_prompts[n], 0.7, role="edit", reasoning_effort=effort)
                     except Exception as exc:  # noqa: BLE001
                         raw = ""
-                        errors_out.append({"index": n + 1, "error": f"контент: {exc}"})
+                        errors_out.append({"index": n + 1, "error": f"content: {exc}"})
                 variant, replaced, apply_error = _apply_content_answer(recovered, slots, raw)
                 variant = ensure_current_ir(variant, source="generate")
                 schema_errors = validate_ir(variant)
                 ds_check = ds_resolver.validate_generation(variant, ds_context)
                 if schema_errors or ds_check.get("errors"):
                     variant, replaced = copy.deepcopy(recovered), 0
-                    apply_error = "Контент нарушил контракт мастера; сохранён исходник"
+                    apply_error = "Content violated the master contract; original preserved"
                 if apply_error:
                     errors_out.append({"index": n + 1, "error": apply_error})
                 variant.setdefault("meta", {})["contentRewrite"] = {"slots": len(slots), "replaced": replaced,
                                                                     **({"error": apply_error} if apply_error else {})}
                 variants_out.append(variant)
                 journal_lines.append([
-                    f"strict: мастер «{key}» ≈{ds_compiled.get('estimatedTokens')} токенов не влезает в бюджет "
-                    f"{ds_compiled.get('tokenBudget')} — точная копия мастера, модель переписала контент",
-                    f"контент: заменено {replaced} из {len(slots)} слотов" + (f" ({apply_error})" if apply_error else ""),
+                    f"strict: master “{key}» ≈{ds_compiled.get('estimatedTokens')} tokens exceeds budget "
+                    f"{ds_compiled.get('tokenBudget')} — exact master copy, content rewritten by model",
+                    f"content: replaced {replaced} из {len(slots)} slots" + (f" ({apply_error})" if apply_error else ""),
                 ])
             return {
                 "variants": variants_out, "errors": errors_out, "prompts": [],
@@ -710,7 +710,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
         # С дайджестом ДС направления генерирует модель внутри языка системы
         # (композиция, порядок секций, ритм, угол копирайта); фиксированный
         # список политики остаётся запасным путём при отказе провайдера.
-        run_registry.stage(run_id, "art-direction", "Формирую три арт-направления")
+        run_registry.stage(run_id, "art-direction", "Preparing three art directions")
         try:
             import art_direction
             style_dna = {"tokens": dna, "designSystem": req.designSystem,
@@ -866,16 +866,16 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
         if run_registry.is_cancelled(run_id):
             return None, "cancelled", None
         if req.rawOutputs is not None:
-            run_registry.stage(run_id, "parse", "Разбираю ответ модели")
+            run_registry.stage(run_id, "parse", "Parsing model response")
             ir, error = parse_ir_response(req.rawOutputs[n - 1])
         else:
-            run_registry.stage(run_id, "llm", f"Модель генерирует IR ({count} вар.)" if count > 1 else "Модель генерирует IR")
+            run_registry.stage(run_id, "llm", f"Model is generating IR ({count} variants)" if count > 1 else "Model is generating IR")
             ir, error = call_context_llm(content, variant_direction)
-            run_registry.stage(run_id, "validate", "Проверка схемы и автофиксы")
+            run_registry.stage(run_id, "validate", "Schema validation and automatic fixes")
         qa = None
         if ir is not None:
             if visual_reference.concept_used_in_output(ir, visual):
-                return None, "Эскиз попал в итоговый макет; нужно собрать живой текст и отдельные изображения", None
+                return None, "Sketch ended up in the final layout; editable text and separate images are required", None
             ir = sanitize_generated_ir(ir)
             if ds_font_faces:
                 # Шрифты системы (включая моно для лейблов) — в meta.fontFaces:
@@ -896,7 +896,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
                     return False
                 return all(empty_composition(child) for child in node.get("children", []))
             if not ir.get("tree") or all(empty_composition(root) for root in ir["tree"]):
-                return None, "Модель вернула пустой макет. Проверьте промпт и приложенный референс и повторите запуск.", None
+                return None, "Model returned an empty layout. Check the prompt and attached reference, then run again.", None
             if variant_direction:
                 ir.setdefault("meta", {})["direction"] = {
                     "name": str(variant_direction["label"])[:60],
@@ -988,10 +988,10 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
         else:
             errors.append({"index": i + 1, "error": error})
     if run_registry.is_cancelled(run_id):
-        return err(CANCELLED_STATUS, "Генерация отменена")
+        return err(CANCELLED_STATUS, "Generation cancelled")
     if not variants and not (ds_usage_mode == "strict" and ds_context is not None):
-        return err(502, f"Ни один вариант не сгенерирован. {errors[0]['error'] if errors else ''}")
-    run_registry.stage(run_id, "design-system", "Проверка дизайн-системы и сборка ответа")
+        return err(502, f"No variants generated. {errors[0]['error'] if errors else ''}")
+    run_registry.stage(run_id, "design-system", "Validating design system and assembling response")
     design_system_report = None
     strict_fallback = ""
     if ds_context is not None:
@@ -1058,7 +1058,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
                     strict_fallback = "extend"
                     fallback_warning = {
                         "code": "strict-fallback-extend",
-                        "message": "Strict: мастера не использованы, результат принят в режиме extend",
+                        "message": "Strict: masters were not used; result accepted in extend mode",
                     }
                     for variant in strict_candidate_variants:
                         meta = variant.setdefault("meta", {})
@@ -1073,7 +1073,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
                     design_system_report["warnings"].append(fallback_warning)
                 if not variants:
                     first = design_system_report["errors"][0]["message"] if design_system_report["errors"] else "strict validation failed"
-                    return err(422, f"Design System Strict отклонил все варианты: {first}")
+                    return err(422, f"Design System Strict rejected all variants: {first}")
     # Журнал решений: что агент получил и что проверил — вместо чёрного ящика.
     generation_log = {
         "visualReference": visual["info"] if visual else None,
@@ -1106,6 +1106,7 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
             "archetypeIds": list((ds_compiled or {}).get("archetypeIds") or []),
             "estimatedTokens": (ds_compiled or {}).get("estimatedTokens"),
             "tokenBudget": (ds_compiled or {}).get("tokenBudget"),
+            "sectionShell": "foundations.section-shell" in ((ds_compiled or {}).get("includedRuleIds") or []),
             "referenceImages": ds_reference_images.describe(
                 ds_reference_candidates, ds_reference_parts if req.rawOutputs is None else None),
             "identityScores": [(variant.get("meta") or {}).get("identityScore") for variant in variants],
@@ -1139,16 +1140,16 @@ def _generate(req: GenerateReq, run_id: str | None, *, prepared: dict | None = N
 def mix(req: MixReq):
     irs, weights = req.irs, [float(w) for w in req.weights]
     if not irs:
-        return err(422, "Нужен хотя бы один IR для микса.")
+        return err(422, "At least one IR is required for mixing.")
     if len(irs) != len(weights):
-        return err(422, "Количество IR и весов не совпадает.")
+        return err(422, "IR count and weight count do not match.")
     if any(w < 0 for w in weights):
-        return err(422, "Веса должны быть >= 0.")
+        return err(422, "Weights must be >= 0.")
 
     dom = max(range(len(irs)), key=lambda i: weights[i])  # при всех нулях -> 0
     result = copy.deepcopy(irs[dom])
     if not isinstance(result, dict):
-        return err(422, f"IR #{dom + 1} не является объектом.")
+        return err(422, f"IR #{dom + 1} is not an object.")
     result_colors = result.setdefault("tokens", {}).setdefault("color", {})
 
     # цвета — взвешенный микс в OKLCH
@@ -1172,9 +1173,9 @@ def clone(req: CloneReq):
     url = req.url.strip()
     component = req.component.strip()
     if not url:
-        return err(422, "Укажите URL сайта.")
+        return err(422, "Enter the site URL.")
     if not component:
-        return err(422, "Опишите, какой компонент клонировать.")
+        return err(422, "Describe the component to clone.")
     provider = "auto"  # вся цепочка ROUTING подключённых аккаунтов
 
     # SSRF-гард: только публичные http/https URL
@@ -1202,7 +1203,7 @@ def clone(req: CloneReq):
         )
         html = response.content.decode("utf-8", errors="replace")
     except Exception as e:
-        return err(502, f"Не удалось загрузить {url}: {e}")
+        return err(502, f"Could not load {url}: {e}")
 
     # извлекаем стили и body (обрезаем до 12000 символов чтобы уложиться в контекст)
     styles = " ".join(re.findall(r"<style[^>]*>(.*?)</style>", html, re.S))[:6000]
@@ -1274,12 +1275,12 @@ def reskin(req: ReskinReq):
     """
     errors = validate_ir(sanitize_font_face_weights(req.ir))
     if errors:
-        return err(422, "Входной IR невалиден: " + "; ".join(errors[:5]))
+        return err(422, "Invalid input IR: " + "; ".join(errors[:5]))
 
     mask = mergeback.normalize_mask(req.mask)
     if not any(mask.values()):
         return {"ir": req.ir,
-                "log": ["пустая маска: возвращён входной IR без LLM-вызова"]}
+                "log": ["empty mask: input IR returned without an LLM call"]}
 
     allowed = "\n".join(f"- {label}" for key, label in _MASK_LABELS.items() if mask[key])
     user = (
@@ -1315,7 +1316,7 @@ def reskin(req: ReskinReq):
             token_budget=int(req.designSystem.get("tokenBudget") or ds_compiler.default_budget(ds_usage_mode)),
         )
         if ds_usage_mode == "strict" and not ds_compiled.get("strictReady"):
-            return err(422, "Design System Strict: exact master не помещается в выбранный context budget. Переключите режим ДС на Extend/Style-only или отключите ДС для этой ноды (× в строке «ДС» на ноде)")
+            return err(422, "Design System Strict: exact master exceeds the selected context budget. Switch DS mode to Extend/Style-only or disable DS for this node (× in the node DS row)")
         user += "\n\n" + ds_compiled["promptBlock"]
 
     # codex/claude — консольные аккаунты (cli_llm); всё остальное — Sol по ключу
@@ -1361,7 +1362,7 @@ def reskin(req: ReskinReq):
         except Exception:
             pass
     if errors:
-        return err(502, "reskin не прошёл валидацию после repair: " + "; ".join(errors[:5]))
+        return err(502, "reskin failed validation after repair: " + "; ".join(errors[:5]))
     current = ensure_current_ir(merged, source="reskin")
     design_system_report = None
     if ds_context is not None:
@@ -1370,7 +1371,7 @@ def reskin(req: ReskinReq):
         if ds_usage_mode == "strict" and design_system_report["errors"]:
             return err(
                 422,
-                "Design System Strict отклонил reskin: "
+                "Design System Strict rejected reskin: "
                 + "; ".join(item["message"] for item in design_system_report["errors"][:4]),
             )
         current.setdefault("meta", {}).update({

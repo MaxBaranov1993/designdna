@@ -357,7 +357,7 @@ def get(kind: str, key: str) -> dict | None:
 
 def put(kind: str, key: str, payload: dict) -> None:
     if not isinstance(payload, dict):
-        _log(f"отказ записи ({kind}): payload is not an object")
+        _log(f"write rejected ({kind}): payload is not an object")
         return
     blob = _canonical_bytes(payload)
     digest = _integrity_of(blob)
@@ -403,20 +403,20 @@ def put_gated(kind: str, key: str, payload: dict, fidelity_report: dict | None =
     try:
         from fidelity_harness import evaluate_gate, is_raster_fallback
     except Exception as e:
-        _log(f"отказ записи ({kind}): fidelity harness недоступен: {e}")
+        _log(f"write rejected ({kind}): fidelity harness unavailable: {e}")
         return False
     ir = payload.get("ir") if isinstance(payload, dict) else None
     if is_raster_fallback(ir):
         put(kind, key, payload)
         return True
     if isinstance(fidelity_report, dict) and fidelity_report.get("raster_fallback"):
-        _log(f"отказ записи ({kind}): report заявляет raster_fallback, "
-             "но фактический IR строгой проверки не проходит")
+        _log(f"write rejected ({kind}): report claims raster_fallback, "
+             "but the actual IR fails strict validation")
         return False
     gate = evaluate_gate(fidelity_report)
     if not gate.get("passed"):
-        _log(f"отказ записи ({kind}): fidelity gate не пройден: "
-             + "; ".join(gate.get("reasons") or ["нет отчёта"]))
+        _log(f"write rejected ({kind}): fidelity gate failed: "
+             + "; ".join(gate.get("reasons") or ["no report"]))
         return False
     put(kind, key, payload)
     return True

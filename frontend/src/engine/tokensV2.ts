@@ -24,9 +24,9 @@ export const COLOR_ROLE_ORDER = [
 ] as const;
 
 export const COLOR_ROLE_LABELS: Record<string, string> = {
-  bg: "Фон", bg2: "Фон 2", surface: "Поверхность", surface2: "Поверхность 2",
-  ink: "Текст", ink2: "Текст 2", inkMuted: "Текст тихий", line: "Линии",
-  accent: "Акцент", accentInk: "Текст на акценте", accent2: "Акцент 2",
+  bg: "Background", bg2: "Background 2", surface: "Surface", surface2: "Surface 2",
+  ink: "Text", ink2: "Text 2", inkMuted: "Muted text", line: "Lines",
+  accent: "Accent", accentInk: "Text on accent", accent2: "Accent 2",
 };
 
 /** Пересчёт кеглей ролей по base/ratio — на месте, как в миграции. */

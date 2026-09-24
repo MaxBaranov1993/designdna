@@ -141,7 +141,7 @@ def _err(status: int, error_message: str, **details):
 def build_design_system(req: BuildRequest):
     """Source-данные → draft (без публикации)."""
     if not any(isinstance(b, dict) and b.get("ir") for b in req.blocks):
-        return _err(422, "Source не содержит валидных блоков — запустите импорт заново")
+        return _err(422, "Source contains no valid blocks — import again")
     existing = None
     if req.systemId:
         existing = store.get_revision(req.systemId, 0)
@@ -196,7 +196,7 @@ def import_design_system(req: ImportRequest):
     # мастеров не ошибка импорта, а свойство файла.
     hard = [e for e in errors if isinstance(e, dict) and e.get("code") != "no-components"]
     if hard:
-        return _err(422, "Документ не прошёл проверку: " + "; ".join(str(e.get("message") or e.get("code")) for e in hard[:4]))
+        return _err(422, "Document failed validation: " + "; ".join(str(e.get("message") or e.get("code")) for e in hard[:4]))
     saved = store.save_draft(document)
     from .document import summary
     document = saved.get("document") or document
@@ -276,21 +276,21 @@ def component_section(req: ComponentSectionRequest):
         # черновик (revision 0) или последняя опубликованная
         document = store.get_revision(req.systemId, 0)
     if not document:
-        return _err(404, f"Дизайн-система {req.systemId} не найдена")
+        return _err(404, f"Design system {req.systemId} not found")
     comp = (document.get("components") or {}).get(req.componentKey) or (document.get("reviewComponents") or {}).get(req.componentKey)
     if not isinstance(comp, dict):
-        return _err(404, f"Компонент {req.componentKey} не найден")
+        return _err(404, f"Component {req.componentKey} not found")
     master = comp.get("masterIr") if isinstance(comp.get("masterIr"), dict) else comp.get("templateIr")
     variants = comp.get("variants") if isinstance(comp.get("variants"), dict) else {}
     variant = variants.get(req.variantKey) if req.variantKey else None
     if isinstance(variant, dict) and variant.get("masterRef") != "self" and isinstance(variant.get("masterIr"), dict):
         master = variant["masterIr"]
     if not isinstance(master, dict):
-        return _err(422, "У компонента нет masterIr")
+        return _err(422, "Component has no masterIr")
     preview = dsdoc.preview_ir_for_master(master)
     section = (preview.get("tree") or [None])[0]
     if not isinstance(section, dict):
-        return _err(422, "Не удалось собрать секцию из мастера")
+        return _err(422, "Could not build a section from the master")
     system_ref = {"systemId": document.get("id"), "revision": document.get("revision"), "contentHash": document.get("contentHash")}
     handle_component = comp
     if isinstance(variant, dict) and variant.get("masterRef") != "self" and isinstance(variant.get("masterIr"), dict):
@@ -317,13 +317,13 @@ def save_variant(req: VariantSaveRequest):
     пользовательский (origin: user)."""
     document = store.get_revision(req.systemId, 0)
     if not document:
-        return _err(404, f"Черновик дизайн-системы {req.systemId} не найден — откройте ноду ДС")
+        return _err(404, f"Design system draft {req.systemId} not found — open the DS node")
     comp = (document.get("components") or {}).get(req.componentKey)
     if not isinstance(comp, dict):
-        return _err(404, f"Компонент {req.componentKey} не найден в реестре")
+        return _err(404, f"Component {req.componentKey} not found in registry")
     root = _master_root(req.ir)
     if not isinstance(root, dict):
-        return _err(422, "В IR нет корня компонента")
+        return _err(422, "IR has no component root")
     variants = comp.setdefault("variants", {})
     if not isinstance(variants, dict):
         variants = comp["variants"] = {}
@@ -358,7 +358,7 @@ def save_variant(req: VariantSaveRequest):
 @router.post("/api/design-system/save-draft")
 def save_design_system_draft(req: DocumentRequest):
     if not isinstance(req.document, dict) or not req.document.get("id"):
-        return _err(422, "Нет документа дизайн-системы")
+        return _err(422, "No design system document")
     saved = store.save_draft(req.document)
     from .document import summary
     document = saved.get("document") or req.document
@@ -469,11 +469,11 @@ def export_styleguide(req: StyleguideRequest):
     if not document and req.systemId:
         document = store.get_revision(req.systemId, req.revision)
         if not document:
-            return _err(404, f"Ревизия {req.systemId}@{req.revision} не найдена")
+            return _err(404, f"Revision {req.systemId}@{req.revision} not found")
     if not isinstance(document, dict):
-        return _err(422, "Нет документа дизайн-системы")
+        return _err(422, "No design system document")
     if not (document.get("components") or document.get("reviewComponents")):
-        return _err(422, "В системе нет мастеров — соберите UI Kit из Source")
+        return _err(422, "System has no masters — build a UI Kit from Source")
 
     try:
         html_text, report = styleguide.render_styleguide(
@@ -486,7 +486,7 @@ def export_styleguide(req: StyleguideRequest):
     except (ValueError, RuntimeError) as exc:
         return _err(422, str(exc))
     except Exception as exc:
-        return _err(502, f"Сборка UI Kit не удалась: {exc}")
+        return _err(502, f"UI Kit build failed: {exc}")
 
     slug = _re.sub(r"[^A-Za-z0-9._-]+", "-", str(document.get("name") or "ui-kit")).strip("-") or "ui-kit"
     filename = f"{slug}-rev{int(document.get('revision') or 0)}.html"
@@ -506,7 +506,7 @@ def export_styleguide(req: StyleguideRequest):
 @router.post("/api/design-system/publish")
 def publish_design_system(req: DocumentRequest):
     if not isinstance(req.document, dict) or not req.document.get("id"):
-        return _err(422, "Нет документа для публикации")
+        return _err(422, "No document to publish")
     result = store.publish(req.document)
     if not result.get("ok"):
         return JSONResponse(
@@ -520,7 +520,7 @@ def publish_design_system(req: DocumentRequest):
 def validate_design_system(req: DocumentRequest):
     from .document import validate_document
     if not isinstance(req.document, dict):
-        return _err(422, "Нет документа для проверки")
+        return _err(422, "No document to validate")
     return {"errors": validate_document(req.document)}
 
 
@@ -530,11 +530,11 @@ def preview_design_system(req: PreviewRequest):
     if not document and req.systemId:
         document = store.get_revision(req.systemId, req.revision)
         if not document:
-            return _err(404, f"Ревизия {req.systemId}@{req.revision} не найдена")
+            return _err(404, f"Revision {req.systemId}@{req.revision} not found")
     if (not isinstance(document, dict)
             or not (document.get("components") or document.get("reviewComponents")
                     or document.get("suggestions"))):
-        return _err(422, "Нет документа для предпросмотра")
+        return _err(422, "No document to preview")
     components = document.get("components") or {}
     review_components = document.get("reviewComponents") or {}
     suggestions = document.get("suggestions") or {}
@@ -544,7 +544,7 @@ def preview_design_system(req: PreviewRequest):
                 or review_components.get(req.componentKey)
                 or suggestions.get(req.componentKey))
         if not isinstance(comp, dict):
-            return _err(404, f"Компонент {req.componentKey} не найден")
+            return _err(404, f"Component {req.componentKey} not found")
     elif isinstance(components, dict) and components:
         comp = next(iter(components.values()))
     variants = (comp or {}).get("variants") if isinstance((comp or {}).get("variants"), dict) else {}
@@ -662,8 +662,8 @@ def promote_design_identity(req: PromoteRequest):
     from .document import content_hash, new_document, summary
     from .identity import extract_identity
     if not isinstance(req.ir, dict) or not isinstance(req.ir.get("tree"), list) or not req.ir.get("tree"):
-        return _err(422, "Для закрепления нужен непустой Design IR")
-    name = req.name.strip() or "Закреплённый стиль"
+        return _err(422, "A non-empty Design IR is required for pinning")
+    name = req.name.strip() or "Pinned style"
     source_id = str(req.sourceNodeId or "generator")
     document = new_document(
         name,
@@ -686,7 +686,7 @@ def promote_design_identity(req: PromoteRequest):
     document["components"] = {
         component_key: {
             "componentKey": component_key, "name": "Promoted Master", "category": "surfaces",
-            "description": "Принятый пользователем результат генерации — мастер для переноса identity",
+            "description": "User-accepted generation result — master for transferring identity",
             "origin": "user", "status": "verified", "confidence": 1.0, "confirmed": True,
             "masterIr": req.ir, "propsSchema": {}, "slots": [],
             "variants": {"default": {"label": "Default", "origin": "user", "confirmed": True,

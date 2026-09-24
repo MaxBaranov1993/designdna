@@ -36,3 +36,21 @@ def test_same_snapshot_reuses_images_and_skips_derived_copies():
     with patch("video_context.cache_store.get", return_value={"images": []}), patch("video_context.render_png") as render:
         assert len(prepare_context(timeline)) == 2
     render.assert_not_called()
+
+
+def test_invented_analysis_reference_is_dropped_not_fatal():
+    """Opus named a page by its title during analysis; the request still succeeds."""
+    timeline = build_pages(pages_fixture(), {})
+    visual = [{"pageId": "ir", "name": "Page", "images": []}]
+    analysis = {"summary": "Форма.", "targets": [{"pageId": "ir", "id": "s0.children.3", "meaning": "Название"},
+                                                 {"pageId": "Logo", "id": "s0", "meaning": "Логотип"},
+                                                 {"pageId": "ir", "id": "s9.children.99", "meaning": "Нет такого"}]}
+    with patch("video_story.llm.chat", side_effect=[json.dumps(analysis), json.dumps(plan_fixture())]) as chat:
+        direct_story(timeline, "Заполни форму", "claude", "medium", visual_context=visual)
+    planner_text = chat.call_args.args[1][-1]["content"][0]["text"]
+    assert "ir:s9.children.99" in planner_text and "do not exist" in planner_text
+    only_invented = {"summary": "Форма.", "targets": [{"pageId": "Logo", "id": "s0", "meaning": "Логотип"}]}
+    import pytest
+    with patch("video_story.llm.chat", side_effect=[json.dumps(only_invented), json.dumps(plan_fixture())]):
+        with pytest.raises(ValueError, match="nonexistent component"):
+            direct_story(timeline, "Заполни форму", "claude", "medium", visual_context=visual)

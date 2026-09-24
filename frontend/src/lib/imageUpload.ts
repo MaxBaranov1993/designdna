@@ -39,7 +39,7 @@ async function decode(file: File): Promise<ImageBitmap | HTMLImageElement> {
     return await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error("Не удалось прочитать изображение"));
+      img.onerror = () => reject(new Error("Could not read image"));
       img.src = url;
     });
   } finally {
@@ -63,7 +63,7 @@ export type PreparedImage = { dataUrl: string; width: number; height: number; by
 
 /** Файл → data:-URL с даунскейлом. SVG отдаём как есть (векторный, без канваса). */
 export async function prepareImageForIr(file: File, maxSide = IMAGE_MAX_SIDE): Promise<PreparedImage> {
-  if (!file.type.startsWith("image/")) throw new Error("Это не изображение");
+  if (!file.type.startsWith("image/")) throw new Error("Not an image");
   if (file.type === "image/svg+xml" && file.size <= 512 * 1024) {
     const text = await file.text();
     const dataUrl = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(text)));
@@ -79,7 +79,7 @@ export async function prepareImageForIr(file: File, maxSide = IMAGE_MAX_SIDE): P
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas недоступен");
+  if (!ctx) throw new Error("Canvas unavailable");
   ctx.drawImage(source as CanvasImageSource, 0, 0, width, height);
   if ("close" in source && typeof source.close === "function") source.close();
   const keepPng = file.type === "image/png" && hasAlpha(ctx, width, height);
@@ -89,7 +89,7 @@ export async function prepareImageForIr(file: File, maxSide = IMAGE_MAX_SIDE): P
 }
 
 export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} Б`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }

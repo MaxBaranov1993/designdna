@@ -11,10 +11,10 @@
 
   /* Категории — стадии пайплайна из CTX_GROUPS; короткие подписи для рельсы. */
   const CATEGORY_META: Record<string, { short: string; icon: string }> = {
-    "ИСТОЧНИК": { short: "Источник", icon: "M4 6h16M4 12h10M4 18h7" },
-    "ГЕНЕРАЦИЯ": { short: "Генерация", icon: "M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8M18.4 5.6l-2.8 2.8m-7.2 7.2-2.8 2.8" },
-    "СБОРКА": { short: "Сборка", icon: "M4 5h16v5H4zM4 14h7v5H4zM13 14h7v5h-7z" },
-    "КОНТРОЛЬ И ДВИЖЕНИЕ": { short: "Видео", icon: "M4 6h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm14 4 4-2v8l-4-2z" },
+    "SOURCE": { short: "Source", icon: "M4 6h16M4 12h10M4 18h7" },
+    "GENERATION": { short: "Generation", icon: "M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8M18.4 5.6l-2.8 2.8m-7.2 7.2-2.8 2.8" },
+    "ASSEMBLY": { short: "Assembly", icon: "M4 5h16v5H4zM4 14h7v5H4zM13 14h7v5h-7z" },
+    "QUALITY AND MOTION": { short: "Video", icon: "M4 6h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm14 4 4-2v8l-4-2z" },
   };
   const categories = CTX_GROUPS.map((group) => ({ label: group.label, ...(CATEGORY_META[group.label] || { short: group.label, icon: "M4 12h16" }) }));
 
@@ -29,18 +29,18 @@
   const openCheatsheet = () => window.dispatchEvent(new CustomEvent("designdna:open-cheatsheet"));
 </script>
 
-<nav class="dna-rail" aria-label="Разделы">
+<nav class="dna-rail" aria-label="Sections">
   <div class="rail-logo" title="DesignDNA">D</div>
 
-  <button class="rail-btn" title="Найти ноду или команду (Ctrl+K)" onclick={openSearch}>
+  <button class="rail-btn" title="Find a node or command (Ctrl+K)" onclick={openSearch}>
     <span class="rail-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2" /></svg></span>
-    <span>Поиск</span>
+    <span>Search</span>
   </button>
 
   <span class="rail-sep"></span>
 
   {#each categories as category (category.label)}
-    <button class="rail-btn" title={`Ноды: ${category.label.toLocaleLowerCase("ru")}`} data-group={category.label} onclick={(event) => openCategory(event, category.label)}>
+    <button class="rail-btn" title={`Nodes: ${category.label.toLocaleLowerCase("ru")}`} data-group={category.label} onclick={(event) => openCategory(event, category.label)}>
       <span class="rail-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d={category.icon} /></svg></span>
       <span>{category.short}</span>
     </button>
@@ -48,26 +48,26 @@
 
   <span class="rail-sep"></span>
 
-  <button class="rail-btn" class:active={surface === "design"} aria-pressed={surface === "design"} title="Граф и канвас" onclick={() => onselect("design")}>
+  <button class="rail-btn" class:active={surface === "design"} aria-pressed={surface === "design"} title="Graph and canvas" onclick={() => onselect("design")}>
     <span class="rail-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="7" height="6" rx="1.5" /><rect x="14" y="14" width="7" height="6" rx="1.5" /><path d="M10 7h2a3 3 0 0 1 3 3v4" /></svg></span>
-    <span>Граф</span>
+    <span>Graph</span>
   </button>
   {#if isDesktop}
-    <button class="rail-btn" class:active={surface === "map"} aria-pressed={surface === "map"} title="Project Map — семантическая карта репозитория" onclick={() => onselect("map")}>
+    <button class="rail-btn" class:active={surface === "map"} aria-pressed={surface === "map"} title="Project Map — semantic repository map" onclick={() => onselect("map")}>
       <span class="rail-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14" /></svg></span>
-      <span>Карта</span>
+      <span>Map</span>
     </button>
-    <button class="rail-btn" class:active={surface === "agents"} aria-pressed={surface === "agents"} title="Agents — чат с агентами и MCP" onclick={() => onselect("agents")}>
+    <button class="rail-btn" class:active={surface === "agents"} aria-pressed={surface === "agents"} title="Agents — chat with agents and MCP" onclick={() => onselect("agents")}>
       <span class="rail-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4z" /><path d="M8 9h8M8 12h5" /></svg></span>
-      <span>Агенты</span>
+      <span>Agents</span>
     </button>
   {/if}
 
   <span class="rail-spacer"></span>
 
-  <button class="rail-btn" title="Горячие клавиши (?)" onclick={openCheatsheet}>
+  <button class="rail-btn" title="Keyboard shortcuts (?)" onclick={openCheatsheet}>
     <span class="rail-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01" /></svg></span>
-    <span>Помощь</span>
+    <span>Help</span>
   </button>
-  <div class="rail-avatar" title={isDesktop ? "Локальный профиль" : "Браузер"}>M</div>
+  <div class="rail-avatar" title={isDesktop ? "Local profile" : "Browser"}>M</div>
 </nav>

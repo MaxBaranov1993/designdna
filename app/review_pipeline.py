@@ -59,7 +59,7 @@ def parse_items(raw: str) -> list:
             continue
     if items:
         return items
-    raise ValueError("review JSON не распознан")
+    raise ValueError("review JSON not recognized")
 
 
 def main() -> int:
@@ -71,7 +71,7 @@ def main() -> int:
     rng = args[0] if args else "737478f..HEAD"
     # ведущий '-' запрещён: аргумент не должен разбираться git'ом как флаг
     if not re.fullmatch(r"[\w.~/][\w.~/^-]*(\.\.[\w.~/][\w.~/^-]*)?", rng):
-        print("некорректный git-range:", rng)
+        print("invalid git range:", rng)
         return 2
     # концы диапазона обязаны существовать в репозитории
     for rev in (rng.split("..", 1) if ".." in rng else [rng]):
@@ -79,7 +79,7 @@ def main() -> int:
             ["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", rev + "^{commit}"],
             capture_output=True, text=True, encoding="utf-8", errors="replace")
         if chk.returncode != 0:
-            print("некорректная ревизия в диапазоне:", rev)
+            print("invalid revision in range:", rev)
             return 2
     reviewers = REVIEWERS
     # '--' отделяет ревизии от pathspec: аргументы после него git не примет за флаги
@@ -95,14 +95,14 @@ def main() -> int:
             diff = diff[:cut + 1]
         else:
             diff = diff[:60000]
-        diff += "\n…[diff обрезан по границе файла; пропущены: " + ", ".join(omitted) + "]"
-    print(f"diff {rng}: {len(diff)} символов")
+        diff += "\n…[diff truncated at file boundary; omitted: " + ", ".join(omitted) + "]"
+    print(f"diff {rng}: {len(diff)} characters")
 
     report = {"range": rng, "reviewers": {}}
     empty = not diff.strip()
     if empty:
         # правок app/ в диапазоне нет: нечего ревьювить, вызовы LLM не делаем
-        print("diff пуст: правок app/ нет, ревью без вызовов LLM")
+        print("empty diff: no app/ changes, review without LLM calls")
         report["reviewers"] = {name: [] for name, _, _, _ in reviewers}
     for name, provider, model, fallback in ([] if empty else reviewers):
         try:
@@ -124,16 +124,16 @@ def main() -> int:
             report["reviewers"][name] = items
             crit = sum(1 for i in items if i.get("severity") == "critical")
             maj = sum(1 for i in items if i.get("severity") == "major")
-            print(f"[{name}] замечаний: {len(items)} (critical={crit}, major={maj})")
+            print(f"[{name}] issues: {len(items)} (critical={crit}, major={maj})")
         except Exception as e:
-            print(f"[{name}] ОШИБКА: {e}")
+            print(f"[{name}] ERROR: {e}")
             report["reviewers"][name] = [{"file": "-", "severity": "critical",
                                           "issue": f"review failed: {e}", "fix": "-"}]
 
     out = ROOT / "results" / "review_sprint4.json"
     out.parent.mkdir(exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print("отчёт:", out)
+    print("report:", out)
     return 0
 
 

@@ -6,7 +6,7 @@ export function isImageSource(value: unknown): value is string {
 
 export async function imageDataUrl(value: string): Promise<string> {
   const resolved = isDesktopBlobUrl(value) ? JSON.parse(await expandBlobRefs(JSON.stringify(value))) : value;
-  if (typeof resolved !== "string" || !resolved.startsWith("data:image/")) throw new Error("Не удалось загрузить изображение");
+  if (typeof resolved !== "string" || !resolved.startsWith("data:image/")) throw new Error("Could not load image");
   return resolved;
 }
 

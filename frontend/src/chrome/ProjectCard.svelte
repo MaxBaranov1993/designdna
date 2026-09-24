@@ -31,9 +31,9 @@
   const removePage = (pageId: string, name: string, event: MouseEvent) => {
     event.stopPropagation();
     void confirmDialog({
-      title: `Удалить страницу «${name}»?`,
-      message: "Ноды и связи этой страницы будут удалены. Действие нельзя отменить.",
-      confirmLabel: "Удалить",
+      title: `Delete page “${name}»?`,
+      message: "The nodes and connections on this page will be deleted. This cannot be undone.",
+      confirmLabel: "Delete",
       danger: true,
     }).then((ok) => {
       if (ok) $flow.deletePage(pageId);
@@ -45,17 +45,17 @@
   {#if !isDesktop}
     <!-- В десктопе имя и окружение живут в полосе заголовка окна -->
     <span class="pc-name">DesignDNA</span>
-    <span class="pc-badge">браузер</span>
+    <span class="pc-badge">browser</span>
     <span class="pc-vsep"></span>
   {/if}
   <div style="position: relative">
-    <button class="pc-page" aria-haspopup="menu" aria-expanded={open} title="Страницы проекта" onclick={() => (open = !open)}>
-      <span class="pc-page-name">{activePage?.name || "Страница"}</span>
+    <button class="pc-page" aria-haspopup="menu" aria-expanded={open} title="Project pages" onclick={() => (open = !open)}>
+      <span class="pc-page-name">{activePage?.name || "Page"}</span>
       <span class="count">{$flowNodes.length}</span>
       <span class="chev">▼</span>
     </button>
     {#if open}
-      <div class="pc-menu" role="menu" aria-label="Страницы">
+      <div class="pc-menu" role="menu" aria-label="Pages">
         {#each pages as page (page.id)}
           <div
             class="pc-item"
@@ -70,7 +70,7 @@
             {#if editingId === page.id}
               <input
                 value={page.name}
-                aria-label="Название страницы"
+                aria-label="Page name"
                 oninput={(event) => $flow.renamePage(page.id, event.currentTarget.value)}
                 onblur={() => (editingId = null)}
                 onkeydown={(event) => { if (event.key === "Enter" || event.key === "Escape") { editingId = null; event.stopPropagation(); } }}
@@ -80,14 +80,14 @@
               <span class="name">{page.name}</span>
               <span class="count">{countNodes(page.id)}</span>
             {/if}
-            <button class="x" disabled={pages.length <= 1} title="Удалить страницу" aria-label="Удалить страницу" onclick={(event) => removePage(page.id, page.name, event)}>✕</button>
+            <button class="x" disabled={pages.length <= 1} title="Delete page" aria-label="Delete page" onclick={(event) => removePage(page.id, page.name, event)}>✕</button>
           </div>
         {/each}
         <span class="pc-sep"></span>
-        <button class="pc-item add" role="menuitem" onclick={() => { $flow.createPage(); open = false; }}><span class="dot"></span><span class="name">+ Страница</span></button>
-        <button class="pc-item add" role="menuitem" onclick={() => { $flow.addVideoChainPage(); open = false; }}><span class="dot"></span><span class="name">+ Видео-цепочка</span></button>
+        <button class="pc-item add" role="menuitem" onclick={() => { $flow.createPage(); open = false; }}><span class="dot"></span><span class="name">+ Page</span></button>
+        <button class="pc-item add" role="menuitem" onclick={() => { $flow.addVideoChainPage(); open = false; }}><span class="dot"></span><span class="name">+ Video workflow</span></button>
         <span class="pc-sep"></span>
-        <div class="dna-field-hint" style="padding: 4px 8px 6px">Двойной клик — переименовать · Ctrl+PgUp / PgDn — переключить</div>
+        <div class="dna-field-hint" style="padding: 4px 8px 6px">Double-click to rename · Ctrl+PgUp / PgDn to switch</div>
       </div>
     {/if}
   </div>

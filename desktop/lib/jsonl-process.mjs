@@ -117,7 +117,7 @@ export class JsonlProcess extends EventEmitter {
       const timer = setTimeout(() => {
         this.#untrack(id);
         reject(new Error(`${this.name} request timed out: ${method}`));
-        if (this.restartOnTimeout) this.abort(`${this.name}: канал перезапущен после таймаута ${method}`);
+        if (this.restartOnTimeout) this.abort(`${this.name}: channel restarted after timeout ${method}`);
       }, timeoutMs);
       this.#track(id, { resolve, reject, timer });
       this.child.stdin.write(frame, (error) => {

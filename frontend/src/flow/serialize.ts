@@ -137,7 +137,6 @@ let lastProjectProvider: (() => PagesProjectPayload) | null = null;
 let idleWriteHandle: number | null = null;
 let dbSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let lastDbProjectText: string | null = null;
-let lsPagesDisabled = false;
 /* Ревизия проекта (SHA-256 строки payload) с последнего load/save —
  * заголовок CAS для /api/project/save. */
 let lastKnownRevision: string | null = null;
@@ -150,6 +149,13 @@ let pendingProjectWrite: { provider: () => PagesProjectPayload; generation: numb
 let dbSaveInFlight: Promise<void> | null = null;
 let dbConflictBlocked = false;
 let dbSaveEpoch = 0;
+/* Pages deleted by the user since the last load/acknowledged save: the only
+ * pages a save may drop (the server refuses any other page loss). */
+const deletedPageIds = new Set<string>();
+export function noteDeletedPage(id: string): void {
+  deletedPageIds.add(id);
+}
+const deletedPagesJson = (ids: string[]) => ids.length ? `,"deletedPages":${JSON.stringify(ids)}` : "";
 
 function scheduleIdleWrite(): void {
   if (idleWriteHandle != null) return; // отложенный write возьмёт свежий provider при исполнении
@@ -179,30 +185,62 @@ function cancelIdleWrite(): void {
   idleWriteHandle = null;
 }
 
-/** Синхронная запись (путь beforeunload): без offload — страница может
- *  закрыться до завершения асинхронного шага, данные обязаны попасть в LS. */
+/** Поставить снимок проекта в очередь записи в SQLite (единственное хранилище
+ *  проекта: localStorage-кэш убран 2026-09-24 — он переполнялся на больших
+ *  проектах и при старте подменял полный проект урезанной копией). */
 function writeProjectSync(payload: PagesProjectPayload): void {
-  // Also invalidates an older offload when beforeunload writes synchronously.
+  // Also invalidates an older offload when the unload/quit flush writes synchronously.
   projectWriteGeneration += 1;
   pendingProjectWrite = null;
-  const compact = compactForStorage(payload);
-  const text = JSON.stringify(compact);
-  // SQLite is the durable project, localStorage is only a compact startup cache.
   // A failed/timed-out blob put must never delete the only Source screenshot.
   lastDbProjectText = JSON.stringify(compactForStorage(payload, true));
+  snapshotObserver?.(lastDbProjectText);
   scheduleDbProjectSave();
-  if (lsPagesDisabled) return;
-  try {
-    localStorage.setItem(FLOW_PAGES_LS_KEY, text);
-  } catch {
-    try {
-      localStorage.setItem(FLOW_PAGES_LS_KEY, JSON.stringify(stripHeavy(compact)));
-      toast("localStorage переполнен — проект страниц сохранён без тяжёлых данных", "error");
-    } catch {
-      lsPagesDisabled = true;
-      localStorage.removeItem(FLOW_PAGES_LS_KEY);
-      toast("localStorage переполнен - проект сохраняется в SQLite.", "error");
+}
+
+let snapshotObserver: ((text: string) => void) | null = null;
+/** Test seam: observe every snapshot handed to the SQLite queue, in order. */
+export function observeProjectSnapshots(observer: ((text: string) => void) | null): void {
+  snapshotObserver = observer;
+}
+
+/** Дописать текущий проект в SQLite и дождаться ответа (выход из приложения).
+ *  true — сохранено или сохранять нечего; false — конфликт, ошибка или таймаут. */
+export async function flushProjectToDb(timeoutMs = 15_000): Promise<boolean> {
+  // Unsaved edits still in the debounce/idle/offload stages are captured now;
+  // an idle pipeline means the last snapshot already reached the DB queue.
+  const pendingEdit = !!projectSaveTimer || idleWriteHandle != null || !!pendingProjectWrite || preparingProject;
+  if (projectSaveTimer) {
+    clearTimeout(projectSaveTimer);
+    projectSaveTimer = null;
+  }
+  cancelIdleWrite();
+  if (pendingEdit && lastProjectProvider) writeProjectSync(lastProjectProvider());
+  if (dbSaveTimer) {
+    clearTimeout(dbSaveTimer);
+    dbSaveTimer = null;
+  }
+  const work = (async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (dbSaveInFlight) await dbSaveInFlight;
+      if (lastDbProjectText === null) return !dbConflictBlocked;
+      if (!dbRevisionSynced || !lastKnownRevision || dbConflictBlocked) return false;
+      await flushDbProject();
     }
+    return lastDbProjectText === null && !dbConflictBlocked;
+  })();
+  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs));
+  return Promise.race([work, timeout]);
+}
+
+/** Удалить старый localStorage-кэш проекта (после того как SQLite отдал проект
+ *  или приняла перенесённую копию). */
+export function clearLocalProjectCache(): void {
+  try {
+    localStorage.removeItem(FLOW_PAGES_LS_KEY);
+    localStorage.removeItem(FLOW_LS_KEY);
+  } catch {
+    // private mode etc.: nothing to clear
   }
 }
 
@@ -258,6 +296,7 @@ async function flushDbProject(): Promise<void> {
   if (dbSaveTimer) clearTimeout(dbSaveTimer);
   dbSaveTimer = null;
   const expectedRevision = lastKnownRevision;
+  const sentDeletions = [...deletedPageIds];
   const epoch = dbSaveEpoch;
   lastDbProjectText = null;
   let acknowledged = false;
@@ -268,11 +307,11 @@ async function flushDbProject(): Promise<void> {
       const resp = await fetch("/api/project/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: `{"project":${text},"expectedRevision":${JSON.stringify(expectedRevision)}}`,
+        body: `{"project":${text},"expectedRevision":${JSON.stringify(expectedRevision)}${deletedPagesJson(sentDeletions)}}`,
       });
       if (epoch !== dbSaveEpoch) return;
       if (resp.status === 409) {
-        const conflict = (await resp.clone().json().catch(() => ({}))) as { revision?: string; error?: string };
+        const conflict = (await resp.clone().json().catch(() => ({}))) as { revision?: string; error?: string; missingPages?: unknown[]; missingPageIds?: unknown[] };
         if (epoch !== dbSaveEpoch) return;
         // External conflicts stay blocked until an explicit user decision.
         // Never adopt the returned revision or retry unconditionally.
@@ -283,6 +322,8 @@ async function flushDbProject(): Promise<void> {
             expectedRevision,
             currentRevision: typeof conflict.revision === "string" ? conflict.revision : null,
             error: conflict.error || "stale_revision",
+            missingPages: Array.isArray(conflict.missingPages) ? conflict.missingPages.map(String) : [],
+            missingPageIds: Array.isArray(conflict.missingPageIds) ? conflict.missingPageIds.map(String) : [],
           },
         }));
         return;
@@ -292,6 +333,7 @@ async function flushDbProject(): Promise<void> {
         if (epoch !== dbSaveEpoch) return;
         if (typeof saved?.revision === "string" && saved.revision) {
           lastKnownRevision = saved.revision;
+          for (const id of sentDeletions) deletedPageIds.delete(id);
           acknowledged = true;
         }
       }
@@ -318,18 +360,34 @@ async function flushDbProject(): Promise<void> {
   }
 }
 
+/** The canvas changed before the saved project finished loading (a large
+ *  project, a click during startup). The local graph came from the compact
+ *  localStorage cache and may miss heavy data, so it must not silently
+ *  overwrite the loaded revision: pause autosave and let the user choose. */
+export function blockDbSaveForHydrationConflict(): void {
+  dbConflictBlocked = true;
+  window.dispatchEvent(new CustomEvent("designdna:project-conflict", {
+    detail: { expectedRevision: null, currentRevision: lastKnownRevision || null, error: "edited-while-loading" },
+  }));
+}
+
 /* ---------- разрешение конфликта 409 (ConflictDialog в App) ----------
  * Fail-closed сейв выше только сообщает о конфликте; решение — за пользователем. */
 export type ProjectConflictDetail = {
   expectedRevision: string | null;
   currentRevision: string | null;
   error: string;
+  /** error "page_loss": stored pages this save would remove without a delete */
+  missingPages?: string[];
+  missingPageIds?: string[];
 };
 
 /** Explicit keep-mine uses the supplied server revision for one CAS attempt.
  * Missing revision or another conflict fails closed; no unconditional write. */
-export async function resolveConflictKeepMine(currentRevision: string | null): Promise<boolean> {
+export async function resolveConflictKeepMine(currentRevision: string | null, removePageIds: string[] = []): Promise<boolean> {
   if (!currentRevision) return false;
+  // "Remove these pages" in the page-loss dialog is an explicit delete.
+  for (const id of removePageIds) deletedPageIds.add(id);
   if (dbSaveInFlight) await dbSaveInFlight;
   lastKnownRevision = currentRevision;
   dbRevisionSynced = true;
@@ -377,8 +435,15 @@ export function scheduleProjectSave(provider: () => PagesProjectPayload) {
   }, 300);
 }
 
+/* Выход из десктопа: main-процесс вызывает эту функцию и ждёт записи в БД
+ * до остановки Python-воркера (desktop/main.mjs, before-quit и close окна). */
+if (typeof window !== "undefined") {
+  (window as unknown as { __designdnaFlushProject?: (ms?: number) => Promise<boolean> }).__designdnaFlushProject = flushProjectToDb;
+}
+
 /* При закрытии вкладки: дожать незавершённый дебаунс/idle синхронно и
- * отправить ожидающий SQLite-POST через sendBeacon */
+ * отправить ожидающий SQLite-POST через sendBeacon (небольшие проекты; большой
+ * проект уже записан явным flush из main-процесса) */
 window.addEventListener("beforeunload", () => {
   if (projectSaveTimer) {
     clearTimeout(projectSaveTimer);
@@ -391,10 +456,10 @@ window.addEventListener("beforeunload", () => {
     clearTimeout(dbSaveTimer);
     dbSaveTimer = null;
   }
-  // An in-flight request owns the CAS base. Keep newer data in localStorage
-  // instead of racing it with a beacon using that same stale revision.
-  if (lastDbProjectText && dbRevisionSynced && lastKnownRevision && !dbSaveInFlight && !dbConflictBlocked && navigator.sendBeacon) {
-    const expected = `,"expectedRevision":${JSON.stringify(lastKnownRevision)}`;
+  // An in-flight request owns the CAS base; never race it with a beacon using
+  // that same stale revision. Beacons carry at most ~64 KB.
+  if (lastDbProjectText && lastDbProjectText.length < 60_000 && dbRevisionSynced && lastKnownRevision && !dbSaveInFlight && !dbConflictBlocked && navigator.sendBeacon) {
+    const expected = `,"expectedRevision":${JSON.stringify(lastKnownRevision)}${deletedPagesJson([...deletedPageIds])}`;
     navigator.sendBeacon(
       "/api/project/save",
       new Blob([`{"project":${lastDbProjectText}${expected}}`], { type: "application/json" }),
@@ -463,7 +528,7 @@ function dataForRuntime(type: NodeType, data: AnyNodeData): AnyNodeData {
     // and completed stages, but never show a phantom running/success after boot.
     merged.pipelineStatus = Object.fromEntries(Object.entries(merged.pipelineStatus as Record<string, Record<string, unknown>>)
       .map(([key, stage]) => [key, stage?.status === "running" ? { ...stage, status: "cancelled",
-        message: "Этап не подтверждён после загрузки проекта — повторите проверку" } : stage]));
+        message: "Stage unverified after project load — run verification again" } : stage]));
     data = merged as AnyNodeData;
   }
   if (type === "motion") return { ...defaultData("motion"), ...data, renderJob: (data as { renderJob?: { status?: string } }).renderJob?.status === "complete" ? (data as Record<string, unknown>).renderJob : null } as AnyNodeData;
@@ -637,7 +702,7 @@ export function payloadToRf(payload: LegacyGraphPayload): {
     if (reachable(Number(edge.target), Number(edge.source), accepted)) continue;
     accepted.push(edge);
   }
-  if (accepted.length !== edges.length) toast("Некорректные связи пропущены при загрузке графа", "info");
+  if (accepted.length !== edges.length) toast("Invalid connections skipped while loading the graph", "info");
   edges = accepted;
 
   const maxId = nodes.reduce((m, n) => Math.max(m, Number(n.id) || 0), 0);
@@ -653,10 +718,10 @@ export function payloadToRf(payload: LegacyGraphPayload): {
 /* Р Р°Р·Р±РѕСЂ РІС…РѕРґСЏС‰РµРіРѕ JSON (localStorage РёР»Рё РёРјРїРѕСЂС‚ legacy-С„РѕСЂРјР°С‚Р°).
  * id number<->string РєРѕРЅРІРµСЂС‚РёСЂСѓСЋС‚СЃСЏ Р·РґРµСЃСЊ, РІ СЂР°РЅС‚Р°Р№РјРµ. Р‘СЂРѕСЃР°РµС‚ Error РїСЂРё РЅРµРІР°Р»РёРґРЅРѕРј С„РѕСЂРјР°С‚Рµ. */
 export function parseLegacyPayload(input: unknown): LegacyGraphPayload {
-  if (!input || typeof input !== "object") throw new Error("РѕР¶РёРґР°Р»СЃСЏ РѕР±СЉРµРєС‚ РіСЂР°С„Р°");
+  if (!input || typeof input !== "object") throw new Error("expected a graph object");
   const raw = input as Record<string, unknown>;
-  if (raw.nodes != null && !Array.isArray(raw.nodes)) throw new Error("nodes РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РјР°СЃСЃРёРІРѕРј");
-  if (raw.edges != null && !Array.isArray(raw.edges)) throw new Error("edges РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РјР°СЃСЃРёРІРѕРј");
+  if (raw.nodes != null && !Array.isArray(raw.nodes)) throw new Error("nodes must be an array");
+  if (raw.edges != null && !Array.isArray(raw.edges)) throw new Error("edges must be an array");
 
   const known = new Set<string>(NODE_TYPES);
   let autoId = 1;
@@ -667,7 +732,7 @@ export function parseLegacyPayload(input: unknown): LegacyGraphPayload {
     if (typeof r.type !== "string" || !known.has(r.type)) continue; // РЅРµРёР·РІРµСЃС‚РЅС‹Р№ С‚РёРї РїСЂРѕРїСѓСЃРєР°РµРј
     let id = Number(r.id);
     if (!Number.isFinite(id) || id <= 0) id = autoId; // Р±РёС‚С‹Р№/СЃС‚СЂРѕРєРѕРІС‹Р№ id в†’ С‡РёСЃР»РѕРІРѕР№
-    if (nodes.some((node) => node.id === id)) throw new Error(`Повторяющийся ID ноды: ${id}`);
+    if (nodes.some((node) => node.id === id)) throw new Error(`Duplicate node ID: ${id}`);
     autoId = Math.max(autoId, id) + 1;
     let data =
       r.data && typeof r.data === "object" ? (r.data as AnyNodeData) : defaultData(r.type as NodeType);
@@ -763,22 +828,8 @@ export function parsePagesPayload(input: unknown): {
   return { activePageId, pages, channels };
 }
 
-/** Разовая миграция legacy-блоба: проекты, сохранённые до compact-автосейва,
- *  несут мегабайты base64-превью в localStorage. Каждый бут распарсивал такой
- *  блоб целиком (замер: 18 МБ → FCP 3.2 с), поэтому при обнаружении —
- *  перезаписываем скомпакченной версией. Правки/данные не трогаем. */
-export function compactLegacyLocalStorage(): void {
-  try {
-    const raw = localStorage.getItem(FLOW_PAGES_LS_KEY) || "";
-    if (raw.length < 400_000) return;
-    if (!raw.includes('"preview"') && !raw.includes("data:image/")) return;
-    const compacted = JSON.stringify(compactForStorage(JSON.parse(raw)));
-    if (compacted.length < raw.length) localStorage.setItem(FLOW_PAGES_LS_KEY, compacted);
-  } catch {
-    // битый блоб оставляем как есть — load обработает отказ
-  }
-}
-
+/** Только разовый перенос: проект, который жил лишь в старом localStorage-кэше
+ *  (SQLite пуст), читается отсюда и сохраняется в SQLite. */
 export function loadPagesProjectFromStorage(): {
   activePageId: string;
   pages: FlowPage[];
@@ -808,6 +859,7 @@ export async function loadPagesProjectFromDb(): Promise<{
     const data = (await resp.json()) as ProjectLoadResp;
     if (typeof data.revision === "string" && data.revision) lastKnownRevision = data.revision;
     dbRevisionSynced = true;
+    deletedPageIds.clear();
     if (!data.project) return null;
     return parsePagesPayload(data.project);
   } catch {

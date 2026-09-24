@@ -73,15 +73,15 @@
 
   function formatValue(value: unknown): string {
     if (value == null || value === "") return "—";
-    if (typeof value === "boolean") return value ? "Включено" : "Выключено";
+    if (typeof value === "boolean") return value ? "On" : "Off";
     if (typeof value === "string" || typeof value === "number") return String(value);
-    if (Array.isArray(value)) return `${value.length} элементов`;
-    if (typeof value === "object") return `${Object.keys(value as Record<string, unknown>).length} полей`;
+    if (Array.isArray(value)) return `${value.length} items`;
+    if (typeof value === "object") return `${Object.keys(value as Record<string, unknown>).length} fields`;
     return String(value);
   }
 
   const statusClass = () => busy ? "run" : status?.kind === "err" ? "err" : status?.kind === "warn" ? "warn" : status?.kind === "ok" ? "ok" : "";
-  const statusText = () => busy ? "выполняется" : status?.text || "готова";
+  const statusText = () => busy ? "running" : status?.text || "ready";
   const canOpen = $derived(selectedNode?.type === "edit" || selectedNode?.type === "designsystem");
 
   const openSelected = async () => {
@@ -92,7 +92,7 @@
     }
     if (selectedNode.type !== "edit") return;
     if (!(selectedNode.data as Record<string, unknown>).ir) {
-      toast("Сначала подключите IR к входу ноды", "error");
+      toast("Connect IR to the node input first", "error");
       return;
     }
     window.dispatchEvent(new Event("designdna:ensure-editor"));
@@ -101,7 +101,7 @@
       const { useEditorStore } = await import("./editor/store");
       useEditorStore.getState().openEditor(nodeId);
     } catch (error) {
-      toast(`Не удалось открыть редактор: ${error instanceof Error ? error.message : String(error)}`, "error");
+      toast(`Could not open editor: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
   };
 
@@ -120,14 +120,14 @@
 <svelte:window onkeydown={onKey} />
 
 {#if selected.length > 1}
-  <div class="dna-insp-multi" role="toolbar" aria-label="Выделено несколько нод">
-    <span>{selected.length} нод</span>
-    <button class="dna-btn-ghost" style="padding: 6px 10px" onclick={() => selected.forEach((node) => $flow.runNode(Number(node.id)))}>Запустить все</button>
-    <button class="dna-btn-ghost" style="padding: 6px 10px" onclick={() => selected.forEach((node) => $flow.deleteNode(Number(node.id)))}>Удалить</button>
-    <button class="dna-insp-close" title="Снять выделение (Esc)" aria-label="Снять выделение" onclick={deselectAllNodes}>✕</button>
+  <div class="dna-insp-multi" role="toolbar" aria-label="Multiple nodes selected">
+    <span>{selected.length} nodes</span>
+    <button class="dna-btn-ghost" style="padding: 6px 10px" onclick={() => selected.forEach((node) => $flow.runNode(Number(node.id)))}>Run all</button>
+    <button class="dna-btn-ghost" style="padding: 6px 10px" onclick={() => selected.forEach((node) => $flow.deleteNode(Number(node.id)))}>Delete</button>
+    <button class="dna-insp-close" title="Clear selection (Esc)" aria-label="Clear selection" onclick={deselectAllNodes}>✕</button>
   </div>
 {:else if selectedNode && def && nodeId != null && !$inspectorHidden}
-  <aside class="dna-insp" aria-label="Инспектор ноды">
+  <aside class="dna-insp" aria-label="Node inspector">
     <div class="dna-insp-head">
       <div class="dna-insp-icon" style="background: color-mix(in srgb, {def.accent}, transparent 84%); color: {def.accent}">{def.icon}</div>
       <div class="dna-insp-title">
@@ -135,12 +135,12 @@
         <small>{def.sub}</small>
       </div>
       <span class={`n-badge ${statusClass()}`} title={statusText()}>{statusText()}</span>
-      <button class="dna-insp-close" title="Скрыть инспектор (Esc — снять выделение)" aria-label="Скрыть инспектор" onclick={() => inspectorHidden.set(true)}>✕</button>
+      <button class="dna-insp-close" title="Hide inspector (Esc to clear selection)" aria-label="Hide inspector" onclick={() => inspectorHidden.set(true)}>✕</button>
     </div>
     <div class="dna-insp-tabs" role="tablist">
-      <button class:active={tab === "params"} class="dna-insp-tab" role="tab" aria-selected={tab === "params"} onclick={() => (tab = "params")}>Параметры</button>
-      <button class:active={tab === "outputs"} class="dna-insp-tab" role="tab" aria-selected={tab === "outputs"} onclick={() => (tab = "outputs")}>Выходы</button>
-      <button class:active={tab === "logs"} class="dna-insp-tab" role="tab" aria-selected={tab === "logs"} onclick={() => (tab = "logs")}>Журнал</button>
+      <button class:active={tab === "params"} class="dna-insp-tab" role="tab" aria-selected={tab === "params"} onclick={() => (tab = "params")}>Settings</button>
+      <button class:active={tab === "outputs"} class="dna-insp-tab" role="tab" aria-selected={tab === "outputs"} onclick={() => (tab = "outputs")}>Outputs</button>
+      <button class:active={tab === "logs"} class="dna-insp-tab" role="tab" aria-selected={tab === "logs"} onclick={() => (tab = "logs")}>Log</button>
     </div>
 
     <div class="dna-insp-body">
@@ -157,15 +157,15 @@
                 <div class="dna-field-value"><span>{field.value}</span></div>
               </div>
             {/each}
-            {#if !fields.length}<div class="dna-insp-empty">У этой ноды нет настраиваемых параметров.</div>{/if}
+            {#if !fields.length}<div class="dna-insp-empty">This node has no configurable settings.</div>{/if}
           </div>
         {/if}
         <div class="dna-lastrun">
-          <div class="dna-lastrun-cap">Последний запуск</div>
+          <div class="dna-lastrun-cap">Last run</div>
           <div class="dna-lastrun-rows">
-            <div class="dna-lastrun-row"><span>Статус</span><span class:good={status?.kind === "ok"}>{statusText()}</span></div>
-            <div class="dna-lastrun-row"><span>Входы</span><span>{ports.in.length}</span></div>
-            <div class="dna-lastrun-row"><span>Выходы</span><span>{ports.out.length}</span></div>
+            <div class="dna-lastrun-row"><span>Status</span><span class:good={status?.kind === "ok"}>{statusText()}</span></div>
+            <div class="dna-lastrun-row"><span>Inputs</span><span>{ports.in.length}</span></div>
+            <div class="dna-lastrun-row"><span>Outputs</span><span>{ports.out.length}</span></div>
           </div>
         </div>
       {:else if tab === "outputs"}
@@ -177,9 +177,9 @@
               <span class="dna-out-kind">{port.kind}</span>
             </div>
           {/each}
-          {#if !ports.out.length}<div class="dna-insp-empty">Выходные порты не объявлены.</div>{/if}
+          {#if !ports.out.length}<div class="dna-insp-empty">No output ports declared.</div>{/if}
           {#if ports.in.length}
-            <div class="dna-field-cap" style="margin-top: 4px">Входы</div>
+            <div class="dna-field-cap" style="margin-top: 4px">Inputs</div>
             {#each ports.in as port (port.name)}
               <div class="dna-out-row">
                 <span class="dna-out-dot" style="background: {KIND_COLORS[port.kind] || KIND_COLORS.text}"></span>
@@ -193,20 +193,20 @@
         <div class="dna-insp-fields">
           {#each log as entry (entry.at + entry.text)}
             <div class:err={entry.kind === "err"} class="dna-insp-log">
-              <span class="dna-insp-log-time">{new Date(entry.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+              <span class="dna-insp-log-time">{new Date(entry.at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
               {entry.text}
             </div>
           {/each}
-          {#if !log.length}<div class="dna-insp-log">Запусков в этой сессии ещё не было.</div>{/if}
+          {#if !log.length}<div class="dna-insp-log">No runs in this session yet.</div>{/if}
         </div>
       {/if}
     </div>
 
     <div class="dna-insp-actions">
       {#if canOpen}
-        <button class="dna-btn-ghost" onclick={openSelected}>Открыть редактор</button>
+        <button class="dna-btn-ghost" onclick={openSelected}>Open editor</button>
       {/if}
-      <button class="dna-btn-primary" disabled={busy} onclick={() => $flow.runNode(nodeId)}>{busy ? "Выполняется…" : "Запустить"}</button>
+      <button class="dna-btn-primary" disabled={busy} onclick={() => $flow.runNode(nodeId)}>{busy ? "Running…" : "Run"}</button>
     </div>
   </aside>
 {/if}

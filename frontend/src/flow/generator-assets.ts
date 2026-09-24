@@ -17,6 +17,7 @@ export type AssetRun = {
   provider: "codex" | "off"; model?: string; status: "running" | "complete" | "partial" | "cancelled";
   plan: AssetPlan; events: { at: number; slotId: string; status: AssetSlot["status"]; error?: string }[];
   quality?: (import("./api").QualityPassResp["resourceEvidence"] | null)[];
+  verificationError?: string;
 };
 type Scope = { check(): void };
 
@@ -49,7 +50,7 @@ export function settleInterruptedAssets(history: AssetRun[] | undefined): AssetR
   const run = structuredClone(last);
   run.status = "cancelled"; run.finishedAt = Date.now();
   for (const slot of run.plan.slots) if (slot.status === "running") {
-    slot.status = "failed"; slot.error = "Создание остановлено; готовые изображения сохранены";
+    slot.status = "failed"; slot.error = "Generation stopped; completed images are preserved";
   }
   return assetRunPatch(history, run);
 }
@@ -61,15 +62,31 @@ export async function reconcileAssets(variants: IRObject[], run: AssetRun, signa
     if (!slots.length) continue;
     const result = await api<{ ir: IRObject; missing: string[] }>("/api/generate/assets/reconcile", { ir: output[index], slots }, { signal });
     scope.check();
-    if (signal.aborted) throw new DOMException("Отменено", "AbortError");
+    if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
     output[index] = result.ir;
     for (const id of result.missing) {
       const slot = run.plan.slots.find(slot => slot.id === id)!;
       slot.status = "failed";
-      slot.error = "Изображение отсутствует или изменилось после проверки";
+      slot.error = "Image missing or changed since verification";
     }
   }
   return output;
+}
+
+/** A transport failure is not evidence that a successfully applied image failed. */
+export async function verifyAssetPlan(variants: IRObject[], run: AssetRun, signal: AbortSignal, scope: Scope) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    scope.check(); signal.throwIfAborted();
+    try {
+      const verified = await reconcileAssets(variants, run, signal, scope);
+      delete run.verificationError;
+      return verified;
+    } catch (error) {
+      scope.check(); signal.throwIfAborted();
+      run.verificationError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  return variants;
 }
 
 /** Each committed slot is immediately saved with the node. Failed slots never discard successful peers. */
@@ -80,7 +97,7 @@ export async function executeAssetPlan(variants: IRObject[], run: AssetRun, opti
   const { signal, scope, onChange, onStage } = options;
   let output = structuredClone(variants);
   const current = structuredClone(run);
-  const check = () => { scope.check(); if (signal.aborted) throw new DOMException("Отменено", "AbortError"); };
+  const check = () => { scope.check(); if (signal.aborted) throw new DOMException("Cancelled", "AbortError"); };
   const publish = () => { check(); onChange(structuredClone(output), structuredClone(current)); };
   current.status = "running";
   delete current.finishedAt;
@@ -91,15 +108,15 @@ export async function executeAssetPlan(variants: IRObject[], run: AssetRun, opti
       const slot = targets[index];
       slot.status = "running"; slot.attempts++; delete slot.error;
       current.events.push({ at: Date.now(), slotId: slot.id, status: "running" });
-      onStage(`Изображение ${index + 1}/${targets.length}: ${slot.subject.slice(0, 80)}`);
+      onStage(`Image ${index + 1}/${targets.length}: ${slot.subject.slice(0, 80)}`);
       publish();
       const requestId = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
       const cancel = () => { void window.designDNA?.providers.cancel(requestId).catch(() => {}); };
       signal.addEventListener("abort", cancel, { once: true });
       try {
-        if (current.provider !== "codex") throw new Error("Выберите GPT Image через Codex в параметрах изображений ноды");
+        if (current.provider !== "codex") throw new Error("Select GPT Image through Codex in the node image settings");
         const provider = window.designDNA?.providers;
-        if (!provider?.imageRequest) throw new Error("Для изображений подключите Codex в десктопном приложении");
+        if (!provider?.imageRequest) throw new Error("Connect Codex in the desktop app to generate images");
         check();
         const anchor = current.plan.context.coherentSeries === true
           ? current.plan.slots.find(item => item.variant === slot.variant && item.id !== slot.id && item.status === "complete" && item.result)
@@ -118,8 +135,6 @@ export async function executeAssetPlan(variants: IRObject[], run: AssetRun, opti
         output[slot.variant] = applied.ir;
         slot.result = applied.result;
         slot.status = "complete";
-        output = await reconcileAssets(output, current, signal, scope);
-        check();
       } catch (error) {
         check();
         slot.status = "failed";
@@ -130,7 +145,11 @@ export async function executeAssetPlan(variants: IRObject[], run: AssetRun, opti
       current.events.push({ at: Date.now(), slotId: slot.id, status: slot.status, ...(slot.error ? { error: slot.error } : {}) });
       publish();
     }
-    current.status = current.plan.slots.every(slot => slot.status === "complete") ? "complete" : "partial";
+    // Apply already saved a validated canonical blob. Commit it before any
+    // verification request can fail or be cancelled. Retry only verification,
+    // including when every slot was completed by a previous invocation.
+    output = await verifyAssetPlan(output, current, signal, scope);
+    current.status = !current.verificationError && current.plan.slots.every(slot => slot.status === "complete") ? "complete" : "partial";
     current.finishedAt = Date.now();
     publish();
     return { variants: output, run: current };

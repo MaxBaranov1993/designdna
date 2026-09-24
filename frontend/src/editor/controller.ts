@@ -327,7 +327,7 @@ function selectedLockTargets(): any[] {
 export function getIntentLockView() {
   const targets = selectedLockTargets();
   return {
-    scope: state?.sel.length ? `${targets.length} выбранн. блок(а)` : "Весь документ",
+    scope: state?.sel.length ? `${targets.length} selected block(s)` : "Entire document",
     locks: ALL_INTENT_LOCKS.filter((lock) => targets.length > 0 && targets.every((target) => nodeLocks(target).includes(lock))),
   };
 }
@@ -508,7 +508,7 @@ export function setTool(tool: string) {
       state.geo.setTool(tool);
       if (state.geo.getTool() !== tool) throw new Error("engine rejected tool");
     } catch {
-      console.warn(`GeoEdit: инструмент "${tool}" пока не поддержан движком — откат на select`);
+      console.warn(`GeoEdit: tool "${tool}" is not supported by the engine yet; using select`);
       state.tool = "select";
       ui.setTool("select");
       try {
@@ -649,7 +649,7 @@ function persistDraft(clearProposals = true) {
 }
 
 function sectionLabel(section: any, index: number): string {
-  return section?.props?.heading || section?.semantic?.label || section?.id || `Блок ${index + 1}`;
+  return section?.props?.heading || section?.semantic?.label || section?.id || `Block ${index + 1}`;
 }
 
 /** AI Layout Director: evidence chooses the axis; the mutation stays deterministic,
@@ -707,7 +707,7 @@ export function planSmartAxis() {
     id: `change.smart-axis.${stamp}`,
     targetWidth,
     gutter,
-    referenceLabel: referenceLabel || (best ? "лучшее найденное ограничение" : "безопасная дизайн-сетка"),
+    referenceLabel: referenceLabel || (best ? "best available constraint" : "safe layout grid"),
     affectedLabels: candidates.map(({ section, sectionIndex }: any) => sectionLabel(section, sectionIndex)),
     baseDraftRevision: state.draftRevision,
     baseSessionId: state.sessionId,
@@ -716,7 +716,7 @@ export function planSmartAxis() {
       version: "semantic-change-set/1.0",
       id: `change.smart-axis.${stamp}`,
       baseRevisionId: stableRevisionId(),
-      intent: "Выровнять внутреннюю ширину выбранных блоков по общей смысловой оси",
+      intent: "Align the content width of selected blocks to a shared axis",
       scope: operations.map((operation: Record<string, any>) => operation.target),
       preconditions: [{ kind: "revision-match", expected: stableRevisionId() }],
       operations,
@@ -726,7 +726,7 @@ export function planSmartAxis() {
       status: "draft",
       actor: "ai-layout-director",
       createdAt: new Date().toISOString(),
-      explanation: `Единая ось ${targetWidth}px получена из ${referenceLabel || "layout evidence"}; фон секций остаётся full-bleed.`,
+      explanation: `Shared axis ${targetWidth}px derived from ${referenceLabel || "layout evidence"}; section backgrounds remain full-bleed.`,
     },
   });
 }
@@ -768,7 +768,7 @@ export async function planQualityGate() {
     if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
     if (cancelGen !== overlayCancelGen) return;
     if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
-      if (state?.sessionId === baseSessionId) ui.setQualityProposal({ status: "error", passed: false, violations: [], journal: [], fixedIr: null, baseDraftRevision, baseSessionId, error: "Макет изменился во время проверки. Запустите проверку ещё раз." });
+      if (state?.sessionId === baseSessionId) ui.setQualityProposal({ status: "error", passed: false, violations: [], journal: [], fixedIr: null, baseDraftRevision, baseSessionId, error: "The layout changed during verification. Run verification again." });
       return;
     }
     ui.setQualityProposal({
@@ -820,7 +820,7 @@ export async function planHarmonizer() {
     if (!extractResponse.ok) throw new Error(extracted.detail || `HTTP ${extractResponse.status}`);
     if (cancelGen !== overlayCancelGen) return;
     if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
-      if (state?.sessionId === baseSessionId) ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId, error: "Макет изменился во время анализа. Запустите Harmonizer ещё раз." });
+      if (state?.sessionId === baseSessionId) ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId, error: "The layout changed during analysis. Run Harmonizer again." });
       return;
     }
     const applyResponse = await fetch("/api/style-dna/apply", {
@@ -832,7 +832,7 @@ export async function planHarmonizer() {
     if (!applyResponse.ok) throw new Error(applied.detail || `HTTP ${applyResponse.status}`);
     if (cancelGen !== overlayCancelGen) return;
     if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
-      if (state?.sessionId === baseSessionId) ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId, error: "Макет изменился во время применения Style DNA. Запустите Harmonizer ещё раз." });
+      if (state?.sessionId === baseSessionId) ui.setHarmonizerProposal({ status: "error", sourceCount, tokens: null, harmonizedIr: null, baseDraftRevision, baseSessionId, error: "The layout changed while applying Style DNA. Run Harmonizer again." });
       return;
     }
     const harmonizedIr = applied.ir ? preserveLockedFacets(baseIr, deepClone(applied.ir)) : null;
@@ -956,15 +956,15 @@ export async function planResponsiveAutopilot() {
     if (!response.ok) throw new Error(quality.detail || `HTTP ${response.status}`);
     if (cancelGen !== overlayCancelGen) return;
     if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) {
-      if (state?.sessionId === baseSessionId) ui.setResponsiveProposal({ status: "error", candidateIr: null, decisions: [], warnings: [], baseDraftRevision, baseSessionId, error: "Макет изменился во время адаптации. Запустите Autopilot ещё раз." });
+      if (state?.sessionId === baseSessionId) ui.setResponsiveProposal({ status: "error", candidateIr: null, decisions: [], warnings: [], baseDraftRevision, baseSessionId, error: "The layout changed during adaptation. Run Autopilot again." });
       return;
     }
     const decisions = [
-      { kind: "rails", label: "Контентные оси", count: counters.rails },
+      { kind: "rails", label: "Content axes", count: counters.rails },
       { kind: "stacks", label: "Row → column", count: counters.stacks },
-      { kind: "widths", label: "Защита от overflow", count: counters.widths },
-      { kind: "type", label: "Мобильная типографика", count: counters.type },
-      { kind: "preserve", label: "Импорт без изменений", count: counters.untouched },
+      { kind: "widths", label: "Overflow protection", count: counters.widths },
+      { kind: "type", label: "Mobile typography", count: counters.type },
+      { kind: "preserve", label: "Import unchanged", count: counters.untouched },
     ].filter((item) => item.count > 0);
     ui.setResponsiveProposal({ status: "ready", candidateIr: candidate, decisions, warnings: Array.isArray(quality.violations) ? quality.violations : [], baseDraftRevision, baseSessionId });
   } catch (error) {
@@ -1202,7 +1202,7 @@ export function openStyleDnaInspector() {
   if (!state || !dom.dnaPanel || !dom.dnaBody) return;
   dom.dnaPanel.classList.add("open");
   setDnaActionsEnabled(false);
-  dom.dnaBody.innerHTML = '<div class="fe-dna-empty">Загрузка токенов…</div>';
+  dom.dnaBody.innerHTML = '<div class="fe-dna-empty">Loading tokens…</div>';
   const existing = state.ir && state.ir.tokens;
   if (existing && existing.semantic && existing.primitives) {
     dnaPanelState = { tokens: deepClone(existing), originalTokens: deepClone(existing) };
@@ -1246,7 +1246,7 @@ async function extractStyleDnaFromServer() {
   } catch (e) {
     setDnaActionsEnabled(false);
     if (dom.dnaBody) {
-      dom.dnaBody.innerHTML = `<div class="fe-dna-empty fe-dna-err">Ошибка загрузки: ${esc((e as Error).message)}</div>`;
+      dom.dnaBody.innerHTML = `<div class="fe-dna-empty fe-dna-err">Loading failed: ${esc((e as Error).message)}</div>`;
     }
   }
 }
@@ -1257,7 +1257,7 @@ async function applyStyleDnaFromInspector() {
   const baseSessionId = state.sessionId;
   const baseIr = deepClone(state.ir);
   const foot = dom.dnaFoot;
-  if (foot) foot.textContent = "Применение…";
+  if (foot) foot.textContent = "Applying…";
   setDnaActionsEnabled(false);
   try {
     const resp = await fetch("/api/style-dna/apply", {
@@ -1267,18 +1267,18 @@ async function applyStyleDnaFromInspector() {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "HTTP " + resp.status);
-    if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) throw new Error("Макет изменился во время применения Style DNA. Повторите операцию.");
+    if (!proposalStillCurrent(baseSessionId, baseDraftRevision)) throw new Error("The layout changed while applying page tokens. Try again.");
     pushHistory();
     state.ir = data.ir || state.ir;
     persistDraft();
     dnaPanelState.originalTokens = deepClone(dnaPanelState.tokens);
     rerenderEditorCanvas();
-    if (foot) foot.textContent = "Токены применены";
+    if (foot) foot.textContent = "Tokens applied";
     setDnaActionsEnabled(true);
     setTimeout(() => { if (foot) foot.textContent = ""; }, 2000);
   } catch (e) {
     setDnaActionsEnabled(true);
-    if (foot) foot.textContent = "Ошибка: " + (e as Error).message;
+    if (foot) foot.textContent = "Error: " + (e as Error).message;
   }
 }
 
@@ -1313,7 +1313,7 @@ function renderStyleDnaPanel() {
       <label>${esc(key)}</label>
       <input type="color" value="${hex}" data-key="${key}" data-kind="color">
       <input type="text" value="${esc(val)}" data-key="${key}" data-kind="color-text" title="hex / rgba">
-      <button class="fe-dna-highlight" data-highlight="semantic.${key}" title="Подсветить связанные">${count}</button>
+      <button class="fe-dna-highlight" data-highlight="semantic.${key}" title="Highlight linked elements">${count}</button>
     </div>
     <div class="fe-dna-row" data-token="semantic.${key}-alpha">
       <label style="width:60px">α ${Math.round(alpha * 100)}%</label>
@@ -1382,7 +1382,7 @@ function dnaNumberRow(label: string, value: any, token: string, counts: Record<s
   return `<div class="fe-dna-row" data-token="${esc(token)}">
     <label>${esc(label)}</label>
     <input type="number" value="${value == null ? "" : esc(value)}" data-kind="number" data-token="${esc(token)}">
-    <button class="fe-dna-highlight" data-highlight="${esc(token)}" title="Подсветить связанные">${count}</button>
+    <button class="fe-dna-highlight" data-highlight="${esc(token)}" title="Highlight linked elements">${count}</button>
   </div>`;
 }
 
@@ -1394,7 +1394,7 @@ function dnaFontRow(label: string, font: any, counts: Record<string, number>) {
     <label>${esc(label)}</label>
     <select data-kind="font-family" data-token="${esc(token)}" class="fe-dna-fontsel">${fontOptionsHtml(f.family)}</select>
     <input type="number" value="${esc(f.weight)}" data-kind="font-weight" data-token="${esc(token)}" style="width:55px">
-    <button class="fe-dna-highlight" data-highlight="${esc(token)}" title="Подсветить связанные">${count}</button>
+    <button class="fe-dna-highlight" data-highlight="${esc(token)}" title="Highlight linked elements">${count}</button>
   </div>`;
 }
 
@@ -1505,7 +1505,7 @@ async function previewStyleNormalization() {
     ).join("");
     result.innerHTML = `<div class="fe-dna-result">
       <div class="fe-dna-meta">${patch.length} properties · risk ${esc((data.visualDelta || {}).risk || "none")}</div>
-      ${changes || '<div class="fe-dna-empty">Already aligned with Style DNA scale.</div>'}
+      ${changes || '<div class="fe-dna-empty">Already aligned with the page token scale.</div>'}
       ${patch.length > 12 ? `<div class="fe-dna-meta">+ ${patch.length - 12} more changes</div>` : ""}
       ${patch.length ? '<button class="fe-btn primary" data-dna-action="apply-normalize" style="width:100%;margin-top:8px">Apply Normalize</button>' : ""}
     </div>`;
@@ -1712,7 +1712,7 @@ export function getAiScopeView(mode: "single" | "selection" | "document") {
     ? selected.filter((candidate) => selected.some((other) => candidate !== other && isAncestorRef(candidate.ref, other.ref)))
     : [];
   const items = selected.filter((candidate) => !excluded.includes(candidate));
-  const map = (sel: GeoSel) => ({ label: sel.label || "Объект", ref: sel.ref, sourceKey: sourceKeyForSelection(sel) });
+  const map = (sel: GeoSel) => ({ label: sel.label || "Object", ref: sel.ref, sourceKey: sourceKeyForSelection(sel) });
   return { items: items.map(map).filter((item) => item.sourceKey), excluded: excluded.map(map) };
 }
 
@@ -1729,16 +1729,16 @@ export function removeFromAiSelection(ref: GeoRef) {
 
 function friendlyAiError(detail: string) {
   console.warn("AI assist rejected:", detail);
-  if (/AI_STALE|изменился во время AI/i.test(detail)) return "Макет или выделение изменились во время работы AI. Запустите запрос ещё раз — ручные правки сохранены.";
-  if (/Intent Lock|allowedColors|maxTextLength|защищ[её]н|ограничен/i.test(detail)) return "Эта часть объекта защищена ограничениями. Измените разрешения или выберите другой элемент.";
-  if (/OpenAI API key|Codex не подключён|Claude не подключён|Codex CLI|Claude Code|нет подключённого AI-аккаунта|Agents\s*→\s*Connections/i.test(detail)) return "AI-аккаунт не подключён. Откройте Agents → Connections.";
-  if (/outside|вне текущего выделения|не найден элемент/i.test(detail)) return "Выделение изменилось. Выберите объект ещё раз.";
-  if (/schema|невалидн|структурн|children|sourceKey|patch|команд/i.test(detail)) return "AI предложил небезопасную правку. Уточните запрос.";
-  if (/429|лимит|очередь/i.test(detail)) return "AI занят. Повторите через минуту.";
+  if (/AI_STALE|изменился во время AI/i.test(detail)) return "The layout or selection changed while AI was running. Try again; your manual edits are preserved.";
+  if (/Intent Lock|allowedColors|maxTextLength|защищ[её]н|ограничен/i.test(detail)) return "This part of the object is protected by constraints. Change its permissions or select another element.";
+  if (/OpenAI API key|Codex не подключён|Claude не подключён|Codex CLI|Claude Code|нет подключённого AI-аккаунта|Agents\s*→\s*Connections/i.test(detail)) return "No AI account is connected. Open Agents → Connections.";
+  if (/outside|вне текущего выделения|не найден элемент/i.test(detail)) return "The selection changed. Select the object again.";
+  if (/schema|невалидн|структурн|children|sourceKey|patch|команд/i.test(detail)) return "AI suggested an unsafe change. Refine your request.";
+  if (/429|лимит|очередь/i.test(detail)) return "AI is busy. Try again in a minute.";
   // Ошибки дизайн-системы содержат готовое объяснение и действие — не прячем их
   if (/Design System/i.test(detail)) return detail;
-  if (/timed out|timeout|время ожидания/i.test(detail)) return "AI не ответил за 3 минуты. Запрос остановлен — попробуйте ещё раз или сократите задачу.";
-  return "Не удалось подготовить результат. Попробуйте уточнить запрос.";
+  if (/timed out|timeout|время ожидания/i.test(detail)) return "AI did not respond within 3 minutes. The request was stopped. Try again or simplify the task.";
+  return "Could not prepare a result. Try refining your request.";
 }
 
 function isAbortError(error: unknown) {
@@ -1761,14 +1761,14 @@ export async function requestAiAssist(request: AssistRequest) {
   // document-режим работает без выделения — скоуп это все секции
   if (!state || (request.scopeMode !== "document" && !state.sel.length)) return;
   const prompt = request.prompt.trim();
-  if (!prompt) { ui.setAiError("Опишите, что нужно изменить"); return; }
+  if (!prompt) { ui.setAiError("Describe what you want to change"); return; }
   aiAssistAbort?.abort();
   aiAssistAbort = new AbortController();
   const { signal } = aiAssistAbort;
   ui.setAiBusy(true);
   ui.setAiError("");
   const startedAt = Date.now();
-  ui.setAiProgress({ stage: "prepare", label: "Собираю контекст выделения", startedAt });
+  ui.setAiProgress({ stage: "prepare", label: "Preparing selection context", startedAt });
   aiAssistState = null;
   aiAssistBaseFingerprint = null;
   ui.setAiPreview(null);
@@ -1810,7 +1810,7 @@ export async function requestAiAssist(request: AssistRequest) {
       const prepared = await postAiAssist({ ...payload, prepareOnly: true }, signal);
       if (signal.aborted) return;
       if (Array.isArray(prepared.messages)) {
-        ui.setAiProgress({ stage: "provider", label: "AI анализирует объект и готовит правки", startedAt });
+        ui.setAiProgress({ stage: "provider", label: "AI is analyzing the object and preparing changes", startedAt });
         const effort = ["medium", "high", "max"].includes(String(request.effort))
           ? request.effort as "medium" | "high" | "max"
           : "medium";
@@ -1829,22 +1829,22 @@ export async function requestAiAssist(request: AssistRequest) {
           messages: prepared.messages,
         });
         if (signal.aborted) return;
-        ui.setAiProgress({ stage: "validate", label: "Проверяю ответ и строю предпросмотр", startedAt });
+        ui.setAiProgress({ stage: "validate", label: "Validating the response and building a preview", startedAt });
         data = await postAiAssist({ ...payload, rawOutput: answer.content }, signal);
       } else data = prepared;
     } else {
-      if (request.action !== "adapt") ui.setAiProgress({ stage: "provider", label: "AI анализирует объект и готовит правки", startedAt });
+      if (request.action !== "adapt") ui.setAiProgress({ stage: "provider", label: "AI is analyzing the object and preparing changes", startedAt });
       data = await postAiAssist(payload, signal);
       if (signal.aborted) return;
-      ui.setAiProgress({ stage: "validate", label: "Проверяю ответ и строю предпросмотр", startedAt });
+      ui.setAiProgress({ stage: "validate", label: "Validating the response and building a preview", startedAt });
     }
     if (signal.aborted) return;
-    if (!data?.previewIr || !Array.isArray(data.ops)) throw new Error("AI вернул неполный preview");
+    if (!data?.previewIr || !Array.isArray(data.ops)) throw new Error("AI returned an incomplete preview");
     const currentScopeKeys = state ? selectedSourceKeys(request.scopeMode) : [];
     if (!state || state.sessionId !== baseSessionId
       || JSON.stringify(sanitizeIrForPost(state.ir)) !== baseFingerprint
       || JSON.stringify(currentScopeKeys) !== JSON.stringify(requestScopeKeys)) {
-      throw new Error("AI_STALE: макет или выделение изменился во время AI");
+      throw new Error("AI_STALE: the layout or selection changed while AI was running");
     }
     aiAssistState = data as AssistPreview;
     aiAssistBaseFingerprint = baseFingerprint;
@@ -1887,7 +1887,7 @@ export function applyAiAssist() {
     aiAssistBaseFingerprint = null;
     dom.overlay?.classList.remove("ai-previewing");
     ui.setAiPreview(null);
-    ui.setAiError("Макет изменился после предпросмотра. AI-правка отменена, ручные изменения сохранены.");
+    ui.setAiError("The layout changed after the preview. AI changes were cancelled; manual edits are preserved.");
     rerenderEditorCanvas();
     updateUndoBtn();
     return false;
@@ -2593,15 +2593,15 @@ function propsElements(sec: any) {
     const base = `props.fields.${i}`;
     items.push({
       path: base,
-      label: "поле: " + String(field.label || field.placeholder || `№ ${i + 1}`).slice(0, 24),
+      label: "field: " + String(field.label || field.placeholder || `№ ${i + 1}`).slice(0, 24),
       icon: "◇",
     });
-    items.push({ path: `${base}.parts.label`, label: "подпись", icon: "T", depth: 3 });
-    items.push({ path: `${base}.parts.control`, label: "поле ввода", icon: "▭", depth: 3 });
+    items.push({ path: `${base}.parts.label`, label: "label", icon: "T", depth: 3 });
+    items.push({ path: `${base}.parts.control`, label: "input field", icon: "▭", depth: 3 });
   });
   if (sec.type === "contact-form" && (p.submit || p.submitText)) items.push({
     path: "props.submit",
-    label: "кнопка: " + String(p.submit?.text ?? p.submitText ?? "Отправить").slice(0, 24),
+    label: "button: " + String(p.submit?.text ?? p.submitText ?? "Send").slice(0, 24),
     icon: "▰",
   });
   return items;
@@ -2611,10 +2611,13 @@ export function renderLayers() {
   const tree = dom.layersTree;
   if (!tree || !state) return;
   tree.innerHTML = "";
-  if (!state.ir || !state.ir.tree) return;
+  // Must mirror the canvas IR (activeIR when responsive is materialized).
+  // Using base state.ir here left Layers out of sync with canvas selection.
+  const ir = state.activeIR || state.ir;
+  if (!ir || !ir.tree) return;
   // артборд
-  addLayerItem(tree, state.ir, { secIdx: null, path: null }, 0, "Артборд");
-  state.ir.tree.forEach((sec: any, si: number) => {
+  addLayerItem(tree, ir, { secIdx: null, path: null }, 0, "Artboard");
+  ir.tree.forEach((sec: any, si: number) => {
     const secLabel = sec.type + (sec.props && sec.props.heading ? ` · ${String(sec.props.heading).slice(0, 18)}` : "");
     addLayerItem(tree, sec, { secIdx: si, path: null }, 1, secLabel);
     // props-элементы
@@ -2624,6 +2627,11 @@ export function renderLayers() {
     const sourceAddressed = sec.type === "source-block" || sec.variant === "dom-capture";
     renderChildLayers(tree, sec.children || [], si, "children", 2, sourceAddressed);
   });
+  // After canvas pick — bring the matching layer into view (Figma-like)
+  const selected = tree.querySelector(".fe-layer.selected") as HTMLElement | null;
+  if (selected) {
+    selected.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
 }
 
 function layerLabel(el: any, maxText: number) {
@@ -2631,7 +2639,7 @@ function layerLabel(el: any, maxText: number) {
   if (sourceMeta.componentBoundary) {
     const role = String(sourceMeta.componentRole || el.role || el.type || "component");
     const name = String(sourceMeta.componentLabel || role);
-    return `компонент · ${name}`.slice(0, Math.max(18, maxText + 14));
+    return `component · ${name}`.slice(0, Math.max(18, maxText + 14));
   }
   const base = el.type === "card" && el.role ? "div" : el.type;
   const suffix = el.text ? ` · ${String(el.text).slice(0, maxText)}`
@@ -2723,12 +2731,12 @@ function addLayerItem(
         state.geo.moveSibling(fromRef, to);
         return;
       }
-      toast("Перетащите на секцию или карточку — внутрь текста и картинки вложить нельзя");
+      toast("Drop onto a section or card. Text and images cannot contain nested elements");
     });
   }
   if (fl.hidden) div.classList.add("flag-hidden");
   if (fl.locked) div.classList.add("flag-locked");
-  const isSelected = state.sel.some((s) => s.ref.secIdx === ref.secIdx && s.ref.path === ref.path);
+  const isSelected = state.sel.some((s) => refKeyOf(s.ref) === key);
   if (isSelected) div.classList.add("selected");
   div.setAttribute("aria-pressed", String(isSelected));
   const icons: Record<string, string> = {
@@ -2740,12 +2748,12 @@ function addLayerItem(
   if (source) {
     div.classList.add("fe-layer-sourced");
     div.style.setProperty("--source-color", source.color);
-    div.title = `Источник: ${source.label}`;
+    div.title = `Source: ${source.label}`;
   }
   div.innerHTML = (source ? `<span class="fe-source-dot" title="${esc(source.label)}"></span>` : "") +
     `<span class="fe-li">${icon}</span><span class="fe-ln">${esc(label)}</span>` +
-    `<button class="fe-lbtn" data-flag="hidden" title="Скрыть/показать слой" aria-label="${fl.hidden ? "Показать слой" : "Скрыть слой"}" aria-pressed="${fl.hidden ? "true" : "false"}">${fl.hidden ? "🚫" : "👁"}</button>` +
-    `<button class="fe-lbtn" data-flag="locked" title="Залочить/разлочить" aria-label="${fl.locked ? "Разлочить слой" : "Залочить слой"}" aria-pressed="${fl.locked ? "true" : "false"}">${fl.locked ? "🔒" : "🔓"}</button>`;
+    `<button class="fe-lbtn" data-flag="hidden" title="Show/hide layer" aria-label="${fl.hidden ? "Show layer" : "Hide layer"}" aria-pressed="${fl.hidden ? "true" : "false"}">${fl.hidden ? "🚫" : "👁"}</button>` +
+    `<button class="fe-lbtn" data-flag="locked" title="Lock/unlock" aria-label="${fl.locked ? "Unlock layer" : "Lock layer"}" aria-pressed="${fl.locked ? "true" : "false"}">${fl.locked ? "🔒" : "🔓"}</button>`;
   const selectLayer = (e: Pick<MouseEvent | KeyboardEvent, "target" | "shiftKey" | "ctrlKey" | "metaKey">) => {
     if (!state) return;
     const btn = (e.target as HTMLElement).closest("[data-flag]") as HTMLElement | null;
@@ -3029,10 +3037,10 @@ export async function uploadImageForSelection(file?: File | null): Promise<boole
     commitActiveIrEdits();
     rerenderEditorCanvas();
     ui.bumpInspector();
-    toast(`Картинка вставлена · ${prepared.width}×${prepared.height}, ${formatBytes(prepared.bytes)}`, "ok");
+    toast(`Image inserted · ${prepared.width}×${prepared.height}, ${formatBytes(prepared.bytes)}`, "ok");
     return true;
   } catch (error) {
-    toast(`Не удалось загрузить картинку: ${error instanceof Error ? error.message : String(error)}`, "error");
+    toast(`Could not load image: ${error instanceof Error ? error.message : String(error)}`, "error");
     return false;
   }
 }
@@ -3076,6 +3084,19 @@ function dismissOpenOverlays(): boolean {
   return true;
 }
 
+
+/* Space hold → temporary Hand pan (Figma). Restores previous tool on keyup. */
+let spacePanRestore: string | null = null;
+
+export function onKeyup(e: KeyboardEvent) {
+  if (!state) return;
+  if (e.code === "Space" && spacePanRestore != null) {
+    const restore = spacePanRestore;
+    spacePanRestore = null;
+    if (state.tool === "hand") setTool(restore);
+  }
+}
+
 export function onKeydown(e: KeyboardEvent) {
   if (!state) return;
   const ae = document.activeElement as HTMLElement | null;
@@ -3088,6 +3109,16 @@ export function onKeydown(e: KeyboardEvent) {
     return;
   }
   if (typing) return;
+  // Space (hold) = temporary Hand — same as Figma
+  if (e.code === "Space" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault(); // held Space must not scroll the canvas container
+    if (e.repeat) return;
+    if (spacePanRestore == null) {
+      spacePanRestore = state.tool === "hand" ? "select" : state.tool;
+      setTool("hand");
+    }
+    return;
+  }
   if (e.key === "v" || e.key === "V" || e.key === "м" || e.key === "М") setTool("select");
   if (e.key === "h" || e.key === "H" || e.key === "р" || e.key === "Р") setTool("hand");
   if (e.key === "r" || e.key === "R" || e.key === "к" || e.key === "К") setTool("rect");

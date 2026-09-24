@@ -50,17 +50,17 @@ def audit(ir: dict) -> dict:
         item = {"path": path, "status": "unknown"}
         if not src:
             item["status"] = "fail"
-            errors.append({"path": path, "problem": "Изображение не заполнено"})
+            errors.append({"path": path, "problem": "Image slot is empty"})
         elif isinstance(src, str):
             try:
                 data = src
                 if src.startswith("ddna://blobs/"):
                     match = re.fullmatch(r"ddna://blobs/([a-f0-9]{64})\.(png|jpeg|jpg|webp|svg|gif)", src)
                     if not match:
-                        raise ValueError("Некорректная ссылка на ресурс")
+                        raise ValueError("Invalid asset reference")
                     raw = (blobs_dir() / src.rsplit("/", 1)[1]).read_bytes()
                     if hashlib.sha256(raw).hexdigest() != match[1]:
-                        raise ValueError("Файл ресурса повреждён")
+                        raise ValueError("Asset file is corrupted")
                     mime = {"jpg": "jpeg", "svg": "svg+xml"}.get(match[2], match[2])
                     data = "data:image/" + mime + ";base64," + base64.b64encode(raw).decode()
                 if data.startswith(("data:image/png;", "data:image/jpeg;", "data:image/webp;")):
@@ -70,7 +70,7 @@ def audit(ir: dict) -> dict:
                     item.update(validated, status="pass")
                     frame = node.get("frame") or {}
                     if any(isinstance(frame.get(key), (float, int)) and frame[key] > validated[key] * 1.5 for key in ("width", "height")):
-                        warnings.append({"path": path, "problem": "Разрешение изображения меньше его размера в макете"})
+                        warnings.append({"path": path, "problem": "Image resolution is smaller than its layout size"})
             except (ValueError, OSError) as exc:
                 item["status"] = "fail"
                 errors.append({"path": path, "problem": str(exc)})

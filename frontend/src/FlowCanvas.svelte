@@ -431,7 +431,7 @@
     }
     if (node.type !== "edit") return;
     if (!(node.data as Record<string, unknown>).ir) {
-      toast("Сначала подключите IR к входу ноды", "error");
+      toast("Connect IR to the node input first", "error");
       return;
     }
     window.dispatchEvent(new Event("designdna:ensure-editor"));
@@ -440,7 +440,7 @@
       const { useEditorStore } = await import("./editor/store");
       useEditorStore.getState().openEditor(nodeId);
     } catch (error) {
-      toast(`Не удалось открыть редактор: ${error instanceof Error ? error.message : String(error)}`, "error");
+      toast(`Could not open editor: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
   };
 </script>
@@ -616,6 +616,12 @@
   {#if showEmptyState}
     <EmptyState onfit={() => void rf.fitView({ padding: 0.12, duration: 250 })} />
   {/if}
+  {#if !$flowHydrated}
+    <!-- The project comes only from SQLite: block edits until it has arrived -->
+    <div class="flow-loading" role="status" aria-live="polite" data-project-loading>
+      <span class="flow-loading-card">Loading project…</span>
+    </div>
+  {/if}
   {#if menu}
     <!-- Контекстное меню создания ноды — зеркало showCtxMenu/CTX_ITEMS (nodes.js:1096-1122) -->
     <div
@@ -623,7 +629,7 @@
       style="display: block; left: {Math.max(12, Math.min(menu.x, window.innerWidth - 312))}px; top: {Math.max(12, Math.min(menu.y, window.innerHeight - 480))}px;"
     >
       <div class="ctx-head">
-        <div class="ctx-cap">{menuWire ? `ПРИНИМАЕТ · ${menuWire.kind}` : "СОЗДАТЬ НОДУ"}</div>
+        <div class="ctx-cap">{menuWire ? `ACCEPTS · ${menuWire.kind}` : "CREATE NODE"}</div>
         <span class="ctx-esc">ESC</span>
       </div>
       <div class="ctx-search-wrap">
@@ -631,8 +637,8 @@
           class="ctx-search"
           bind:value={menuSearch}
           use:focusOnMount
-          placeholder="Найти тип ноды…"
-          aria-label="Найти тип ноды"
+          placeholder="Find a node type…"
+          aria-label="Find a node type"
           onkeydown={(event) => {
             if (event.key !== "Enter") return;
             const first = visibleGroups[0]?.items[0];
@@ -641,8 +647,8 @@
         />
       </div>
       {#if !menuSearch && !menuWire}
-        <div class="ctx-groups" role="tablist" aria-label="Стадии">
-          <button class="ctx-group-chip" class:active={!menuGroup} role="tab" aria-selected={!menuGroup} onclick={() => (menuGroup = null)}>Все</button>
+        <div class="ctx-groups" role="tablist" aria-label="Stages">
+          <button class="ctx-group-chip" class:active={!menuGroup} role="tab" aria-selected={!menuGroup} onclick={() => (menuGroup = null)}>All</button>
           {#each CTX_GROUPS as group (group.label)}
             <button class="ctx-group-chip" class:active={menuGroup === group.label} role="tab" aria-selected={menuGroup === group.label} onclick={() => (menuGroup = menuGroup === group.label ? null : group.label)}>
               {group.label.charAt(0) + group.label.slice(1).toLocaleLowerCase("ru")}
@@ -674,7 +680,7 @@
             </div>
           {/each}
         {/each}
-        {#if !visibleGroups.length}<div class="ctx-none">Ничего не найдено</div>{/if}
+        {#if !visibleGroups.length}<div class="ctx-none">No results</div>{/if}
       </div>
     </div>
   {/if}
@@ -686,8 +692,8 @@
       style="left: {Math.max(12, Math.min(nodeMenu.x, window.innerWidth - 252))}px; top: {Math.max(12, Math.min(nodeMenu.y, window.innerHeight - 132))}px;"
     >
       <div class="node-ctx-head">
-        <span>{selectedNode?.type ? NODE_DEFS[selectedNode.type as NodeType].title : "Нода"}</span>
-        <small>{links} {links === 1 ? "связь" : "связей"}</small>
+        <span>{selectedNode?.type ? NODE_DEFS[selectedNode.type as NodeType].title : "Node"}</span>
+        <small>{links} {links === 1 ? "connection" : "connections"}</small>
       </div>
       <button
         type="button"
@@ -698,7 +704,7 @@
         }}
       >
         <span aria-hidden="true">▶</span>
-        <span><strong>Запустить</strong><small>Выполнить с текущими входами</small></span>
+        <span><strong>Run</strong><small>Run with current inputs</small></span>
       </button>
       {#if selectedNode?.type === "edit" || selectedNode?.type === "designsystem"}
         <button
@@ -711,7 +717,7 @@
           }}
         >
           <span aria-hidden="true">⬚</span>
-          <span><strong>Открыть редактор</strong><small>{selectedNode.type === "edit" ? "DNA-редактор" : "Панель дизайн-системы"}</small></span>
+          <span><strong>Open editor</strong><small>{selectedNode.type === "edit" ? "DNA editor" : "Design system panel"}</small></span>
         </button>
       {/if}
       <button
@@ -724,7 +730,7 @@
         }}
       >
         <span aria-hidden="true">⌁</span>
-        <span><strong>Разорвать связи</strong><small>Нода и её данные сохранятся</small></span>
+        <span><strong>Disconnect</strong><small>The node and its data will be preserved</small></span>
       </button>
       <button
         type="button"
@@ -736,8 +742,28 @@
         }}
       >
         <span aria-hidden="true">✕</span>
-        <span><strong>Удалить</strong><small>Ctrl+Z вернёт</small></span>
+        <span><strong>Delete</strong><small>Ctrl+Z to restore</small></span>
       </button>
     </div>
   {/if}
 </div>
+
+<style>
+  .flow-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--dna-bg, #151517) 55%, transparent);
+    cursor: progress;
+  }
+  .flow-loading-card {
+    padding: 10px 16px;
+    border: 1px solid var(--dna-border-strong);
+    border-radius: 8px;
+    background: var(--dna-elevated);
+    color: var(--dna-text);
+    font-size: 13px;
+  }
+</style>

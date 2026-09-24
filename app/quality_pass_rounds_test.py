@@ -98,7 +98,7 @@ def test_repair_prompt_lists_every_issue_and_the_design_system(monkeypatch):
     assert "Общая инструкция судьи: общая" in text and "Текущая оценка 45/100, порог 80" in text
     assert "DESIGN SYSTEM COMPILED PROFILE" in text and "Скриншоты текущего состояния" in text
     empty, empty_error = quality._quality_repair_messages(copy.deepcopy(BASE_IR), {"score": 90, "issues": []}, "x")
-    assert empty is None and "не дал инструкций" in empty_error
+    assert empty is None and "no repair instructions" in empty_error
 
 
 def test_server_quality_pass_loops_rounds(monkeypatch):

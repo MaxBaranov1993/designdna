@@ -26,10 +26,10 @@
 
 <div class="dna-insp-fields">
   <div class="dna-field">
-    <div class="dna-field-cap">Промпт микса</div>
+    <div class="dna-field-cap">Mix prompt</div>
     <textarea
       rows="3"
-      placeholder="Например: лаконичность из a, цена и бейджи как в b"
+      placeholder="For example: simplicity from a, pricing and badges from b"
       value={data.prompt || ""}
       oninput={(e) => {
         const value = e.currentTarget.value;
@@ -39,7 +39,7 @@
     ></textarea>
   </div>
   <div class="dna-field">
-    <div class="dna-field-cap">Веса входов</div>
+    <div class="dna-field-cap">Input weights</div>
     <div class="nrow-weights">
       {#each data.inputs as name (name)}
         {@const weight = Math.round(data.weights[name] ?? 50)}
@@ -49,14 +49,14 @@
           <span class="w-pct">{weight}%</span>
           <button class="w-step" title="−10" onclick={() => bumpWeight(name, -10)}>−</button>
           <button class="w-step" title="+10" onclick={() => bumpWeight(name, 10)}>+</button>
-          <button class="w-x" title="Убрать вход" onclick={() => $flow.removeMixInput(id, name)}>✕</button>
+          <button class="w-x" title="Remove input" onclick={() => $flow.removeMixInput(id, name)}>✕</button>
         </div>
       {/each}
     </div>
-    <button class="dna-btn-ghost" onclick={() => $flow.addMixInput(id)}>+ Вход</button>
+    <button class="dna-btn-ghost" onclick={() => $flow.addMixInput(id)}>+ Input</button>
   </div>
   <div class="nrow-variants">
-    <span>Вариантов</span>
+    <span>Variants</span>
     <button class="v-step" onclick={() => $flow.setNodeData(id, { variants: Math.max(1, variants - 1) })}>−</button>
     <span class="v-count">{variants}</span>
     <button class="v-step" onclick={() => $flow.setNodeData(id, { variants: Math.min(8, variants + 1) })}>+</button>

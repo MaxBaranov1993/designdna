@@ -8,6 +8,7 @@ from playwright.sync_api import sync_playwright
 from timeline_assets import (
     install_render_asset_guard,
     materialize_render_assets,
+    promote_oversized_data_urls,
     rewrite_local_asset_urls,
 )
 from timeline_render import (
@@ -28,6 +29,13 @@ RENDER_DOCUMENT_HTML = (
 )
 
 
+# CSS generic families are keywords, not fonts: aliasing "ui-monospace" to the bundled
+# Inter turned every captured monospace stack (code/trace blocks) into a sans face,
+# because Chromium outside macOS treats the unsupported keyword as a family name.
+_GENERIC_FAMILIES = {"serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif",
+                     "ui-sans-serif", "ui-monospace", "ui-rounded", "math", "emoji", "fangsong"}
+
+
 def _requested_font_families(ir: dict) -> set[str]:
     """Return primary custom families that the rendered DOM can request."""
     families: set[str] = set()
@@ -36,7 +44,7 @@ def _requested_font_families(ir: dict) -> set[str]:
         if not isinstance(value, str):
             return
         primary = re.split(r",", value, maxsplit=1)[0].strip().strip("'\"")
-        if primary:
+        if primary and primary.lower() not in _GENERIC_FAMILIES:
             families.add(primary)
 
     tokens = ir.get("tokens") if isinstance(ir.get("tokens"), dict) else {}
@@ -125,7 +133,8 @@ def _neutralize_links(ir: dict) -> dict:
 
 
 WEBFONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
-_UNDECLARED_FONT_RE = re.compile(r'^шрифт "([^"]+)" недоступен офлайн')
+# Readiness messages are English since 2026-09-23; older Russian wording is kept for cached reports.
+_UNDECLARED_FONT_RE = re.compile(r'^(?:font|шрифт) "([^"]+)" (?:is unavailable offline|недоступен офлайн)')
 
 
 def _undeclared_families(problems: list[str]) -> set[str]:
@@ -168,6 +177,7 @@ def render_png(
     # не загружаются — это не ассеты. Сгенерированный IR полон таких href;
     # без нейтрализации гард ассетов ронял судью на каждой второй странице.
     ir = _neutralize_links(ir)
+    ir = promote_oversized_data_urls(ir)
     # IR без корневого артборда рендерится на холсте 960px и масштабируется 1.5×:
     # судья видел «сложенные» ряды hero. Такие страницы снимаем на ширине вывода.
     root_frame = ir.get("frame") if isinstance(ir.get("frame"), dict) else {}

@@ -35,6 +35,29 @@
         "description": {
           "type": "string"
         },
+        "pageRect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "width", "height"],
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "width": { "type": "number" },
+            "height": { "type": "number" },
+            "source": { "type": "string", "maxLength": 512, "description": "Capture identity (final URL); neighbours with the same source keep their original gaps and overlaps." }
+          },
+          "description": "Document rectangle of a captured Source section on the original page (CSS px)."
+        },
+        "pageBackground": {
+          "type": "string",
+          "maxLength": 4096,
+          "description": "CSS background of the source page body/html behind the captured section."
+        },
+        "pageRectByViewport": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/properties/meta/properties/pageRect" },
+          "description": "pageRect per captured viewport (desktop/tablet/mobile)."
+        },
         "qaWarnings": {
           "type": "array",
           "items": {

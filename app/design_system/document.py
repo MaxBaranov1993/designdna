@@ -372,7 +372,7 @@ def validate_document(document: dict) -> list[dict]:
     errors: list[dict] = []
     components = document.get("components") or {}
     if not isinstance(components, dict) or not components:
-        errors.append({"code": "no-components", "message": "Дизайн-система не содержит ни одного компонента"})
+        errors.append({"code": "no-components", "message": "Design system contains no components"})
         return errors
 
     source_revision_hashes = {
@@ -383,23 +383,23 @@ def validate_document(document: dict) -> list[dict]:
     keys = set()
     for key, comp in components.items():
         if not isinstance(comp, dict):
-            errors.append({"code": "bad-component", "message": f"Компонент {key} не является объектом"})
+            errors.append({"code": "bad-component", "message": f"Component {key} is not an object"})
             continue
         if comp.get("componentKey") and comp["componentKey"] in keys:
-            errors.append({"code": "duplicate-key", "message": f"Дубликат componentKey: {comp['componentKey']}"})
+            errors.append({"code": "duplicate-key", "message": f"Duplicate componentKey: {comp['componentKey']}"})
         keys.add(comp.get("componentKey") or key)
         template = comp.get("templateIr")
         if template is not None and (not isinstance(template, dict) or not isinstance(template.get("tree"), list)):
-            errors.append({"code": "bad-template", "message": f"Компонент {key}: templateIr не является Design IR"})
+            errors.append({"code": "bad-template", "message": f"Component {key}: templateIr is not Design IR"})
         master = comp.get("masterIr")
         if not isinstance(master, dict) or not isinstance(master.get("tree"), list):
-            errors.append({"code": "bad-master", "message": f"Компонент {key}: отсутствует точный masterIr"})
+            errors.append({"code": "bad-master", "message": f"Component {key}: missing exact masterIr"})
 
         origin = str(comp.get("origin") or "inferred")
         if origin in ("inferred", "suggested"):
             errors.append({
                 "code": "suggestion-in-registry",
-                "message": f"Компонент {key}: предложение нельзя публиковать без явного Promote",
+                "message": f"Component {key}: proposal cannot be published without explicit Promote",
             })
         if origin == "observed":
             if isinstance(master, dict) and isinstance(template, dict):
@@ -413,32 +413,32 @@ def validate_document(document: dict) -> list[dict]:
                         or canonical_json(master_roots[0]) != canonical_json(preview_node)):
                     errors.append({
                         "code": "observed-master-mutated",
-                        "message": f"Компонент {key}: preview не содержит точный Source masterIr",
+                        "message": f"Component {key}: preview does not contain the exact Source masterIr",
                     })
             if comp.get("confirmed") is not True:
-                errors.append({"code": "unconfirmed-observed", "message": f"Компонент {key}: Source master не подтверждён"})
+                errors.append({"code": "unconfirmed-observed", "message": f"Component {key}: Source master unconfirmed"})
             fidelity = component_fidelity_status(comp.get("fidelity"))
             if not fidelity["passed"] or comp.get("status") != "verified":
                 errors.append({
                     "code": "master-fidelity-failed",
-                    "message": f"Компонент {key}: fidelity gate не пройден — {'; '.join(fidelity['reasons']) or 'status is not verified'}",
+                    "message": f"Component {key}: fidelity gate failed — {'; '.join(fidelity['reasons']) or 'status is not verified'}",
                 })
             source_ref = comp.get("sourceRef") if isinstance(comp.get("sourceRef"), dict) else {}
             revision_hash = str(source_ref.get("sourceRevisionHash") or "")
             if not source_ref.get("sourceKey") or not revision_hash:
                 errors.append({
                     "code": "missing-master-source-ref",
-                    "message": f"Компонент {key}: нет Source sourceKey/sourceRevisionHash",
+                    "message": f"Component {key}: no Source sourceKey/sourceRevisionHash",
                 })
             elif revision_hash not in source_revision_hashes:
                 errors.append({
                     "code": "stale-master-source-ref",
-                    "message": f"Компонент {key}: Source revision не совпадает с документом",
+                    "message": f"Component {key}: Source revision does not match the document",
                 })
             if source_ref.get("masterHash") != content_hash(master or {}):
                 errors.append({
                     "code": "observed-master-mutated",
-                    "message": f"Компонент {key}: masterIr не совпадает с закреплённым Source hash",
+                    "message": f"Component {key}: masterIr does not match the pinned Source hash",
                 })
             for variant_key, variant in (comp.get("variants") or {}).items():
                 if not isinstance(variant, dict) or variant.get("origin") != "observed":
@@ -448,7 +448,7 @@ def validate_document(document: dict) -> list[dict]:
                 if not isinstance(variant.get("masterIr"), dict) or not isinstance(variant.get("sourceRef"), dict):
                     errors.append({
                         "code": "bad-observed-variant",
-                        "message": f"Компонент {key}, вариант {variant_key}: нет точного masterIr/sourceRef",
+                        "message": f"Component {key}, variant {variant_key}: no exact masterIr/sourceRef",
                     })
                 if isinstance(variant.get("masterIr"), dict) and isinstance(variant.get("sourceRef"), dict):
                     variant_fidelity = component_fidelity_status(variant.get("fidelity"))
@@ -470,14 +470,14 @@ def validate_document(document: dict) -> list[dict]:
                             "message": f"Component {key}, variant {variant_key}: masterIr differs from its Source hash",
                         })
         elif origin == "user" and comp.get("confirmed") is not True:
-            errors.append({"code": "unconfirmed-user", "message": f"Компонент {key}: пользовательский master не подтверждён"})
+            errors.append({"code": "unconfirmed-user", "message": f"Component {key}: user master unconfirmed"})
 
     # зависимости существуют + отсутствие циклов
     deps_graph = {k: [d for d in (c.get("dependencies") or []) if isinstance(c, dict)] for k, c in components.items() if isinstance(c, dict)}
     for key, deps in deps_graph.items():
         for dep in deps:
             if dep not in components and dep not in keys:
-                errors.append({"code": "missing-dependency", "message": f"Компонент {key} зависит от несуществующего {dep}"})
+                errors.append({"code": "missing-dependency", "message": f"Component {key} depends on nonexistent {dep}"})
     visiting, done = set(), set()
 
     def has_cycle(node: str) -> bool:
@@ -495,13 +495,13 @@ def validate_document(document: dict) -> list[dict]:
 
     for key in deps_graph:
         if has_cycle(key):
-            errors.append({"code": "dependency-cycle", "message": f"Циклическая зависимость с участием {key}"})
+            errors.append({"code": "dependency-cycle", "message": f"Circular dependency involving {key}"})
             break
 
     # generated-компоненты не публикуются без подтверждения (§10)
     for key, comp in components.items():
         if isinstance(comp, dict) and comp.get("origin") == "generated" and not comp.get("confirmed"):
-            errors.append({"code": "unconfirmed-generated", "message": f"Компонент {key} сгенерирован и не подтверждён — подтвердите или удалите перед публикацией"})
+            errors.append({"code": "unconfirmed-generated", "message": f"Component {key} is generated and unconfirmed — confirm or remove before publishing"})
 
     # token bindings ссылаются на существующие foundations-токены
     semantic = ((document.get("foundations") or {}).get("colors") or {}).get("semantic") or {}
@@ -516,7 +516,7 @@ def validate_document(document: dict) -> list[dict]:
             if isinstance(binding, dict):
                 binding = binding.get("token") or binding.get("name")
             if known_tokens and binding not in known_tokens:
-                errors.append({"code": "unknown-token-binding", "message": f"Компонент {key}: привязка к неизвестному токену {binding}"})
+                errors.append({"code": "unknown-token-binding", "message": f"Component {key}: binding to unknown token {binding}"})
     from .identity import validate_identity_schema
     errors.extend(validate_identity_schema(document))
     return errors

@@ -39,31 +39,31 @@
     </div>
     <div class="foot-right">
       {#if data.job && !terminal}
-        <button class="btn-node small nodrag" disabled={busy} onclick={() => void $flow.refreshMotionDesign(nodeId)}>Обновить</button>
+        <button class="btn-node small nodrag" disabled={busy} onclick={() => void $flow.refreshMotionDesign(nodeId)}>Refresh</button>
       {/if}
       {#if data.video}
-        <a class="btn-node small md-download nodrag" href={data.video.downloadUrl} download={data.video.filename}>Скачать</a>
+        <a class="btn-node small md-download nodrag" href={data.video.downloadUrl} download={data.video.filename}>Download</a>
       {/if}
       <button class="btn-node primary small nodrag" disabled={busy || !paidConfirmed} onclick={() => void $flow.runMotionDesign(nodeId, paidConfirmed)}>
-        {#if busy}<span class="spinner"></span>{/if} Сгенерировать
+        {#if busy}<span class="spinner"></span>{/if} Generate
       </button>
     </div>
   {/snippet}
   <InPorts type="motiondesign" />
   {#if data.video?.downloadUrl}
-    <VideoPlayer src={data.video.downloadUrl} label="Видео Seedance" />
+    <VideoPlayer src={data.video.downloadUrl} label="Seedance video" />
   {:else}
     <div class="n-hero nodrag" style="aspect-ratio: {ratio}; max-height: 220px">
       <div class="n-hero-empty md-empty">
         <div class="md-source-row">
-          <span class:active={hasReference}>video {hasReference ? "✓" : "—"}</span>
-          <span class:active={hasMotionData}>params {hasMotionData ? "✓" : "—"}</span>
+          <span class:active={hasReference}>{hasReference ? "Video connected" : "No video input"}</span>
+          <span class:active={hasMotionData}>{hasMotionData ? "Motion connected" : "No motion input"}</span>
         </div>
-        <span>{busy ? "Генерируем ролик…" : data.plannedPrompt ? "Prompt подготовлен — подтвердите вызов и запустите" : "Опишите сцену в инспекторе или подайте видео на вход"}</span>
+        <span>{busy ? "Generating video…" : data.plannedPrompt ? "Prompt prepared — confirm the call and run" : "Describe the scene in the inspector or connect a video input"}</span>
       </div>
     </div>
   {/if}
-  <div class="md-mode-row n-seg grow nodrag" role="group" aria-label="Источник">
+  <div class="md-mode-row n-seg grow nodrag" role="group" aria-label="Source">
     {#each [["auto", "Auto"], ["prompt", "Prompt"], ["reference", "Video"]] as option}
       <button class:active={data.inputMode === option[0]} onclick={() => $flow.setNodeData(nodeId, { inputMode: option[0], plannedPrompt: "" })}>{option[1]}</button>
     {/each}
@@ -72,10 +72,10 @@
     <div class="md-preview nodrag nowheel" title={data.plannedPrompt}>{data.plannedPrompt}</div>
   {/if}
   <label class="md-paid nodrag"><input type="checkbox" bind:checked={paidConfirmed} />
-    <span><strong>Подтверждаю платный вызов</strong><small>OpenRouter · видео не поддерживает ZDR</small></span>
+    <span><strong>I confirm the paid call</strong><small>OpenRouter · video does not support ZDR</small></span>
   </label>
   <NodeStatus {id} />
-  <OutPorts type="motiondesign" {data} />
+  <OutPorts {id} type="motiondesign" {data} />
 </NodeShell>
 
 <style>

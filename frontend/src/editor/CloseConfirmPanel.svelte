@@ -21,14 +21,14 @@
     }}
   >
     <div class="fe-locks-card fe-close-card" role="dialog" aria-modal="true" aria-labelledby="close-confirm-title" data-close-confirm>
-      <div class="fe-locks-kicker">Несохранённые правки</div>
-      <h2 id="close-confirm-title">Закрыть редактор?</h2>
-      <p>Правки ещё не записаны в ноду. Сохраните их, выйдите без сохранения или останьтесь в редакторе.</p>
+      <div class="fe-locks-kicker">Unsaved changes</div>
+      <h2 id="close-confirm-title">Close the editor?</h2>
+      <p>Your changes have not been saved to the node. Save them, discard them, or stay in the editor.</p>
       <div class="fe-locks-actions fe-close-actions">
-        <button class="fe-btn danger" data-act="close-discard" onclick={() => ctl.discardAndClose()}>Не сохранять</button>
+        <button class="fe-btn danger" data-act="close-discard" onclick={() => ctl.discardAndClose()}>Discard changes</button>
         <span class="fe-close-spacer"></span>
-        <button class="fe-btn" data-act="close-stay" onclick={() => ctl.dismissCloseConfirm()}>Остаться</button>
-        <button bind:this={primary} class="fe-btn primary" data-act="close-save" onclick={() => ctl.saveAndClose()}>Сохранить и закрыть</button>
+        <button class="fe-btn" data-act="close-stay" onclick={() => ctl.dismissCloseConfirm()}>Stay</button>
+        <button bind:this={primary} class="fe-btn primary" data-act="close-save" onclick={() => ctl.saveAndClose()}>Save and close</button>
       </div>
     </div>
   </div>

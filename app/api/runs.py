@@ -18,7 +18,7 @@ def run_status(run_id: str):
     """Стадия длинного запуска (generate/quality-pass) — клиент поллит параллельно POST."""
     run = run_registry.get(run_id)
     if not run:
-        return err(404, "Запуск не найден")
+        return err(404, "Run not found")
     return run
 
 

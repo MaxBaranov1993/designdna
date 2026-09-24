@@ -6,6 +6,7 @@
   import { isImageSource } from "../flow/image-assets";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
   import type { ReferenceFlowNode } from "../flow/types";
+  import IrPreview from "../components/IrPreview.svelte";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
   import InPorts from "./InPorts.svelte";
@@ -40,25 +41,27 @@
   {#snippet footer()}
     <div class="foot-left">
       <label class="btn-node small add-input nodrag" style="cursor: pointer">
-        {data.image ? "Заменить изображение" : "+ Изображение"}
+        {data.image ? "Replace image" : "+ Image"}
         <input type="file" accept="image/*" class="f-file" hidden onchange={onFile} />
       </label>
     </div>
-    <div class="foot-right"><span class="foot-hint">{data.image ? data.fileName || "" : wiredImage ? "по проводу" : ""}</span></div>
+    <div class="foot-right"><span class="foot-hint">{data.image ? data.fileName || "" : wiredImage ? "via wire" : ""}</span></div>
   {/snippet}
   <InPorts type="reference" />
   {#if shownImage}
-    <div class="n-hero nodrag"><img class="ref-img" alt="референс" src={shownImage} /></div>
+    <div class="n-hero nodrag"><img class="ref-img" alt="reference" src={shownImage} /></div>
+  {:else if data.ir}
+    <div class="n-hero nodrag"><IrPreview ir={data.ir} height={200} fitHeight /></div>
   {:else}
     <label class="ref-drop nodrag">
-      Перетащите или выберите скриншот
+      Drop or choose a screenshot
       <input type="file" accept="image/*" hidden onchange={onFile} />
     </label>
   {/if}
   <textarea
     class="f-brief nodrag nowheel"
     rows="2"
-    placeholder="Что взять из референса (уходит в провод «стиль»)"
+    placeholder="What to take from the reference (sent through the style output)"
     value={data.brief}
     oninput={(e) => {
       const value = e.currentTarget.value;
@@ -70,7 +73,7 @@
     onblur={() => flushNodeText(`reference:${id}:brief`)}
   ></textarea>
   <NodeStatus {id} />
-  <OutPorts type="reference" />
+  <OutPorts {id} type="reference" />
 </NodeShell>
 
 <style>

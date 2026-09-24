@@ -6,7 +6,7 @@ def capture_source_png(page, locator, item: dict) -> bytes:
     root = item.get('root') or {}
     clip = root.get('captureRect')
     if not isinstance(clip, dict):
-        return locator.screenshot(type='png')
+        return locator.screenshot(type='png', timeout=8000)
     if any(not isinstance(clip.get(k), (int, float)) or not math.isfinite(clip[k])
            for k in ('x', 'y', 'width', 'height')):
         raise ValueError('Invalid measured Source capture rectangle')
@@ -20,4 +20,4 @@ def capture_source_png(page, locator, item: dict) -> bytes:
             raise ValueError('Source geometry changed after compilation')
     # Unlike locator.screenshot, this never scrolls the element. The compiler
     # recorded this exact crop and offset; no padding, rescaling or guessed paint.
-    return page.screenshot(type='png', full_page=True, clip=clip)
+    return page.screenshot(type='png', full_page=True, clip=clip, animations='disabled', caret='hide', timeout=15000)

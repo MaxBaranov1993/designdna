@@ -256,8 +256,8 @@ def import_design_system(payload: Any, *, name: str = "", file_name: str = "",
     fmt = detect_format(payload)
     if fmt is None:
         raise ValueError(
-            "Не распознан формат: нужен документ DesignDNA, W3C/Tokens Studio JSON "
-            "или карта токенов (shadcn / IR tokens v1)")
+            "Unrecognized format: use a DesignDNA document, W3C/Tokens Studio JSON "
+            "or a token map (shadcn / IR tokens v1)")
     display_name = (name or "").strip() or (re.sub(r"\.[A-Za-z0-9]+$", "", file_name).strip() if file_name else "") or "Imported Design System"
 
     if fmt == "designdna-document":
@@ -275,7 +275,7 @@ def import_design_system(payload: Any, *, name: str = "", file_name: str = "",
         parsed = _from_design_tokens(payload)
         ir_tokens = coerce_ir_tokens(parsed["tokens"]) if parsed["tokens"] else None
         if ir_tokens is None:
-            raise ValueError("В токенах не нашлось ни одного цвета или шрифта с понятной ролью "
+            raise ValueError("No colors or fonts with recognizable roles found in tokens "
                              "(primary/background/text/border, display/body)")
         extra = {"primitives": parsed["primitives"], "radii": parsed["radii"],
                  "spacing": parsed["spacing"], "shadows": parsed["shadows"]}

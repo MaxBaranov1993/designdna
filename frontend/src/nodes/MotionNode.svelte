@@ -36,22 +36,22 @@
       if (!MotionWorkspace) MotionWorkspace = (await import("./MotionWorkspace.svelte")).default;
     } catch (error) {
       open = false;
-      toast(`Не удалось открыть редактор: ${error instanceof Error ? error.message : String(error)}`, "error");
+      toast(`Could not open editor: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
   };
 </script>
 
 <NodeShell {id} type="motion" {selected}>
   {#snippet footer()}
-    <div class="foot-left"><span>{scenes.length} {scenes.length === 1 ? "сцена" : "сцен"} · {(durationOf(data) / 1000).toFixed(1)} s · {data.composition.fps} fps · {(data.renderSettings?.format || "mp4").toUpperCase()}</span></div>
+    <div class="foot-left"><span>{scenes.length} {scenes.length === 1 ? "scene" : "scenes"} · {(durationOf(data) / 1000).toFixed(1)} s · {data.composition.fps} fps · {(data.renderSettings?.format || "mp4").toUpperCase()}</span></div>
     <div class="foot-right">
-      <button class="btn-node small nodrag" disabled={!data.motion} onclick={() => void openWorkspace()}>Открыть</button>
-      <button class="btn-node primary small nodrag" disabled={busy} onclick={() => $flow.runNode(nodeId)}>{#if busy}<span class="spinner"></span>{/if} Собрать</button>
+      <button class="btn-node small nodrag" disabled={!data.motion} onclick={() => void openWorkspace()}>Open</button>
+      <button class="btn-node primary small nodrag" disabled={busy} onclick={() => $flow.runNode(nodeId)}>{#if busy}<span class="spinner"></span>{/if} Build</button>
     </div>
   {/snippet}
   <InPorts type="motion" />
   <div class="n-hero nodrag">
-    <IrPreview ir={preview} height={200} fitHeight empty="Соберите таймлайн — сцены появятся здесь" />
+    <IrPreview ir={preview} height={200} fitHeight empty="Build the timeline — scenes will appear here" />
   </div>
   {#if scenes.length > 1}
     <div class="motion-node-scenes nodrag">
@@ -61,7 +61,7 @@
     </div>
   {/if}
   <NodeStatus {id} />
-  <OutPorts type="motion" {data} />
+  <OutPorts {id} type="motion" {data} />
   {#if open && MotionWorkspace}
     <MotionWorkspace {nodeId} {data} onClose={() => (open = false)} />
   {/if}

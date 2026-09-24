@@ -12,41 +12,41 @@
 
   const sections: Section[] = [
     {
-      title: "Канвас графа",
+      title: "Graph canvas",
       rows: [
-        { keys: ["ПКМ", "Двойной клик"], label: "Создать ноду (меню с поиском)" },
-        { keys: ["Ctrl", "K"], label: "Поиск нод и команд" },
-        { keys: ["Провод в пустоту"], label: "Создать совместимую ноду и сразу соединить" },
-        { keys: ["ПКМ по ноде", "···"], label: "Меню ноды: запустить, редактор, связи, удалить" },
-        { keys: ["Ctrl", "Колесо"], label: "Зум к курсору" },
-        { keys: ["V"], label: "Выбор и выделение рамкой" },
-        { keys: ["H"], label: "Рука" },
-        { keys: ["Shift", "1"], label: "Вписать весь граф" },
-        { keys: ["Shift", "2"], label: "Вписать выделенное" },
-        { keys: ["Пробел + drag", "СКМ", "Колесо"], label: "Перемещение канваса" },
-        { keys: ["Del", "Backspace"], label: "Удалить выбранную ноду или связь" },
-        { keys: ["Ctrl", "Z"], label: "Отменить изменение графа" },
-        { keys: ["Ctrl", "Y"], label: "Повторить изменение графа" },
-        { keys: ["Esc"], label: "Закрыть меню, диалог или снять выделение" },
-        { keys: ["?"], label: "Эта шпаргалка" },
+        { keys: ["Right-click", "Double-click"], label: "Create a node (searchable menu)" },
+        { keys: ["Ctrl", "K"], label: "Search nodes and commands" },
+        { keys: ["Drag a wire to empty space"], label: "Create and connect a compatible node" },
+        { keys: ["Right-click a node", "···"], label: "Node menu: run, editor, connections, delete" },
+        { keys: ["Ctrl", "Mouse wheel"], label: "Zoom toward cursor" },
+        { keys: ["V"], label: "Select and marquee selection" },
+        { keys: ["H"], label: "Hand" },
+        { keys: ["Shift", "1"], label: "Fit entire graph" },
+        { keys: ["Shift", "2"], label: "Fit selection" },
+        { keys: ["Space + drag", "Middle mouse button", "Mouse wheel"], label: "Pan canvas" },
+        { keys: ["Del", "Backspace"], label: "Delete selected node or connection" },
+        { keys: ["Ctrl", "Z"], label: "Undo graph change" },
+        { keys: ["Ctrl", "Y"], label: "Redo graph change" },
+        { keys: ["Esc"], label: "Close menu or dialog, or clear selection" },
+        { keys: ["?"], label: "This shortcut reference" },
       ],
     },
     {
-      title: "DNA-редактор",
+      title: "DNA editor",
       rows: [
-        { keys: ["V", "М"], label: "Выделение" },
-        { keys: ["H", "Р"], label: "Рука (панорама)" },
-        { keys: ["R", "К"], label: "Прямоугольник" },
-        { keys: ["T", "Е"], label: "Текст" },
-        { keys: ["F", "А"], label: "Фрейм" },
-        { keys: ["O", "Щ"], label: "Эллипс" },
-        { keys: ["L", "Д"], label: "Линия" },
-        { keys: ["I", "Ш"], label: "Изображение" },
-        { keys: ["]", "["], label: "Слой выше / ниже" },
-        { keys: ["Ctrl", "S"], label: "Сохранить" },
-        { keys: ["Ctrl", "Z"], label: "Отменить" },
-        { keys: ["Ctrl", "Shift", "Z"], label: "Повторить (или Ctrl+Y)" },
-        { keys: ["Esc"], label: "Закрыть редактор" },
+        { keys: ["V"], label: "Select" },
+        { keys: ["H"], label: "Hand (pan)" },
+        { keys: ["R"], label: "Rectangle" },
+        { keys: ["T"], label: "Text" },
+        { keys: ["F"], label: "Frame" },
+        { keys: ["O"], label: "Ellipse" },
+        { keys: ["L"], label: "Line" },
+        { keys: ["I"], label: "Image" },
+        { keys: ["]", "["], label: "Layer up / down" },
+        { keys: ["Ctrl", "S"], label: "Save" },
+        { keys: ["Ctrl", "Z"], label: "Undo" },
+        { keys: ["Ctrl", "Shift", "Z"], label: "Redo (or Ctrl+Y)" },
+        { keys: ["Esc"], label: "Close editor" },
       ],
     },
   ];
@@ -117,10 +117,10 @@
     <div class="hk-card" role="dialog" aria-modal="true" aria-labelledby="hk-title" data-hotkey-cheatsheet>
       <div class="hk-head">
         <div>
-          <div class="hk-kicker">Горячие клавиши</div>
-          <h2 id="hk-title">Шпаргалка</h2>
+          <div class="hk-kicker">Keyboard shortcuts</div>
+          <h2 id="hk-title">Shortcut reference</h2>
         </div>
-        <button bind:this={closeBtn} class="hk-close" type="button" aria-label="Закрыть шпаргалку" onclick={close}>✕</button>
+        <button bind:this={closeBtn} class="hk-close" type="button" aria-label="Close shortcut reference" onclick={close}>✕</button>
       </div>
       <div class="hk-grid">
         {#each sections as section (section.title)}
@@ -142,7 +142,7 @@
           </section>
         {/each}
       </div>
-      <div class="hk-foot">Esc — закрыть · Русские буквы в редакторе работают как латинские</div>
+      <div class="hk-foot">Esc to close · Editor shortcuts also work with the Russian keyboard layout</div>
     </div>
   </div>
 {/if}

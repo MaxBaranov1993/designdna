@@ -2,7 +2,8 @@
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import ResultAssets from "../components/ResultAssets.svelte";
-  import { flow, flowBusy } from "../flow/state";
+  import { flow, flowBusy, flowNodes, flowEdges } from "../flow/state";
+  import { nodeInputHint } from "../flow/node-readiness";
   import type { MixFlowNode } from "../flow/types";
   import InPorts from "./InPorts.svelte";
   import NodeShell from "./NodeShell.svelte";
@@ -15,6 +16,7 @@
   let { id, data, selected }: NodeProps<MixFlowNode> = $props();
 
   let busy = $derived(!!$flowBusy[Number(id)]);
+  let inputHint = $derived(nodeInputHint($flowNodes, $flowEdges, $flowNodes.find(n => n.id === id) || null));
   let variants = $derived(Math.max(1, Math.min(8, Number(data.variants) || 1)));
   let mixVariants = $derived(data.mixVariants || []);
 
@@ -45,18 +47,18 @@
 <NodeShell {id} type="mix" {selected}>
   {#snippet footer()}
     <div class="foot-left">
-      <button class="btn-node small add-input f-add-in nodrag" onclick={() => $flow.addMixInput(Number(id))}>+ Вход</button>
-      <span>{variants} {variants === 1 ? "вариант" : variants < 5 ? "варианта" : "вариантов"}</span>
+      <button class="btn-node small add-input f-add-in nodrag" onclick={() => $flow.addMixInput(Number(id))}>+ Input</button>
+      <span>{variants} {variants === 1 ? "variant" : variants < 5 ? "variants" : "variants"}</span>
     </div>
     <div class="foot-right">
-      <button class="btn-node primary small f-run nodrag" disabled={busy} onclick={() => $flow.runNode(Number(id))}>
-        {#if busy}<span class="spinner"></span>{/if} Смешать
+      <button class="btn-node primary small f-run nodrag" disabled={busy || !!inputHint} title={inputHint || "Mix inputs"} onclick={() => $flow.runNode(Number(id))}>
+        {#if busy}<span class="spinner"></span>{/if} Mix
       </button>
     </div>
   {/snippet}
   <InPorts type="mix" {data} />
   <div class="n-hero nodrag">
-    <IrPreview class="f-preview" ir={data.ir} height={200} fitHeight empty="Подключите ≥2 IR-входа и нажмите «Смешать»" />
+    <IrPreview class="f-preview" ir={data.ir} height={200} fitHeight empty="Connect at least two IR inputs, then click Mix" />
   </div>
   {#if mixVariants.length > 1}
     <div class="mix-variant-tabs nodrag">
@@ -74,11 +76,12 @@
         <span class="w-pct">{weight}%</span>
         <button class="w-step" title="−10" onclick={() => bumpWeight(name, -10)}>−</button>
         <button class="w-step" title="+10" onclick={() => bumpWeight(name, 10)}>+</button>
-        <button class="w-x" title="Убрать вход" onclick={() => $flow.removeMixInput(Number(id), name)}>✕</button>
+        <button class="w-x" title="Remove input" onclick={() => $flow.removeMixInput(Number(id), name)}>✕</button>
       </div>
     {/each}
   </div>
+  {#if inputHint}<div class="n-hint nodrag">{inputHint}</div>{/if}
   <NodeStatus {id} />
   <ResultAssets {id} type="mix" {data} />
-  <OutPorts type="mix" {data} />
+  <OutPorts {id} type="mix" {data} />
 </NodeShell>

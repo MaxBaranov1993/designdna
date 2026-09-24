@@ -15,23 +15,23 @@
 
 <NodeShell {id} type="pagebridge" {selected}>
   {#snippet footer()}
-    <div class="foot-left"><span>{hasComponent ? "компонент готов" : "канал пуст"}</span></div>
+    <div class="foot-left"><span>{hasComponent ? "component ready" : "channel empty"}</span></div>
     <div class="foot-right">
       <button class="btn-node primary small f-run nodrag" onclick={() => $flow.runNode(Number(id))}>
-        {data.mode === "send" ? "Передать" : "Получить"}
+        {data.mode === "send" ? "Send" : "Receive"}
       </button>
     </div>
   {/snippet}
   <InPorts type="pagebridge" {data} />
-  <div class="n-seg grow nodrag" role="group" aria-label="Режим">
-    <button class={data.mode === "send" ? "active" : ""} onclick={() => $flow.setNodeData(Number(id), { mode: "send" })}>Передать</button>
-    <button class={data.mode === "receive" ? "active" : ""} onclick={() => $flow.setNodeData(Number(id), { mode: "receive" })}>Получить</button>
+  <div class="n-seg grow nodrag" role="group" aria-label="Mode">
+    <button class={data.mode === "send" ? "active" : ""} onclick={() => $flow.setNodeData(Number(id), { mode: "send" })}>Send</button>
+    <button class={data.mode === "receive" ? "active" : ""} onclick={() => $flow.setNodeData(Number(id), { mode: "receive" })}>Receive</button>
   </div>
   <input
     class="nodrag"
     type="text"
     value={data.channel}
-    aria-label="Канал"
+    aria-label="Channel"
     oninput={(e) => {
       const value = e.currentTarget.value;
       commitNodeText(`pagebridge:${id}:channel`, () => $flow.setNodeData(Number(id), { channel: value }));
@@ -43,5 +43,5 @@
     placeholder="shared-component"
   />
   <NodeStatus {id} />
-  <OutPorts type="pagebridge" {data} />
+  <OutPorts {id} type="pagebridge" {data} />
 </NodeShell>

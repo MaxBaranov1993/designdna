@@ -152,5 +152,5 @@ test("main, preload and the workspace expose the self-test end to end", () => {
   assert.ok(preload.includes('ipcRenderer.invoke("providers:self-test", { provider })'));
   assert.ok(typings.includes("selfTest(provider: \"claude\" | \"codex\"): Promise<IsolationSelfTest>"));
   assert.ok(workspace.includes('runIsolationCheck("codex")') && workspace.includes('runIsolationCheck("claude")'));
-  assert.ok(workspace.includes("Проверить изоляцию GPT") && workspace.includes("Проверить изоляцию Claude"));
+  assert.ok(workspace.includes("Check GPT isolation") && workspace.includes("Check Claude isolation"));
 });

@@ -1,7 +1,7 @@
 /** A reversible timeline preset. It never writes into a page's canonical Design IR. */
 export function assembleLayers(document: Record<string, any>): number {
   const page = document.story?.pages?.find((p: any) => p.id === document.story.initialPageId);
-  if (!page) throw new Error('Подключите страницу к Видео');
+  if (!page) throw new Error('Connect a page to Video');
   const groups = new Map<string, any>((document.groups || []).map((group: any) => [group.id, group]));
   const locked = (layer: any) => {
     if (layer.locked) return true;
@@ -19,7 +19,7 @@ export function assembleLayers(document: Record<string, any>): number {
   const layers = candidates.filter((layer: any) => !locked(layer) && layer.in === 0 && layer.out >= 100
     && !Object.keys(layer.transform?.properties || {}).length
     && !candidates.some((other: any) => other !== layer && other.storyTarget.startsWith(layer.storyTarget + '.children.')));
-  if (!layers.length) throw new Error('Нет свободных слоёв: существующая анимация и блокировки сохраняются');
+  if (!layers.length) throw new Error('No unlocked layers: existing animation and locks are preserved');
   const kind = (layer: any) => {
     const path = String(layer.storyTarget).replace(/^s(\d+)/, 'tree.$1').split('.');
     const node = path.reduce((value: any, key: string) => value?.[key], page.ir);

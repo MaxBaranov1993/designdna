@@ -8,6 +8,13 @@
   const VIEWPORTS: SourceViewport[] = ["desktop", "tablet", "mobile"];
   const PREVIEW_MODES = ["reference", "ir", "compare"] as const;
   let busy = $derived(!!$flowBusy[id]);
+  let captured = $derived(new Set(Object.keys(((data.blocks?.find((block) => block.ir)?.ir as { responsive?: { viewports?: Record<string, unknown> } } | undefined)?.responsive?.viewports) || { desktop: {} })));
+  const captureViewport = (viewport: SourceViewport) => {
+    if (viewport === "desktop") return;
+    const current = (data.captureViewports || (data.importProfile === "precise" ? ["tablet", "mobile"] : [])) as ("tablet" | "mobile")[];
+    $flow.setNodeData(id, { captureViewports: [...new Set([...current, viewport])], importedUrl: null, activeViewport: viewport });
+    void $flow.runNode(id);
+  };
   let desktopAuth = $derived(typeof window !== "undefined" ? window.designDNA?.sourceAuth : undefined);
 
   const openAuthenticatedSession = async () => {
@@ -24,30 +31,30 @@
 
 <div class="dna-insp-fields">
   <div class="dna-field">
-    <div class="dna-field-cap">Источник</div>
+    <div class="dna-field-cap">Source</div>
     <div class="dna-insp-seg">
       <button class:active={data.mode === "url"} onclick={() => $flow.setNodeData(id, { mode: "url" })}>URL</button>
-      <button class:active={data.mode === "screenshot"} onclick={() => $flow.setNodeData(id, { mode: "screenshot" })}>Скриншот</button>
+      <button class:active={data.mode === "screenshot"} onclick={() => $flow.setNodeData(id, { mode: "screenshot" })}>Screenshot</button>
     </div>
   </div>
   {#if data.mode === "url"}
-    <label class="dna-insp-check" title="Импортируйте только свои страницы или страницы, на которые есть право">
+    <label class="dna-insp-check" title="Only import pages you own or have permission to use">
       <input type="checkbox" checked={data.mine} onchange={(e) => $flow.setNodeData(id, { mine: e.currentTarget.checked })} />
-      <span>Это мой сайт / есть право</span>
+      <span>I own this site / have permission</span>
     </label>
     {#if desktopAuth}
-      <label class="dna-insp-check" title="Cookies остаются в изолированной памяти desktop-приложения">
+      <label class="dna-insp-check" title="Cookies stay in isolated desktop app memory">
         <input type="checkbox" checked={data.authenticatedSession} onchange={(e) => $flow.setNodeData(id, { authenticatedSession: e.currentTarget.checked })} />
-        <span>Авторизованная сессия</span>
+        <span>Authenticated session</span>
       </label>
       {#if data.authenticatedSession}
-        <button class="dna-btn-ghost" onclick={openAuthenticatedSession}>Открыть вход в браузере</button>
+        <button class="dna-btn-ghost" onclick={openAuthenticatedSession}>Open browser sign-in</button>
       {/if}
     {/if}
   {/if}
   {#if desktopAuth}
     <div class="dna-field">
-      <div class="dna-field-cap">AI-уточнение · чей аккаунт</div>
+      <div class="dna-field-cap">AI refinement · account</div>
       <ProviderPicker
         provider={data.aiProvider || "openai"}
         effort={data.aiEffort || "high"}
@@ -56,15 +63,20 @@
     </div>
   {/if}
   <div class="dna-field">
-    <div class="dna-field-cap">Вьюпорт превью · снимаются все три</div>
+    <div class="dna-field-cap">Preview viewport</div>
     <div class="dna-insp-seg">
       {#each VIEWPORTS as viewport (viewport)}
-        <button class:active={data.activeViewport === viewport} onclick={() => setViewport(viewport)}>{viewport === "desktop" ? "Desktop" : viewport === "tablet" ? "Tablet" : "Mobile"}</button>
+        {#if captured.has(viewport) || !data.blocks?.length}
+          <button class:active={data.activeViewport === viewport} onclick={() => setViewport(viewport)}>{viewport === "desktop" ? "Desktop" : viewport === "tablet" ? "Tablet" : "Mobile"}</button>
+        {:else}
+          <button class="capture-viewport" disabled={busy} title={`Not captured yet · capture the ${viewport} layout now`}
+            onclick={() => captureViewport(viewport)}>+ {viewport === "tablet" ? "Tablet" : "Mobile"}</button>
+        {/if}
       {/each}
     </div>
   </div>
   <div class="dna-field">
-    <div class="dna-field-cap">Режим превью блока</div>
+    <div class="dna-field-cap">Block preview mode</div>
     <div class="dna-insp-seg">
       {#each PREVIEW_MODES as mode (mode)}
         <button class:active={(data.previewMode || "reference") === mode} onclick={() => $flow.setNodeData(id, { previewMode: mode })}>{mode === "reference" ? "Reference" : mode === "ir" ? "IR" : "Compare"}</button>
@@ -73,14 +85,14 @@
   </div>
   {#if data.importedUrl && data.blocks.length}
     <div class="dna-insp-row">
-      <button class="dna-btn-ghost" disabled={busy} title="Повторно загрузить страницу" onclick={() => { $flow.setNodeData(id, { importedUrl: null }); queueMicrotask(() => $flow.runNode(id)); }}>Обновить импорт</button>
-      <button class="dna-btn-ghost" disabled={busy} title="Собрать UI Kit и дизайн-систему из этого Source" onclick={() => void useFlowStore.getState().createDesignSystemFromSource(id)}>◈ UI Kit &amp; ДС</button>
+      <button class="dna-btn-ghost" disabled={busy} title="Reload page" onclick={() => { $flow.setNodeData(id, { importedUrl: null }); queueMicrotask(() => $flow.runNode(id)); }}>Refresh import</button>
+      <button class="dna-btn-ghost" disabled={busy} title="Build UI Kit and design system from this Source" onclick={() => void useFlowStore.getState().createDesignSystemFromSource(id)}>◈ UI Kit &amp; DS</button>
     </div>
   {/if}
   {#if data.lastRun}
     <div class="dna-field">
-      <div class="dna-field-cap">Последний импорт</div>
-      <div class="dna-field-value"><span>{data.lastRun.cached ? "из кэша" : "измерен"}</span><span class="dna-out-kind">{(data.lastRun.totalMs / 1000).toFixed(1)}s</span></div>
+      <div class="dna-field-cap">Last import</div>
+      <div class="dna-field-value"><span>{data.lastRun.cached ? "from cache" : "measured"}</span><span class="dna-out-kind">{(data.lastRun.totalMs / 1000).toFixed(1)}s</span></div>
     </div>
   {/if}
 </div>

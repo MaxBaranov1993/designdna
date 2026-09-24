@@ -18,7 +18,7 @@ import { loadAgentContract } from "./agent-contract.mjs";
 const CLAUDE_MODEL = "opus";
 /* Модели, которые принимает headless CLI. Неизвестное значение тихо падает
  * в дефолт: адаптер не должен ронять запрос из-за опечатки в маршруте. */
-const CLAUDE_MODELS = new Set(["opus", "sonnet", "haiku"]);
+const CLAUDE_MODELS = new Set(["fable", "opus", "sonnet", "haiku"]);
 
 export function claudeModel(value) {
   const model = String(value || "").trim().toLowerCase();
@@ -253,8 +253,8 @@ export class ClaudeAgentServer {
       // Наличие файла кредов ещё не значит, что бинарь доступен: сообщаем
       // именно то, чего не хватает, а не общее «не подключён».
       hint: ready ? null
-        : !installed ? "Claude CLI не найден. Установите Claude Code — бинарь ожидается в ~/.local/bin — либо задайте путь в DESIGNDNA_CLAUDE."
-          : "Нажмите «Подключить Claude» — приложение проведёт вход само.",
+        : !installed ? "Claude CLI not found. Install Claude Code — the binary is expected in ~/.local/bin — or set its path in DESIGNDNA_CLAUDE."
+          : "Click Connect Claude — the app will guide you through sign-in.",
     };
   }
 
@@ -264,7 +264,7 @@ export class ClaudeAgentServer {
    *  кредов через waitForLogin(). */
   loginStart() {
     const spec = claudeProcessSpec({ environment: this.environment, fileExists: this.fileExists });
-    if (!spec.resolved) throw new Error("Claude CLI не найден — установите Claude Code, затем подключайте.");
+    if (!spec.resolved) throw new Error("Claude CLI not found — install Claude Code, then connect.");
     const platform = this.environment.USERPROFILE && !this.environment.HOME ? "win32" : process.platform;
     if (platform === "win32") {
       const comspec = this.environment.ComSpec || this.environment.COMSPEC || "cmd.exe";
@@ -294,7 +294,7 @@ export class ClaudeAgentServer {
       if (claudeCredentialsValid(this.environment, this.readFile, this.fileExists)) return this.account();
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
-    throw new Error("Вход не завершён за 5 минут. Завершите /login в окне терминала и нажмите «Проверить».");
+    throw new Error("Sign-in did not finish within 5 minutes. Complete /login in the terminal window, then click Check.");
   }
 
   /** Читает `claude --help` и запоминает, какие headless-флаги знает
@@ -345,7 +345,7 @@ export class ClaudeAgentServer {
     const status = this.account();
     if (!status.installed) throw new Error(status.hint);
     if (!status.loggedIn) {
-      throw new Error("Claude не подключён. Требуется существующий OAuth-вход по подписке. Откройте Agents → Connections и нажмите «Подключить Claude».");
+      throw new Error("Claude is not connected. An existing subscription OAuth sign-in is required. Open Agents → Connections and click Connect Claude.");
     }
     if (this.capabilityProbe) await this.capabilityProbe.catch(() => undefined);
     const caps = this.capabilities || DEFAULT_CLAUDE_CAPABILITIES;
@@ -419,7 +419,7 @@ export class ClaudeAgentServer {
     const startedAt = Date.now();
     const status = this.account();
     if (!status.ready) {
-      return { provider: "claude", ok: false, isolated: null, error: status.hint || "Claude не подключён", elapsedMs: 0 };
+      return { provider: "claude", ok: false, isolated: null, error: status.hint || "Claude not connected", elapsedMs: 0 };
     }
     const caps = this.capabilities?.probed ? this.capabilities : await this.probeCapabilities();
     const root = canaryRoot
@@ -524,7 +524,7 @@ export class ClaudeAgentServer {
 
       child.stdout.on("data", (chunk) => { stdoutChunks.push(Buffer.from(chunk)); });
       child.stderr.on("data", (chunk) => { stderrChunks.push(Buffer.from(chunk)); });
-      child.once("error", (error) => finish(new Error(`Claude CLI недоступен: ${error.message}`)));
+      child.once("error", (error) => finish(new Error(`Claude CLI unavailable: ${error.message}`)));
       child.once("exit", (code) => {
         const stdout = decodeProcessOutput(Buffer.concat(stdoutChunks));
         if (code === 0) { finish(null, stdout); return; }
@@ -539,13 +539,13 @@ export class ClaudeAgentServer {
         const detail = (envelopeReason
           || decodeProcessOutput(Buffer.concat(stderrChunks))).trim().slice(-1_000);
         if (/not recognized|не является|не найден|command not found|ENOENT/i.test(detail)) {
-          finish(new Error("Claude CLI не найден в PATH. Установите Claude Code или задайте путь в DESIGNDNA_CLAUDE."));
+          finish(new Error("Claude CLI not found in PATH. Install Claude Code or set its path in DESIGNDNA_CLAUDE."));
           return;
         }
         finish(new Error(
           /login|authenticat|credential|unauthor/i.test(detail)
-            ? "Claude не подключён. Откройте Agents → Connections и нажмите «Подключить Claude»."
-            : `Claude CLI завершился с кодом ${code}${detail ? `: ${detail}` : ""}`,
+            ? "Claude is not connected. Open Agents → Connections and click Connect Claude."
+            : `Claude CLI exited with code ${code}${detail ? `: ${detail}` : ""}`,
         ));
       });
       child.stdin.end(prompt);

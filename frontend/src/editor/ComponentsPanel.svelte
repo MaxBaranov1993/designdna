@@ -74,7 +74,7 @@
       const body = await res.json();
       if (!res.ok || body.error) throw new Error(body.error || `HTTP ${res.status}`);
       const ok = ctl.insertDesignSystemSection(body.section, body.meta);
-      if (ok) toast(`Вставлен компонент «${body.name || comp.componentKey}»`, "ok");
+      if (ok) toast(`Inserted component “${body.name || comp.componentKey}»`, "ok");
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -107,25 +107,25 @@
     }}
   >
     <div class="fe-locks-card fe-comps-card" role="dialog" aria-modal="true" aria-labelledby="comps-title" data-components-panel>
-      <div class="fe-locks-kicker">Дизайн-система · компоненты</div>
-      <h2 id="comps-title">Вставить компонент в страницу</h2>
-      <p>Мастер добавится после выделенной секции, а без выделения — в конец. Привязка к дизайн-системе позволит strict-проверке принять его как точную копию.</p>
+      <div class="fe-locks-kicker">Design system · components</div>
+      <h2 id="comps-title">Insert component into page</h2>
+      <p>The master will be inserted after the selected section, or at the end if nothing is selected. Its design system reference lets strict validation recognize it as an exact copy.</p>
       {#if systems.length}
         <label class="fe-comps-system">
-          <span>Система</span>
+          <span>System</span>
           <select data-components-system value={systemId} onchange={(e) => switchSystem(e.currentTarget.value)}>
             {#each systems as row (row.systemId)}
-              <option value={row.systemId}>{row.name || row.systemId} · {row.status === "published" ? `v${row.revision}` : "черновик"}</option>
+              <option value={row.systemId}>{row.name || row.systemId} · {row.status === "published" ? `v${row.revision}` : "draft"}</option>
             {/each}
           </select>
         </label>
       {:else}
-        <div class="fe-rules-empty">В проекте нет дизайн-систем: соберите её из Source или загрузите JSON в ноду «Design System».</div>
+        <div class="fe-rules-empty">This project has no design systems. Build one from Source or load JSON into a Design System node.</div>
       {/if}
       {#if loading}
-        <div class="fe-rules-empty">Загружаю компоненты…</div>
+        <div class="fe-rules-empty">Loading components…</div>
       {:else if systemId && !components.length && !error}
-        <div class="fe-rules-empty">В системе пока нет мастеров.</div>
+        <div class="fe-rules-empty">This system has no masters yet.</div>
       {:else if components.length}
         <div class="fe-comps-list">
           {#each components as comp (comp.componentKey)}
@@ -138,14 +138,14 @@
                   {/each}
                 </select>
               {/if}
-              <button class="fe-btn primary" data-component-insert={comp.componentKey} disabled={!!inserting} onclick={() => void insert(comp)}>{inserting === comp.componentKey ? "…" : "Вставить"}</button>
+              <button class="fe-btn primary" data-component-insert={comp.componentKey} disabled={!!inserting} onclick={() => void insert(comp)}>{inserting === comp.componentKey ? "…" : "Insert"}</button>
             </div>
           {/each}
         </div>
       {/if}
       {#if error}<div class="fe-rules-error" role="alert">{error}</div>{/if}
       <div class="fe-locks-actions">
-        <button class="fe-btn" data-act="close-components" onclick={() => ctl.handleAct("close-components")}>Закрыть</button>
+        <button class="fe-btn" data-act="close-components" onclick={() => ctl.handleAct("close-components")}>Close</button>
       </div>
     </div>
   </div>

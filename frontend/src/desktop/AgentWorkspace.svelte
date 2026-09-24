@@ -54,13 +54,13 @@
   }
   const isolationLabel = (result: IsolationSelfTest | undefined): string => {
     if (!result) return "";
-    if (result.error) return `Изоляция: ошибка · ${result.error}`;
-    if (result.isolated === false) return "Изоляция: НЕ работает — инструкции с диска попадают в модель";
+    if (result.error) return `Isolation: error · ${result.error}`;
+    if (result.isolated === false) return "Isolation: FAILED — instructions from disk reach the model";
     if (result.isolated) {
       const globals = result.globalInstructionSources?.length || 0;
-      return `Изоляция: работает${globals ? ` · глобальных файлов инструкций: ${globals}` : ""}${result.model ? ` · ${result.model}` : ""}`;
+      return `Isolation: working${globals ? ` · global instruction files: ${globals}` : ""}${result.model ? ` · ${result.model}` : ""}`;
     }
-    return "Изоляция: не проверена";
+    return "Isolation: not checked";
   };
   let agentModel = $state("gpt-5.6-sol");
   const modelLabel = (model: string) => model === "opus" ? "Claude Opus" : model === "gpt-6-astra" ? "GPT-6 Astra" : "GPT-5.6 Sol";
@@ -235,7 +235,7 @@
     try {
       claudeStatus = await desktop.claude.status();
     } catch {
-      claudeStatus = { installed: false, loggedIn: false, hint: "Claude CLI не найден в PATH." };
+      claudeStatus = { installed: false, loggedIn: false, hint: "Claude CLI was not found in PATH." };
     }
   }
 
@@ -271,10 +271,10 @@
         loggedIn: mode === "chatgpt",
         mode,
         email: account?.email || null,
-        hint: mode === "apiKey" ? "Codex вошёл по API-ключу — переподключите по подписке ChatGPT." : mode ? null : "Войдите в ChatGPT, чтобы GPT работал по подписке.",
+        hint: mode === "apiKey" ? "Codex is signed in with an API key. Reconnect using your ChatGPT subscription." : mode ? null : "Sign in to ChatGPT to use GPT with your subscription.",
       };
     } catch (reason) {
-      codexStatus = { installed: false, loggedIn: false, mode: null, email: null, hint: reason instanceof Error ? reason.message : "Codex CLI не найден в PATH." };
+      codexStatus = { installed: false, loggedIn: false, mode: null, email: null, hint: reason instanceof Error ? reason.message : "Codex CLI was not found in PATH." };
     }
     return codexStatus;
   }
@@ -293,7 +293,7 @@
         const status = await refreshCodex();
         if (status?.loggedIn) break;
       }
-      if (!codexStatus?.loggedIn) codexLoginError = "Вход не подтверждён. Завершите вход в браузере и нажмите «Проверить GPT».";
+      if (!codexStatus?.loggedIn) codexLoginError = "Sign-in was not confirmed. Complete it in your browser, then select Check GPT.";
     } catch (reason) {
       codexLoginError = reason instanceof Error ? reason.message : String(reason);
     } finally {
@@ -311,93 +311,93 @@
 </script>
 
 {#if !desktop}
-  <div class="agent-empty">Агенты доступны в десктоп-приложении.</div>
+  <div class="agent-empty">Agents are available in the desktop app.</div>
 {:else}
   <section class="agent-shell">
     <aside class="agent-sidebar">
-      <div><span class="agent-eyebrow">AI workspace</span><h1>Агент + MCP</h1><p>GPT и Claude по подписке · три уровня усилия.</p></div>
-      <label>Модель
-        <select bind:value={agentModel} disabled={busy || agentRunning} aria-label="Модель агента">
+      <div><span class="agent-eyebrow">AI workspace</span><h1>Agent + MCP</h1><p>GPT and Claude subscriptions · three effort levels.</p></div>
+      <label>Model
+        <select bind:value={agentModel} disabled={busy || agentRunning} aria-label="Agent model">
           <option value="gpt-5.6-sol">GPT-5.6 Sol · Codex</option>
           <option value="gpt-6-astra">GPT-6 Astra · Codex</option>
           <option value="opus">Claude Opus · Claude Code</option>
         </select>
       </label>
       {#if agentModel !== "opus" && codexStatus && !codexStatus.loggedIn}
-        <p>GPT работает по подписке ChatGPT через Codex CLI — подключите его ниже.</p>
+        <p>GPT uses your ChatGPT subscription through Codex CLI. Connect it below.</p>
       {:else if agentModel === "opus" && claudeStatus && !claudeStatus.loggedIn}
-        <p>Claude работает по подписке через Claude Code — подключите его ниже.</p>
+        <p>Claude uses your subscription through Claude Code. Connect it below.</p>
       {/if}
       <div class="agent-backend">
-        <button class:active={agentEffort === "medium"} onclick={() => (agentEffort = "medium")} disabled={busy || agentRunning}>Среднее</button>
-        <button class:active={agentEffort === "high"} onclick={() => (agentEffort = "high")} disabled={busy || agentRunning}>Высокое</button>
-        <button class:active={agentEffort === "max"} onclick={() => (agentEffort = "max")} disabled={busy || agentRunning}>Макс</button>
+        <button class:active={agentEffort === "medium"} onclick={() => (agentEffort = "medium")} disabled={busy || agentRunning}>Medium</button>
+        <button class:active={agentEffort === "high"} onclick={() => (agentEffort = "high")} disabled={busy || agentRunning}>High</button>
+        <button class:active={agentEffort === "max"} onclick={() => (agentEffort = "max")} disabled={busy || agentRunning}>Max</button>
       </div>
-      <Button variant="outline" onclick={() => { agentHistory = []; }} disabled={busy || agentRunning}>Новая сессия</Button>
+      <Button variant="outline" onclick={() => { agentHistory = []; }} disabled={busy || agentRunning}>New session</Button>
       <div class="agent-connections">
-        <h2>Подключения</h2>
+        <h2>Connections</h2>
         <div class="agent-runtime" data-provider="codex">
           <span class={codexStatus?.loggedIn ? "ok" : "bad"}>
             GPT · Codex CLI: {codexStatus === null
-              ? "проверяю…"
+              ? "checking…"
               : codexStatus.loggedIn
-                ? `подключён по подписке${codexStatus.email ? ` · ${codexStatus.email}` : ""}`
+                ? `connected with subscription${codexStatus.email ? ` · ${codexStatus.email}` : ""}`
                 : codexStatus.mode === "apiKey"
-                  ? "вошёл по API-ключу"
+                  ? "signed in with an API key"
                   : codexStatus.installed
-                    ? "не выполнен вход"
-                    : "CLI не установлен"}
+                    ? "not signed in"
+                    : "CLI not installed"}
           </span>
           {#if codexStatus && !codexStatus.loggedIn && codexStatus.hint}
             <p class="agent-runtime-hint">{codexStatus.hint}</p>
           {/if}
           {#if codexLoginActive}
-            <p class="agent-runtime-hint">Открыта страница входа ChatGPT в браузере — завершите вход там. Статус обновится сам.</p>
-            <Button variant="outline" onclick={() => { codexLoginActive = false; }}>Отменить ожидание</Button>
+            <p class="agent-runtime-hint">ChatGPT sign-in opened in your browser. Complete it there; the status will update automatically.</p>
+            <Button variant="outline" onclick={() => { codexLoginActive = false; }}>Stop waiting</Button>
           {:else if codexStatus && codexStatus.installed && !codexStatus.loggedIn}
-            <Button variant="outline" onclick={() => void startCodexLogin()}>Подключить GPT по подписке</Button>
+            <Button variant="outline" onclick={() => void startCodexLogin()}>Connect GPT subscription</Button>
           {/if}
           {#if codexLoginError}<p class="agent-runtime-hint">{codexLoginError}</p>{/if}
-          <Button variant="outline" onclick={() => void refreshCodex()}>Проверить GPT</Button>
+          <Button variant="outline" onclick={() => void refreshCodex()}>Check GPT</Button>
           <Button variant="outline" onclick={() => void runIsolationCheck("codex")} disabled={isolationBusy !== null || !codexStatus?.loggedIn}>
-            {isolationBusy === "codex" ? "Проверяю изоляцию…" : "Проверить изоляцию GPT"}
+            {isolationBusy === "codex" ? "Checking isolation…" : "Check GPT isolation"}
           </Button>
           {#if isolation.codex}<p class="agent-runtime-hint" data-isolation="codex">{isolationLabel(isolation.codex)}</p>{/if}
         </div>
         <div class="agent-runtime" data-provider="claude">
           <span class={claudeStatus?.loggedIn ? "ok" : "bad"}>
             Claude Opus: {claudeStatus === null
-              ? "проверяю…"
+              ? "checking…"
               : claudeStatus.loggedIn
-                ? "подключён по подписке"
+                ? "connected with subscription"
                 : claudeStatus.installed
-                  ? "не выполнен вход"
-                  : "CLI не установлен"}
+                  ? "not signed in"
+                  : "CLI not installed"}
           </span>
           {#if claudeStatus && !claudeStatus.loggedIn}
-            <p class="agent-runtime-hint">{claudeStatus.hint || "Установите Claude Code и выполните вход."}</p>
+            <p class="agent-runtime-hint">{claudeStatus.hint || "Install Claude Code and sign in."}</p>
           {/if}
           {#if claudeLoginActive}
-            <p class="agent-runtime-hint">Открыто окно терминала — завершите вход там (браузер откроется сам). Статус обновится автоматически.</p>
+            <p class="agent-runtime-hint">A terminal window is open. Complete sign-in there; the browser will open automatically. The status will update automatically.</p>
           {:else if claudeStatus?.installed && !claudeStatus.loggedIn}
-            <Button variant="outline" onclick={() => void startClaudeLogin()}>Подключить Claude</Button>
+            <Button variant="outline" onclick={() => void startClaudeLogin()}>Connect Claude</Button>
           {/if}
           {#if claudeLoginError}<p class="agent-runtime-hint">{claudeLoginError}</p>{/if}
-          <Button variant="outline" onclick={() => void refreshClaude()}>Проверить Claude</Button>
+          <Button variant="outline" onclick={() => void refreshClaude()}>Check Claude</Button>
           <Button variant="outline" onclick={() => void runIsolationCheck("claude")} disabled={isolationBusy !== null || !claudeStatus?.loggedIn}>
-            {isolationBusy === "claude" ? "Проверяю изоляцию…" : "Проверить изоляцию Claude"}
+            {isolationBusy === "claude" ? "Checking isolation…" : "Check Claude isolation"}
           </Button>
-          {#if isolation.claude}<p class="agent-runtime-hint" data-isolation="claude">{isolationLabel(isolation.claude)} · один короткий запрос haiku по подписке</p>{/if}
+          {#if isolation.claude}<p class="agent-runtime-hint" data-isolation="claude">{isolationLabel(isolation.claude)} · one short Haiku request using your subscription</p>{/if}
         </div>
-        <label><span>Ключ OpenRouter (только видео Seedance) {providerState.credentials?.openrouter ? "· сохранён" : ""}</span><input type="password" bind:value={openrouterKey} placeholder="sk-or-v1-…" /></label>
-        <Button variant="outline" onclick={() => void saveKey("openrouter", openrouterKey)}>Сохранить ключ OpenRouter</Button>
+        <label><span>OpenRouter key (Seedance video only) {providerState.credentials?.openrouter ? "· saved" : ""}</span><input type="password" bind:value={openrouterKey} placeholder="sk-or-v1-…" /></label>
+        <Button variant="outline" onclick={() => void saveKey("openrouter", openrouterKey)}>Save OpenRouter key</Button>
       </div>
-      <h2>MCP-серверы</h2>
+      <h2>MCP servers</h2>
       <textarea class="agent-config" bind:value={mcpConfig} spellcheck="false"></textarea>
-      <Button variant="outline" onclick={() => void saveMcp()}>Сохранить и подключить</Button>
+      <Button variant="outline" onclick={() => void saveMcp()}>Save and connect</Button>
       <div class="agent-mcp-list">
         {#each mcpStatus as server (server.id)}
-          <span class={server.connected ? "ok" : "bad"}>{server.name}: {server.connected ? `инструментов: ${server.tools}` : server.error}</span>
+          <span class={server.connected ? "ok" : "bad"}>{server.name}: {server.connected ? `tools: ${server.tools}` : server.error}</span>
         {/each}
         {#each tools as tool (tool.qualifiedName)}
           <code>{tool.serverName}/{tool.name}</code>
@@ -408,27 +408,27 @@
       {#if error}<div class="agent-error">{error}</div>{/if}
       <div class="agent-timeline">
         {#if agentHistory.length === 0}
-          <div class="agent-welcome"><h2>Рабочая сессия DesignDNA</h2><p>Попросите агента проанализировать проект, изменить код или использовать подключённый MCP-инструмент.</p></div>
+          <div class="agent-welcome"><h2>DesignDNA workspace session</h2><p>Ask the agent to analyze the project, edit code, or use a connected MCP tool.</p></div>
         {/if}
         {#each agentHistory as message, index (index)}
           <article class="agent-message" class:agent-tool-message={message.role === "tool"}>
-            <span>{message.role === "user" ? "Вы" : message.role === "tool" ? `MCP · ${message.toolName || message.toolCallId || ""}` : `${modelLabel(message.model || "gpt-5.6-sol")} · ${message.effort || "medium"}`}</span>
+            <span>{message.role === "user" ? "You" : message.role === "tool" ? `MCP · ${message.toolName || message.toolCallId || ""}` : `${modelLabel(message.model || "gpt-5.6-sol")} · ${message.effort || "medium"}`}</span>
             <div>{message.content}</div>
           </article>
         {/each}
         {#if agentRunning}
-          <article class="agent-message"><span>{modelLabel(agentModel)} · {agentEffort}</span><div>думаю… {agentModel !== "opus" && tools.length ? `· MCP-инструментов: ${tools.length}` : ""}</div></article>
+          <article class="agent-message"><span>{modelLabel(agentModel)} · {agentEffort}</span><div>thinking… {agentModel !== "opus" && tools.length ? `· MCP tools: ${tools.length}` : ""}</div></article>
         {/if}
       </div>
       <div class="agent-composer">
-        <textarea bind:value={prompt} placeholder="Что должен сделать DesignDNA?" onkeydown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void send(); }}></textarea>
-        {#if agentRunning}<Button variant="outline" onclick={() => void cancelAgent()}>Отменить</Button>{/if}
-        <Button onclick={() => void send()} disabled={busy || agentRunning || !prompt.trim()}>Отправить</Button>
+        <textarea bind:value={prompt} placeholder="What should DesignDNA do?" onkeydown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void send(); }}></textarea>
+        {#if agentRunning}<Button variant="outline" onclick={() => void cancelAgent()}>Cancel</Button>{/if}
+        <Button onclick={() => void send()} disabled={busy || agentRunning || !prompt.trim()}>Send</Button>
       </div>
     </main>
     {#if mcpApproval}
       {@const request = mcpApproval}
-      <div class="agent-modal"><div><span class="agent-eyebrow">Подтверждение MCP-инструмента</span><h2>{request.server} / {request.tool}</h2><pre>{JSON.stringify(request.arguments || {}, null, 2)}</pre><div class="agent-modal-actions"><Button variant="outline" onclick={() => { void desktop.mcp.respondToApproval(String(request.id), false); mcpApproval = null; }}>Отклонить</Button><Button onclick={() => { void desktop.mcp.respondToApproval(String(request.id), true); mcpApproval = null; }}>Выполнить</Button></div></div></div>
+      <div class="agent-modal"><div><span class="agent-eyebrow">Confirm MCP tool</span><h2>{request.server} / {request.tool}</h2><pre>{JSON.stringify(request.arguments || {}, null, 2)}</pre><div class="agent-modal-actions"><Button variant="outline" onclick={() => { void desktop.mcp.respondToApproval(String(request.id), false); mcpApproval = null; }}>Decline</Button><Button onclick={() => { void desktop.mcp.respondToApproval(String(request.id), true); mcpApproval = null; }}>Run</Button></div></div></div>
     {/if}
   </section>
 {/if}

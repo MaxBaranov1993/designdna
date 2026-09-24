@@ -454,8 +454,8 @@ def _chat_envelope(
         }
     if not key:
         if request.provider in ("openai", "astra") or request.model:
-            raise RuntimeError(f"{payload['model']}: добавьте OpenAI API key в Agents → Connections (OPENAI_API_KEY).")
-        raise RuntimeError("Нет подключённого AI-аккаунта: установите Codex CLI или Claude Code и войдите, либо задайте OPENAI_API_KEY")
+            raise RuntimeError(f"{payload['model']}: add an OpenAI API key for development (OPENAI_API_KEY).")
+        raise RuntimeError("No AI account connected: install Codex CLI or Claude Code and sign in, or set OPENAI_API_KEY for development")
     streamed = bool(request.stream or on_delta)
     post = _post_stream if streamed else _post_json
     if streamed:

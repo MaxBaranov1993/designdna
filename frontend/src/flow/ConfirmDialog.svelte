@@ -49,7 +49,7 @@
     aria-describedby="confirm-message-{request.id}"
     data-confirm-dialog
   >
-    <div class="confirm-kicker" class:danger={request.danger}>{request.danger ? "Необратимое действие" : "Подтверждение"}</div>
+    <div class="confirm-kicker" class:danger={request.danger}>{request.danger ? "Irreversible action" : "Confirmation"}</div>
     <h2 id="confirm-title-{request.id}">{request.title}</h2>
     <p id="confirm-message-{request.id}">{request.message}</p>
     <div class="confirm-actions">

@@ -111,7 +111,7 @@ def test_ai_cannot_escape_single_selection():
         "changes": {"style": {"opacity": 0.5}}, "reason": "must reject",
     }])
     assert getattr(result, "status_code", None) == 422
-    assert "вне текущего выделения" in result.body.decode("utf-8")
+    assert "outside the selection" in result.body.decode("utf-8")
 
 
 def test_empty_scope_is_rejected_instead_of_allowing_the_whole_document():
@@ -122,7 +122,7 @@ def test_empty_scope_is_rejected_instead_of_allowing_the_whole_document():
         "changes": {"style": {"opacity": 0.5}}, "reason": "must reject",
     }])
     assert getattr(result, "status_code", None) == 422
-    assert "выберите хотя бы один элемент" in result.body.decode("utf-8")
+    assert "select at least one element" in result.body.decode("utf-8")
 
 
 def test_nested_group_scope_keeps_specific_child_and_excludes_parent():
@@ -153,14 +153,14 @@ def test_content_and_color_constraints_are_enforced_server_side():
         "changes": {"style": {"color": "#123456"}}, "reason": "color",
     }], {"allowColor": False})
     assert getattr(no_color, "status_code", None) == 422
-    assert "цвета" in no_color.body.decode("utf-8")
+    assert "color" in no_color.body.decode("utf-8")
 
     no_content = _request(base, [target["sourceKey"]], [{
         "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
         "changes": {"text": "Новый текст"}, "reason": "content",
     }], {"allowContent": False})
     assert getattr(no_content, "status_code", None) == 422
-    assert "текста" in no_content.body.decode("utf-8")
+    assert "text" in no_content.body.decode("utf-8")
 
     no_props = _request(base, [target["sourceKey"]], [{
         "command": "update", "targetSourceKey": target["sourceKey"], "viewport": "shared",
@@ -231,7 +231,7 @@ def test_structured_props_cannot_bypass_structure_lock():
         "changes": {"props": {"ctaPrimary": {"label": "Заменить"}}}, "reason": "must reject",
     }])
     assert getattr(result, "status_code", None) == 422
-    assert "структурные props" in result.body.decode("utf-8")
+    assert "structural props" in result.body.decode("utf-8")
 
 
 def test_intent_locks_and_embedded_constraints_are_enforced():

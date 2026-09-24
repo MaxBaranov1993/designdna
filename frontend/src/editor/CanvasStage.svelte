@@ -8,8 +8,8 @@
 
   /* Статус-чип внизу канваса: активный инструмент + шаг привязки */
   const TOOL_NAMES: Record<string, string> = {
-    select: "Выделение", hand: "Рука", frame: "Фрейм", rect: "Прямоугольник",
-    ellipse: "Эллипс", line: "Линия", image: "Изображение", text: "Текст",
+    select: "Select", hand: "Hand", frame: "Frame", rect: "Rectangle",
+    ellipse: "Ellipse", line: "Line", image: "Image", text: "Text",
   };
 
   let canvas: HTMLDivElement | null = $state(null);
@@ -50,6 +50,6 @@
   <div class="fe-status" aria-live="polite">
     <span class="fe-status-tool">{TOOL_NAMES[$editorUi.tool] || $editorUi.tool}</span>
     <span class="fe-status-sep">·</span>
-    <span class="fe-status-grid">{$editorUi.snap ? `сетка ${$editorUi.snapStep}px` : "сетка выкл"}</span>
+    <span class="fe-status-grid">{$editorUi.snap ? `grid ${$editorUi.snapStep}px` : "grid off"}</span>
   </div>
 </div>

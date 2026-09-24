@@ -82,7 +82,7 @@ def prepare(variants: list[dict], context: dict | None = None) -> dict:
                                             alpha="yes" if slot["requiresAlpha"] else "no")
             plan["slots"].append(slot)
     if len(plan["slots"]) > MAX_SLOTS:
-        raise ValueError(f"В одном плане поддерживается до {MAX_SLOTS} изображений; разделите композицию")
+        raise ValueError(f"A single plan supports up to {MAX_SLOTS} images; split the composition")
     return plan
 
 
@@ -116,10 +116,10 @@ def apply(ir: dict, slot: dict, image: str) -> dict:
     # Re-derive the permission from current IR; a caller cannot invent a path or unlock a source.
     candidate = next((item for item in slots(ir, replace=slot.get("operation") == "replace") if item["path"] == slot.get("path")), None)
     if not candidate or candidate["targetHash"] != slot.get("targetHash"):
-        raise ValueError("Место изображения изменилось или защищено; обновите план ресурсов")
+        raise ValueError("Image slot changed or is protected; refresh the asset plan")
     result = store_image(image, candidate["requiresAlpha"])
     if result["sha256"] in (slot.get("forbiddenImageHashes") or []):
-        raise ValueError("Эскиз нельзя использовать как готовое изображение; нужен отдельный ресурс")
+        raise ValueError("A sketch cannot be used as a finished image; a separate asset is required")
     updated = copy.deepcopy(ir)
     _at(updated, candidate["path"])["src"] = result["src"]
     return {"ir": updated, "result": result}

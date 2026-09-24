@@ -15,12 +15,12 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   /* Подписи чекбоксов маски — что модели разрешено менять (остальное merge-back
    * принудительно вернёт из входного IR, server.py _MASK_LABELS) */
   const MASK_FIELDS: { key: keyof ReskinMask; label: string }[] = [
-    { key: "colors", label: "цвета" },
-    { key: "fonts", label: "шрифты" },
-    { key: "radii", label: "радиусы" },
-    { key: "shadows", label: "тени" },
-    { key: "texts", label: "тексты" },
-    { key: "images", label: "изображения" },
+    { key: "colors", label: "colors" },
+    { key: "fonts", label: "fonts" },
+    { key: "radii", label: "radii" },
+    { key: "shadows", label: "shadows" },
+    { key: "texts", label: "text" },
+    { key: "images", label: "images" },
   ];
 
   /* «Reskin» — controlled AI-нода (см. docs/NODES.md): вход ir
@@ -37,7 +37,7 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   <InPorts type="reskin" />
   <textarea
     class="f-prompt nodrag nowheel"
-    placeholder="Пожелания по новому стилю"
+    placeholder="New style preferences"
     value={data.prompt}
     oninput={(e) => {
       const value = e.currentTarget.value;
@@ -47,7 +47,7 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   ></textarea>
   <div class="rs-mask">
     {#each MASK_FIELDS as f (f.key)}
-      <label class="nodrag" title={"Разрешить менять: " + f.label}>
+      <label class="nodrag" title={"Allow changes to: " + f.label}>
         <input
           type="checkbox"
           class={"f-mask-" + f.key}
@@ -71,19 +71,19 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
       class="btn-node primary small f-run nodrag"
       style="margin-left: auto"
       disabled={busy || !maskAny}
-      title={!maskAny ? "Пустая маска: отметьте, что разрешено менять" : undefined}
+      title={!maskAny ? "Empty mask: select what can change" : undefined}
       onclick={() => $flow.runNode(Number(id))}
     >
       {#if busy}<span class="spinner"></span>{/if} ✦ Reskin
     </button>
   </div>
   {#if !maskAny}
-    <div class="rs-hint">Пустая маска: запуск заблокирован (IR вернулся бы без изменений)</div>
+    <div class="rs-hint">Empty mask: run blocked (IR would remain unchanged)</div>
   {/if}
-  <IrPreview class="f-preview" ir={data.ir} height={160} empty="Результат появится после запуска" />
+  <IrPreview class="f-preview" ir={data.ir} height={160} empty="Result appears after running" />
   {#if data.log.length}
     <details class="rs-log f-log">
-      <summary>журнал merge-back · {data.log.length}</summary>
+      <summary>merge-back log · {data.log.length}</summary>
       <div class="rs-log-lines">
         {#each data.log.slice(-8) as line, i (i)}
           <div>{line}</div>
@@ -93,5 +93,5 @@ import DesignSystemPicker from "../components/DesignSystemPicker.svelte";
   {/if}
   <NodeStatus {id} />
   <ResultAssets {id} type="reskin" {data} />
-  <OutPorts type="reskin" />
+  <OutPorts {id} type="reskin" />
 </NodeShell>

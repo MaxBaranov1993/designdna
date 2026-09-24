@@ -9,16 +9,16 @@ const ctx={exports:{}};
 runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,ctx);
 const status=ctx.exports.designSystemIdleStatus;
 test('saved DS warnings cannot become generic ready after restart',()=>{
-  assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'warning'}}}).text,'Нужно ревью');
-  assert.equal(status({systemId:'kit',summary:{reviewMasters:6}}).text,'UI Kit собран · 6 требуют проверки');
+  assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'warning'}}}).text,'Needs review');
+  assert.equal(status({systemId:'kit',summary:{reviewMasters:6}}).text,'UI Kit built · 6 need review');
   assert.equal(status({systemId:'kit',summary:{reviewMasters:6}}).kind,null);
-  assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'failed'}}}).text,'Ошибка проверки');
-  assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'cancelled'}}}).text,'Не завершено');
+  assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'failed'}}}).text,'Validation error');
+  assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'cancelled'}}}).text,'Incomplete');
 });
 test('unreviewed drafts are labelled drafts, not AI success',()=>{
-  assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'skipped'}}}).text,'Черновик');
-  assert.equal(status({systemId:'kit',status:'published'}).text,'Опубликовано');
-  assert.equal(status({systemId:'kit',sourceUpdate:true}).text,'Source изменён');
+  assert.equal(status({systemId:'kit',pipelineStatus:{review:{status:'skipped'}}}).text,'Draft');
+  assert.equal(status({systemId:'kit',status:'published'}).text,'Published');
+  assert.equal(status({systemId:'kit',sourceUpdate:true}).text,'Source changed');
   assert.equal(status({}),undefined);
 });
 test('node shell retains runtime progress and DS exposes full diagnostics on demand',()=>{

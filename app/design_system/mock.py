@@ -14,31 +14,31 @@ _PROFILES = ("typical", "short", "long", "empty", "loading", "error", "edge-case
 
 _SYNTH = {
     # формат поля -> генератор значения (никогда не real data)
-    "name": lambda rng, locale: rng.choice(["Анна Ковалёва", "Иван Мельник", "Ольга Литвин", "Дмитрий Савин", "Мария Гончар"]),
+    "name": lambda rng, locale: rng.choice(["Anna Kovaleva", "Ivan Melnik", "Olga Litvin", "Dmitry Savin", "Maria Gonchar"]),
     "email": lambda rng, locale: f"user{rng.randint(100, 999)}@example.com",
     "phone": lambda rng, locale: f"+7 9{rng.randint(10, 99)} {rng.randint(100, 999)}-{rng.randint(10, 99)}-{rng.randint(10, 99)}",
     "price": lambda rng, locale: f"{rng.randint(3, 12) * 1000 + rng.choice([0, 490, 900]):,}".replace(",", " ") + " ₽",
-    "title": lambda rng, locale: rng.choice(["Компактный вариант", "Премиальная модель", "Базовый пакет", "Новая коллекция", "Популярный выбор"]),
+    "title": lambda rng, locale: rng.choice(["Compact variant", "Premium model", "Basic package", "New collection", "Popular choice"]),
     "sentence": lambda rng, locale: rng.choice([
-        "Правдоподобный текст с конкретикой для проверки вёрстки.",
-        "Более длинное описание, чтобы проверить перенос строк и обрезку контента в реальных условиях макета.",
-        "Коротко.",
+        "Realistic, specific text for checking the layout.",
+        "A longer description for checking line wrapping and content clipping in realistic layout conditions.",
+        "Brief.",
     ]),
     "url": lambda rng, locale: f"https://example.com/item/{rng.randint(1, 9999)}",
     "date": lambda rng, locale: f"2026-{rng.randint(1, 12):02d}-{rng.randint(1, 28):02d}",
     # форматы мок-контента референса (fallback, когда Source не отдал свои значения)
-    "cta": lambda rng, locale: rng.choice(["Подробнее", "В корзину", "Отправить", "Оформить"]),
-    "nav": lambda rng, locale: rng.choice(["Главная", "Каталог", "Избранное", "Профиль", "Сообщения"]),
-    "badge": lambda rng, locale: rng.choice(["Хит", "Новинка", "-25%", "В наличии"]),
-    "category": lambda rng, locale: rng.choice(["Электроника", "Для дома", "Аксессуары", "Хобби", "Одежда"]),
-    "heading": lambda rng, locale: rng.choice(["Популярные товары", "Новые поступления", "Выгодные предложения"]),
-    "question": lambda rng, locale: rng.choice(["Как оформить доставку?", "Есть ли гарантия?", "Как оплатить заказ?"]),
+    "cta": lambda rng, locale: rng.choice(["Learn more", "Add to cart", "Submit", "Checkout"]),
+    "nav": lambda rng, locale: rng.choice(["Home", "Catalog", "Favorites", "Profile", "Messages"]),
+    "badge": lambda rng, locale: rng.choice(["Bestseller", "New", "-25%", "In stock"]),
+    "category": lambda rng, locale: rng.choice(["Electronics", "Home", "Accessories", "Hobbies", "Clothing"]),
+    "heading": lambda rng, locale: rng.choice(["Popular products", "New arrivals", "Special offers"]),
+    "question": lambda rng, locale: rng.choice(["How does delivery work?", "Is there a warranty?", "How can I pay?"]),
     "answer": lambda rng, locale: rng.choice([
-        "Курьер привезёт заказ в течение двух дней, дату можно выбрать при оформлении.",
-        "На все товары действует гарантия двенадцать месяцев с момента покупки.",
-        "Доступна оплата картой, наличными при получении и в рассрочку.",
+        "A courier will deliver within two days. Choose a date at checkout.",
+        "All products include a twelve-month warranty from the date of purchase.",
+        "Pay by card, cash on delivery, or installments.",
     ]),
-    "word": lambda rng, locale: rng.choice(["Первый", "Основной", "Активный", "Выбранный"]),
+    "word": lambda rng, locale: rng.choice(["First", "Main", "Active", "Selected"]),
 }
 
 
@@ -60,7 +60,7 @@ def make_fixture(schema: dict, profile: str = "typical", *, locale: str = "ru") 
     if profile == "loading":
         return {"id": f"{schema_id}:loading", "schemaId": schema_id, "locale": locale, "seed": seed_for(schema_id, profile), "profile": "loading", "data": {"__loading": True}}
     if profile == "error":
-        return {"id": f"{schema_id}:error", "schemaId": schema_id, "locale": locale, "seed": seed_for(schema_id, profile), "profile": "error", "data": {"__error": "Не удалось загрузить данные"}}
+        return {"id": f"{schema_id}:error", "schemaId": schema_id, "locale": locale, "seed": seed_for(schema_id, profile), "profile": "error", "data": {"__error": "Could not load data"}}
 
     repeat = {"short": 1, "typical": 3, "long": 8, "edge-case": 12}.get(profile, 3)
     for field in schema.get("fields") or []:
@@ -107,11 +107,11 @@ def materialize_ir(template_ir: dict, fixture: dict | None) -> dict:
         if profile == "empty":
             return ""
         if profile == "loading":
-            value = "Загрузка…" if index == 0 else ""
+            value = "Loading…" if index == 0 else ""
             index += 1
             return value
         if profile == "error":
-            value = str(data.get("__error") or "Не удалось загрузить данные") if index == 0 else ""
+            value = str(data.get("__error") or "Could not load data") if index == 0 else ""
             index += 1
             return value
         if values:

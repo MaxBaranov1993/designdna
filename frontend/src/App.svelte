@@ -78,7 +78,7 @@
       void ensureDsEditor().catch((error) => {
         dsEditorNodeId = null;
         console.error("Design System editor failed to load", error);
-        toast(`Не удалось открыть редактор дизайн-системы: ${error?.message || error}`);
+        toast(`Could not open the design system editor: ${error?.message || error}`);
       });
     });
     window.addEventListener("designdna:ensure-editor", onEditorRequest);
@@ -97,8 +97,8 @@
       const source = state.nodes.find(n => Number(n.id) === Number(detail?.nodeId) && n.type === 'designsystem');
       const target = source?.type === 'designsystem' && source.data.systemId && source.data.systemId === detail?.systemId
         ? state.sendDesignSystemToGenerator(Number(source.id)) : null;
-      if (target == null) { toast('Не удалось подключить UI Kit: исходная нода недоступна'); return; }
-      toast('UI Kit подключён к Генератору', 'ok');
+      if (target == null) { toast('Could not connect the UI Kit: the source node is unavailable'); return; }
+      toast('UI Kit connected to Generator', 'ok');
     };
     window.addEventListener("designdna:ds-to-generator", onDsToGenerator);
     installGraphDev();
@@ -123,7 +123,7 @@
     {#if isDesktop}
       <div class="dna-titlebar" role="presentation">
         <span class="tb-name">DesignDNA</span>
-        <span class="tb-badge">локально</span>
+        <span class="tb-badge">local</span>
       </div>
     {/if}
     <Rail {surface} onselect={showSurface} />
@@ -150,7 +150,7 @@
         {#if ProjectMapComponent}
           <ProjectMapComponent />
         {:else}
-          <div class="grid h-full place-items-center text-sm text-muted-foreground">Загрузка Project Map…</div>
+          <div class="grid h-full place-items-center text-sm text-muted-foreground">Loading Project Map…</div>
         {/if}
       </div>
     {:else}
@@ -158,7 +158,7 @@
         {#if AgentComponent}
           <AgentComponent />
         {:else}
-          <div class="grid h-full place-items-center text-sm text-muted-foreground">Загрузка Agents…</div>
+          <div class="grid h-full place-items-center text-sm text-muted-foreground">Loading Agents…</div>
         {/if}
       </div>
     {/if}

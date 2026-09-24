@@ -112,3 +112,24 @@ def test_completed_download_survives_render_worker_restart(tmp_path, monkeypatch
     output.unlink()
     with TestClient(app) as client:
         assert client.get(f"/api/timeline/render/{render_id}/download").status_code == 404
+
+
+def test_timeline_built_from_expanded_images_matches_the_same_ir_with_blob_refs(tmp_path, monkeypatch) -> None:
+    """Timelines built before 2026-09-24 hashed the IR with images expanded to data URLs."""
+    import base64
+    import hashlib
+
+    import scraper
+    import timeline_api
+    from ir.hash import content_hash
+
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    digest = hashlib.sha256(png).hexdigest()
+    (tmp_path / f"{digest}.png").write_bytes(png)
+    monkeypatch.setattr(scraper, "blobs_dir", lambda: tmp_path)
+    with_ref = {**DESIGN_IR, "tree": [{"id": "img", "type": "image", "src": f"ddna://blobs/{digest}.png"}]}
+    expanded = {**DESIGN_IR, "tree": [{"id": "img", "type": "image",
+                                       "src": "data:image/png;base64," + base64.b64encode(png).decode()}]}
+    assert timeline_api._same_design_ir(content_hash(expanded), with_ref)
+    assert timeline_api._same_design_ir(content_hash(with_ref), with_ref)
+    assert not timeline_api._same_design_ir(content_hash(DESIGN_IR), with_ref), "another design is still rejected"

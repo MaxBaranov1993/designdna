@@ -78,5 +78,5 @@ def test_desktop_image_blob_is_materialized_for_export(tmp_path, monkeypatch):
     assert prepared[0]['src'].startswith('data:image/png;base64,')
     assert image['src'].startswith('ddna://')
     (tmp_path / 'blobs' / f'{key}.png').unlink()
-    with pytest.raises(ValueError, match='не найден'):
+    with pytest.raises(ValueError, match='not found'):
         prepare_composition_layers([image])

@@ -17,11 +17,11 @@
 
 <NodeShell {id} type="prompt" {selected}>
   {#snippet footer()}
-    <div class="foot-left"><span>{length ? `${length} симв.` : "уходит в провод «текст»"}</span></div>
+    <div class="foot-left"><span>{length ? `${length} chars` : "sent through the text output"}</span></div>
   {/snippet}
   <textarea
     class="f-text n-prompt-text nodrag nowheel"
-    placeholder="Что нужно сделать? Например: шапка маркетплейса объявлений…"
+    placeholder="What would you like to create? For example: a marketplace header…"
     value={data.text}
     use:autogrow={240}
     oninput={(e) => {
@@ -34,7 +34,7 @@
     onblur={() => flushNodeText(textKey)}
   ></textarea>
   <NodeStatus {id} />
-  <OutPorts type="prompt" />
+  <OutPorts {id} type="prompt" />
 </NodeShell>
 
 <style>

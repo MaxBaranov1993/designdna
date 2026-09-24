@@ -73,26 +73,26 @@ def merge_back(input_ir: dict, model_ir, mask) -> tuple[dict, list]:
     категорий, разрешённых маской. Битый/пустой ответ модели → копия входа.
     """
     if not isinstance(input_ir, dict):
-        raise ValueError("input_ir должен быть объектом")
+        raise ValueError("input_ir must be an object")
     merged = copy.deepcopy(input_ir)
     m = normalize_mask(mask)
     journal = []
 
     if not isinstance(model_ir, dict):
-        journal.append("ответ модели не объект — возвращён входной IR без изменений")
+        journal.append("model response is not an object — input IR returned unchanged")
         log.warning("mergeback: %s", journal[-1])
         return merged, journal
 
     # --- корневые залоченные поля: только журнал попыток ---
     for key in model_ir:
         if key not in ("version", "frame", "meta", "tokens", "tree"):
-            journal.append(f"лишний корневой ключ {key!r} отброшен")
+            journal.append(f"extra root key {key!r} discarded")
     if model_ir.get("version", _MISSING) not in (_MISSING, input_ir.get("version")):
-        journal.append("version: изменение отброшено (залочен)")
+        journal.append("version: change discarded (locked)")
     if "frame" in model_ir and model_ir["frame"] != input_ir.get("frame"):
-        journal.append("frame артборда: попытка изменения геометрии — перезаписан из входа")
+        journal.append("artboard frame: geometry change overwritten with input")
     if "meta" in model_ir and model_ir["meta"] != input_ir.get("meta"):
-        journal.append("meta: изменения отброшены (залочено)")
+        journal.append("meta: changes discarded (locked)")
 
     # --- tokens: только разрешённые маской категории ---
     merged["tokens"] = _merge_tokens(input_ir.get("tokens", {}),
@@ -103,11 +103,11 @@ def merge_back(input_ir: dict, model_ir, mask) -> tuple[dict, list]:
     mo_tree = model_ir.get("tree", _MISSING)
     if not isinstance(mo_tree, list):
         if in_tree:
-            journal.append("tree: модель не вернула дерево — топология взята из входа")
+            journal.append("tree: model returned no tree — topology taken from input")
     else:
         if len(mo_tree) != len(in_tree):
-            journal.append(f"tree: модель вернула {len(mo_tree)} секций вместо "
-                           f"{len(in_tree)} — топология взята из входа")
+            journal.append(f"tree: model returned {len(mo_tree)} sections instead of "
+                           f"{len(in_tree)} — topology taken from input")
         kept = [_merge_section(in_tree[i], mo_tree[i], m, journal, f"tree.{i}")
                 for i in range(min(len(in_tree), len(mo_tree)))]
         kept += [copy.deepcopy(s) for s in in_tree[len(mo_tree):]]
@@ -127,24 +127,24 @@ def _merge_named(in_d: dict, mo_d, out_d: dict, allowed: bool, journal: list,
         return
     for key, val in mo_d.items():
         if key not in in_d:
-            journal.append(f"{path}.{key}: добавленный моделью ключ отброшен")
+            journal.append(f"{path}.{key}: model-added key discarded")
             continue
         if val == in_d[key]:
             continue
         if not allowed:
-            journal.append(f"{path}.{key}: изменение при залоченной категории — перезаписано")
+            journal.append(f"{path}.{key}: change to a locked category overwritten")
             continue
         if check(val):
             out_d[key] = val
         else:
-            journal.append(f"{path}.{key}: некорректное значение {val!r} — оставлено входное")
+            journal.append(f"{path}.{key}: invalid value {val!r} — input preserved")
 
 
 def _merge_tokens(in_tok: dict, mo_tok, m: dict, journal: list) -> dict:
     out = copy.deepcopy(in_tok)
     if not isinstance(mo_tok, dict):
         if in_tok:
-            journal.append("tokens: модель не вернула токены — взяты из входа")
+            journal.append("tokens: model returned no tokens — taken from input")
         return out
 
     # mode (light/dark) относим к категории цветов
@@ -153,7 +153,7 @@ def _merge_tokens(in_tok: dict, mo_tok, m: dict, journal: list) -> dict:
         if m["colors"] and mo_mode in _MODES:
             out["mode"] = mo_mode
         else:
-            journal.append("tokens.mode: изменение перезаписано из входа")
+            journal.append("tokens.mode: change overwritten with input")
 
     _merge_named(in_tok.get("color", {}), mo_tok.get("color", _MISSING),
                  out.setdefault("color", {}), m["colors"], journal, "tokens.color",
@@ -167,20 +167,20 @@ def _merge_tokens(in_tok: dict, mo_tok, m: dict, journal: list) -> dict:
             if mo_face is _MISSING or face not in font_in or mo_face == font_in[face]:
                 continue
             if not m["fonts"]:
-                journal.append(f"tokens.font.{face}: изменение при залоченных шрифтах — перезаписано")
+                journal.append(f"tokens.font.{face}: change to locked fonts overwritten")
                 continue
             fam = mo_face.get("family") if isinstance(mo_face, dict) else None
             weight = mo_face.get("weight") if isinstance(mo_face, dict) else None
             if isinstance(fam, str) and fam.strip() and weight in _WEIGHTS:
                 out.setdefault("font", {})[face] = {"family": fam, "weight": weight}
             else:
-                journal.append(f"tokens.font.{face}: некорректный fontFace — оставлен входной")
+                journal.append(f"tokens.font.{face}: invalid fontFace — input preserved")
         scale_mo = font_mo.get("scale", _MISSING)
         if scale_mo is not _MISSING and scale_mo != font_in.get("scale"):
             if m["fonts"] and scale_mo in _SCALES:
                 out.setdefault("font", {})["scale"] = scale_mo
             else:
-                journal.append("tokens.font.scale: изменение перезаписано из входа")
+                journal.append("tokens.font.scale: change overwritten with input")
 
     _merge_named(in_tok.get("radius", {}), mo_tok.get("radius", _MISSING),
                  out.setdefault("radius", {}), m["radii"], journal, "tokens.radius",
@@ -191,11 +191,11 @@ def _merge_tokens(in_tok: dict, mo_tok, m: dict, journal: list) -> dict:
         if m["shadows"] and mo_shadow in _SHADOWS:
             out["shadow"] = mo_shadow
         else:
-            journal.append("tokens.shadow: изменение перезаписано из входа")
+            journal.append("tokens.shadow: change overwritten with input")
 
     # spacing — геометрия, залочен всегда (слайдер силы лока — v2)
     if "spacing" in mo_tok and mo_tok["spacing"] != in_tok.get("spacing"):
-        journal.append("tokens.spacing: изменение отброшено (залочен)")
+        journal.append("tokens.spacing: change discarded (locked)")
     return out
 
 
@@ -205,20 +205,20 @@ def _merge_section(in_sec: dict, mo_sec, m: dict, journal: list, path: str) -> d
     """Секция merged = входная копия; из модели — только props/children по маске."""
     out = copy.deepcopy(in_sec)
     if not isinstance(mo_sec, dict):
-        journal.append(f"{path}: секция от модели не объект — взята из входа")
+        journal.append(f"{path}: model section is not an object — taken from input")
         return out
     if mo_sec.get("type") != in_sec.get("type"):
-        journal.append(f"{path}: тип секции {mo_sec.get('type')!r} != "
-                       f"{in_sec.get('type')!r} — секция взята из входа")
+        journal.append(f"{path}: section type {mo_sec.get('type')!r} != "
+                       f"{in_sec.get('type')!r} — section taken from input")
         return out
     if mo_sec.get("id", _MISSING) not in (_MISSING, in_sec.get("id")):
-        journal.append(f"{path}: id {mo_sec.get('id')!r} отброшен (залочен {in_sec.get('id')!r})")
+        journal.append(f"{path}: id {mo_sec.get('id')!r} discarded (locked {in_sec.get('id')!r})")
     if mo_sec.get("variant", _MISSING) not in (_MISSING, in_sec.get("variant")):
-        journal.append(f"{path}: variant — props-разметка, изменение отброшено")
+        journal.append(f"{path}: variant is structural markup; change discarded")
     if "frame" in mo_sec and mo_sec["frame"] != in_sec.get("frame"):
-        journal.append(f"{path}.frame: попытка изменения геометрии — перезаписан из входа")
+        journal.append(f"{path}.frame: geometry change overwritten with input")
     if "_frames" in mo_sec and mo_sec["_frames"] != in_sec.get("_frames"):
-        journal.append(f"{path}._frames: изменения отброшены (залочены)")
+        journal.append(f"{path}._frames: changes discarded (locked)")
     if "props" in in_sec:
         out["props"] = _merge_value(in_sec.get("props", {}), mo_sec.get("props", _MISSING),
                                     m, journal, f"{path}.props", "props")
@@ -236,17 +236,17 @@ def _merge_value(in_val, mo_val, m: dict, journal: list, path: str, key: str,
 
     # frame на любом уровне — залочен
     if key == "frame":
-        journal.append(f"{path}: попытка изменения frame — перезаписан из входа")
+        journal.append(f"{path}: frame change overwritten with input")
         return copy.deepcopy(in_val)
 
     # списки: длина — часть топологии
     if isinstance(in_val, list):
         if not isinstance(mo_val, list):
-            journal.append(f"{path}: список заменён не-списком — взят из входа")
+            journal.append(f"{path}: list replaced with a non-list — taken from input")
             return copy.deepcopy(in_val)
         if len(mo_val) != len(in_val):
-            journal.append(f"{path}: длина списка {len(mo_val)} != {len(in_val)} — "
-                           f"топология взята из входа")
+            journal.append(f"{path}: list length {len(mo_val)} != {len(in_val)} — "
+                           f"topology taken from input")
         return [_merge_value(item, mo_val[i] if i < len(mo_val) else _MISSING,
                              m, journal, f"{path}.{i}", "", button_ctx)
                 for i, item in enumerate(in_val)]
@@ -254,7 +254,7 @@ def _merge_value(in_val, mo_val, m: dict, journal: list, path: str, key: str,
     # словари: ключи — часть props-разметки; лишние от модели отбрасываем
     if isinstance(in_val, dict):
         if not isinstance(mo_val, dict):
-            journal.append(f"{path}: объект заменён не-объектом — взят из входа")
+            journal.append(f"{path}: object replaced with a non-object — taken from input")
             return copy.deepcopy(in_val)
         out = {}
         for k, v in in_val.items():
@@ -262,46 +262,46 @@ def _merge_value(in_val, mo_val, m: dict, journal: list, path: str, key: str,
                                   f"{path}.{k}", k, button_ctx or k in _BUTTON_PARENTS)
         for k in mo_val:
             if k not in in_val:
-                journal.append(f"{path}.{k}: добавленный моделью ключ отброшен (залочено)")
+                journal.append(f"{path}.{k}: model-added key discarded (locked)")
         return out
 
     # лист: разметка и числа/флаги залочены всегда
     if key in _LOCKED_KEYS or isinstance(in_val, (int, float, bool)):
-        journal.append(f"{path}: изменение залоченного поля перезаписано из входа")
+        journal.append(f"{path}: locked field change overwritten with input")
         return copy.deepcopy(in_val)
 
     if key in _IMAGE_KEYS:
         if not m["images"]:
-            journal.append(f"{path}: изменение при залоченных изображениях — перезаписано")
+            journal.append(f"{path}: change to locked images overwritten")
             return copy.deepcopy(in_val)
         if key == "aspect":
             if mo_val in _ASPECTS:
                 return mo_val
         elif isinstance(mo_val, str) and mo_val.strip():
             return mo_val
-        journal.append(f"{path}: некорректное значение изображения — оставлено входное")
+        journal.append(f"{path}: invalid image value — input preserved")
         return copy.deepcopy(in_val)
 
     # element.fill — цвет rect (категория colors)
     if key == "fill":
         if m["colors"] and isinstance(mo_val, str) and _FILL.match(mo_val):
             return mo_val
-        journal.append(f"{path}: fill перезаписан из входа (лок или некорректный hex)")
+        journal.append(f"{path}: fill overwritten with input (locked or invalid HEX)")
         return copy.deepcopy(in_val)
 
     # строки — контент (категория texts)
     if isinstance(in_val, str):
         if not m["texts"]:
-            journal.append(f"{path}: текст изменён при залоченных текстах — перезаписан")
+            journal.append(f"{path}: locked text change overwritten")
             return copy.deepcopy(in_val)
         if not isinstance(mo_val, str):
-            journal.append(f"{path}: текст заменён не-строкой — оставлен входной")
+            journal.append(f"{path}: text replaced with a non-string — input preserved")
             return copy.deepcopy(in_val)
         limit = 40 if (button_ctx and key == "text") else _MAX_LEN.get(key)
         if limit and len(mo_val) > limit:
-            journal.append(f"{path}: текст длиннее лимита {limit} — оставлен входной")
+            journal.append(f"{path}: text exceeds limit {limit} — input preserved")
             return copy.deepcopy(in_val)
         return mo_val
 
-    journal.append(f"{path}: изменение залоченного поля перезаписано из входа")
+    journal.append(f"{path}: locked field change overwritten with input")
     return copy.deepcopy(in_val)

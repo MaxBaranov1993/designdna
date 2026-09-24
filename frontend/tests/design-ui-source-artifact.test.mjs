@@ -14,7 +14,7 @@ test("Source Artifact keeps its typed measured contract", async () => {
   assert.match(types, /screens\?: SourceArtifactScreen\[\]/);
   assert.match(types, /library\?: SourceArtifactLibrary/);
   assert.match(types, /components: SourceArtifactComponent\[\]/);
-  assert.match(ports, /name: "artifact", label: "Source Artifact", kind: "artifact"/);
+  assert.match(ports, /name: "artifact", label: "Source", kind: "artifact"/);
   assert.match(dataflow, /if \(port === "artifact"\) return n\.data\.sourceArtifact \|\| null/);
 });
 
@@ -35,10 +35,10 @@ test("Design System is the single new canvas surface for Source UI", async () =>
   assert.match(node, /<InPorts type="designsystem"/);
   assert.match(panel, /data-ds-tab="source"/);
   assert.match(panel, /<SourceArtifactPanel/);
-  // Разделы кита названы по-русски и читаются от простого к составному;
+  // Разделы кита названы in English и читаются от простого к составному;
   // уровни атомарного дизайна — обязательная ось каталога.
-  for (const label of ["Основы", "Экраны", "Компоненты", "мастеров из источника",
-                       "Атомы", "Молекулы", "Организмы", "на ревью"]) {
+  for (const label of ["Foundations", "Viewports", "Components", "Source masters",
+                       "Atoms", "Molecules", "Organisms", "verification needed"]) {
     assert.ok(sourcePanel.includes(label), `нет раздела: ${label}`);
   }
   assert.match(sourcePanel, /screen\.hierarchy/);
@@ -82,5 +82,5 @@ test("Design System catalog exposes guarded user-selected semantic organization"
   }
   assert.match(panel, /catalog\.sections/);
   assert.match(sourcePanel, /catalog\.sections/);
-  assert.match(panel, /Точные мастера не меняются/);
+  assert.match(panel, /Exact masters are preserved/);
 });

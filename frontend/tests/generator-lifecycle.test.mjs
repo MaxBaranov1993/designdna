@@ -143,7 +143,7 @@ test('changed wired prompt prevents finalization and QP for the previous prompt'
  const pending=store.getState().runGenerator(id); await tick();
  patch(prompt,{text:'Different task'}); resolve({content:'{}'}); await pending;
  assert.equal(node(id).data.variants.length,0);
- assert.match(store.getState().statuses[id].text,/Входные данные изменились/);
+ assert.match(store.getState().statuses[id].text,/Inputs changed/);
  assert.equal(calls.filter(c=>c[0]==='/api/generate').length,1);
 });
 
@@ -364,5 +364,5 @@ test('unfixed remarks end as a warning with the result kept, not an error',async
  await store.getState().runGenerator(id);
  assert.equal(node(id).data.variants.length,1);
  assert.equal(store.getState().statuses[id].kind,'warn');
- assert.match(store.getState().statuses[id].text,/Готово с замечаниями.*Кнопка сливается/);
+ assert.match(store.getState().statuses[id].text,/Done with issues.*Кнопка сливается/);
 });

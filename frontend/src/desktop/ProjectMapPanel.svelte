@@ -41,9 +41,9 @@
   const refreshArchitecture = async () => {
     if (!desktop) return;
     const ok = await confirmDialog({
-      title: "Перестроить семантическую карту?",
-      message: "Codex заново проанализирует проект и заменит текущую карту. Это займёт время.",
-      confirmLabel: "Перестроить",
+      title: "Rebuild the semantic map?",
+      message: "Codex will analyze the project again and replace the current map. This may take some time.",
+      confirmLabel: "Rebuild",
     });
     if (!ok) return;
     busy = true;
@@ -59,17 +59,17 @@
 </script>
 
 {#if !desktop}
-  <div class="project-map-empty">Project Map доступен в desktop-приложении DesignDNA.</div>
+  <div class="project-map-empty">Project Map is available in the DesignDNA desktop app.</div>
 {:else}
   <section class="project-map-shell">
     <header class="project-map-header">
       <div>
         <span class="project-map-eyebrow">Live semantic workspace</span>
         <h1>Project Map</h1>
-        <p>Архитектура репозитория и активная работа агентов в одном локальном runtime.</p>
+        <p>Repository architecture and active agent work in one local workspace.</p>
       </div>
       <div class="project-map-actions">
-        <Button variant="outline" onclick={() => void load()} disabled={busy}>Обновить</Button>
+        <Button variant="outline" onclick={() => void load()} disabled={busy}>Refresh</Button>
         <Button onclick={() => void refreshArchitecture()} disabled={busy}>Architect refresh</Button>
       </div>
     </header>

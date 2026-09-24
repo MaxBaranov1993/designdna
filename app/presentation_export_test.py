@@ -89,7 +89,7 @@ def test_missing_asset_or_font_blocks_export_without_changing_ir():
     ir = fixture()
     ir["tree"][0]["children"][4]["src"] = "ddna://blobs/" + "a" * 64 + ".png"
     before = copy.deepcopy(ir)
-    with pytest.raises(ValueError, match="Ресурсы экспорта"):
+    with pytest.raises(ValueError, match="Export assets"):
         capture_scene(ir)
     assert ir == before
 

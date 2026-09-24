@@ -321,5 +321,5 @@
     <button class="btn-node small nodrag" onclick={() => (data.mode === "live" ? (liveActions = []) : reset())}>Reset</button>
   </div>
   <NodeStatus {id} />
-  <OutPorts type="recorder" {data} />
+  <OutPorts {id} type="recorder" {data} />
 </NodeShell>

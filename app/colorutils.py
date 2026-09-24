@@ -77,7 +77,7 @@ def mix_hex_colors(pairs: list) -> str:
     hue берётся от доминантного хроматичного цвета.
     """
     if not pairs:
-        raise ValueError("пустой список цветов")
+        raise ValueError("empty color list")
     total = sum(w for _, w in pairs)
     if total <= 0:
         weights = [1.0 / len(pairs)] * len(pairs)

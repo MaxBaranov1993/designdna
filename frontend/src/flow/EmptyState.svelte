@@ -29,8 +29,8 @@
     {
       id: "import-uikit",
       icon: "⌁",
-      title: "Импорт сайта → UI Kit",
-      note: "Source Import по URL, из него — Design System",
+      title: "Import site → UI Kit",
+      note: "Source Import from a URL, then Design System",
       build: () => {
         const st = useFlowStore.getState();
         const source = st.addNode("sourceimport", 120, 160);
@@ -41,8 +41,8 @@
     {
       id: "landing",
       icon: "◈",
-      title: "Генерация лендинга",
-      note: "Промпт и референс → Генератор вариантов",
+      title: "Generate a landing page",
+      note: "Prompt and reference → Generator variants",
       build: () => {
         const st = useFlowStore.getState();
         const prompt = st.addNode("prompt", 120, 120);
@@ -55,8 +55,8 @@
     {
       id: "video",
       icon: "▶",
-      title: "Видео из страницы",
-      note: "Источник → Генератор → Recorder → Motion → ролик",
+      title: "Video from a page",
+      note: "Source → Generator → Recorder → Motion → video",
       build: () => {
         useFlowStore.getState().addVideoChainPage();
       },
@@ -69,7 +69,7 @@
       fitSoon();
     } catch (error) {
       console.error("empty-state scenario failed", error);
-      toast(`Не удалось собрать сценарий: ${(error as Error)?.message || error}`, "error");
+      toast(`Could not build the scenario: ${(error as Error)?.message || error}`, "error");
     }
   };
 
@@ -132,11 +132,10 @@
     oncontextmenu={forwardToPane}
     onclick={forwardToPane}
   >
-    <div class="empty-kicker">Пустая страница</div>
-    <h2>С чего начать</h2>
+    <div class="empty-kicker">Empty page</div>
+    <h2>Get started</h2>
     <p>
-      <kbd>ПКМ</kbd> или двойной клик по канвасу создаёт ноду, <kbd>Ctrl</kbd>+<kbd>K</kbd> — поиск, <kbd>?</kbd> — горячие клавиши.
-      Или соберите стартовый граф одной кнопкой:
+      <kbd>Right-click</kbd> or double-click the canvas to create a node, <kbd>Ctrl</kbd>+<kbd>K</kbd> — search, <kbd>?</kbd> — keyboard shortcuts. Or build a starter graph with one click:
     </p>
     <div class="empty-actions">
       {#each scenarios as scenario (scenario.id)}

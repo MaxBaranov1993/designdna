@@ -15,9 +15,13 @@ test("store: long runs drive setProgress and clear it in finally", async () => {
     source.indexOf("runSourceImport: async (id) => {"),
     source.indexOf("runDerive: async (id) => {"),
   );
-  assert.match(si, /setProgress\(id, \{ expectedMs: 90_000, label:/);
+  assert.match(si, /setProgress\(id, \{[\s\S]*?expectedMs:[\s\S]*?label:/);
+  assert.match(si, /expectedImportMs = 45_000 \+ 20_000 \* \(captureViewports\.length - 1\)/);
+  assert.match(si, /captureViewports\.map\(\(name\) => \(\{ name, \.\.\.SOURCE_VIEWPORT_SIZES\[name\] \}\)\)/);
+  assert.match(si, /aiRepair && data\.aiRefine/);
+  assert.match(si, /aiRepair && window\.designDNA && needsRepair/);
   assert.match(si, /setProgress\(id, null\)/);
-  assert.match(si, /Source Import\$\{cacheNote\}\$\{authNote\} · \$\{secs\}с/);
+  assert.match(si, /Source Import\$\{cacheNote\}\$\{authNote\} · \$\{secs\}s/);
   assert.match(si, /res\.diagnostics\?\.timingsMs/);
   assert.match(si, /lastRun:/);
   assert.match(si, /asyncJob: true/);
@@ -30,15 +34,19 @@ test("store: long runs drive setProgress and clear it in finally", async () => {
   );
   assert.match(gen, /setProgress\(id, \{ expectedMs: 90_000, label: progressLabel, stage:/);
   assert.match(gen, /setProgress\(id, null\)/);
-  assert.match(gen, /Предпросмотр проверен: вариантов \$\{variants\.length\}.*· \$\{\(\(Date\.now\(\) - startedAt\) \/ 1000\)\.toFixed\(0\)\}с/);
+  assert.match(gen, /Preview verified: variants \$\{variants\.length\}.*· \$\{\(\(Date\.now\(\) - startedAt\) \/ 1000\)\.toFixed\(0\)\}s/);
 });
 
 test("Source Import shows measured backend stages after a run", async () => {
   const source = await read("../src/nodes/SourceImportNode.svelte");
-  assert.match(source, /Измерено/);
+  assert.match(source, /Measured/);
   assert.match(source, /data\.lastRun\.timingsMs/);
   assert.match(source, /captureCompile: "Layers"/);
   assert.match(source, /fidelity: "Fidelity"/);
+  assert.match(source, /aria-label="Viewports to capture"/);
+  assert.match(source, /toggleViewport\("tablet"\)/);
+  assert.match(source, /\+ Capture \{name\}/);
+  assert.match(source, /AI repair/);
 });
 
 test("NodeShell renders the thin progress bar with percent and clock", async () => {

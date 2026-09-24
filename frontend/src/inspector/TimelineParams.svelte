@@ -19,13 +19,13 @@
 
 <div class="dna-insp-fields">
   <div class="dna-field">
-    <div class="dna-field-cap">Что должно происходить в ролике</div>
+    <div class="dna-field-cap">What should happen in the video</div>
     <textarea rows="4" value={data.prompt || ""} disabled={busy}
-      placeholder="На странице «Форма» заполни поля, нажми «Разместить» и перейди к странице «Готово»"
+      placeholder="On the Form page, fill in the fields, click Publish, then navigate to the Done page"
       oninput={(event) => $flow.setNodeData(id, { prompt: event.currentTarget.value })}></textarea>
   </div>
   <div class="dna-field" inert={busy}>
-    <div class="dna-field-cap">Модель</div>
+    <div class="dna-field-cap">Model</div>
     <VideoModelPicker model={data.model} provider={data.provider === "claude" ? "claude" : "codex"} effort={data.effort || "medium"}
       onChange={(choice) => $flow.setNodeData(id, choice)} />
   </div>
@@ -37,33 +37,33 @@
       </select>
     </div>
     <div class="dna-field">
-      <div class="dna-field-cap">Секунд</div>
+      <div class="dna-field-cap">Seconds</div>
       <input type="number" min="1" max="120" step="0.5" value={(data.settings.duration / 1000).toFixed(1)} onchange={(e) => patchSettings({ duration: Math.max(1000, Math.round(Number(e.currentTarget.value) * 1000)) })} />
     </div>
     <div class="dna-field">
-      <div class="dna-field-cap">Кадр</div>
+      <div class="dna-field-cap">Frame</div>
       <select value={`${data.settings.width}x${data.settings.height}`} onchange={(e) => { const [w, h] = e.currentTarget.value.split("x").map(Number); patchSettings({ width: w, height: h }); }}>
         <option value="1920x1080">16:9</option><option value="1080x1920">9:16</option><option value="1080x1080">1:1</option>
       </select>
     </div>
   </div>
   <div class="dna-field">
-    <div class="dna-field-cap">Страницы-источники</div>
+    <div class="dna-field-cap">Source pages</div>
     <div class="nrow-merge">
       {#each inputs as port, index (port)}
         <div class="merge-row" data-port={port} data-kind="ir">
           <span class="merge-n">{index + 1}</span>
-          <input aria-label={`Название страницы ${index + 1}`} value={data.pageNames?.[port] || `Страница ${index + 1}`} maxlength="120"
+          <input aria-label={`Page name ${index + 1}`} value={data.pageNames?.[port] || `Page ${index + 1}`} maxlength="120"
             style="flex: 1; min-width: 0; padding: 4px 6px; font-size: 11.5px"
-            onchange={(event) => renamePage(port, event.currentTarget.value.trim() || `Страница ${index + 1}`)} />
-          {#if port !== "ir"}<span class="merge-ctl"><button title="Удалить вход" onclick={() => $flow.removeVideoInput(id, port)}>✕</button></span>{/if}
+            onchange={(event) => renamePage(port, event.currentTarget.value.trim() || `Page ${index + 1}`)} />
+          {#if port !== "ir"}<span class="merge-ctl"><button title="Remove input" onclick={() => $flow.removeVideoInput(id, port)}>✕</button></span>{/if}
         </div>
       {/each}
     </div>
-    <button class="dna-btn-ghost" disabled={inputs.length >= 8 || busy} onclick={() => $flow.addVideoInput(id)}>+ Страница</button>
+    <button class="dna-btn-ghost" disabled={inputs.length >= 8 || busy} onclick={() => $flow.addVideoInput(id)}>+ Page</button>
   </div>
   <div class="dna-field">
-    <div class="dna-field-cap">Версии</div>
-    <div class="dna-field-value"><span>{data.revisions?.length || 0} версий монтажа</span><span class="dna-out-kind">без звука</span></div>
+    <div class="dna-field-cap">Versions</div>
+    <div class="dna-field-value"><span>{data.revisions?.length || 0} timeline versions</span><span class="dna-out-kind">no audio</span></div>
   </div>
 </div>

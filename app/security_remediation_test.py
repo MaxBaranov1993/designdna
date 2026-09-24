@@ -43,7 +43,7 @@ def test_fetch_blocks_private_redirect_before_second_request(monkeypatch):
         return httpx.Response(302, headers={"Location": "http://127.0.0.1/admin"})
 
     _mock_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="внутреннюю сеть"):
+    with pytest.raises(ValueError, match="private network"):
         urlguard.fetch_public_bytes(
             "https://public.test/start", timeout=1, max_bytes=100,
         )
@@ -65,7 +65,7 @@ def test_fetch_allows_public_redirect_and_bounds_stream(monkeypatch):
     assert response.content == b"0123456789"
     assert response.url == "https://public.test/final"
 
-    with pytest.raises(ValueError, match="превышает лимит"):
+    with pytest.raises(ValueError, match="exceeds limit"):
         urlguard.fetch_public_bytes(
             "https://public.test/start", timeout=1, max_bytes=9,
         )
@@ -97,12 +97,35 @@ def test_connect_backend_rejects_rebinding_before_socket_connect(monkeypatch):
         "connect_tcp",
         lambda *_args, **_kwargs: connected.append(True),
     )
-    with pytest.raises(ValueError, match="внутреннюю сеть"):
+    with pytest.raises(ValueError, match="private network"):
         urlguard.PublicSyncBackend().connect_tcp("rebind.test", 80)
     assert connected == []
 
 
+def test_fetch_connects_to_the_vetted_numeric_address(monkeypatch):
+    """The vetted IP from URL validation is reused at connect: a DNS answer that
+    changes between validation and connect never reaches the socket."""
+    urlguard._DNS_CACHE.clear()
+    answers = iter([
+        [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 80))],
+        [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 80))],
+    ])
+    connected = []
+    monkeypatch.setattr(urlguard.socket, "getaddrinfo", lambda *_args, **_kwargs: next(answers))
+
+    def record_and_fail(_self, host, port, **_kwargs):
+        connected.append((host, port))
+        raise httpcore.ConnectError("offline")
+
+    monkeypatch.setattr(httpcore.SyncBackend, "connect_tcp", record_and_fail)
+    with pytest.raises(httpx.ConnectError):
+        urlguard.fetch_public_bytes("http://rebind.test/", timeout=1, max_bytes=100)
+    assert connected == [("8.8.8.8", 80)]
+
+
 def test_fetch_revalidates_dns_at_connect_and_rejects_private_rebind(monkeypatch):
+    """Once the cached answer is gone, connect-time resolution re-vets the host."""
+    urlguard._DNS_CACHE.clear()
     answers = iter([
         [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 80))],
         [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 80))],
@@ -114,7 +137,15 @@ def test_fetch_revalidates_dns_at_connect_and_rejects_private_rebind(monkeypatch
         "connect_tcp",
         lambda *_args, **_kwargs: connected.append(True),
     )
-    with pytest.raises(ValueError, match="внутреннюю сеть"):
+    original_resolve = urlguard.resolve_public_ips
+
+    def expire_then_resolve(host, port):
+        urlguard._DNS_CACHE.pop(host, None)
+        return original_resolve(host, port)
+
+    monkeypatch.setattr(urlguard.PublicSyncBackend, "connect_tcp",
+                        lambda self, host, port, **kw: (expire_then_resolve(host, port), connected.append(True)))
+    with pytest.raises(ValueError, match="private network"):
         urlguard.fetch_public_bytes(
             "http://rebind.test/", timeout=1, max_bytes=100,
         )

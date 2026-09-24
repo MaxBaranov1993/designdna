@@ -8,7 +8,8 @@
  *
  * Отправка воркеру: fidelity/QA-рендеры должны видеть настоящие картинки,
  * поэтому мост (desktop/bridge.ts) разворачивает ddna://blobs обратно в
- * data:-URL во всех исходящих /api-телах, кроме /api/project/*. */
+ * data:-URL во всех исходящих /api-телах, кроме /api/project/*, /api/export/*,
+ * /api/design-system/* и /api/timeline/* (там ссылки хранятся как есть). */
 
 const OFFLOAD_MIN_LENGTH = 32_768; // data:-URL короче 32 КБ оставляем как есть
 const BLOB_PREFIX = "ddna://blobs/";
@@ -120,6 +121,47 @@ export async function expandBlobRefs(body: string): Promise<string> {
   });
 }
 
+/** Replace inline images in timeline story page copies (a Video node's
+ *  `timeline` and every `revisions[].timeline`) with blob refs, in place and
+ *  without a time budget. Identical images are stored once. Returns the number
+ *  of replaced values; canonical IR (`ir`, `sourceIr`) is never touched. */
+export async function offloadTimelineStories(data: { timeline?: unknown; revisions?: unknown }): Promise<number> {
+  if (!blobBridgesAvailable()) return 0;
+  const refs = new Map<string, string | null>();
+  let replaced = 0;
+  const all = async (value: unknown): Promise<void> => {
+    if (Array.isArray(value)) {
+      for (const item of value) await all(item);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const object = value as Record<string, unknown>;
+    for (const key of Object.keys(object)) {
+      const v = object[key];
+      if (typeof v === "string" && v.startsWith("data:") && v.length >= OFFLOAD_MIN_LENGTH) {
+        if (!refs.has(v)) refs.set(v, await offloadDataUrl(v));
+        const ref = refs.get(v);
+        if (ref) {
+          object[key] = ref;
+          replaced++;
+        }
+      } else {
+        await all(v);
+      }
+    }
+  };
+  const story = async (timeline: unknown) => {
+    const pages = (timeline as { story?: { pages?: unknown } } | null)?.story?.pages;
+    if (!Array.isArray(pages)) return;
+    for (const page of pages) if (page && typeof page === "object") await all((page as Record<string, unknown>).ir);
+  };
+  await story(data.timeline);
+  if (Array.isArray(data.revisions)) {
+    for (const revision of data.revisions) await story((revision as { timeline?: unknown } | null)?.timeline);
+  }
+  return replaced;
+}
+
 /** Offload presentation assets in an owned save snapshot only. Canonical IR
  * and DS documents are backend-owned hash inputs, including embedded assets;
  * replacing data URLs there invalidates Source/master pins even in a copy. */
@@ -135,6 +177,15 @@ export async function offloadBlobsInPlace(payload: unknown, budgetMs = 800): Pro
     }
     if (value && typeof value === "object") {
       const object = value as Record<string, unknown>;
+      // A timeline document (Video node, its revisions) carries render copies of
+      // the connected pages in story.pages[].ir. They are not hash inputs; left
+      // inline they made every timeline copy weigh the page's pixels (14 MB).
+      const story = object.story as { pages?: unknown } | undefined;
+      if (Array.isArray(object.layers) && story && Array.isArray(story.pages)) {
+        for (const page of story.pages) {
+          if (page && typeof page === "object" && (page as Record<string, unknown>).ir) await offloadAll((page as Record<string, unknown>).ir);
+        }
+      }
       if (object.type === "designsystem"
         || (typeof object.schemaVersion === "string" && object.schemaVersion.startsWith("design-system/"))
         || (Array.isArray(object.tree) && (object.version != null || object.tokens != null))) return;
@@ -150,6 +201,28 @@ export async function offloadBlobsInPlace(payload: unknown, budgetMs = 800): Pro
         } else {
           await walk(v);
         }
+      }
+    }
+  };
+  /** Every inline data: URL of a non-canonical IR copy (timeline story pages). */
+  const offloadAll = async (value: unknown): Promise<void> => {
+    if (performance.now() - started > budgetMs) return;
+    if (Array.isArray(value)) {
+      for (const item of value) await offloadAll(item);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const object = value as Record<string, unknown>;
+    for (const key of Object.keys(object)) {
+      const v = object[key];
+      if (typeof v === "string" && v.startsWith("data:") && v.length >= OFFLOAD_MIN_LENGTH) {
+        const ref = await offloadDataUrl(v);
+        if (ref) {
+          object[key] = ref;
+          replaced++;
+        }
+      } else {
+        await offloadAll(v);
       }
     }
   };

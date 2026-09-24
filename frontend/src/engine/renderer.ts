@@ -436,7 +436,7 @@ import { isLockedNode } from "./locked";
         line-height:var(--t-small-lh,1.5); font-weight:var(--t-small-weight,var(--fw-body)); }
       .ir-${uid} h1.t-eyebrow, .ir-${uid} h2.t-eyebrow, .ir-${uid} h3.t-eyebrow, .ir-${uid} h4.t-eyebrow { font-family:var(--font-body); font-size:var(--t-eyebrow-size, calc(12px * var(--fs)));
         line-height:var(--t-eyebrow-lh,1.2); letter-spacing:var(--t-eyebrow-tracking,.12em); font-weight:var(--t-eyebrow-weight,600); text-transform:uppercase; }
-      .ir-${uid} .sec, .ir-${uid} .sec-free { padding:var(--sec-py) 32px; position:relative; }
+      .ir-${uid} .sec, .ir-${uid} .sec-free { padding:var(--sec-py) var(--sec-px,32px); position:relative; }
       .ir-${uid} .sec-source { padding:0; position:relative; margin:0; }
       /* Источник объявляет лишние веса поверх одного файла (JetBrains Mono 400/500/600
          → один woff2), браузер там не синтезирует жирность. Захват хранит только
@@ -463,7 +463,7 @@ import { isLockedNode } from "./locked";
       .ir-${uid} .badge.tone-primary { background:var(--c-primary); color:#fff; border-color:transparent; }
       .ir-${uid} .badge.tone-accent { background:var(--c-accent); color:#fff; border-color:transparent; }
       .ir-${uid} .input { width:100%; padding:12px 16px; border-radius:var(--r-input); border:1px solid var(--c-border);
-        background:var(--c-bg); color:var(--c-text); font-size:calc(14px * var(--fs)); }
+        background:var(--c-bg); color:var(--c-text); font-family:inherit; font-size:calc(14px * var(--fs)); }
       .ir-${uid} .source-control, .ir-${uid} .source-input { appearance:none; background:transparent; border:0;
         color:inherit; font:inherit; text-decoration:none; }
       .ir-${uid} .icon-dot { width:34px; height:34px; border-radius:var(--r-btn); background:var(--c-primary);
@@ -580,6 +580,15 @@ import { isLockedNode } from "./locked";
  *  data-ir-transform помечает захваченный CSS transform источника: responsive
  *  reflow-правила (.ir-mobile/.ir-tablet .sec-free) не сбрасывают его — linked
  *  viewports Source Import хранят измеренный transform каждого viewport. */
+  /** padding рамки листовых button/badge — на самом элементе, а не на обёртке. */
+  function ownPaddingCss(frame) {
+    const p = frame && frame.padding;
+    if (typeof p === "number") return `padding:${p}px`;
+    if (Array.isArray(p) && p.length === 4) return `padding:${p.map(n => Number(n) + "px").join(" ")}`;
+    if (Array.isArray(p) && p.length === 2) return `padding:${Number(p[0])}px ${Number(p[1])}px`;
+    return "";
+  }
+
   function withFrame(html, frame, parentFree, container, irPath, cls, parentFrame, extraCss) {
     const css = [frameCss(frame, parentFree, container, parentFrame), extraCss || ""].filter(Boolean).join(";");
     if (!css && !cls) return html;
@@ -626,7 +635,11 @@ import { isLockedNode } from "./locked";
       const hugText = (el.type === "text" || el.type === "heading") && el.frame && el.frame.width === "hug"
         ? "white-space:nowrap" : "";
       const extra = [clipText, flexImage, hugText].filter(Boolean).join(";");
-      const wrapped = withFrame(html, el.frame, parentFree, false, irPath, "", parentFrame, extra);
+      // Листовая кнопка сама рисует свой фон: padding рамки уходит внутрь <a>
+      // (case "button"), иначе обёртка сдвигала кнопку на величину отступа.
+      const wrapFrame = (el.type === "button" || el.type === "badge") && el.frame && el.frame.padding != null
+        ? { ...el.frame, padding: undefined } : el.frame;
+      const wrapped = withFrame(html, wrapFrame, parentFree, false, irPath, "", parentFrame, extra);
       // если frame пустой и withFrame не обернул — добавляем span-обёртку с path
       out = (wrapped === html && irPath)
         ? (flexImage
@@ -698,10 +711,16 @@ import { isLockedNode } from "./locked";
         }
         const textCss = visualTextCss(el.style);
         const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
-        return `<a class="btn btn-${el.variant || "primary"}"${path}${styleAttr(el.style)}><span${textCss ? ` style="${textCss}"` : ""}>${esc(el.text || "")}</span></a>`;
+        const bf = el.frame || {};
+        const pad = ownPaddingCss(bf);
+        const fill = typeof bf.height === "number" ? "box-sizing:border-box;height:100%" : "";
+        const own = [pad, fill].filter(Boolean).join(";");
+        return `<a class="btn btn-${el.variant || "primary"}"${path}${styleAttr(el.style, own)}><span${textCss ? ` style="${textCss}"` : ""}>${esc(el.text || "")}</span></a>`;
       }
       case "badge":
-        return `<span class="badge${el.tone && el.tone !== "default" ? " tone-" + el.tone : ""}">${esc(el.text || el.label || "")}</span>`;
+        // style узла (цвет, фон, радиус, шрифт) перекрывает пилюлю по умолчанию:
+        // моно-лейбл сайта без него рисовался серой пилюлей с рамкой
+        return `<span class="badge${el.tone && el.tone !== "default" ? " tone-" + el.tone : ""}"${styleAttr(el.style, ownPaddingCss(el.frame || {}))}>${esc(el.text || el.label || "")}</span>`;
       case "icon":
         return `<span class="icon-dot">${esc((el.icon || "✦").slice(0, 2))}</span>`;
       case "image":
@@ -713,7 +732,7 @@ import { isLockedNode } from "./locked";
           // это ломало ритм колонки, где картинка задаёт пропорцию блока
           const ratio = ASPECT_RATIO[el.aspect];
           const css = ratio ? ` style="aspect-ratio:${ratio};min-height:0"` : "";
-          return `<div class="img-ph"${css}><span>${esc(el.imagePrompt || el.alt || "изображение")}</span></div>`;
+          return `<div class="img-ph"${css}><span>${esc(el.imagePrompt || el.alt || "image")}</span></div>`;
         }
       case "divider":
         return `<div class="divider"></div>`;
@@ -744,14 +763,20 @@ import { isLockedNode } from "./locked";
           const path = el.__path ? ` data-ir-path="${esc(el.__path)}"` : "";
           return `<div class="source-input"${path}${transformAttr(el.frame)}${css ? ` style="${css}"` : ""}>${kids}</div>`;
         }
+        // style узла (фон, радиус, рамка, шрифт) применяется к самому полю, а высота
+        // рамки — к textarea: иначе обёртка с min-height держала пустоту под полем
         if (el.inputType === "textarea") {
-          return `<textarea class="input" placeholder="${esc(el.placeholder || el.label || "")}">${esc(el.value ?? "")}</textarea>`;
+          const f = el.frame || {};
+          const tall = [typeof f.minHeight === "number" ? f.minHeight : 0, typeof f.height === "number" ? f.height : 0]
+            .filter((v) => v > 0 && v <= 4000);
+          const size = tall.length ? `min-height:${Math.max(...tall)}px;resize:vertical` : "";
+          return `<textarea class="input"${styleAttr(el.style, size)} placeholder="${esc(el.placeholder || el.label || "")}">${esc(el.value ?? "")}</textarea>`;
         }
         if (el.inputType === "select") {
-          return `<select class="input" aria-label="${esc(el.label || el.placeholder || "")}">${(el.items || []).map(item =>
+          return `<select class="input"${styleAttr(el.style)} aria-label="${esc(el.label || el.placeholder || "")}">${(el.items || []).map(item =>
             `<option${String(item) === String(el.value) ? " selected" : ""}>${esc(item)}</option>`).join("")}</select>`;
         }
-        return `<input class="input" type="${["text", "search", "email", "tel", "url", "password", "number", "checkbox"].includes(el.inputType) ? el.inputType : "text"}" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value ?? "")}">`;
+        return `<input class="input"${styleAttr(el.style)} type="${["text", "search", "email", "tel", "url", "password", "number", "checkbox"].includes(el.inputType) ? el.inputType : "text"}" placeholder="${esc(el.placeholder || el.label || "")}" value="${esc(el.value ?? "")}">`;
       /* Голый контейнер композиции: без карточной обводки/фона — только собственная
        * геометрия (auto-layout или free) и дети. Рендерится как card с role, но это
        * явный тип, чтобы модель не путала «фрейм» с «карточкой». */
@@ -850,7 +875,10 @@ import { isLockedNode } from "./locked";
     // обёртка — якорь hoisted absolute-детей: position:relative без flex-раскладки
     // (extraCss гарантирует и саму обёртку, даже если у секции пустой frame)
     const railCss = sec.frame && typeof sec.frame.contentMaxWidth === "number"
-      ? `--content-max-width:${sec.frame.contentMaxWidth}px;--content-gutter:${typeof sec.frame.contentGutter === "number" ? sec.frame.contentGutter : 0}px`
+      ? `--content-max-width:${sec.frame.contentMaxWidth}px;--content-gutter:${typeof sec.frame.contentGutter === "number" ? sec.frame.contentGutter : 0}px` +
+        // contentGutter — отступ контента от края страницы (колонка сайта из
+        // оболочки секции); боковой padding .sec сдвигал бы колонку ещё на 32px
+        (typeof sec.frame.contentGutter === "number" && sec.frame.contentGutter > 0 ? ";--sec-px:0px" : "")
       : "";
     const extraCss = [secStyle, railCss, absChildren ? "position:relative" : ""].filter(Boolean).join(";");
     // free-секция рендерится без .sec-внутренностей — класс sec-free сохраняет
@@ -978,7 +1006,7 @@ import { isLockedNode } from "./locked";
        * линией и уходящее за правый край — асимметрия вместо двух равных половин. */
       if (v === "split-offset") {
         const media = heroMedia(420, "margin-top:-64px;border-top-right-radius:0;border-bottom-right-radius:0") ||
-          `<div class="img-ph" style="min-height:420px;margin-top:-64px">${esc("медиа")}</div>`;
+          `<div class="img-ph" style="min-height:420px;margin-top:-64px">${esc("media")}</div>`;
         return `<section class="sec ${base}" style="overflow:hidden"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:56px;align-items:start">
           <div style="display:flex;flex-direction:column;padding-top:24px">${badge}${head}${sub}${btns}</div>
           <div style="position:relative;left:72px">${media}</div></div></section>`;
@@ -1000,7 +1028,7 @@ import { isLockedNode } from "./locked";
           ? p.media.src
             ? `<div class="img-ph" style="min-height:320px;overflow:hidden;padding:0"><img src="${esc(p.media.src)}" alt="${esc(p.media.alt || "")}" style="display:block;width:100%;height:320px;object-fit:cover" decoding="sync"></div>`
             : `<div class="img-ph" style="min-height:320px">${esc(p.media.imagePrompt || p.media.alt || "")}</div>`
-          : `<div class="img-ph" style="min-height:320px">медиа</div>`;
+          : `<div class="img-ph" style="min-height:320px">media</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center">${badge}${head}${sub}${btns}</div>`;
         return `<section class="sec ${base}"><div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:48px;align-items:center">
           ${v === "split" ? txt + media : media + txt}</div></section>`;
@@ -1018,7 +1046,7 @@ import { isLockedNode } from "./locked";
     }
 
     if (t === "logo-cloud") {
-      const logos = (sec.children && sec.children.length ? sec.children : [{ type: "text", text: "Партнёр" }, { type: "text", text: "Бренд" }, { type: "text", text: "Компания" }, { type: "text", text: "Сервис" }])
+      const logos = (sec.children && sec.children.length ? sec.children : [{ type: "text", text: "Partner" }, { type: "text", text: "Brand" }, { type: "text", text: "Company" }, { type: "text", text: "Service" }])
         .map(c => `<span class="muted" style="font-family:var(--font-display);font-weight:700;font-size:calc(18px*var(--fs));opacity:.7">${esc(c.text || c.title || c.alt || "logo")}</span>`).join("");
       const marquee = v === "marquee" ? ";overflow:hidden;white-space:nowrap" : "";
       return `<section class="sec ${base}" style="padding-top:32px;padding-bottom:32px${marquee}"><div class="wrap" style="text-align:center">
@@ -1072,7 +1100,7 @@ import { isLockedNode } from "./locked";
       const rows = (sec.children || []).map((c, i) => {
         const media = c.src
           ? `<div class="img-ph" style="min-height:240px;padding:0;overflow:hidden"><img src="${esc(c.src)}" alt="${esc(c.alt || "")}" style="display:block;width:100%;height:240px;object-fit:cover" decoding="sync"></div>`
-          : `<div class="img-ph" style="min-height:240px">${esc(c.imagePrompt || c.alt || "изображение")}</div>`;
+          : `<div class="img-ph" style="min-height:240px">${esc(c.imagePrompt || c.alt || "image")}</div>`;
         const txt = `<div style="display:flex;flex-direction:column;justify-content:center;gap:12px">
           ${c.title || c.text ? `<h3>${esc(c.title || "")}</h3><p class="muted">${esc(c.text || "")}</p>` : renderElement(c, uid, false, sec.frame)}
           ${(c.children || []).map(ch => renderElement(ch, uid, !!(c.frame && c.frame.layout === "free"), c.frame)).join("")}</div>`;
@@ -1094,7 +1122,7 @@ import { isLockedNode } from "./locked";
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:20px">
         ${(sec.children || []).map((c, i) => `<div class="card"><div class="icon-dot" style="margin-bottom:12px">${i + 1}</div>
-          <h3 style="margin-bottom:8px">${esc(c.title || c.text || "Шаг " + (i + 1))}</h3><p class="muted">${esc(c.text || "")}</p></div>`).join("")}</div></div></section>`;
+          <h3 style="margin-bottom:8px">${esc(c.title || c.text || "Step " + (i + 1))}</h3><p class="muted">${esc(c.text || "")}</p></div>`).join("")}</div></div></section>`;
     }
 
     if (t === "gallery") {
@@ -1104,7 +1132,7 @@ import { isLockedNode } from "./locked";
           const height = v === "masonry" ? 140 + ((i * 67) % 120) : 200;
           return c.src
             ? `<div class="img-ph" style="min-height:${height}px;padding:0;overflow:hidden"><img src="${esc(c.src)}" alt="${esc(c.alt || "")}" style="display:block;width:100%;height:${height}px;object-fit:cover" decoding="sync"></div>`
-            : `<div class="img-ph" style="min-height:${height}px">${esc(c.imagePrompt || c.alt || "фото")}</div>`;
+            : `<div class="img-ph" style="min-height:${height}px">${esc(c.imagePrompt || c.alt || "photo")}</div>`;
         }).join("")}</div></div></section>`;
     }
 
@@ -1123,7 +1151,7 @@ import { isLockedNode } from "./locked";
       return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:20px;align-items:stretch">
         ${(p.tiers || []).map((tier, i) => `<div class="card" style="display:flex;flex-direction:column;${tier.highlighted ? "border-color:var(--c-primary);box-shadow:var(--shadow);position:relative" : ""}">
-          ${tier.highlighted ? '<span class="badge tone-primary" style="position:absolute;top:-12px;left:50%;transform:translateX(-50%)">Популярный</span>' : ""}
+          ${tier.highlighted ? '<span class="badge tone-primary" style="position:absolute;top:-12px;left:50%;transform:translateX(-50%)">Popular</span>' : ""}
           <h3 data-ir-path="props.tiers.${i}.name">${esc(tier.name)}</h3>
           <div style="margin:12px 0"><span data-ir-path="props.tiers.${i}.price" style="font-family:var(--font-display);font-weight:var(--fw-display);font-size:calc(34px*var(--fs))">${esc(tier.price)}</span>
           ${tier.period ? `<span class="muted" data-ir-path="props.tiers.${i}.period"> ${esc(tier.period)}</span>` : ""}</div>
@@ -1155,7 +1183,7 @@ import { isLockedNode } from "./locked";
     if (t === "newsletter") {
       const form = `<div style="display:flex;gap:10px;${v === "minimal" ? "" : "justify-content:center;"}max-width:440px;margin:0 auto">
         <input class="input" placeholder="${esc(p.placeholder || "Email")}" data-ir-path="props.placeholder" style="flex:1">
-        <a class="btn btn-primary"><span data-ir-path="props.submitText">${esc(p.submitText || "Подписаться")}</span></a></div>`;
+        <a class="btn btn-primary"><span data-ir-path="props.submitText">${esc(p.submitText || "Subscribe")}</span></a></div>`;
       return `<section class="sec ${base}" style="${v === "boxed" ? "" : ""}"><div class="wrap" style="${v === "boxed" ? "background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--r-card);padding:48px;box-shadow:var(--shadow);" : ""}text-align:center">
         <h2 data-ir-path="props.heading" style="margin-bottom:10px">${esc(p.heading || "")}</h2>
         ${p.subheading ? `<p class="muted" data-ir-path="props.subheading" style="margin-bottom:24px">${esc(p.subheading)}</p>` : '<div style="margin-bottom:24px"></div>'}
@@ -1166,7 +1194,7 @@ import { isLockedNode } from "./locked";
       const submit = p.submit || {};
       const submitFrame = sec._frames && sec._frames["props.submit"] || {};
       const submitCss = ["justify-content:center", frameCss(submitFrame, false, false), visualCss(submit.style)].filter(Boolean).join(";");
-      const submitText = submit.text ?? p.submitText ?? "Отправить";
+      const submitText = submit.text ?? p.submitText ?? "Send";
       const form = `<div class="card" style="display:flex;flex-direction:column;gap:14px">
         ${(p.fields || []).map((f, i) => {
           const path = `props.fields.${i}`;
@@ -1229,7 +1257,7 @@ import { isLockedNode } from "./locked";
     }
     return `<section class="sec ${base}"><div class="wrap">${secHead(p)}
       ${renderChildren(sec.children, uid, Math.min(3, (sec.children || []).length || 0), sec.frame) ||
-      `<div class="card muted">Секция «${esc(t)}» (${esc(v)}): нет children для предпросмотра</div>`}</div></section>`;
+      `<div class="card muted">Section “${esc(t)}» (${esc(v)}): no children to preview</div>`}</div></section>`;
   }
 
   function secHead(p) {
@@ -1542,6 +1570,16 @@ import { isLockedNode } from "./locked";
       if (typeof rootFrame.padding === "number") artStyle.push(`padding:${rootFrame.padding}px`);
       else if (Array.isArray(rootFrame.padding) && rootFrame.padding.length === 4) artStyle.push(`padding:${rootFrame.padding.map(n => n + "px").join(" ")}`);
       if (rootFree) artStyle.push("position:relative");
+    }
+    // Page assembled from Source bands: the site's page background (often a
+    // gradient over the whole document) is painted once behind every section.
+    // A single captured block keeps its own look (its backdrop covers the box).
+    const pageBackground = ir.meta && typeof ir.meta.pageBackground === "string" ? ir.meta.pageBackground.trim() : "";
+    const singleSourceBlock = legacySourceFrame !== null;
+    if (pageBackground && !singleSourceBlock && pageBackground.length <= 800
+      && !/[;{}<>"'\\\r\n]/.test(pageBackground) && !/url\s*\(|expression/i.test(pageBackground)
+      && (safeColor(pageBackground) || /gradient\(/i.test(pageBackground))) {
+      artStyle.push(`background:${pageBackground}`);
     }
 
     const css = `.ir-${uid}{${cssVars(tokens)}}` + baseCss(uid);

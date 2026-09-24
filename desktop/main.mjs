@@ -159,7 +159,7 @@ async function warmEngineWorker(scope) {
     // перезапускаем с backoff — как падение, а не как отмену пользователя.
     if (worker.alive && !quitting) {
       entry.suppressAbortRestart = true;
-      worker.abort(`${worker.name}: health не ответил (${error.message})`);
+      worker.abort(`${worker.name}: health did not respond (${error.message})`);
       scheduleEngineRestart(scope, { reason: error.message });
     }
   }
@@ -173,7 +173,7 @@ function scheduleEngineRestart(scope, { immediate = false, reason = null } = {})
     entry.failures += 1;
     if (entry.failures > ENGINE_MAX_CONSECUTIVE_RESTARTS) {
       setEngineStatus(scope, "dead", {
-        error: `${entry.worker.name}: ${ENGINE_MAX_CONSECUTIVE_RESTARTS} перезапуска подряд не помогли${reason ? ` — ${reason}` : ""}`,
+        error: `${entry.worker.name}: ${ENGINE_MAX_CONSECUTIVE_RESTARTS} consecutive restarts did not help${reason ? ` — ${reason}` : ""}`,
       });
       return;
     }
@@ -181,7 +181,7 @@ function scheduleEngineRestart(scope, { immediate = false, reason = null } = {})
   const delay = immediate ? 0 : ENGINE_RESTART_BACKOFF_MS[Math.min(entry.failures, ENGINE_RESTART_BACKOFF_MS.length) - 1];
   engineState.restartCount += 1;
   setEngineStatus(scope, "starting");
-  if (!immediate) console.warn(`[engine:${scope}] перезапуск ${entry.failures}/${ENGINE_MAX_CONSECUTIVE_RESTARTS} через ${delay} мс`);
+  if (!immediate) console.warn(`[engine:${scope}] restart ${entry.failures}/${ENGINE_MAX_CONSECUTIVE_RESTARTS} in ${delay} ms`);
   entry.timer = setTimeout(() => {
     entry.timer = null;
     if (quitting) return;
@@ -231,7 +231,7 @@ function restartEngine(scope = "all") {
     if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
     engineState.workers[target].lastError = null;
     if (entry.worker.alive) {
-      entry.worker.abort("перезапуск движка по запросу пользователя");
+      entry.worker.abort("engine restarted at user request");
     } else {
       scheduleEngineRestart(target, { immediate: true });
     }
@@ -1035,6 +1035,23 @@ const TITLEBAR_HEIGHT = 36;
 const TITLEBAR_COLOR = "#1b1b1e";
 const TITLEBAR_SYMBOL_COLOR = "#ececef";
 
+/* Проект живёт только в SQLite (через Python-воркер): перед закрытием окна и
+ * выходом рендерер дописывает несохранённые правки и отвечает, когда БД их
+ * приняла. Таймаут не даёт зависшему рендереру держать выход бесконечно. */
+const PROJECT_FLUSH_SCRIPT = "window.__designdnaFlushProject ? window.__designdnaFlushProject(30000) : true";
+
+function flushWindowProject(window, timeoutMs = 35_000) {
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return Promise.resolve(true);
+  return Promise.race([
+    window.webContents.executeJavaScript(PROJECT_FLUSH_SCRIPT, true).then((ok) => ok !== false, () => false),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+}
+
+function flushAllProjects() {
+  return Promise.all(BrowserWindow.getAllWindows().map((window) => flushWindowProject(window)));
+}
+
 function createWindow() {
   Menu.setApplicationMenu(null);
   const window = new BrowserWindow({
@@ -1090,6 +1107,16 @@ function createWindow() {
   // Devtools по требованию: DESIGNDNA_DEVTOOLS=1 npm start
   if (process.env.DESIGNDNA_DEVTOOLS === "1") window.webContents.openDevTools({ mode: "detach" });
   window.on("closed", () => rendererCommands?.detach(rendererId));
+  let projectFlushed = false;
+  window.on("close", (event) => {
+    if (projectFlushed || quitting) return;
+    event.preventDefault();
+    projectFlushed = true;
+    void flushWindowProject(window).then((ok) => {
+      if (!ok) console.error("Project flush before close did not complete; the last autosave remains in the database");
+      if (!window.isDestroyed()) window.close();
+    });
+  });
   if (rendererDevUrl) void window.loadURL(rendererDevUrl);
   else void window.loadFile(rendererEntry);
 }
@@ -1172,6 +1199,11 @@ app.on("before-quit", (event) => {
   if (quitting) return;
   quitting = true;
   event.preventDefault();
+  // Unsaved project edits reach SQLite while the Python worker is still alive.
+  void flushAllProjects().then(() => shutdown());
+});
+
+function shutdown() {
   codex?.stop();
   mcp?.stop();
   liveCommands?.dispose();
@@ -1185,4 +1217,4 @@ app.on("before-quit", (event) => {
   ]);
   const forceExit = new Promise((resolve) => setTimeout(resolve, 3_000));
   void Promise.race([stops, forceExit]).then(() => app.exit(0));
-});
+}

@@ -137,6 +137,36 @@ def test_render_timeline_video_produces_mp4(tmp_path: Path) -> None:
     assert result["width"] == 320 and result["height"] == 240
 
 
+def test_render_with_camera_layer_produces_mp4(tmp_path: Path) -> None:
+    """Camera presets add a non-component layer; the offline document must accept it."""
+    from ir.timeline import ensure_camera_operations, merge_keyframe_operations
+    timeline = _timeline(duration=1000, fps=12)
+    operations = ensure_camera_operations(timeline)
+    operations += preset_operations("camera-push", ["camera"], {"start": 0, "duration": 1000})
+    operations += preset_operations("camera-pan", ["camera"], {"start": 200, "duration": 800, "travel": 60})
+    operations += preset_operations("scale-reveal", ["layer-hero-1"], {"start": 0, "duration": 500})
+    applied = apply_change_set(timeline, build_change_set(timeline, "camera", merge_keyframe_operations(timeline, operations)))
+    output = tmp_path / "camera.mp4"
+    result = render_timeline_video(applied, DESIGN_IR, output)
+    assert output.is_file() and result["bytes"] > 0 and result["frames"] == 12
+
+
+def test_parallel_workers_split_frames_and_concat_segments(tmp_path: Path) -> None:
+    from timeline_render import _frame_segments, _worker_count
+    assert _frame_segments(60, 2) == [(0, 30), (30, 60)]
+    assert _frame_segments(61, 3) == [(0, 21), (21, 41), (41, 61)]
+    assert _frame_segments(2, 4) == [(0, 1), (1, 2)]
+    assert _worker_count(60, None) == 1, "short clips stay single-worker"
+    assert _worker_count(600, 8) == 4, "capped by MAX_RENDER_WORKERS"
+    timeline = _animated_timeline()
+    progress: list[tuple[int, int]] = []
+    output = tmp_path / "parallel.mp4"
+    result = render_timeline_video(timeline, DESIGN_IR, output, on_progress=lambda done, total: progress.append((done, total)), workers=2)
+    assert output.is_file() and result["frames"] == 60 and result["workers"] == 2 and result["bytes"] > 0
+    assert progress[-1] == (60, 60) and len(progress) == 60
+    assert not list(tmp_path.glob("*.seg*")) and not list(tmp_path.glob("*.segments.txt"))
+
+
 def test_render_endpoint_validates_input() -> None:
     timeline = _animated_timeline()
     with TestClient(app) as client:

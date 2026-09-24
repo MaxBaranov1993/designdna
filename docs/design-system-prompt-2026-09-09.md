@@ -24,7 +24,7 @@
 
 1. `system.ref`, `policy.usage-mode` — режим первым, а не последним.
 2. `identity.soul`, hard/soft `BAN`.
-3. `styleguide.profile` — атмосфера: тема, углы, плотность, `labelStyle`, `monoFamily`, голос копирайта.
+3. `styleguide.profile` — атмосфера: тема, углы, плотность, `labelStyle`, `monoFamily`, голос копирайта. Следом `foundations.section-shell` (с 2026-09-23, обязательная): сетка страницы, измеренная по Source (`design_system/section_shell.py`, хранится в `foundations.sectionShell`): колонка и отступ контента, вертикальные отступы секций, прозрачен ли корень секции, стиль эйбрау с зазором под ним, уровни заголовков, основной текст, поверхности карточек и кнопки, плюс готовый `newSectionRoot` (ширина страницы и боковые отступы до колонки). Без неё генератор в extend-режиме строил универсальную белую карточку вне сетки сайта.
 4. Декор-сигнатуры (`sig-*` из `master_summary.decorative_signatures`), затем измеренные сигнатуры identity.
 5. Архетипы (`select_archetypes`).
 6. `site.brief` — ужимается по смыслу (`compact_site_brief_levels`), а не режется посреди JSON; `site.component-usage`.

@@ -13,12 +13,12 @@
 </script>
 
 <div class="fe-layers">
-  <div class="fe-layers-head">Слои</div>
-  <div class="fe-layers-hint">Клик — объект · Shift/Ctrl/Cmd — группа</div>
+  <div class="fe-layers-head">Layers</div>
+  <div class="fe-layers-hint">Click to select · Shift/Ctrl/Cmd for a group</div>
   <input
     class="fe-search"
-    aria-label="Поиск слоёв"
-    placeholder="Поиск слоёв…"
+    aria-label="Search layers"
+    placeholder="Search layers…"
     bind:this={search}
     oninput={(e) => ctl.setLayerQuery(e.currentTarget.value)}
   />

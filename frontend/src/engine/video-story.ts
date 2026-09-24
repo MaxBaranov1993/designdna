@@ -1,5 +1,5 @@
 import { IRRenderer } from "./renderer";
-import { TimelineEngine } from "./timeline";
+import { CAMERA_LAYER_ID, TimelineEngine, applyCameraToDom, clipCss, filterCss } from "./timeline";
 import { motionEase, type StoryEasing } from "./story-motion";
 import { overlayTargets, renderStoryOverlays, type StoryOverlay } from "./story-overlays";
 
@@ -7,11 +7,11 @@ export type StoryPage = { id: string; name: string; ir: Record<string, any>; gen
 export type StoryAction = {
   id: string; type: "move" | "click" | "type" | "wait" | "scroll" | "navigate";
   pageId: string; duration: number; target?: string; text?: string; y?: number;
-  toPageId?: string; transition?: "cut" | "fade" | "motion" | "state"; easing?: StoryEasing;
+  toPageId?: string; transition?: "cut" | "fade" | "motion" | "state" | "slide" | "zoom"; easing?: StoryEasing;
 };
 export type VideoStory = { pages: StoryPage[]; initialPageId: string; actions: StoryAction[] };
 export const actionLabel: Record<StoryAction["type"], string> = {
-  move: "Навести курсор", click: "Нажать", type: "Ввести текст", wait: "Пауза", scroll: "Прокрутить", navigate: "Перейти",
+  move: "Hover", click: "Click", type: "Type text", wait: "Pause", scroll: "Scroll", navigate: "Navigate",
 };
 export function storySchedule(story: VideoStory) {
   let time = 0;
@@ -88,12 +88,17 @@ export class VideoStoryPlayer {
     this.engine = new TimelineEngine(document);
     host.replaceChildren();
     Object.assign(host.style, { width: `${document.composition.width}px`, height: `${document.composition.height}px`, position: "relative", overflow: "hidden", pointerEvents: "none", background: document.composition.background });
+    // Camera wrapper: camera-layer keyframes move every page together.
+    const camera = window.document.createElement("div");
+    camera.dataset.timelineCamera = "";
+    Object.assign(camera.style, { position: "absolute", inset: "0", transformOrigin: "50% 50%" });
+    host.append(camera);
     for (const page of this.story.pages) {
       const outer = window.document.createElement("div");
       outer.dataset.storyPage = page.id;
       Object.assign(outer.style, { position: "absolute", inset: "0", overflow: "hidden", background: document.composition.background });
       const inner = window.document.createElement("div");
-      outer.append(inner); host.append(outer);
+      outer.append(inner); camera.append(outer);
       IRRenderer.renderIR(inner, page.ir as any, { viewport: "desktop", fit: false, offline });
       bindStoryTargets(inner, page.ir);
       const artWidth = Number(inner.querySelector<HTMLElement>("[data-design-width]")?.dataset.designWidth) || Number(page.ir.frame?.width) || 1440;
@@ -124,7 +129,7 @@ export class VideoStoryPlayer {
       if (this.fields.has(key)) continue;
       const root = this.roots.get(action.pageId)?.inner;
       const target = root && storyTarget(root, action.target || "");
-      if (!target) throw new Error(`Не найдено поле ${action.target} на странице ${action.pageId}`);
+      if (!target) throw new Error(`Field not found ${action.target} on page ${action.pageId}`);
       const input = target.matches("input,textarea") ? target : target.querySelector<HTMLElement>("input,textarea");
       if (input) {
         this.fields.set(key, { el: input, initial: (input as HTMLInputElement).value });
@@ -140,7 +145,7 @@ export class VideoStoryPlayer {
     // Also refuse unresolved clicks/moves before rendering a misleading clip.
     for (const action of this.story.actions.filter((a) => a.target)) {
       const root = this.roots.get(action.pageId)?.inner;
-      if (!root || !storyTarget(root, action.target!)) throw new Error(`Не найден элемент ${action.target} на странице ${action.pageId}`);
+      if (!root || !storyTarget(root, action.target!)) throw new Error(`Element not found ${action.target} on page ${action.pageId}`);
     }
     this.cursor = window.document.createElement("div");
     this.cursor.dataset.storyCursor = "true";
@@ -164,23 +169,46 @@ export class VideoStoryPlayer {
     }
   }
 
+  /** Реальная высота каждой страницы в px макета (после раскладки), для пролёта камеры. */
+  pageHeights(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const [id, root] of this.roots) {
+      const height = Math.max(root.inner.scrollHeight, root.inner.getBoundingClientRect().height / (root.scale || 1) || 0);
+      if (height > 0) out[id] = Math.round(height);
+    }
+    return out;
+  }
+
   seek(time: number) {
     const t = Math.max(0, Math.min(this.document.composition.duration, time));
     const solved = this.engine.seek(t);
+    // Pages sit in frame-sized clipped boxes: moving that box by the camera's
+    // vertical travel slid the clip itself off the frame and left blank video.
+    // A vertical pan is therefore a scroll of the page inside the frame; x,
+    // scale and rotation still move the whole frame.
+    const cameraState = solved[CAMERA_LAYER_ID];
+    const panY = cameraState ? cameraState.y : 0;
+    applyCameraToDom(this.host, cameraState ? { ...solved, [CAMERA_LAYER_ID]: { ...cameraState, y: 0 } } : solved);
     for (const base of this.mapped) {
       const state = solved[base.id];
       base.el.style.visibility = state.visible ? base.visibility : "hidden";
       base.el.style.opacity = String(state.visible ? state.opacity * base.opacity : 0);
       base.el.style.transform = `translate3d(${state.x}px,${state.y}px,0) rotate(${state.rotation}deg) scale(${state.scale}) ${base.transform}`;
+      base.el.style.filter = filterCss(state);
+      base.el.style.clipPath = clipCss(state);
     }
     for (const key of this.fields.keys()) this.writeField(key, null);
     const scrolls: Record<string, number> = {};
     const typed: Record<string, string> = {};
     let pageId = this.story.initialPageId;
     let x = this.document.composition.width / 2, y = this.document.composition.height / 2, visible = false, pulse = 0, cursorOpacity = 0, cursorScale = 1;
-    let fade: { from: string; to: string; progress: number; motion: boolean; state: boolean } | null = null;
+    let fade: { from: string; to: string; progress: number; motion: boolean; state: boolean; kind: string } | null = null;
     const applyScroll = () => {
-      for (const [id, root] of this.roots) root.inner.style.transform = `scale(${root.scale}) translateY(${- (scrolls[id] || 0)}px)`;
+      for (const [id, root] of this.roots) {
+        const max = Math.max(0, root.inner.scrollHeight - this.document.composition.height / root.scale);
+        const offset = Math.min(max, Math.max(0, (scrolls[id] || 0) - panY / root.scale));
+        root.inner.style.transform = `scale(${root.scale}) translateY(${-offset}px)`;
+      }
     };
     for (const root of this.roots.values()) { root.outer.style.transform = "none"; for (const panel of root.panels) panel.style.translate = "0px 0px"; }
     applyScroll();
@@ -191,7 +219,7 @@ export class VideoStoryPlayer {
       if (action.type === "navigate") {
         const to = action.toPageId!;
         const samePageState = action.transition === "state";
-        fade = action.transition !== "cut" && p < 1 ? { from: pageId, to, progress: ease(p), motion: action.transition === "motion", state: samePageState } : null;
+        fade = action.transition !== "cut" && p < 1 ? { from: pageId, to, progress: ease(p), motion: action.transition === "motion", state: samePageState, kind: action.transition || "motion" } : null;
         if (samePageState) { scrolls[to] = scrolls[pageId] || 0; applyScroll(); }
         else cursorOpacity *= fade ? 1 - motionEase(Math.min(1, p * 2)) : 0;
         pageId = to; visible = visible && cursorOpacity > 0;
@@ -236,11 +264,22 @@ export class VideoStoryPlayer {
       if (p < 1) break;
     }
     for (const [id, root] of this.roots) {
-      const opacity = fade ? id === fade.from ? 1 : id === fade.to ? fade.progress : 0 : id === pageId ? 1 : 0;
+      let opacity = fade ? id === fade.from ? 1 : id === fade.to ? fade.progress : 0 : id === pageId ? 1 : 0;
       if (fade?.motion) {
         const q = fade.progress;
         root.outer.style.transformOrigin = "center center";
         root.outer.style.transform = id === fade.to ? `translateY(${Math.min(10, this.document.composition.height * .012) * (1 - q)}px) scale(${1 + .035 * (1 - q)})` : "none";
+      } else if (fade?.kind === "slide") {
+        // Slide deck: the next page pushes up from below, the previous one drifts away.
+        const q = fade.progress, h = this.document.composition.height;
+        root.outer.style.transformOrigin = "center center";
+        root.outer.style.transform = id === fade.to ? `translateY(${h * (1 - q)}px)` : id === fade.from ? `translateY(${-h * .18 * q}px)` : "none";
+        if (id === fade.to || id === fade.from) opacity = 1;
+      } else if (fade?.kind === "zoom") {
+        // Zoom settle: the next page arrives from a slight enlargement while the previous recedes.
+        const q = fade.progress;
+        root.outer.style.transformOrigin = "center center";
+        root.outer.style.transform = id === fade.to ? `scale(${1.12 - .12 * q})` : id === fade.from ? `scale(${1 - .06 * q})` : "none";
       }
       // A full-opacity outgoing page under the incoming page prevents a dark flash.
       root.outer.style.zIndex = fade ? id === fade.to ? "2" : id === fade.from ? "1" : "0" : "0";

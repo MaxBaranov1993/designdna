@@ -37,3 +37,26 @@ def test_project_migration_reuses_existing_creation_time_without_mutating_input(
     assert payload == original
     assert migrated["ir"]["provenance"]["createdAt"] == created_at
     assert migrated["ir"]["provenance"]["migratedAt"] == created_at
+
+
+def test_asset_undo_snapshots_migrate_with_current_results_and_preserve_source_boundaries() -> None:
+    before = _legacy_ir()
+    after = copy.deepcopy(before)
+    after["tree"]["children"] = [{"type": "image", "src": "ddna://blobs/" + "a" * 64 + ".png"}]
+    data = {"ir": after, "variants": [after], "mixVariants": [after],
+            "assetVersions": [{"runId": "r", "before": [before], "after": [after]}]}
+    payload = {"pages": [{"graph": {"nodes": [
+        {"type": kind, "data": copy.deepcopy(data)} for kind in ("derive", "mix", "reskin", "sourceimport", "designsystem")
+    ]}}]}
+    original = copy.deepcopy(payload)
+    migrated = migrate_project_payload(payload)
+    assert payload == original
+    assert migrate_project_payload(migrated) == migrated
+    nodes = migrated["pages"][0]["graph"]["nodes"]
+    for node in nodes[:3]:
+        current = node["data"]
+        snapshot = current["assetVersions"][0]
+        assert snapshot["after"] == current["variants"] == current["mixVariants"] == [current["ir"]]
+        assert snapshot["before"][0]["version"] == "1.1"
+        assert snapshot["before"][0]["tree"]["children"] == []
+    assert nodes[3:] == original["pages"][0]["graph"]["nodes"][3:]

@@ -95,7 +95,7 @@ export async function getProviderStatus({
     const { command, args, overrideEnv, ...publicFields } = provider;
     if (!command) {
       const configured = Boolean(hasCredential(provider.id));
-      return { ...publicFields, installed: configured, checkedAt: now(), reason: configured ? null : "API-ключ не задан" };
+      return { ...publicFields, installed: configured, checkedAt: now(), reason: configured ? null : "API key not set" };
     }
     const cached = probeCache.get(provider.id);
     if (cached && now() - cached.at < cacheMs) return { ...publicFields, ...cached.result, cached: true };

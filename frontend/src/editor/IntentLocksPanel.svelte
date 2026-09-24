@@ -3,12 +3,12 @@
   import { editorUi } from "./state";
 
   const OPTIONS: Array<{ id: ctl.IntentLock; label: string; hint: string }> = [
-    { id: "brand", label: "Бренд", hint: "токены, логотип и фирменные решения" },
-    { id: "content", label: "Контент", hint: "тексты, изображения и данные" },
-    { id: "geometry", label: "Геометрия", hint: "размеры, позиции и оси" },
-    { id: "appearance", label: "Внешний вид", hint: "цвета, шрифты, радиусы и тени" },
-    { id: "responsive", label: "Адаптив", hint: "tablet/mobile overrides" },
-    { id: "source-link", label: "Связь с источником", hint: "provenance и sourceKey" },
+    { id: "brand", label: "Brand", hint: "tokens, logo, and brand choices" },
+    { id: "content", label: "Content", hint: "text, images, and data" },
+    { id: "geometry", label: "Geometry", hint: "dimensions, positions, and axes" },
+    { id: "appearance", label: "Appearance", hint: "colors, fonts, radii, and shadows" },
+    { id: "responsive", label: "Responsive", hint: "tablet/mobile overrides" },
+    { id: "source-link", label: "Source link", hint: "provenance and sourceKey" },
   ];
 
   const open = $derived($editorUi.intentLocksOpen);
@@ -34,8 +34,8 @@
   >
     <div class="fe-locks-card" role="dialog" aria-modal="true" aria-labelledby="locks-title">
       <div class="fe-locks-kicker">Intent Locks · {view.scope}</div>
-      <h2 id="locks-title">Что AI не должен менять?</h2>
-      <p>Блокировки соблюдают Smart Axis, Harmonizer, Responsive Autopilot и Quality fixes.</p>
+      <h2 id="locks-title">What should AI preserve?</h2>
+      <p>Smart Axis, Harmonizer, Responsive Autopilot, and Quality fixes respect these locks.</p>
       <div class="fe-locks-list">
         {#each OPTIONS as option (option.id)}
           <label class={locks.includes(option.id) ? "active" : ""}>
@@ -45,8 +45,8 @@
         {/each}
       </div>
       <div class="fe-locks-actions">
-        <button class="fe-btn" data-act="dismiss-intent-locks" onclick={() => ctl.closeIntentLocks()}>Отмена</button>
-        <button class="fe-btn primary" data-act="apply-intent-locks" onclick={() => ctl.setIntentLocks(locks)}>Сохранить блокировки</button>
+        <button class="fe-btn" data-act="dismiss-intent-locks" onclick={() => ctl.closeIntentLocks()}>Cancel</button>
+        <button class="fe-btn primary" data-act="apply-intent-locks" onclick={() => ctl.setIntentLocks(locks)}>Save locks</button>
       </div>
     </div>
   </div>

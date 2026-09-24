@@ -13,13 +13,13 @@
 
 {#if resultVariants({ type, data }).length}
   <details class="result-assets nodrag nowheel">
-    <summary>Изображения результата · Codex</summary>
+    <summary>Result images · Codex</summary>
     {#if allowed}
-      <p>Общий стиль серии берётся из входного компонента. Обрабатываются места с описанием изображения.</p>
-      <label><input type="checkbox" bind:checked={replace} disabled={busy} /> Обновить уже готовые изображения</label>
-      <button class="btn-node small" disabled={busy} onclick={() => void fillResultAssets(Number(id), replace)}>Создать изображения через Codex</button>
-    {:else}<p>Для изображений включите соответствующее поле маски Reskin.</p>{/if}
-    {#if versions.length}<button class="btn-node small" disabled={busy} onclick={() => undoResultAssets(Number(id))}>Отменить обработку изображений</button>{/if}
+      <p>The input component defines the visual style of the series. Only slots with image descriptions are processed.</p>
+      <label><input type="checkbox" bind:checked={replace} disabled={busy} /> Replace existing images</label>
+      <button class="btn-node small" disabled={busy} onclick={() => void fillResultAssets(Number(id), replace)}>Create images with Codex</button>
+    {:else}<p>Enable images in the Reskin mask to process them.</p>{/if}
+    {#if versions.length}<button class="btn-node small" disabled={busy} onclick={() => undoResultAssets(Number(id))}>Undo image processing</button>{/if}
     <AssetRunDetails {runs} {busy} currentResult={resultAssetsAreCurrent({ type, data })} onRetry={allowed ? (slotId) => void fillResultAssets(Number(id), runs?.at(-1)?.plan.context.replaceImages === true, slotId || '*') : undefined} />
   </details>
 {/if}

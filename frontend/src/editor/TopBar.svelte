@@ -26,7 +26,7 @@
     if (!dsMaster || savingVariant) return;
     const ir = ctl.currentIrSnapshot();
     if (!ir) return;
-    const label = window.prompt("Название варианта (например: Тёмный, Компактный, Со скидкой)", "");
+    const label = window.prompt("Variant name (e.g. Dark, Compact, Discount)", "");
     if (label === null) return;
     savingVariant = true;
     try {
@@ -39,9 +39,9 @@
       const fst = useFlowStore.getState();
       const dsNode = fst.nodes.find((n) => n.type === "designsystem" && (n.data as Record<string, unknown>).systemId === dsMaster.systemId);
       if (dsNode) fst.setNodeData(Number(dsNode.id), { document: body.document, summary: body.summary });
-      toast(`Вариант «${body.variantKey}» сохранён в черновик ДС — опубликуйте систему, чтобы генератор его увидел`, "ok");
+      toast(`Variant “${body.variantKey}” saved to the DS draft — publish the system to make it available to Generator`, "ok");
     } catch (e) {
-      toast("Вариант не сохранён: " + (e instanceof Error ? e.message : String(e)), "error");
+      toast("Variant not saved: " + (e instanceof Error ? e.message : String(e)), "error");
     } finally {
       savingVariant = false;
     }
@@ -63,10 +63,10 @@
 
 <div class="fe-toolbar">
   <span class="fe-logo">✦ DNA Editor</span>
-  <button class="fe-tbtn" data-act="zoom-out" title="Уменьшить" aria-label="Уменьшить" onclick={() => ctl.handleAct("zoom-out")}>−</button>
-  <button class="fe-zoom" bind:this={zoomLabel} aria-live="polite" title="Сбросить зум до 100%" aria-label="Сбросить зум до 100%" onclick={() => ctl.zoomReset()}>100%</button>
-  <button class="fe-tbtn" data-act="zoom-in" title="Увеличить" aria-label="Увеличить" onclick={() => ctl.handleAct("zoom-in")}>+</button>
-  <button class="fe-tbtn" data-act="zoom-fit" title="Вписать" aria-label="Вписать" onclick={() => ctl.handleAct("zoom-fit")}>⊡</button>
+  <button class="fe-tbtn" data-act="zoom-out" title="Zoom out" aria-label="Zoom out" onclick={() => ctl.handleAct("zoom-out")}>−</button>
+  <button class="fe-zoom" bind:this={zoomLabel} aria-live="polite" title="Reset zoom to 100%" aria-label="Reset zoom to 100%" onclick={() => ctl.zoomReset()}>100%</button>
+  <button class="fe-tbtn" data-act="zoom-in" title="Zoom in" aria-label="Zoom in" onclick={() => ctl.handleAct("zoom-in")}>+</button>
+  <button class="fe-tbtn" data-act="zoom-fit" title="Fit" aria-label="Fit" onclick={() => ctl.handleAct("zoom-fit")}>⊡</button>
   <span class="fe-sep"></span>
   <span class="fe-viewports" hidden bind:this={viewports}>
     <button class="fe-tbtn fe-viewport-btn active" data-viewport="desktop" title="Desktop 1440 px" aria-pressed="true" onclick={() => ctl.setViewport("desktop")}>
@@ -89,7 +89,7 @@
       step={1}
       value={1440}
       title="Custom canvas width"
-      aria-label="Ширина холста"
+      aria-label="Canvas width"
       bind:this={viewportWidth}
       oninput={(e) => ctl.setPreviewWidth(e.currentTarget.value)}
     />
@@ -99,8 +99,8 @@
   <DiagramInsert disabled={!!dsMaster} />
   <PresentationExport compact snapshot={() => ({ ir: ctl.currentIrSnapshot(), width: ctl.getSession()?.previewWidth || 1280, viewport: ctl.getSession()?.viewport || "desktop" })} />
   {#if dsMaster}
-    <button class="fe-btn" data-act="save-ds-variant" title="Сохранить текущее состояние как вариант компонента «{dsMaster.componentKey}» в дизайн-системе" aria-label="Сохранить как вариант ДС" disabled={savingVariant} onclick={() => void saveVariant()}>◈ Вариант в ДС</button>
+    <button class="fe-btn" data-act="save-ds-variant" title="Save the current state as a variant of component “{dsMaster.componentKey}” in the design system" aria-label="Save as DS variant" disabled={savingVariant} onclick={() => void saveVariant()}>◈ DS variant</button>
   {/if}
-  <button class="fe-btn danger" data-act="close" aria-label="Закрыть редактор" onclick={() => ctl.handleAct("close")}>Закрыть</button>
-  <button class="fe-btn primary" data-act="save" aria-label="Сохранить" aria-keyshortcuts="Control+S" onclick={() => ctl.handleAct("save")}>💾 Сохранить</button>
+  <button class="fe-btn danger" data-act="close" aria-label="Close editor" onclick={() => ctl.handleAct("close")}>Close</button>
+  <button class="fe-btn primary" data-act="save" aria-label="Save" aria-keyshortcuts="Control+S" onclick={() => ctl.handleAct("save")}>💾 Save</button>
 </div>

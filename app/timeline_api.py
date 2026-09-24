@@ -28,7 +28,7 @@ from ir.timeline import (
     revert_change_set,
     validate,
 )
-from timeline_assets import materialize_render_assets
+from timeline_assets import materialize_render_assets, promote_oversized_data_urls
 from timeline_render import (
     JOBS,
     JOBS_LOCK,
@@ -49,12 +49,29 @@ _ROOT = settings.runtime_root()
 TIMELINE_RENDER_DIR = settings.renders_dir()
 
 PRESET_LABELS = {
-    "fade-in": "Появление (прозрачность)",
-    "fade-in-up": "Появление снизу",
-    "zoom-in": "Появление с приближением",
-    "zoom-spotlight": "Медленный наезд камеры",
-    "pan-down": "Провлёт вниз",
-    "cta-pulse": "Пульс акцента",
+    "fade-in": "Fade in (opacity)",
+    "fade-in-up": "Fade in from below",
+    "slide-in-left": "Slide in from the left",
+    "slide-in-right": "Slide in from the right",
+    "zoom-in": "Zoom in",
+    "scale-reveal": "Scale reveal (soft overshoot)",
+    "focus-pull": "Focus pull (blur to sharp)",
+    "wipe-reveal": "Wipe reveal (mask from the bottom)",
+    "wipe-out": "Wipe out (mask to the bottom)",
+    "rotate-in": "Tilt in",
+    "zoom-spotlight": "Slow spotlight zoom",
+    "hero-focus": "Gentle focus",
+    "dim": "Dim (secondary blocks)",
+    "defocus": "Defocus (soft blur)",
+    "fade-out": "Fade out",
+    "pan-down": "Pan down",
+    "drift-up": "Parallax drift",
+    "cta-pulse": "Accent pulse",
+    "cta-bounce": "Accent bounce",
+    "camera-push": "Camera push-in",
+    "camera-pull": "Camera pull-out",
+    "camera-pan": "Camera pan down the page",
+    "camera-drift": "Camera drift",
 }
 
 
@@ -94,6 +111,9 @@ class TimelineAssistRequest(BaseModel):
     model: str | None = Field(default=None, max_length=100, pattern=r"^[a-zA-Z0-9._-]+$")
     require_llm: bool = False
     conversation: list[TimelineConversationMessage] = Field(default_factory=list, max_length=24)
+    # Реальные высоты страниц (px макета), измеренные плеером редактора: точный
+    # пролёт камеры вместо оценки по числу секций.
+    pageHeights: dict[str, float] | None = Field(default=None, max_length=8)
 
 
 class TimelineRenderRequest(BaseModel):
@@ -113,7 +133,7 @@ def _err(status: int, message: str):
 
 def _guard():
     if not FEATURE_FLAGS.is_enabled("videoEditor"):
-        return _err(403, "Video Editor выключен флагом DESIGNAI_FLAG_VIDEOEDITOR")
+        return _err(403, "Video Editor disabled by DESIGNAI_FLAG_VIDEOEDITOR")
     return None
 
 
@@ -123,7 +143,7 @@ def timeline_build(req: TimelineBuildRequest):
     if blocked:
         return blocked
     if not isinstance(req.ir, dict) or not isinstance(req.ir.get("tree"), list) or not req.ir.get("tree"):
-        return _err(422, "Нужен Design IR с непустым деревом")
+        return _err(422, "Design IR with a non-empty tree is required")
     try:
         if req.pages:
             from video_story import build_pages
@@ -143,9 +163,9 @@ def timeline_commit(req: TimelineCommitRequest):
         return blocked
     errors = validate(req.timeline)
     if errors:
-        return _err(422, "Таймлайн невалиден до применения: " + "; ".join(errors[:3]))
+        return _err(422, "Timeline invalid before apply: " + "; ".join(errors[:3]))
     if not req.operations:
-        return _err(422, "Нет операций для коммита")
+        return _err(422, "No operations to commit")
     try:
         change_set = build_change_set(
             req.timeline, req.intent or "timeline edit", req.operations,
@@ -212,15 +232,21 @@ def timeline_assist(req: TimelineAssistRequest):
         return blocked
     errors = validate(req.timeline)
     if errors:
-        return _err(422, "Таймлайн невалиден до применения: " + "; ".join(errors[:3]))
+        return _err(422, "Timeline invalid before apply: " + "; ".join(errors[:3]))
     from timeline_director import direct
     try:
         from video_models import validate_selection
         validate_selection(req.provider, req.model, req.effort)
         from video_context import prepare_context
-        visual_context = prepare_context(req.timeline) if req.timeline.get("story") and req.require_llm else None
+        from timeline_choreography import is_motion_request
+        # Motion-only requests (no clicks, menus, translations) skip the page
+        # screenshots and the vision pass: one short director call instead of two.
+        needs_vision = bool(req.timeline.get("story")) and req.require_llm and not is_motion_request(req.prompt, [m.model_dump() for m in req.conversation])
+        visual_context = prepare_context(req.timeline) if needs_vision else None
+        page_heights = {str(k): float(v) for k, v in (req.pageHeights or {}).items() if isinstance(v, (int, float)) and 0 < float(v) <= 100000}
         preview_timeline, change_set, meta = direct(req.timeline, req.prompt, provider=req.provider, effort=req.effort, require_llm=req.require_llm,
-            conversation=[message.model_dump() for message in req.conversation], model=req.model, visual_context=visual_context)
+            conversation=[message.model_dump() for message in req.conversation], model=req.model, visual_context=visual_context,
+            page_heights=page_heights or None)
     except ValueError as e:
         return _err(422, str(e))
     return {
@@ -234,6 +260,43 @@ def timeline_assist(req: TimelineAssistRequest):
     }
 
 
+def _same_design_ir(expected: str, ir: dict) -> bool:
+    """The timeline was built from this Design IR, whichever way its images travel.
+
+    Since 2026-09-24 the desktop bridge keeps ``ddna://blobs`` refs in timeline
+    requests; timelines built earlier hashed the same IR with the blobs expanded
+    to data URLs. Both forms are the same design.
+    """
+    if expected == content_hash(ir):
+        return True
+    text = json.dumps(ir, ensure_ascii=False)
+    if "ddna://blobs/" not in text:
+        return False
+    import base64
+    from scraper import blobs_dir
+    root = blobs_dir()
+    failed = False
+
+    def expand(match: re.Match) -> str:
+        # Same string the desktop bridge produced (blobs:getMany in desktop/main.mjs).
+        nonlocal failed
+        path = root / f"{match.group(1)}.{match.group(2)}"
+        try:
+            data = path.read_bytes()
+        except OSError:
+            failed = True
+            return match.group(0)
+        return f"data:{_BLOB_MIME[match.group(2)]};base64,{base64.b64encode(data).decode('ascii')}"
+
+    expanded = _BLOB_REF_RE.sub(expand, text)
+    return not failed and expected == content_hash(json.loads(expanded))
+
+
+_BLOB_REF_RE = re.compile(r"ddna://blobs/([0-9a-f]{64})\.(png|jpg|jpeg|gif|webp|svg)")
+_BLOB_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
+              "webp": "image/webp", "svg": "image/svg+xml"}
+
+
 @router.post("/api/timeline/render")
 def timeline_render(req: TimelineRenderRequest):
     """Очередь детерминированного локального рендера ролика."""
@@ -244,17 +307,20 @@ def timeline_render(req: TimelineRenderRequest):
         return _err(404, "Video render is disabled by feature flag.")
     errors = validate(req.timeline)
     if errors:
-        return _err(422, "Таймлайн невалиден: " + "; ".join(errors[:3]))
+        return _err(422, "Invalid timeline: " + "; ".join(errors[:3]))
     expected = ((req.timeline.get("source") or {}).get("designIrHash")) or ""
-    if expected and expected != content_hash(req.ir):
-        return _err(409, "Таймлайн не принадлежит переданному Design IR")
+    if expected and not _same_design_ir(expected, req.ir):
+        return _err(409, "Timeline does not belong to the supplied Design IR")
     # Fail closed на входе: политика + наличие/целостность локальных ассетов
+    req.ir = promote_oversized_data_urls(req.ir)
+
     _assets, asset_errors = materialize_render_assets(req.ir)
     for page in (req.timeline.get("story") or {}).get("pages", []):
+        page["ir"] = promote_oversized_data_urls(page["ir"])
         _, page_errors = materialize_render_assets(page["ir"])
         asset_errors.extend(page_errors)
     if asset_errors:
-        return _err(422, "Ассеты рендера не прошли проверку: " + "; ".join(asset_errors[:3]))
+        return _err(422, "Render assets failed validation: " + "; ".join(asset_errors[:3]))
     try:
         total, _fps = validate_timeline_render(req.timeline, req.ir)
     except ValueError as e:
@@ -264,7 +330,7 @@ def timeline_render(req: TimelineRenderRequest):
     output = TIMELINE_RENDER_DIR / f"{render_id}.{output_format}"
     job = register_job(render_id, total, output_format, output)
     if job is None:
-        return _err(429, "Очередь рендера заполнена — отмените лишние задачи или дождитесь завершения текущих")
+        return _err(429, "Render queue full — cancel extra jobs or wait for current jobs to finish")
     submit_render(render_id, copy.deepcopy(req.timeline), copy.deepcopy(req.ir), output)
     return {
         "renderId": render_id,
@@ -356,9 +422,9 @@ def timeline_export(req: TimelineExportRequest):
         return blocked
     errors = validate(req.timeline)
     if errors:
-        return _err(422, "Таймлайн невалиден: " + "; ".join(errors[:3]))
+        return _err(422, "Invalid timeline: " + "; ".join(errors[:3]))
     if (req.timeline.get("story") or {}).get("actions"):
-        return _err(422, "Сценарий с действиями экспортируется в MP4 или WebM")
+        return _err(422, "Scenarios with actions export to MP4 or WebM")
     if req.mode == "waapi":
         recipe = export_waapi(req.timeline)
         return {"files": {"timeline.waapi.json": json.dumps(recipe, ensure_ascii=False, indent=2)}}

@@ -27,6 +27,7 @@ def catalogue():
     if not models:
         models = [{"provider": "codex", "id": ident, "label": label, "efforts": ["medium", "high", "max"], "defaultEffort": "medium"}
                   for ident, label in [("gpt-5.6-sol", "GPT-5.6 Sol"), ("gpt-6-astra", "GPT-6 Astra")]]
+    models.append({"provider": "claude", "id": "fable", "label": "Claude Fable 5.1", "efforts": ["medium", "high", "max"], "defaultEffort": "medium"})
     models.append({"provider": "claude", "id": "opus", "label": "Claude Opus", "efforts": ["medium", "high", "max"], "defaultEffort": "medium"})
     return {"models": models, "source": source}
 
@@ -38,6 +39,6 @@ def validate_selection(provider, model, effort):
         return  # Keep saved requests without an explicit selection compatible.
     choice = next((item for item in catalogue()["models"] if item["provider"] == provider and item["id"] == model), None)
     if not choice:
-        raise ValueError("Модель отсутствует в каталоге выбранного аккаунта. Выберите модель заново.")
+        raise ValueError("Model not in the selected account catalog. Select a model again.")
     if effort not in choice["efforts"]:
-        raise ValueError("Эта модель не поддерживает выбранный уровень рассуждения.")
+        raise ValueError("This model does not support the selected reasoning level.")

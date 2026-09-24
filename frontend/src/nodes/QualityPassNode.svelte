@@ -32,7 +32,7 @@
   <InPorts type="qualitypass" />
   <textarea
     class="f-prompt nodrag nowheel"
-    placeholder="Бриф для оценки (необязательно, но повышает точность)"
+    placeholder="Evaluation brief (optional, improves accuracy)"
     value={data.brief}
     oninput={(e) => {
       const value = e.currentTarget.value;
@@ -47,7 +47,7 @@
   />
   <div class="ctl-row qp-controls">
     <label class="qp-label nodrag"
-      >порог
+      >threshold
       <select
         class="f-count"
         value={String(data.minScore)}
@@ -56,7 +56,7 @@
         <option value="75">75</option><option value="85">85</option><option value="95">95</option>
       </select>
     </label>
-    <label class="qp-label nodrag" title="Исправить замечания судьи и проверить результат повторно">
+    <label class="qp-label nodrag" title="Fix judge findings and verify again">
       <input
         type="checkbox"
         checked={data.repair}
@@ -70,12 +70,12 @@
       disabled={busy}
       onclick={() => $flow.runNode(Number(id))}
     >
-      {#if busy}<span class="spinner"></span>{/if} ✓ Проверить
+      {#if busy}<span class="spinner"></span>{/if} ✓ Check
     </button>
   </div>
   {#if result}
     <div class={"qp-score " + (result.passed ? "pass" : "warn")}>
-      <strong>{score ?? "?"}/100</strong> · {result.acceptance?.status === "unverified" ? "проверено не полностью" : result.passed ? "готово" : "нужна правка"}{result.repair?.applied ? " · repair применён" : ""}
+      <strong>{score ?? "?"}/100</strong> · {result.acceptance?.status === "unverified" ? "partially verified" : result.passed ? "done" : "needs repair"}{result.repair?.applied ? " · repair applied" : ""}
     </div>
   {/if}
   {#if result?.scorecard?.summary}
@@ -83,10 +83,10 @@
   {/if}
   {#if issues.length}
     <details class="rs-log f-log">
-      <summary>замечания · {issues.length}</summary>
+      <summary>issues · {issues.length}</summary>
       <div class="rs-log-lines">
         {#each issues.slice(0, 6) as issue, i (i)}
-          <div><b>{issue.severity || "minor"}</b>: {issue.problem || "без описания"}</div>
+          <div><b>{issue.severity || "minor"}</b>: {issue.problem || "no description"}</div>
         {/each}
       </div>
     </details>
@@ -94,7 +94,7 @@
   {#if result?.repair?.error}
     <div class="qp-error">repair: {result.repair.error}</div>
   {/if}
-  <IrPreview class="f-preview" ir={data.ir} height={160} empty="Подключите IR и запустите проверку" />
+  <IrPreview class="f-preview" ir={data.ir} height={160} empty="Connect IR and run verification" />
   <NodeStatus {id} />
-  <OutPorts type="qualitypass" />
+  <OutPorts {id} type="qualitypass" />
 </NodeShell>

@@ -29,7 +29,7 @@ ANTI_AI = [
 
 PRODUCT_TYPES: dict[str, dict] = {
     "marketplace": {
-        "label": "маркетплейс / объявления",
+        "label": "Marketplace / classifieds",
         "keywords": ("маркетплейс", "marketplace", "объявлен", "каталог товаров",
                      "продав", "покуп", "listing", "classifieds", "барахолк",
                      "витрин", "товар"),
@@ -51,7 +51,7 @@ PRODUCT_TYPES: dict[str, dict] = {
         ],
     },
     "saas": {
-        "label": "SaaS / продукт",
+        "label": "SaaS / product",
         "keywords": ("saas", "платформ", "сервис для", "подписк", "дашборд",
                      "dashboard", "crm", "аналитик", "автоматиз", "облачн"),
         "presets": ["bento", "minimal"],
@@ -72,7 +72,7 @@ PRODUCT_TYPES: dict[str, dict] = {
         ],
     },
     "editorial": {
-        "label": "медиа / журнал",
+        "label": "Media / magazine",
         "keywords": ("журнал", "стать", "медиа", "блог", "новост", "editorial",
                      "издани", "публикац", "лонгрид"),
         "presets": ["editorial", "minimal"],
@@ -93,7 +93,7 @@ PRODUCT_TYPES: dict[str, dict] = {
         ],
     },
     "ecommerce": {
-        "label": "интернет-магазин",
+        "label": "Online store",
         "keywords": ("магазин", "ecommerce", "e-commerce", "shop", "купить",
                      "корзин", "бренд одежд", "косметик", "мебел"),
         "presets": ["minimal", "bento"],
@@ -113,7 +113,7 @@ PRODUCT_TYPES: dict[str, dict] = {
         ],
     },
     "fintech": {
-        "label": "финтех / банк",
+        "label": "Fintech / banking",
         "keywords": ("банк", "финанс", "fintech", "платёж", "платеж", "инвестиц",
                      "криптовалют", "кошел", "страхов"),
         "presets": ["minimal", "glass"],
@@ -133,7 +133,7 @@ PRODUCT_TYPES: dict[str, dict] = {
         ],
     },
     "portfolio": {
-        "label": "портфолио / студия",
+        "label": "Portfolio / studio",
         "keywords": ("портфолио", "студия", "дизайнер", "фотограф", "архитект",
                      "кейсы", "portfolio", "агентств", "продакшн"),
         "presets": ["brutal", "editorial"],
@@ -153,7 +153,7 @@ PRODUCT_TYPES: dict[str, dict] = {
         ],
     },
     "edtech": {
-        "label": "образование",
+        "label": "Education",
         "keywords": ("курс", "обучен", "школ", "edtech", "образован", "учеб",
                      "тренинг", "вебинар", "репетитор"),
         "presets": ["bento", "minimal"],
@@ -173,7 +173,7 @@ PRODUCT_TYPES: dict[str, dict] = {
         ],
     },
     "healthcare": {
-        "label": "медицина / здоровье",
+        "label": "Medical / health",
         "keywords": ("медицин", "клиник", "здоров", "врач", "стоматолог",
                      "healthcare", "аптек", "терап", "диагностик"),
         "presets": ["minimal"],
@@ -193,7 +193,7 @@ PRODUCT_TYPES: dict[str, dict] = {
         ],
     },
     "event": {
-        "label": "событие / конференция",
+        "label": "Event / conference",
         "keywords": ("конференц", "событи", "ивент", "event", "фестивал",
                      "митап", "концерт", "выставк", "хакатон"),
         "presets": ["brutal", "glass"],
@@ -213,7 +213,7 @@ PRODUCT_TYPES: dict[str, dict] = {
         ],
     },
     "food": {
-        "label": "еда / ресторан",
+        "label": "Food / restaurant",
         "keywords": ("ресторан", "кафе", "еда", "доставк", "меню", "пицц",
                      "суши", "кофе", "бар ", "кухн"),
         "presets": ["editorial", "minimal"],
@@ -233,7 +233,7 @@ PRODUCT_TYPES: dict[str, dict] = {
         ],
     },
     "landing": {
-        "label": "лендинг",
+        "label": "Landing page",
         "keywords": (),
         "presets": ["bento", "minimal"],
         "fonts": ["manrope", "sora"],

@@ -38,7 +38,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
   .geo-overlay.geo-handling { cursor:grabbing; }
   .geo-overlay * { pointer-events:none; }
   .geo-overlay .geo-h, .geo-overlay .geo-pad { pointer-events:auto; }
-  .geo-box { position:absolute; border:calc(1.5px * var(--geo-inv,1)) solid transparent; pointer-events:none; }
+  .geo-box { position:absolute; border:calc(1.5px * var(--geo-inv,1)) solid transparent; pointer-events:none; overflow:visible; }
   .geo-box.hover { border-color:rgba(120,120,160,.55); border-style:dashed; }
   .geo-box.selected { border-color:#0D99FF; }
   .geo-chip { position:absolute; top:calc(-20px * var(--geo-inv,1)); left:calc(-1px * var(--geo-inv,1));
@@ -57,27 +57,51 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
   .geo-h.h-s  { bottom:calc(-4px * var(--geo-inv,1)); left:calc(50% - 4px * var(--geo-inv,1)); cursor:ns-resize; }
   .geo-h.h-sw { bottom:calc(-4px * var(--geo-inv,1)); left:calc(-4px * var(--geo-inv,1)); cursor:nesw-resize; }
   .geo-h.h-w  { top:calc(50% - 4px * var(--geo-inv,1)); left:calc(-4px * var(--geo-inv,1)); cursor:ew-resize; }
-  .geo-pad-guide { position:absolute; pointer-events:none; z-index:1; background:rgba(151,71,255,.72); }
-  .geo-pad-guide.pad-top, .geo-pad-guide.pad-bottom { height:calc(1px * var(--geo-inv,1)); }
-  .geo-pad-guide.pad-left, .geo-pad-guide.pad-right { width:calc(1px * var(--geo-inv,1)); }
-  .geo-pad { position:absolute; z-index:4; box-sizing:border-box; pointer-events:auto;
-    background:#9747ff; border:calc(1px * var(--geo-inv,1)) solid #fff;
-    box-shadow:0 0 0 calc(1px * var(--geo-inv,1)) rgba(151,71,255,.45); }
-  .geo-pad.pad-top, .geo-pad.pad-bottom { width:calc(34px * var(--geo-inv,1)); height:calc(7px * var(--geo-inv,1));
-    margin-left:calc(-17px * var(--geo-inv,1)); margin-top:calc(-3.5px * var(--geo-inv,1));
-    border-radius:calc(4px * var(--geo-inv,1)); cursor:ns-resize; }
-  .geo-pad.pad-left, .geo-pad.pad-right { width:calc(7px * var(--geo-inv,1)); height:calc(34px * var(--geo-inv,1));
-    margin-left:calc(-3.5px * var(--geo-inv,1)); margin-top:calc(-17px * var(--geo-inv,1));
-    border-radius:calc(4px * var(--geo-inv,1)); cursor:ew-resize; }
-  .geo-pad::after { content:attr(data-value); position:absolute; opacity:0; pointer-events:none; transition:opacity 80ms linear;
-    min-width:calc(22px * var(--geo-inv,1)); padding:calc(2px * var(--geo-inv,1)) calc(5px * var(--geo-inv,1));
-    border-radius:calc(4px * var(--geo-inv,1)); background:#9747ff; color:#fff;
-    font:600 calc(10px * var(--geo-inv,1))/1.2 'Inter',system-ui,sans-serif; text-align:center; white-space:nowrap; }
+  /* Padding UX: fills inside, grips + value chips OUTSIDE the frame */
+  .geo-pad-fill { position:absolute; pointer-events:none; z-index:1;
+    background:rgba(151,71,255,.22); }
+  .geo-pad-guide { position:absolute; pointer-events:none; z-index:2;
+    background:rgba(151,71,255,.85); }
+  .geo-pad-guide.pad-top, .geo-pad-guide.pad-bottom { height:calc(1.5px * var(--geo-inv,1));
+    margin-top:calc(-0.75px * var(--geo-inv,1)); }
+  .geo-pad-guide.pad-left, .geo-pad-guide.pad-right { width:calc(1.5px * var(--geo-inv,1));
+    margin-left:calc(-0.75px * var(--geo-inv,1)); }
+  .geo-pad { position:absolute; z-index:5; box-sizing:border-box; pointer-events:auto;
+    background:#9747ff; border:calc(1.5px * var(--geo-inv,1)) solid #fff;
+    box-shadow:0 0 0 calc(1px * var(--geo-inv,1)) rgba(151,71,255,.35),
+      0 calc(2px * var(--geo-inv,1)) calc(6px * var(--geo-inv,1)) rgba(0,0,0,.28); }
+  .geo-pad.pad-top, .geo-pad.pad-bottom { width:calc(48px * var(--geo-inv,1)); height:calc(12px * var(--geo-inv,1));
+    margin-left:calc(-24px * var(--geo-inv,1)); margin-top:calc(-6px * var(--geo-inv,1));
+    border-radius:calc(999px * var(--geo-inv,1)); cursor:ns-resize; }
+  .geo-pad.pad-left, .geo-pad.pad-right { width:calc(12px * var(--geo-inv,1)); height:calc(48px * var(--geo-inv,1));
+    margin-left:calc(-6px * var(--geo-inv,1)); margin-top:calc(-24px * var(--geo-inv,1));
+    border-radius:calc(999px * var(--geo-inv,1)); cursor:ew-resize; }
+  .geo-pad::before { content:''; position:absolute; pointer-events:auto; }
+  .geo-pad.pad-top::before, .geo-pad.pad-bottom::before {
+    left:calc(-12px * var(--geo-inv,1)); right:calc(-12px * var(--geo-inv,1));
+    top:calc(-10px * var(--geo-inv,1)); bottom:calc(-10px * var(--geo-inv,1)); }
+  .geo-pad.pad-left::before, .geo-pad.pad-right::before {
+    top:calc(-12px * var(--geo-inv,1)); bottom:calc(-12px * var(--geo-inv,1));
+    left:calc(-10px * var(--geo-inv,1)); right:calc(-10px * var(--geo-inv,1)); }
+  .geo-pad::after { content:attr(data-value); position:absolute; opacity:.95; pointer-events:none;
+    transition:opacity 80ms linear;
+    min-width:calc(28px * var(--geo-inv,1)); padding:calc(3px * var(--geo-inv,1)) calc(7px * var(--geo-inv,1));
+    border-radius:calc(6px * var(--geo-inv,1)); background:rgba(24,24,27,.96); color:#fff;
+    border:1px solid rgba(151,71,255,.55);
+    font:600 calc(11px * var(--geo-inv,1))/1.2 'Inter',system-ui,sans-serif; text-align:center; white-space:nowrap;
+    box-shadow:0 calc(2px * var(--geo-inv,1)) calc(8px * var(--geo-inv,1)) rgba(0,0,0,.3); }
+  .geo-pad[data-zero='1']::after { opacity:0; }
   .geo-pad:hover::after, .geo-pad.active::after { opacity:1; }
-  .geo-pad.pad-top::after, .geo-pad.pad-bottom::after { left:50%; transform:translateX(-50%); top:calc(9px * var(--geo-inv,1)); }
-  .geo-pad.pad-bottom::after { top:auto; bottom:calc(9px * var(--geo-inv,1)); }
-  .geo-pad.pad-left::after, .geo-pad.pad-right::after { top:50%; transform:translateY(-50%); left:calc(9px * var(--geo-inv,1)); }
-  .geo-pad.pad-right::after { left:auto; right:calc(9px * var(--geo-inv,1)); }
+  /* value chips sit further outside so they never cover content */
+  .geo-pad.pad-top::after { left:50%; transform:translateX(-50%);
+    bottom:calc(100% + 6px * var(--geo-inv,1)); top:auto; }
+  .geo-pad.pad-bottom::after { left:50%; transform:translateX(-50%);
+    top:calc(100% + 6px * var(--geo-inv,1)); bottom:auto; }
+  .geo-pad.pad-left::after { top:50%; transform:translateY(-50%);
+    right:calc(100% + 6px * var(--geo-inv,1)); left:auto; }
+  .geo-pad.pad-right::after { top:50%; transform:translateY(-50%);
+    left:calc(100% + 6px * var(--geo-inv,1)); right:auto; }
+  .geo-pad:hover, .geo-pad.active { background:#a855ff; }
   .geo-marquee { position:absolute; border:calc(1px * var(--geo-inv,1)) solid #0D99FF; background:rgba(13,153,255,.08);
     pointer-events:none; z-index:60; }
   .geo-guide { position:absolute; pointer-events:none; z-index:58; }
@@ -293,7 +317,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
     function refuseLocked(ref) {
       const node = lockedNodeFor(ref);
       if (!node) return false;
-      hint("Слой заблокирован: " + lockedReason(node));
+      hint("Layer locked: " + lockedReason(node));
       return true;
     }
 
@@ -371,14 +395,14 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
 
     function labelOf(ref) {
       const node = irNodeAt(ref);
-      if (ref.secIdx == null) return "артборд";
+      if (ref.secIdx == null) return "artboard";
       if (ref.path == null) return "section · " + (node ? node.type : "?");
-      if (/^props\.fields\.\d+$/.test(ref.path)) return "поле формы · " + String(node && (node.label || node.placeholder) || "без названия");
-      if (/^props\.fields\.\d+\.parts\.label$/.test(ref.path)) return "подпись поля";
-      if (/^props\.fields\.\d+\.parts\.control$/.test(ref.path)) return "поле ввода";
-      if (ref.path === "props.submit") return "кнопка формы · " + String(node && node.text || "Отправить");
+      if (/^props\.fields\.\d+$/.test(ref.path)) return "form field · " + String(node && (node.label || node.placeholder) || "untitled");
+      if (/^props\.fields\.\d+\.parts\.label$/.test(ref.path)) return "field label";
+      if (/^props\.fields\.\d+\.parts\.control$/.test(ref.path)) return "input field";
+      if (ref.path === "props.submit") return "form button · " + String(node && node.text || "Send");
       if (ref.path && ref.path.startsWith("props.")) return ref.path.replace("props.", "");
-      return node && node.type ? node.type : "узел";
+      return node && node.type ? node.type : "node";
     }
 
     /* --- геометрический hit-testing (модель tldraw/Excalidraw) --- */
@@ -478,9 +502,9 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
 
     /** Геометрический hit-test: возвращает ref элемента под точкой (или null).
      *  deep=true: пропустить контейнеры (секции), выбрать самый вложенный child. */
-    function hitTest(clientX, clientY, deep) {
+    function hitTest(clientX, clientY, deep, cachedTargets) {
       const pt = screenToCanvas(clientX, clientY);
-      const targets = collectHitTargets();
+      const targets = cachedTargets || collectHitTargets();
       const hits = [];
       // идём с конца (верхний z-order первый)
       for (let i = targets.length - 1; i >= 0; i--) {
@@ -566,11 +590,13 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
 
     /** Вычисляет alignment guides для перемещаемого элемента.
      *  Возвращает { guides: [{axis:'h'|'v', pos:number}], snaps: {dx,dy}, distances: [{...}] } */
-    function computeGuides(movingRef, movingRect) {
+    function computeGuides(movingRef, movingRect, cachedTargets) {
       // порог в canvas-координатах: 4 экранных px при любом зуме
       // (при зуме 0.15 прежние 4 canvas-px превращались в 0.6 экранных — snap не работал)
       const snapThr = SNAP_THRESHOLD / scale();
-      const targets = collectHitTargets().filter(t => refKey(t.ref) !== refKey(movingRef));
+      // Cache hit targets for the whole gesture — getBoundingClientRect on every
+      // frame is the main drag jank source on imported pages.
+      const targets = (cachedTargets || collectHitTargets()).filter(t => refKey(t.ref) !== refKey(movingRef));
       const guides = [];
       const distances = [];
       let snapDx = 0, snapDy = 0;
@@ -727,25 +753,40 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       return { guides: uniqueGuides, snaps: { dx: snapDx, dy: snapDy }, distances: Object.values(closestDist), eq };
     }
 
+    function guidesLayer() {
+      let layer = overlay().querySelector(":scope > .geo-guides-layer");
+      if (!layer) {
+        layer = document.createElement("div");
+        layer.className = "geo-guides-layer";
+        layer.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:58;";
+        overlay().appendChild(layer);
+      }
+      return layer;
+    }
+
     function renderGuides(guidesData) {
-      // очистить предыдущие
-      overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line, .geo-eq, .geo-eq-label").forEach(el => el.remove());
+      const layer = guidesLayer();
+      // One container wipe is much cheaper than querySelectorAll + remove across overlay
+      layer.innerHTML = "";
       if (!guidesData) return;
 
       // guides/eq/dist приходят в canvas-координатах; оверлей может жить вне
       // transform артборда (нода Edit) — переводим в координаты оверлея через k
       const k = canvasK();
       const inv = 1 / overlayScale(); // экранные смещения меток в координатах оверлея
+      // Alignment lines every frame; distance/eq only when few — keeps drag fluid like Figma
+      const light = (guidesData.distances && guidesData.distances.length > 6)
+        || ((guidesData.eq || []).length > 4);
       guidesData.guides.forEach(g => {
         const el = document.createElement("div");
         el.className = "geo-guide " + (g.axis === "h" ? "geo-guide-h" : "geo-guide-v");
         if (g.axis === "h") el.style.top = (g.pos * k) + "px";
         else el.style.left = (g.pos * k) + "px";
-        overlay().appendChild(el);
+        layer.appendChild(el);
       });
 
-      // зелёные distance labels + линии
-      guidesData.distances.forEach(d => {
+      // зелёные distance labels + линии (skip when overcrowded — Figma keeps drag light)
+      if (!light) guidesData.distances.forEach(d => {
         // линия
         const line = document.createElement("div");
         line.className = "geo-dist-line " + (d.type === "h" ? "geo-dist-line-h" : "geo-dist-line-v");
@@ -758,7 +799,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
           line.style.height = ((d.to - d.from) * k) + "px";
           line.style.left = (d.x * k) + "px";
         }
-        overlay().appendChild(line);
+        layer.appendChild(line);
 
         // метка
         const label = document.createElement("div");
@@ -771,11 +812,11 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
           label.style.left = (d.x * k + 4 * inv) + "px";
           label.style.top = ((d.from + d.to) / 2 * k - 6 * inv) + "px";
         }
-        overlay().appendChild(label);
+        layer.appendChild(label);
       });
 
       // фиолетовые equal-spacing регионы и метки
-      (guidesData.eq || []).forEach(d => {
+      if (!light) (guidesData.eq || []).forEach(d => {
         const region = document.createElement("div");
         region.className = "geo-eq";
         if (d.type === "h") {
@@ -789,7 +830,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
           region.style.left = (d.cross0 * k) + "px";
           region.style.width = (Math.max(2, d.cross1 - d.cross0) * k) + "px";
         }
-        overlay().appendChild(region);
+        layer.appendChild(region);
 
         const label = document.createElement("div");
         label.className = "geo-eq-label";
@@ -801,12 +842,14 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
           label.style.left = (d.cross0 * k + 4 * inv) + "px";
           label.style.top = ((d.from + d.to) / 2 * k - 6 * inv) + "px";
         }
-        overlay().appendChild(label);
+        layer.appendChild(label);
       });
     }
 
     function clearGuides() {
-      overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line, .geo-eq, .geo-eq-label").forEach(el => el.remove());
+      const layer = overlay().querySelector(":scope > .geo-guides-layer");
+      if (layer) layer.innerHTML = "";
+      else overlay().querySelectorAll(".geo-guide, .geo-dist, .geo-dist-line, .geo-eq, .geo-eq-label").forEach(el => el.remove());
     }
 
     function parentOf(ref) {
@@ -910,28 +953,59 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
 
     function boxRect(el) {
       const base = previewEl.getBoundingClientRect();
-      const r = el.getBoundingClientRect();
-      // previewEl может иметь transform: scale(zoom) — оверлей в локальных координатах
-      const ow = previewEl.offsetWidth;
-      const s = ow > 0 ? previewEl.getBoundingClientRect().width / ow : 1;
-      return { left: (r.left - base.left) / s, top: (r.top - base.top) / s,
-               width: r.width / s, height: r.height / s };
+      // Same scale the overlay lives in (canvasInner zoom). Prefer overlayScale;
+      // fall back to getScale when they diverge (Edit-node / nested artboard).
+      let s = overlayScale();
+      const gs = scale();
+      if (!(s > 0)) s = 1;
+      // If getScale is meaningfully different, trust getScale for IR content
+      // (artboard zoom) — otherwise selection drifts vertically/horizontally.
+      if (gs > 0 && Math.abs(gs - s) / s > 0.02) s = gs;
+
+      let r = el.getBoundingClientRect();
+      // Text nodes: line-box from getBoundingClientRect often sits above the
+      // ink (extra leading). Prefer Range bounds so the frame hugs glyphs
+      // like Figma's text selection.
+      try {
+        const onlyText = el.childNodes.length && [...el.childNodes].every(
+          n => n.nodeType === 3 || (n.nodeType === 1 && ["BR", "WBR"].includes(n.nodeName))
+        );
+        if (onlyText && (el.textContent || "").trim()) {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const tr = range.getBoundingClientRect();
+          if (tr.width >= 1 && tr.height >= 1) r = tr;
+        }
+      } catch (_) { /* Range may fail on detached nodes */ }
+
+      return {
+        left: (r.left - base.left) / s,
+        top: (r.top - base.top) / s,
+        width: r.width / s,
+        height: r.height / s,
+      };
     }
 
     function placeBox(box, r) {
+      // Clear any live-drag transform so left/top are authoritative again
+      box.style.transform = "";
+      box.style.willChange = "";
       box.style.left = r.left + "px";
       box.style.top = r.top + "px";
-      box.style.width = r.width + "px";
-      box.style.height = r.height + "px";
+      box.style.width = Math.max(1, r.width) + "px";
+      box.style.height = Math.max(1, r.height) + "px";
       box.hidden = false;
     }
 
     function chipText(ref) {
-      const f = (irNodeAt(ref) || {}).frame || {};
       const el = domAt(ref);
-      const s = scale();
-      const w = typeof f.width === "number" ? f.width : el ? Math.round(el.getBoundingClientRect().width / s) : "?";
-      const h = typeof f.height === "number" ? f.height : el ? Math.round(el.getBoundingClientRect().height / s) : "?";
+      if (el) {
+        const r = boxRect(el);
+        return `${labelOf(ref)} · ${Math.round(r.width)}×${Math.round(r.height)}`;
+      }
+      const f = (irNodeAt(ref) || {}).frame || {};
+      const w = typeof f.width === "number" ? Math.round(f.width) : "?";
+      const h = typeof f.height === "number" ? Math.round(f.height) : "?";
       return `${labelOf(ref)} · ${w}×${h}`;
     }
 
@@ -976,34 +1050,43 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
     function positionPaddingHandles(box, pads) {
       const [top, right, bottom, left] = pads;
       const values = { top, right, bottom, left };
-      // Keep padding controls just inside the frame. At zero padding they used
-      // to sit exactly on top of the N/E/S/W resize handles (higher z-index),
-      // making the selected artboard look resizable while every drag changed
-      // padding instead of width/height.
-      // Инсет держит постоянные 10 экранных px, но на мелких/отдалённых
-      // боксах 10/scale разрастается до середины элемента и хендл начинает
-      // перехватывать клики/драги по центру. Клампим до 20% стороны бокса.
-      const insetPx = 10 / overlayScale();
-      const insetY = Math.min(insetPx, Math.max(2, (box.offsetHeight || 40) * 0.2));
-      const insetX = Math.min(insetPx, Math.max(2, (box.offsetWidth || 40) * 0.2));
+      // Grips + value chips live OUTSIDE the blue frame so they never cover
+      // content — critical for short wide cards (avatar rows, pills) where
+      // large top+bottom padding would otherwise stack both grips in the middle.
+      const out = 16 / overlayScale();
       ["top", "right", "bottom", "left"].forEach(side => {
+        const fill = box.querySelector(`.geo-pad-fill.pad-${side}`);
         const guide = box.querySelector(`.geo-pad-guide.pad-${side}`);
         const handle = box.querySelector(`.geo-pad.pad-${side}`);
         const value = Math.max(0, values[side]);
         if (!guide || !handle) return;
-        handle.dataset.value = `${Math.round(value)} px`;
+        const rounded = Math.round(value);
+        handle.dataset.value = `${rounded}`;
+        handle.dataset.zero = rounded === 0 ? "1" : "0";
+        handle.style.top = "";
+        handle.style.right = "";
+        handle.style.bottom = "";
+        handle.style.left = "";
         if (side === "top") {
+          if (fill) fill.style.cssText = `top:0;left:0;right:0;height:${value}px`;
           guide.style.cssText = `top:${value}px;left:${left}px;right:${right}px`;
-          handle.style.top = (value + insetY) + "px"; handle.style.left = "50%";
+          handle.style.top = (-out) + "px";
+          handle.style.left = "50%";
         } else if (side === "bottom") {
+          if (fill) fill.style.cssText = `bottom:0;left:0;right:0;height:${value}px`;
           guide.style.cssText = `bottom:${value}px;left:${left}px;right:${right}px`;
-          handle.style.bottom = (value + insetY) + "px"; handle.style.left = "50%";
+          handle.style.bottom = (-out) + "px";
+          handle.style.left = "50%";
         } else if (side === "left") {
+          if (fill) fill.style.cssText = `left:0;top:${top}px;bottom:${bottom}px;width:${value}px`;
           guide.style.cssText = `left:${value}px;top:${top}px;bottom:${bottom}px`;
-          handle.style.left = (value + insetX) + "px"; handle.style.top = "50%";
+          handle.style.left = (-out) + "px";
+          handle.style.top = "50%";
         } else {
+          if (fill) fill.style.cssText = `right:0;top:${top}px;bottom:${bottom}px;width:${value}px`;
           guide.style.cssText = `right:${value}px;top:${top}px;bottom:${bottom}px`;
-          handle.style.right = (value + insetX) + "px"; handle.style.top = "50%";
+          handle.style.right = (-out) + "px";
+          handle.style.top = "50%";
         }
       });
     }
@@ -1011,6 +1094,9 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
     function addPaddingHandles(box, ref, el) {
       if (!canEditPadding(ref)) return;
       ["top", "right", "bottom", "left"].forEach(side => {
+        const fill = document.createElement("span");
+        fill.className = `geo-pad-fill pad-${side}`;
+        box.appendChild(fill);
         const guide = document.createElement("span");
         guide.className = `geo-pad-guide pad-${side}`;
         box.appendChild(guide);
@@ -1079,21 +1165,38 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       if (box) box.hidden = true;
     }
 
+    let hoverRaf = null;
+    let hoverPointer = null;
+    let hoverTargets = null;
+    let hoverTargetsAt = 0;
+
     function onHover(e) {
       if (drag || marquee) return;
-      const box = overlay().querySelector(".geo-box.hover");
-      // геометрический hit-test вместо DOM event target
-      const ref = hitTest(e.clientX, e.clientY);
-      if (!ref || selections.some(s => refKey(s.ref) === refKey(ref))) {
-        box.hidden = true;
-        overlay().style.cursor = "default";
-        return;
-      }
-      const el = domAt(ref);
-      if (el) {
-        placeBox(box, boxRect(el));
-        overlay().style.cursor = "move";
-      }
+      hoverPointer = e;
+      if (hoverRaf) return;
+      hoverRaf = requestAnimationFrame(() => {
+        hoverRaf = null;
+        if (!hoverPointer || drag || marquee) return;
+        const ev = hoverPointer;
+        const box = overlay().querySelector(".geo-box.hover");
+        // Refresh hit cache ~8×/s — full collectHitTargets every mousemove is expensive
+        const now = performance.now();
+        if (!hoverTargets || now - hoverTargetsAt > 120) {
+          hoverTargets = collectHitTargets();
+          hoverTargetsAt = now;
+        }
+        const ref = hitTest(ev.clientX, ev.clientY, false, hoverTargets);
+        if (!ref || selections.some(s => refKey(s.ref) === refKey(ref))) {
+          box.hidden = true;
+          overlay().style.cursor = "default";
+          return;
+        }
+        const el = domAt(ref);
+        if (el) {
+          placeBox(box, boxRect(el));
+          overlay().style.cursor = "move";
+        }
+      });
     }
 
     /* --- выделение --- */
@@ -1308,7 +1411,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       const cont = containerAt(pt) || rootSectionFallback(pt);
       // Клик мимо артборда раньше не давал НИЧЕГО: ни фигуры, ни объяснения —
       // инструмент выглядел сломанным. Говорим, почему ничего не создалось.
-      if (!cont) { notice("Рисовать можно внутри артборда — начните перетаскивание на макете."); return; }
+      if (!cont) { notice("Draw inside the artboard — start dragging on the layout."); return; }
       const el = document.createElement("div");
       el.className = "geo-marquee";
       overlay().appendChild(el);
@@ -1373,9 +1476,9 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       } else if (tool === "image") {
         fr.width = Math.round(clicked ? 240 : Math.max(40, rw));
         fr.height = Math.round(clicked ? 160 : Math.max(40, rh));
-        child = { type: "image", sourceKey: nextUid(), alt: "изображение", frame: fr };
+        child = { type: "image", sourceKey: nextUid(), alt: "image", frame: fr };
       } else if (tool === "text") {
-        child = { type: "text", sourceKey: nextUid(), text: "Новый текст", frame: fr };
+        child = { type: "text", sourceKey: nextUid(), text: "New text", frame: fr };
       } else {
         fr.width = Math.round(clicked ? 240 : Math.max(40, rw));
         fr.height = Math.round(clicked ? 160 : Math.max(40, rh));
@@ -1542,7 +1645,6 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       // и в live-превью, иначе превью расходится с результатом
       const parent = parentOf(d.ref);
       if (!parent || !parent.node.frame || parent.node.frame.layout !== "free") { tx = 0; ty = 0; }
-      d.wLive = w; d.hLive = h; d.txLive = tx; d.tyLive = ty;
       // Direct manipulation is authoritative. Generated/imported frames may
       // carry min/max constraints (for example hero.minHeight) that otherwise
       // keep the DOM visually frozen even while the pointer is moving.
@@ -1554,22 +1656,29 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         d.el.style.minHeight = "0px";
         d.el.style.maxHeight = "none";
       }
-      d.el.style.width = w + "px";
-      d.el.style.height = h + "px";
-      // угловой drag с контентом — живое превью масштабирования через CSS scale
-      // (origin в противоположном углу); commit пишет реальные числа в IR
-      const node = irNodeAt(d.ref);
-      const hasKids = node && Array.isArray(node.children) && node.children.length;
-      if (d.dir.length === 2 && hasKids && d.w0 > 0 && d.h0 > 0) {
-        const ksx = Math.max(0.1, w / d.w0), ksy = Math.max(0.1, h / d.h0);
-        const origin = { se: "0 0", sw: "100% 0", ne: "0 100%", nw: "100% 100%" }[d.dir] || "0 0";
-        d.el.style.transformOrigin = origin;
-        d.el.style.transform = `translate(${tx}px, ${ty}px) scale(${ksx}, ${ksy})`;
-      } else {
-        d.el.style.transform = (tx || ty) ? `translate(${tx}px, ${ty}px)` : "";
-      }
+      // Live preview via transform only (no width/height layout thrash each frame).
+      // Commit writes integer width/height into IR — same idea as Figma's live resize.
+      w = Math.round(w); h = Math.round(h);
+      d.wLive = w; d.hLive = h; d.txLive = Math.round(tx); d.tyLive = Math.round(ty);
+      const ksx = d.w0 > 0 ? Math.max(0.05, w / d.w0) : 1;
+      const ksy = d.h0 > 0 ? Math.max(0.05, h / d.h0) : 1;
+      const origin = {
+        e: "0 50%", w: "100% 50%", n: "50% 100%", s: "50% 0",
+        se: "0 0", sw: "100% 0", ne: "0 100%", nw: "100% 100%",
+      }[d.dir] || "0 0";
+      d.el.style.transformOrigin = origin;
+      d.el.style.willChange = "transform";
+      d.el.style.transform = `translate3d(${Math.round(tx)}px, ${Math.round(ty)}px, 0) scale(${ksx}, ${ksy})`;
       const chip = overlay().querySelector(".geo-box.selected:last-child .geo-chip");
-      if (chip) chip.textContent = `${Math.round(w)}×${Math.round(h)}`;
+      if (chip) chip.textContent = `${w}×${h}`;
+      // Keep selection box visually in sync via scale from same origin is hard;
+      // update box size cheaply without re-querying DOM children.
+      const box = overlay().querySelector(".geo-box.selected:last-child");
+      if (box && d.boxW0 != null) {
+        box.style.width = (d.boxW0 * ksx) + "px";
+        box.style.height = (d.boxH0 * ksy) + "px";
+        if (tx || ty) box.style.transform = `translate3d(${Math.round(tx) * canvasK()}px, ${Math.round(ty) * canvasK()}px, 0)`;
+      }
     }
 
     function livePadding(d, dx, dy, e) {
@@ -1935,8 +2044,14 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       if (!el) return;
       const s = scale();
       const r = el.getBoundingClientRect();
-      drag = { ref: primary.ref, type: "resize", dir, startX: e.clientX, startY: e.clientY,
-               moved: true, el, w0: r.width / s, h0: r.height / s };
+      const box = overlay().querySelector(".geo-box.selected:last-child");
+      const br = box ? box.getBoundingClientRect() : null;
+      drag = {
+        ref: primary.ref, type: "resize", dir, startX: e.clientX, startY: e.clientY,
+        moved: true, el, w0: r.width / s, h0: r.height / s,
+        boxW0: br ? br.width / overlayScale() : r.width / overlayScale(),
+        boxH0: br ? br.height / overlayScale() : r.height / overlayScale(),
+      };
       overlay().setPointerCapture(e.pointerId);
       overlay().addEventListener("pointermove", onDragMove);
       overlay().addEventListener("pointerup", onDragUp, { once: true });
@@ -1981,12 +2096,17 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         drag.moved = true;
         if (drag.type === "move") {
           drag.els = selections.filter(s => s.ref.secIdx != null).map(s => ({ ref: s.ref, el: domAt(s.ref) })).filter(d => d.el);
+          // Snapshot hit targets once per gesture (Figma-like: no layout scan each frame)
+          drag.guideTargets = collectHitTargets();
           // canvas-позиция элемента ДО drag (без transform) в системе координат
           // collectHitTargets; boxRect в Edit-ноде даёт экранные px и смешал бы единицы
           if (drag.els.length === 1) {
-            const t = collectHitTargets().find(tt => refKey(tt.ref) === refKey(drag.els[0].ref));
+            const t = drag.guideTargets.find(tt => refKey(tt.ref) === refKey(drag.els[0].ref));
             if (t) drag.originRect = { x: t.x, y: t.y, w: t.w, h: t.h };
           }
+          drag.els.forEach(d => {
+            if (d.el) d.el.style.willChange = "transform";
+          });
         }
       }
       const s = scale();
@@ -2000,7 +2120,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
           if (constrain === "y") ty = 0; else tx = 0;
         }
 
-        // smart guides: вычислить alignment и snap
+        // smart guides: вычислить alignment и snap (cached targets)
         if (drag.els.length === 1) {
           const d0 = drag.els[0];
           // исходная позиция без drag + текущее смещение (canvas-координаты)
@@ -2012,7 +2132,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
             const r = boxRect(d0.el);
             moving = { x: r.left + tx, y: r.top + ty, w: r.width, h: r.height };
           }
-          const guidesData = computeGuides(d0.ref, moving);
+          const guidesData = computeGuides(d0.ref, moving, drag.guideTargets);
           tx += guidesData.snaps.dx;
           ty += guidesData.snaps.dy;
           // Смарт-гайды (выравнивание, равные зазоры) приоритетнее сетки: хост
@@ -2025,11 +2145,22 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
           clearGuides();
         }
 
+        // Pixel-snapped live preview at 100%-like feel; GPU translate3d
+        const vtx = Math.round(tx), vty = Math.round(ty);
+        drag.liveTx = vtx; drag.liveTy = vty;
+        const xf = `translate3d(${vtx}px, ${vty}px, 0)`;
         drag.els.forEach(d => {
-          d.el.style.transform = `translate(${tx}px, ${ty}px)`;
+          d.el.style.transform = xf;
+        });
+        // Keep selection chrome glued to the element (was the main "jerky" feel)
+        const k = canvasK();
+        const boxXf = `translate3d(${vtx * k}px, ${vty * k}px, 0)`;
+        overlay().querySelectorAll(".geo-box.selected").forEach(box => {
+          box.style.transform = boxXf;
+          box.style.willChange = "transform";
         });
         const chip = overlay().querySelector(".geo-box.selected:last-child .geo-chip");
-        if (chip) chip.textContent = `Δ ${Math.round(tx)} · ${Math.round(ty)}`;
+        if (chip) chip.textContent = `Δ ${vtx} · ${vty}`;
       } else if (drag.type === "padding") {
         livePadding(drag, dx / s, dy / s, e);
       } else if (drag.type === "resize-multi") {
@@ -2073,14 +2204,35 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       }
       // очищаем CSS transform ДО commit чтобы relPos не включал drag offset
       if (d.type === "move") {
-        d.els && d.els.forEach(de => { if (de.el) de.el.style.transform = ""; });
+        d.els && d.els.forEach(de => {
+          if (de.el) { de.el.style.transform = ""; de.el.style.willChange = ""; }
+        });
+        overlay().querySelectorAll(".geo-box.selected").forEach(box => {
+          box.style.transform = "";
+          box.style.willChange = "";
+        });
         clearGuides();
+        // Prefer the last live (snapped + rounded) delta so drop matches preview
+        if (d.liveTx != null && d.liveTy != null && !d.altKey) {
+          dx = d.liveTx; dy = d.liveTy;
+        }
         if (d.altKey) commitDuplicateMove(dx, dy);
         else commitMoveAll(dx, dy);
       }
       else if (d.type === "padding") commitPadding(d);
-      else if (d.type === "resize-multi") { if (d.el) d.el.style.transform = ""; commitResizeMulti(d); }
-      else { d.el.style.transform = ""; commitResize(d); }
+      else if (d.type === "resize-multi") {
+        if (d.el) { d.el.style.transform = ""; d.el.style.willChange = ""; }
+        overlay().querySelectorAll(".geo-box.selected").forEach(box => {
+          box.style.transform = ""; box.style.willChange = "";
+        });
+        commitResizeMulti(d);
+      } else {
+        if (d.el) { d.el.style.transform = ""; d.el.style.willChange = ""; d.el.style.transformOrigin = ""; }
+        overlay().querySelectorAll(".geo-box.selected").forEach(box => {
+          box.style.transform = ""; box.style.willChange = "";
+        });
+        commitResize(d);
+      }
     }
 
     /** Копии выделенных children/секций/sourceKey-слоёв вставляются рядом с
@@ -2276,7 +2428,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       // секции верхнего уровня (path == null) не группируются: понятный отказ
       // вместо тихого пропуска (и без TypeError на r.path.split)
       if (selections.some(s => s.ref.secIdx != null && s.ref.path == null)) {
-        hint("Группировка недоступна для секций верхнего уровня");
+        hint("Top-level sections cannot be grouped");
         return;
       }
       // children.* и sourceKey-refs; props.* и editable:false исключаем
@@ -2288,7 +2440,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
       const parent = parents[0];
       // явный отказ вместо тихого пропуска: разные секции/родители, stale refs
       if (!parent || !parent.dom || parents.some(p => !p || p.siblings !== parent.siblings)) {
-        hint("Группировка возможна только для сиблингов одного контейнера");
+        hint("Only siblings in the same container can be grouped");
         return;
       }
       // локальные координаты от padding-box родителя — меряем из DOM, как makeParentFree
@@ -2948,17 +3100,17 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         && selections.filter(s => s.ref.secIdx != null && s.ref.path != null
           && !s.ref.path.startsWith("props.") && !lockedNodeFor(s.ref)).length >= 2;
       const items = [
-        { label: "Копировать", hint: "Ctrl+C", disabled: !hasSel, run: copySelection },
-        { label: "Вырезать", hint: "Ctrl+X", disabled: !hasSel, run: cutSelection },
-        { label: "Вставить", hint: "Ctrl+V", disabled: !geoClipboard.length, run: pasteClipboard },
-        { label: "Дублировать", hint: "Ctrl+D", disabled: !hasSel, run: duplicateSelection },
+        { label: "Copy", hint: "Ctrl+C", disabled: !hasSel, run: copySelection },
+        { label: "Cut", hint: "Ctrl+X", disabled: !hasSel, run: cutSelection },
+        { label: "Insert", hint: "Ctrl+V", disabled: !geoClipboard.length, run: pasteClipboard },
+        { label: "Duplicate", hint: "Ctrl+D", disabled: !hasSel, run: duplicateSelection },
         { sep: true },
-        { label: "Выше", hint: "]", disabled: !hasSel, run: bringForward },
-        { label: "Ниже", hint: "[", disabled: !hasSel, run: sendBackward },
-        { label: "Группа", hint: "Ctrl+G", disabled: !groupable, run: groupSelection },
-        { label: "Разгруппировать", hint: "Ctrl+Shift+G", disabled: !canUngroup, run: ungroupSelection },
+        { label: "Bring forward", hint: "]", disabled: !hasSel, run: bringForward },
+        { label: "Send backward", hint: "[", disabled: !hasSel, run: sendBackward },
+        { label: "Group", hint: "Ctrl+G", disabled: !groupable, run: groupSelection },
+        { label: "Ungroup", hint: "Ctrl+Shift+G", disabled: !canUngroup, run: ungroupSelection },
         { sep: true },
-        { label: "Удалить", hint: "Del", disabled: !hasSel, run: deleteSelections },
+        { label: "Delete", hint: "Del", disabled: !hasSel, run: deleteSelections },
       ];
       if (hasSel && !multiSel && last) {
         const pathLabel = last.ref.path == null
@@ -2966,10 +3118,10 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
           : `tree[${last.ref.secIdx}].${last.ref.path}`;
         items.push({ sep: true });
         items.push({
-          label: "Копировать IR-путь", hint: pathLabel,
+          label: "Copy IR path", hint: pathLabel,
           run: () => {
             if (navigator.clipboard) navigator.clipboard.writeText(pathLabel);
-            hint("IR-путь скопирован");
+            hint("IR path copied");
           },
         });
       }
@@ -3224,7 +3376,7 @@ import { isSourceKeyPath, findByKey, sourceParentPath, locateByKey, parentKeyByK
         overlay().appendChild(badge);
       }
       const node = irNodeAt(containerCtx);
-      badge.textContent = `✎ ${node ? node.type : "container"} (Esc — выйти)`;
+      badge.textContent = `✎ ${node ? node.type : "container"} (Esc to exit)`;
     }
 
     /* --- монтаж --- */

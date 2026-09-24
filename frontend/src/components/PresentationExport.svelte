@@ -12,13 +12,13 @@
     busy = true; error = ""; report = null;
     try {
       const input = JSON.parse(JSON.stringify(snapshot()));
-      if (!input.ir) throw new Error("Нет макета для экспорта");
+      if (!input.ir) throw new Error("No layout to export");
       const clean = (value: any) => { if (value && typeof value === "object") { delete value.__path; Object.values(value).forEach(clean); } };
       clean(input.ir);
       const result = await api<{filename: string; base64: string; report: Report}>("/api/export/pptx", structuredClone(input));
       if (window.designDNA?.files) {
         const saved = await window.designDNA.files.save(result.filename, result.base64);
-        if (!saved.saved) { toast("Сохранение PPTX отменено", "info"); return; }
+        if (!saved.saved) { toast("PPTX save cancelled", "info"); return; }
       } else {
         const bytes = Uint8Array.from(atob(result.base64), c => c.charCodeAt(0));
         const url = URL.createObjectURL(new Blob([bytes], {type: "application/vnd.openxmlformats-officedocument.presentationml.presentation"}));
@@ -31,22 +31,22 @@
         reportTop = Math.min(rect.bottom + 8, window.innerHeight - 80);
         reportLeft = Math.max(12, Math.min(rect.right - 340, window.innerWidth - 352));
       }
-      toast(`PPTX: ${report.text} текстовых блоков, ${report.shapes} фигур, ${report.images} изображений`, "ok");
+      toast(`PPTX: ${report.text} text blocks, ${report.shapes} shapes, ${report.images} images`, "ok");
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
-      toast("PPTX не сохранён: " + error, "error");
+      toast("PPTX was not saved: " + error, "error");
     } finally { busy = false; }
   }
 </script>
 
 <div class:compact class="pptx-export nodrag nowheel">
-  <button bind:this={trigger} class={compact ? "fe-btn" : "btn-node small"} data-act="export-pptx" disabled={busy} onclick={() => void run()}>{busy ? "Собираю PPTX…" : "PowerPoint (.pptx)"}</button>
+  <button bind:this={trigger} class={compact ? "fe-btn" : "btn-node small"} data-act="export-pptx" disabled={busy} onclick={() => void run()}>{busy ? "Building PPTX…" : "PowerPoint (.pptx)"}</button>
   {#if report}
-    <details class="pptx-report" style:top={compact ? reportTop + "px" : undefined} style:left={compact ? reportLeft + "px" : undefined}><summary>Последний PPTX: текст {report.text} · фигуры {report.shapes} · изображения {report.images}</summary>
-      <p>Один слайд {Math.round(report.width)} × {Math.round(report.height)} px. Исходный IR и ресурсы включены в файл.</p>
-      <p>Шрифты: {report.fonts.join(", ") || "нет текста"}. Они должны быть установлены на компьютере получателя.</p>
-      {#if report.rasterFallbacks.length}<p>Сложные элементы сохранены растром:</p><ul>{#each report.rasterFallbacks as item}<li>{item.path}: {item.reason}{item.text ? " (включая текст)" : ""}</li>{/each}</ul>{/if}
-      <button class={compact ? "fe-btn" : "btn-node small"} data-act="close-pptx-report" onclick={() => report = null}>Скрыть отчёт</button>
+    <details class="pptx-report" style:top={compact ? reportTop + "px" : undefined} style:left={compact ? reportLeft + "px" : undefined}><summary>Last PPTX: text {report.text} · shapes {report.shapes} · images {report.images}</summary>
+      <p>One slide {Math.round(report.width)} × {Math.round(report.height)} px. Source IR and assets are included in the file.</p>
+      <p>Fonts: {report.fonts.join(", ") || "no text"}. These fonts must be installed on the recipient device.</p>
+      {#if report.rasterFallbacks.length}<p>Complex elements were saved as raster images:</p><ul>{#each report.rasterFallbacks as item}<li>{item.path}: {item.reason}{item.text ? " (including text)" : ""}</li>{/each}</ul>{/if}
+      <button class={compact ? "fe-btn" : "btn-node small"} data-act="close-pptx-report" onclick={() => report = null}>Hide report</button>
     </details>
   {/if}
   {#if error}<p role="alert">{error}</p>{/if}

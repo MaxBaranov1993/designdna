@@ -43,7 +43,7 @@ def fingerprint() -> str:
 
 def surface_for(brief: str, requested: str = "auto", ir: dict | None = None) -> str:
     if requested not in SURFACES:
-        raise ValueError("Неизвестный тип экрана")
+        raise ValueError("Unknown screen type")
     if requested != "auto":
         return requested
     text = brief.casefold()
@@ -74,10 +74,10 @@ def surface_for(brief: str, requested: str = "auto", ir: dict | None = None) -> 
 def mode_for(ds: dict | None, locked: bool = False) -> str:
     if ds is not None:
         if not ds.get("systemId"):
-            raise ValueError("Выбранная дизайн-система не содержит systemId")
+            raise ValueError("Selected design system has no systemId")
         mode = ds.get("usageMode") or "strict"
         if mode not in {"strict", "extend", "style-only"}:
-            raise ValueError("Неизвестный режим дизайн-системы")
+            raise ValueError("Unknown design system mode")
         return mode
     return "tokens-only" if locked else "freeform"
 
@@ -85,7 +85,7 @@ def mode_for(ds: dict | None, locked: bool = False) -> str:
 def context(brief: str, *, surface: str = "auto", style: str = "auto",
             ds: dict | None = None, locked: bool = False, edit: bool = False) -> dict:
     if style not in STYLE_IDS:
-        raise ValueError("Неизвестное стилевое направление")
+        raise ValueError("Unknown style direction")
     resolved = surface_for(brief, surface)
     mode = mode_for(ds, locked)
     return {"version": POLICY_VERSION, "policyHash": fingerprint(), "surface": resolved,
@@ -125,12 +125,12 @@ def directions(ctx: dict) -> list[dict]:
     surface = ctx["surface"]
     pattern = knowledge()["patterns"][surface]
     plans = [
-        ("task-first", "Задача на первом месте", "Основное действие и нужные для него данные видны сразу", "Второстепенные сведения раскрываются позже"),
-        ("compare-first", "Сравнение и контекст", "Связанные данные сгруппированы для проверки перед действием", "Больше информации на первом экране"),
-        ("guided", "Последовательное решение", "Сложное решение разделено на понятные связанные группы", "Меньше данных видно одновременно"),
+        ("task-first", "Task first", "The main action and its required data are immediately visible", "Secondary details are revealed later"),
+        ("compare-first", "Comparison and context", "Related data is grouped for review before acting", "More information on the first screen"),
+        ("guided", "Step-by-step decision", "A complex decision is split into clear related groups", "Less data visible at once"),
     ]
     if ctx["requestedMode"] == "strict":
-        plans = [("registered", "Композиция дизайн-системы", "Точные мастера и допустимые слоты", "Новые компоненты требуют расширения системы")]
+        plans = [("registered", "Design system composition", "Exact masters and allowed slots", "New components require extending the system")]
     return [{"id": key, "label": label, "motivation": why, "tradeoff": tradeoff,
              "plan": {"schemaVersion": "generator-plan/1.0", "surface": surface,
                       "composition": pattern["structure"], "emphasis": why,
@@ -158,9 +158,9 @@ def repair_guard(before: dict, after: dict, surface: str, ds: dict | None = None
     """Reject new defects, changed foundations and changed/removed exact instances."""
     from asset_quality import preserves_resources
     if not preserves_resources(before, after):
-        return "Quality Pass: repair удалил или заменил готовое изображение"
+        return "Quality Pass: repair removed or replaced a completed image"
     if before.get("tokens") != after.get("tokens"):
-        return "Quality Pass: repair изменил зафиксированные foundations"
+        return "Quality Pass: repair changed locked foundations"
     def referenced(value):
         out = []
         if isinstance(value, dict):
@@ -174,11 +174,11 @@ def repair_guard(before: dict, after: dict, surface: str, ds: dict | None = None
     def refs(ir):
         return sorted(item for node in ir.get("tree") or [] for item in referenced(node))
     if refs(before) != refs(after):
-        return "Quality Pass: repair изменил или удалил exact master"
+        return "Quality Pass: repair changed or removed an exact master"
     old = {(x["rule"], x.get("path")) for x in lint(before, surface)}
     added = [x for x in lint(after, surface) if (x["rule"], x.get("path")) not in old]
     if added:
-        return "Quality Pass: repair добавил дефекты: " + "; ".join(x["rule"] for x in added[:5])
+        return "Quality Pass: repair introduced defects: " + "; ".join(x["rule"] for x in added[:5])
     if ds:
         from design_system import resolver, store
         document, error = store.resolve_ref(ds)

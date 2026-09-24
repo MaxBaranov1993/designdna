@@ -130,16 +130,16 @@ def needs_font_catalog(ir: dict) -> bool:
 
 def capture_scene(ir: dict, *, width: int = 1280, viewport: str = "desktop") -> tuple[dict, dict]:
     if not isinstance(ir, dict) or not ir.get("tree"):
-        raise ValueError("Нет макета для экспорта")
+        raise ValueError("No layout to export")
     if viewport not in {"desktop", "tablet", "mobile"} or not 320 <= width <= 4096:
-        raise ValueError("Неверный размер или вид холста")
+        raise ValueError("Invalid canvas size or type")
     render_ir = _neutralize_links(ir)
     root_frame = render_ir.get("frame") or {}
     if viewport != "desktop" or not isinstance(root_frame.get("width"), (int, float)):
         render_ir["frame"] = dict(root_frame, width=width)
     assets, errors = materialize_render_assets(render_ir)
     if errors:
-        raise ValueError("Ресурсы экспорта: " + "; ".join(errors[:3]))
+        raise ValueError("Export assets: " + "; ".join(errors[:3]))
     render_ir = rewrite_local_asset_urls(render_ir)
     faces, inter_assets = _builtin_inter_faces()
     meta = render_ir.setdefault("meta", {})
@@ -167,7 +167,7 @@ def capture_scene(ir: dict, *, width: int = 1280, viewport: str = "desktop") -> 
             }""", {"ir": render_ir, "viewport": viewport, "webfonts": webfonts})
             readiness = page.evaluate(_READINESS_JS)
             if readiness.get("errors") or blocked:
-                raise ValueError("Экспорт не готов: " + "; ".join((readiness.get("errors") or blocked)[:3]))
+                raise ValueError("Export not ready: " + "; ".join((readiness.get("errors") or blocked)[:3]))
             # Renderer links are deliberately inert. Recover their intended
             # destination from the canonical node, never navigate or fetch it.
             page.evaluate("""({ir,viewport}) => {
@@ -185,9 +185,9 @@ def capture_scene(ir: dict, *, width: int = 1280, viewport: str = "desktop") -> 
             }""", {"ir": ir, "viewport": viewport})
             scene = page.evaluate(COLLECT_SCENE)
             if sum(item["kind"] == "image" for item in scene["items"]) > 128:
-                raise ValueError("Больше 128 растровых объектов; экспортируйте отдельный блок")
+                raise ValueError("More than 128 raster objects; export a single block")
             if not 1 <= scene["height"] <= 16000 or scene["width"] * scene["height"] > 32_000_000:
-                raise ValueError("Слишком большой слайд; экспортируйте отдельный блок (до 16 000 px / 32 MP)")
+                raise ValueError("Slide too large; export a single block (up to 16,000 px / 32 MP)")
             page.set_viewport_size({"width": math.ceil(scene["width"]), "height": math.ceil(scene["height"])})
             # Re-read geometry after the viewport grows; fixed/sticky elements may move.
             scene = page.evaluate(COLLECT_SCENE)
@@ -219,7 +219,7 @@ def capture_scene(ir: dict, *, width: int = 1280, viewport: str = "desktop") -> 
                     png = page.screenshot(type="png", omit_background=True, animations="disabled", clip={"x": x, "y": y, "width": w, "height": h})
                     total_bytes += len(png)
                     if total_bytes > 48_000_000:
-                        raise ValueError("Растровые элементы превышают 48 MB; экспортируйте отдельный блок")
+                        raise ValueError("Raster elements exceed 48 MB; export a single block")
                     item.update(x=x, y=y, w=w, h=h, png=base64.b64encode(png).decode())
                 finally:
                     page.evaluate("document.getElementById('pptx-isolation')?.remove(); document.getElementById('pptx-background')?.remove()")

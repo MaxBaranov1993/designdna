@@ -247,15 +247,15 @@ def validate_generation(ir: dict, context: dict) -> dict:
                     hexv = value.lower()[:7]
                     if allowed_colors and hexv not in allowed_colors and hexv != "#ffffff" and hexv != "#000000":
                         (errors if mode == "strict" else warnings).append(
-                            {"code": "off-system-color", "message": f"Цвет {value} вне палитры системы ({section})"})
+                            {"code": "off-system-color", "message": f"Color {value} outside the system palette ({section})"})
             fam = str(style.get("fontFamily") or "").split(",")[0].strip().strip("'\"").lower()
             if families and fam and fam not in families and fam not in ("inter", "system-ui", "sans-serif", "serif", "monospace"):
                 (errors if mode == "strict" else warnings).append(
-                    {"code": "off-system-font", "message": f"Шрифт «{fam}» не входит в систему"})
+                    {"code": "off-system-font", "message": f"Font “{fam}” is not in the system"})
             radius = style.get("borderRadius")
             if (isinstance(radius, (int, float)) and radii and round(float(radius)) not in radii
                     and not (pill_scale and float(radius) >= 50)):
-                warnings.append({"code": "off-system-radius", "message": f"Радиус {radius} вне шкалы системы"})
+                warnings.append({"code": "off-system-radius", "message": f"Radius {radius} outside the system scale"})
         if mode == "strict" and node.get("type") in ("card", "button") and node.get("sourceMeta", {}).get("componentRole"):
             pass  # строгая проверка компонентов — по componentRef ниже
         for child in node.get("children") or []:
@@ -276,7 +276,7 @@ def validate_generation(ir: dict, context: dict) -> dict:
                     key = str(ref.get("componentKey") or "") if isinstance(ref, dict) else ""
                     component = registered.get(key)
                     if component is None:
-                        errors.append({"code": "unregistered-component", "message": f"Компонент {key or 'без ключа'} не зарегистрирован в системе (Strict)"})
+                        errors.append({"code": "unregistered-component", "message": f"Component {key or 'no key'} not registered in the system (Strict)"})
                     else:
                         ref_hash = str(ref.get("masterHash") or "") if isinstance(ref, dict) else ""
                         matched_master = component.get("masterIr") if isinstance(component.get("masterIr"), dict) else None
@@ -308,7 +308,7 @@ def validate_generation(ir: dict, context: dict) -> dict:
                                 or matched_master is None):
                             errors.append({
                                 "code": "stale-component-ref",
-                                "message": f"Компонент {key}: componentRef не совпадает с закреплённым exact master",
+                                "message": f"Component {key}: componentRef does not match the pinned exact master",
                             })
                         else:
                             master_tree = (matched_master.get("tree") or [])
@@ -316,12 +316,12 @@ def validate_generation(ir: dict, context: dict) -> dict:
                             if component_shape_hash(node) != component_shape_hash(master_root):
                                 errors.append({
                                     "code": "mutated-exact-master",
-                                    "message": f"Компонент {key}: изменены geometry/styles/hierarchy exact master",
+                                    "message": f"Component {key}: exact master geometry/styles/hierarchy changed",
                                 })
             stack.extend(node.get("children") or [])
 
     if mode == "strict" and not refs and (context.get("components") or []):
-        errors.append({"code": "no-component-refs", "message": "Strict-результат не ссылается на exact masters системы"})
+        errors.append({"code": "no-component-refs", "message": "Strict result does not reference exact system masters"})
     if mode == "strict" and (context.get("components") or []):
         def validate_coverage(node: dict, *, top_level: bool = False) -> None:
             if not isinstance(node, dict):
@@ -346,7 +346,7 @@ def validate_generation(ir: dict, context: dict) -> dict:
                 return
             errors.append({
                 "code": "unregistered-visual-node",
-                "message": f"Strict: узел {node.get('type') or 'unknown'} не покрыт exact master",
+                "message": f"Strict: node {node.get('type') or 'unknown'} not covered by an exact master",
             })
 
         for section in ir.get("tree") or []:

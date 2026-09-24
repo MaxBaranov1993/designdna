@@ -3,7 +3,7 @@
   import { diagramSection } from "./diagram";
   import { toast } from "../flow/toast";
   let { disabled = false }: {disabled?: boolean} = $props();
-  let open = $state(false), title = $state("Схема процесса"), steps = $state("Входные данные\nОбработка\nРезультат"), error = $state("");
+  let open = $state(false), title = $state("Process diagram"), steps = $state("Input data\nProcessing\nResult"), error = $state("");
   let panelTop = $state(50), panelLeft = $state(12);
   function toggle(event: MouseEvent) {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -16,20 +16,20 @@
     if (!ir || disabled) return;
     try {
       const section = diagramSection(ir, title, steps.split("\n"));
-      if (ctl.insertDiagramSection(section)) { open = false; error = ""; toast("Схема добавлена. Подписи, шаги и стрелки доступны в редакторе", "ok"); }
+      if (ctl.insertDiagramSection(section)) { open = false; error = ""; toast("Diagram added. Edit labels, steps, and arrows in the editor", "ok"); }
     } catch (e) { error = e instanceof Error ? e.message : String(e); }
   }
 </script>
 
 <div class="diagram-insert">
-  <button class="fe-btn" data-act="insert-diagram" {disabled} aria-haspopup="dialog" aria-expanded={open} onclick={toggle}>+ Схема</button>
+  <button class="fe-btn" data-act="insert-diagram" {disabled} aria-haspopup="dialog" aria-expanded={open} onclick={toggle}>+ Diagram</button>
   {#if open}
-    <div class="diagram-panel" style:top={panelTop + "px"} style:left={panelLeft + "px"} role="dialog" aria-label="Добавить схему процесса">
-      <label>Заголовок<input maxlength="160" bind:value={title} /></label>
-      <label>Шаги, каждый с новой строки<textarea rows="6" bind:value={steps}></textarea></label>
-      <p>От 2 до 6 шагов. Подписи и стрелки — отдельные элементы; связи перемещаются вручную.</p>
+    <div class="diagram-panel" style:top={panelTop + "px"} style:left={panelLeft + "px"} role="dialog" aria-label="Add process diagram">
+      <label>Title<input maxlength="160" bind:value={title} /></label>
+      <label>Steps, one per line<textarea rows="6" bind:value={steps}></textarea></label>
+      <p>2 to 6 steps. Labels and arrows are separate elements; move connectors manually.</p>
       {#if error}<p role="alert">{error}</p>{/if}
-      <div><button class="fe-btn" onclick={() => open = false}>Отмена</button> <button class="fe-btn primary" data-act="apply-diagram" onclick={insert}>Добавить</button></div>
+      <div><button class="fe-btn" onclick={() => open = false}>Cancel</button> <button class="fe-btn primary" data-act="apply-diagram" onclick={insert}>Add</button></div>
     </div>
   {/if}
 </div>

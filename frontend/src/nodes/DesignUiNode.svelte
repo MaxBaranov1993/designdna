@@ -36,10 +36,10 @@
   <InPorts type="designui" />
   {#if data.artifact}
     <div class="du-summary" title={data.artifact.version}>
-      <div><span>Screens</span><strong>{data.artifact.summary.screenCount ?? screens.length}</strong></div>
-      <div><span>Component sets</span><strong>{data.artifact.summary.componentSetCount ?? data.artifact.summary.componentCount}</strong></div>
-      <div><span>Variants</span><strong>{data.artifact.summary.variantCount ?? data.artifact.summary.observedStateCount}</strong></div>
-      <div><span>Viewports</span><strong>{data.artifact.summary.viewportCount}</strong></div>
+      <div><span>Screens</span><strong>{data.artifact.summary?.screenCount ?? screens.length}</strong></div>
+      <div><span>Component sets</span><strong>{data.artifact.summary?.componentSetCount ?? data.artifact.summary?.componentCount ?? 0}</strong></div>
+      <div><span>Variants</span><strong>{data.artifact.summary?.variantCount ?? data.artifact.summary?.observedStateCount ?? 0}</strong></div>
+      <div><span>Viewports</span><strong>{data.artifact.summary?.viewportCount ?? 0}</strong></div>
     </div>
 
     <div class="du-section-label">Foundations</div>
@@ -144,7 +144,7 @@
     </div>
   {/if}
   <NodeStatus {id} />
-  <OutPorts type="designui" data={data} />
+  <OutPorts {id} type="designui" data={data} />
 </NodeShell>
 
 <style>

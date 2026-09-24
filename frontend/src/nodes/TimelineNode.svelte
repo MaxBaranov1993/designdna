@@ -29,6 +29,10 @@
   let actions = $derived(Array.isArray(timeline?.story?.actions) ? timeline.story.actions.length : 0);
   let duration = $derived(Number(timeline?.composition?.duration || data.settings.duration || 0));
   const inputs = $derived(data.inputs || ["ir"]);
+  /* Same readiness rule as openWorkspace: every page input must carry a page. */
+  const emptyInputs = $derived(inputs.length > 1
+    ? inputs.filter((port) => !(data.sourcePages || []).some((p) => p.id === port)) : []);
+  const inputHint = $derived(!data.ir ? "Connect a completed page" : emptyInputs.length ? "Connect all pages or remove the empty input" : "");
   let rendered = $derived(data.renderJob && data.renderJob.status === "complete" && data.renderJob.downloadUrl ? data.renderJob : null);
   let ratio = $derived((() => {
     const w = data.settings.width, h = data.settings.height;
@@ -39,7 +43,7 @@
     const get = bindPageState(), scope = captureNodeScope(get, nodeId);
     if (preparing || (busy && !data.timeline)) return;
     if (inputs.some((port) => !(data.sourcePages || []).some((p) => p.id === port)) && inputs.length > 1) {
-      toast("Подключите все страницы или удалите пустой вход", "error"); return;
+      toast("Connect all pages or remove the empty input", "error"); return;
     }
     preparing = true;
     try {
@@ -48,12 +52,12 @@
       if (current?.type !== "timeline" || !current.data.timeline) return;
       if (!(current.data.timeline as any).story) {
         const pages = videoPages(get().nodes, get().edges, current, true);
-        if (!pages.length) throw new Error("Подключите исходную страницу для сценария");
+        if (!pages.length) throw new Error("Connect the source page for the scenario");
         const upgraded = JSON.parse(JSON.stringify(current.data.timeline));
         upgraded.story = { pages, initialPageId: pages[0].id, actions: [] };
         get().setNodeData(nodeId, { sourcePages: pages });
         if (!get().commitTimeline(nodeId, current.data.timeline, get().getNodeIrRevision(nodeId), upgraded,
-          { kind: "manual", label: "Добавлен сценарий страниц" })) throw new Error("Страницы изменились — откройте редактор повторно");
+          { kind: "manual", label: "Page scenario added" })) throw new Error("Pages changed — reopen the editor");
       }
       startWithPrompt = withPrompt;
       if (!TimelineWorkspace) TimelineWorkspace = (await import("../editor/TimelineWorkspace.svelte")).default;
@@ -61,7 +65,7 @@
       open = true;
     } catch (error) {
       open = false;
-      toast(`Не удалось открыть редактор: ${error instanceof Error ? error.message : String(error)}`, "error");
+      toast(`Could not open editor: ${error instanceof Error ? error.message : String(error)}`, "error");
     } finally {
       preparing = false;
     }
@@ -71,36 +75,36 @@
 <NodeShell {id} type="timeline" {selected}>
   {#snippet footer()}
     <div class="foot-left">
-      <button class="btn-node small add-input nodrag" disabled={inputs.length >= 8 || busy} onclick={() => $flow.addVideoInput(nodeId)}>+ Страница</button>
+      <button class="btn-node small add-input nodrag" disabled={inputs.length >= 8 || busy} onclick={() => $flow.addVideoInput(nodeId)}>+ Page</button>
     </div>
     <div class="foot-right">
-      <button class="btn-node small nodrag" disabled={preparing || !data.ir || (busy && !data.timeline)} onclick={() => void openWorkspace()}>Редактор</button>
-      <button class="btn-node primary small nodrag" disabled={busy || preparing || !data.ir || !data.prompt?.trim()} title={!data.prompt?.trim() ? "Опишите ролик, чтобы собрать его по промпту" : ""} onclick={() => void openWorkspace(true)}>
-        {#if busy || preparing}<span class="spinner"></span>{/if} По промпту
+      <button class="btn-node small nodrag" disabled={preparing || !!inputHint || (busy && !data.timeline)} title={inputHint || "Open the video editor"} onclick={() => void openWorkspace()}>Editor</button>
+      <button class="btn-node primary small nodrag" disabled={busy || preparing || !!inputHint || !data.prompt?.trim()} title={inputHint || (!data.prompt?.trim() ? "Describe the video to build it from a prompt" : "")} onclick={() => void openWorkspace(true)}>
+        {#if busy || preparing}<span class="spinner"></span>{/if} From prompt
       </button>
     </div>
   {/snippet}
   <InPorts type="timeline" {data} />
   {#if rendered}
-    <VideoPlayer src={rendered.downloadUrl!} label="Готовый ролик" />
+    <VideoPlayer src={rendered.downloadUrl!} label="Rendered video" />
   {:else}
     <div class="n-hero nodrag">
-      <IrPreview ir={data.ir} height={200} fitHeight empty="Подключите готовую страницу" />
+      <IrPreview ir={data.ir} height={200} fitHeight empty="Connect a completed page" />
       {#if data.ir}
-        <span class="n-hero-tag">{actions ? `${actions} действ. · ` : ""}{(duration / 1000).toFixed(1)} s</span>
+        <span class="n-hero-tag">{actions ? `${actions} actions · ` : ""}{(duration / 1000).toFixed(1)} s</span>
       {/if}
     </div>
   {/if}
   <div class="n-meta">
-    <span>{layers ? `${layers} слоёв` : "монтаж не собран"}{data.revisions?.length ? ` · ${data.revisions.length} версий` : ""}</span>
+    <span>{layers ? `${layers} layers` : "timeline not built"}{data.revisions?.length ? ` · ${data.revisions.length} versions` : ""}</span>
     <span>{ratio} · {data.settings.width}×{data.settings.height} · {data.settings.fps} fps</span>
   </div>
-  <textarea class="video-prompt nodrag nowheel" rows="2" aria-label="Промпт видео" value={data.prompt || ""}
-    placeholder="Что должно происходить в ролике? Например: заполни форму и перейди к странице «Готово»"
+  <textarea class="video-prompt nodrag nowheel" rows="2" aria-label="Video prompt" value={data.prompt || ""}
+    placeholder="What should happen in the video? For example: fill in the form, then navigate to the Done page"
     disabled={busy || preparing}
     oninput={(event) => $flow.setNodeData(nodeId, { prompt: event.currentTarget.value })}></textarea>
   <NodeStatus {id} />
-  <OutPorts type="timeline" {data} />
+  <OutPorts {id} type="timeline" {data} />
   {#if open && TimelineWorkspace}
     <TimelineWorkspace {nodeId} {data} {startWithPrompt} onClose={() => (open = false)} />
   {/if}

@@ -549,7 +549,7 @@ def image_dimensions(data_url: str) -> tuple[int, int]:
 # + CSS resample is not bit-stable across the source page vs <img> replay
 # (live residual: Z.AI/arena section-2 mobile 84.86 vs the 85.0 gate).
 
-SOURCE_CAPTURE_VERSION = "asset-blob-svg-v3"
+SOURCE_CAPTURE_VERSION = "snapshot-v6"
 BLOCK_LAZY_SETTLE_MS = 1200
 MATERIALIZED_IMAGE_SETTLE_MS = 1500
 _MAX_ASSET_BYTES = 8_000_000
@@ -1046,6 +1046,15 @@ def install_image_body_listener(page, asset_bodies: dict[str, bytes]):
     """Queue image responses; drain bodies after navigation (body() in the
     response event deadlocks Chromium's network stack)."""
     pending: list = []
+    # response.body() blocks until the response is fully loaded — for a stream
+    # that never finishes (analytics pixels, chunked images on live sites) it
+    # blocks forever; glebkudr.com stalled the tablet pass for 12 minutes here.
+    # Only bodies of finished requests are read; the rest stay queued.
+    finished: set = set()
+    failed: set = set()
+
+    def _key(request) -> str:
+        return str(getattr(getattr(request, "_impl_obj", None), "_guid", None) or id(request))
 
     def _on_response(response) -> None:
         try:
@@ -1057,14 +1066,24 @@ def install_image_body_listener(page, asset_bodies: dict[str, bytes]):
             return
 
     def drain() -> None:
+        keep: list = []
         while pending:
             response = pending.pop()
             try:
+                key = _key(response.request)
+                if key in failed:
+                    continue
+                if key not in finished:
+                    keep.append(response)
+                    continue
                 _remember_image_body(asset_bodies, str(response.url or ""), response.body())
             except Exception:
                 continue
+        pending.extend(keep)
 
     page.on("response", _on_response)
+    page.on("requestfinished", lambda request: finished.add(_key(request)))
+    page.on("requestfailed", lambda request: failed.add(_key(request)))
     return drain
 
 
@@ -2221,7 +2240,7 @@ def _captured_ir(block: dict, capture: dict, page_tokens: dict | None = None,
 
     return {
         "version": "1.0",
-        "meta": {"name": f"Импорт: {semantic['label']}",
+        "meta": {"name": f"Import: {semantic['label']}",
                  "description": f"Rendered DOM capture · {semantic['role']}",
                  "qaWarnings": qa_warnings,
                  "fontFaces": font_faces},
@@ -2472,13 +2491,97 @@ def _dismiss_cookie_overlays(page) -> int:
         return 0
 
 
+def _evaluate_bounded(cdp, source: str, arg, timeout_ms: int):
+    """page.evaluate с жёстким лимитом времени через CDP.
+
+    Playwright's evaluate ждёт вечно: синхронный runaway-цикл компилятора или
+    промис, который никогда не резолвится (glebkudr.com на планшетном проходе
+    молчал 12 минут), вешают весь импорт. ``Runtime.evaluate`` с ``timeout``
+    прерывает синхронный скрипт, гонка с setTimeout — асинхронный.
+    """
+    expression = (
+        "Promise.race([Promise.resolve().then(() => (" + source + ")(" + json.dumps(arg) + ")), "
+        "new Promise((_, reject) => setTimeout(() => reject(new Error('evaluate timeout after "
+        + str(int(timeout_ms)) + " ms')), " + str(int(timeout_ms)) + "))])"
+    )
+    result = cdp.send("Runtime.evaluate", {
+        "expression": expression, "returnByValue": True, "awaitPromise": True,
+        "timeout": int(timeout_ms), "userGesture": False,
+    })
+    details = result.get("exceptionDetails")
+    if details:
+        text = (details.get("exception") or {}).get("description") or details.get("text") or "evaluate failed"
+        raise RuntimeError(str(text)[:300])
+    return (result.get("result") or {}).get("value")
+
+
+def _element_png(page, cdp, selector: str, timeout_ms: int = 8000) -> bytes:
+    """Скриншот элемента без ожидания «стабильности».
+
+    ``locator.screenshot`` ждёт, пока рамка элемента перестанет меняться два
+    кадра подряд; у страниц с постоянной JS-анимацией (glebkudr.com, футер с
+    бегущей строкой) это ожидание не завершается и не уважает таймаут —
+    захват висел 12 минут. Здесь рамка берётся ограниченным evaluate, а кадр
+    снимается page.screenshot(clip=...), которому стабильность не нужна.
+    """
+    rect = _evaluate_bounded(cdp, """(sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return [r.x + window.scrollX, r.y + window.scrollY, r.width, r.height];
+    }""", selector, 5000)
+    if not rect or rect[2] < 1 or rect[3] < 1:
+        return page.locator(selector).first.screenshot(type="png", timeout=timeout_ms)
+    x, y, width, height = (max(0.0, float(rect[0])), max(0.0, float(rect[1])), float(rect[2]), float(rect[3]))
+    try:
+        # Прямой CDP-кадр: без ожидания шрифтов/стабильности Playwright, которое
+        # на странице с незавершёнными ответами тоже не заканчивается.
+        shot = cdp.send("Page.captureScreenshot", {
+            "format": "png", "captureBeyondViewport": True,
+            "clip": {"x": x, "y": y, "width": width, "height": height, "scale": 1},
+        })
+        data = base64.b64decode(str(shot.get("data") or ""))
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            return data
+    except Exception:
+        pass
+    return page.screenshot(type="png", full_page=True, animations="disabled", caret="hide",
+                           clip={"x": x, "y": y, "width": width, "height": height}, timeout=timeout_ms)
+
+
+def _goto_resilient(page, url: str, timeout_ms: int) -> None:
+    """Навигация для захвата: сначала DOMContentLoaded, при таймауте — ``commit``
+    (ответ получен, документ парсится) с тем же лимитом и settle ниже.
+
+    Тяжёлые Next.js/React-страницы держат DOMContentLoaded дольше 20 с
+    (glebkudr.com: 8–25 с в headless), а «пусто, потому что не успели» — худший
+    результат для импорта, чем страница, дорисованная после commit.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        return
+    except PlaywrightTimeout:
+        pass
+    page.goto(url, wait_until="commit", timeout=timeout_ms)
+    with contextlib.suppress(Exception):
+        page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+
+
 def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 1440,
-                      viewport_h: int = 900, timeout_ms: int = 20000,
+                      viewport_h: int = 900, timeout_ms: int = 45000,
                       return_tokens: bool = False, viewports: list[dict] | None = None,
                       cookies: list[dict] | None = None,
                       return_blocks: bool = False,
-                      on_progress: Callable[[str, int, int, int], None] | None = None):
+                      on_progress: Callable[..., None] | None = None,
+                      engine: str = "snapshot",
+                      timings: dict | None = None):
     """Compile rendered DOM into compact responsive Design IR.
+
+    ``engine="snapshot"`` (default): one lazy-content pass, geometry-based
+    sections, one absolute-mode compile per viewport and CDP reference tiles
+    (``source_snapshot``). ``engine="legacy"``: the previous per-block path
+    with semantic block detection and auto-layout inference.
 
     Text is collected from direct text nodes, so it always remains inside its
     semantic DOM parent. Flex/grid geometry becomes auto-layout; absolute frames
@@ -2498,6 +2601,13 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
     asset_bodies: dict[str, bytes] = {}
     asset_memo: dict[tuple, tuple[bytes, str, str, str]] = {}
     capture_started = time.perf_counter()
+    timings = timings if timings is not None else {}
+    mark = [capture_started]
+
+    def lap(name: str) -> None:
+        now = time.perf_counter()
+        timings[name] = timings.get(name, 0) + max(0, round((now - mark[0]) * 1000))
+        mark[0] = now
     with sync_playwright() as p:
         browser = None
         context = None
@@ -2509,6 +2619,7 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                 {"width": viewport_defs[0]["width"], "height": viewport_defs[0]["height"]},
             )
             drain_image_bodies = install_image_body_listener(page, asset_bodies)
+            cdp = context.new_cdp_session(page)
             source_cookies = _normalize_source_cookies(cookies, url)
             if cookies is not None and not source_cookies:
                 raise ValueError("Authenticated Source Import session has no valid cookies for this URL")
@@ -2519,7 +2630,8 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
             # goto недетерминирован (lazy-hydration, A/B) и вдвое дороже.
             # networkidle у живых storefront-ов не наступает (analytics/websocket),
             # поэтому DOMContentLoaded + детерминированный settle.
-            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            lap("captureLaunch")
+            _goto_resilient(page, url, timeout_ms)
             validate_public_url(page.url)
             _wait_capture_settle(page)
             final_url = page.url
@@ -2529,6 +2641,28 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
               html { scroll-behavior:auto !important; }
             """)
             _dismiss_cookie_overlays(page)
+            lap("captureNavigate")
+            snapshot = engine == "snapshot"
+            if snapshot:
+                import source_snapshot
+                source_snapshot.preload_lazy_content(page, int(viewport_defs[0]["height"]))
+                drain_image_bodies()
+                lap("capturePreload")
+                unused_fonts = source_snapshot.unused_web_fonts(page)
+                if unused_fonts:
+                    # font-display: optional/fallback left the designed fonts unapplied on
+                    # first paint; register them with display:block before measuring.
+                    activated = source_snapshot.activate_web_fonts(page, unused_fonts)
+                    print(json.dumps({"event": "source_snapshot.fonts_activated", "families": activated[:8]},
+                                     ensure_ascii=False), flush=True)
+                lap("captureFonts")
+            if resolved_blocks is None and snapshot:
+                resolved_blocks = source_snapshot.segment_page(cdp, _evaluate_bounded, _MAX_BLOCKS) or None
+                lap("captureSegment")
+            network_frozen = False
+            if snapshot:
+                drain_image_bodies()
+                network_frozen = source_snapshot.freeze_network(context, cdp)
             if resolved_blocks is None:
                 # Fast path: detect selectors from the exact hydrated DOM that
                 # will be compiled below. This removes a second navigation and
@@ -2539,6 +2673,10 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
             for index, viewport in enumerate(viewport_defs):
                 viewport_started = time.perf_counter()
                 if index:
+                    if snapshot and network_frozen:
+                        # responsive images of this viewport may need new downloads
+                        source_snapshot.thaw_network(context, cdp, lambda ctx: install_playwright_url_guard(ctx, validate_public_url))
+                        network_frozen = False
                     page.set_viewport_size({"width": viewport["width"], "height": viewport["height"]})
                     # после resize могут догрузиться responsive images/шрифты
                     _wait_capture_settle(page)
@@ -2546,17 +2684,37 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                 # Карусели/shelf-ы: каноническое состояние — слайд 0
                 # (scrollLeft/inline-transform треков + нейтрализация auto-advance).
                 try:
-                    page.evaluate(_NORMALIZE_CAROUSEL_JS)
+                    _evaluate_bounded(cdp, _NORMALIZE_CAROUSEL_JS, None, 10_000)
                 except Exception:
                     pass
                 if index == 0:
                     # дизайн-токены страницы снимаем один раз, на desktop-проходе
                     try:
-                        token_signals = page.evaluate(_PAGE_TOKEN_SIGNALS_JS)
+                        token_signals = _evaluate_bounded(cdp, _PAGE_TOKEN_SIGNALS_JS, None, 15_000)
                     except Exception:
                         token_signals = None
                 by_selector: dict[str, dict] = {}
-                for block in resolved_blocks:
+                block_total = len(resolved_blocks or [])
+                if snapshot:
+                    if index:
+                        source_snapshot.preload_lazy_content(page, int(viewport["height"]), budget_ms=8000)
+                        drain_image_bodies()
+                        network_frozen = source_snapshot.freeze_network(context, cdp)
+                    drain_image_bodies()
+
+                    def _report(done: int, total: int, _viewport=viewport, _index=index) -> None:
+                        if on_progress is not None:
+                            on_progress(_viewport["name"], _index + 1, len(viewport_defs),
+                                        max(0, round((time.perf_counter() - capture_started) * 1000)), done, total)
+
+                    by_selector = source_snapshot.capture_viewport(
+                        page, cdp, resolved_blocks or [], viewport, compiler_js,
+                        evaluate_bounded=_evaluate_bounded,
+                        materialize=lambda pg, item, selector: _materialize_capture_assets(
+                            pg, item, selector, asset_bodies, asset_memo),
+                        store_png=_store_png_src, namespace=_namespace_block_keys,
+                        find_node=_find_source_node, report=_report, timings=timings)
+                for block_i, block in enumerate([] if snapshot else (resolved_blocks or []), start=1):
                     # Показ блока и ожидание его картинок — ДО компиляции.
                     # Раньше 4-секундное ожидание стояло МЕЖДУ замером IR и
                     # эталонным скриншотом: поздняя гидрация/ленивый контент
@@ -2593,13 +2751,13 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                     # нормализуем ПОВТОАНО — иначе обработчик срабатывал между
                     # компиляцией и эталонным скриншотом (сходство падало до 59%).
                     try:
-                        moved = page.evaluate(_NORMALIZE_CAROUSEL_JS) or 0
+                        moved = _evaluate_bounded(cdp, _NORMALIZE_CAROUSEL_JS, None, 10_000) or 0
                         if moved:
                             # сайт ответит на прокрутку дебаунс-обработчиком
                             # (snap/advance ~200-400мс) — выдерживаем и
                             # нормализуем повторно перед замером
                             page.wait_for_timeout(450)
-                            page.evaluate(_NORMALIZE_CAROUSEL_JS)
+                            _evaluate_bounded(cdp, _NORMALIZE_CAROUSEL_JS, None, 10_000)
                     except Exception:
                         pass
                     # Компиляция блока непосредственно перед его эталонным
@@ -2607,8 +2765,11 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                     # backdrop/materialize (~сотни мс) — гонки гидрации и
                     # auto-advance каруселей в это окно не попадают.
                     try:
-                        raw_one = page.evaluate(compiler_js, [block])
-                    except Exception:
+                        raw_one = _evaluate_bounded(cdp, compiler_js, [block], 90_000)
+                    except Exception as exc:
+                        print(json.dumps({"event": "source_capture.compile_failed", "viewport": viewport["name"],
+                                          "block": str(block.get("name") or block.get("selector")), "error": str(exc)[:200]},
+                                         ensure_ascii=False), flush=True)
                         raw_one = []
                     item = next((entry for entry in raw_one
                                  if isinstance(entry, dict)
@@ -2640,7 +2801,10 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                         locator = page.locator(block["selector"]).first
                         try:
                             if not explicit_capture_rect:
-                                locator.scroll_into_view_if_needed()
+                                # Bounded: an element hidden in this viewport must not
+                                # cost the default 30 s per block (tablet pass stalled
+                                # for minutes on glebkudr.com before this limit).
+                                locator.scroll_into_view_if_needed(timeout=3000)
                             previous_visibility = locator.evaluate(
                                 "el => Array.from(el.children).map(child => child.style.visibility)")
                             locator.evaluate(
@@ -2722,7 +2886,7 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                             try:
                                 shot = (capture_source_png(page, locator, item)
                                         if req.get("mode") == "backdrop"
-                                        else locator.screenshot(type="png"))
+                                        else _element_png(page, cdp, selector))
                             finally:
                                 if previous_visibility is not None:
                                     locator.evaluate(
@@ -2738,7 +2902,14 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                                 "rect": {"x": 0, "y": 0, "width": 0, "height": 0}})
                     _namespace_block_keys(item, re.sub(r"[^A-Za-z0-9_-]+", "-", str(block.get("name") or "block")))
                     by_selector[block["selector"]] = item
+                    if on_progress is not None:
+                        on_progress(
+                            viewport["name"], index + 1, len(viewport_defs),
+                            max(0, round((time.perf_counter() - capture_started) * 1000)),
+                            block_i, block_total,
+                        )
                 captures[viewport["name"]] = by_selector
+                lap("captureViewport" + viewport["name"][:1].upper() + viewport["name"][1:])
                 viewport_ms = max(0, round((time.perf_counter() - viewport_started) * 1000))
                 elapsed_ms = max(0, round((time.perf_counter() - capture_started) * 1000))
                 print(json.dumps({
@@ -2752,7 +2923,10 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                     "elapsedMs": elapsed_ms,
                 }, ensure_ascii=False, separators=(",", ":")), flush=True)
                 if on_progress is not None:
-                    on_progress(viewport["name"], index + 1, len(viewport_defs), elapsed_ms)
+                    on_progress(
+                        viewport["name"], index + 1, len(viewport_defs), elapsed_ms,
+                        block_total, block_total,
+                    )
         finally:
             if context is not None:
                 with contextlib.suppress(Exception):
@@ -2761,6 +2935,7 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
                 with contextlib.suppress(Exception):
                     browser.close()
 
+    lap("captureClose")
     postprocess_started = time.perf_counter()
     page_tokens = _page_tokens_from_signals(token_signals)
     font_download_cache: dict[str, bytes | None] = {}
@@ -2819,6 +2994,21 @@ def capture_block_irs(url: str, blocks: list[dict] | None, viewport_w: int = 144
         merged = _merge_responsive_irs(variants, meta)
         _persist_ir_raster_data_urls(merged)
         base_name = "desktop" if "desktop" in meta else next(iter(meta))
+        # Document position of the section on the source page (snapshot engine):
+        # the Page node restores original offsets and overlaps from it.
+        page_rects = {name: captures.get(name, {}).get(selector, {}).get("pageRect")
+                      for name in meta if isinstance(captures.get(name, {}).get(selector, {}).get("pageRect"), dict)}
+        if page_rects:
+            merged_meta = merged.setdefault("meta", {})
+            merged_meta["pageRect"] = page_rects.get(base_name) or next(iter(page_rects.values()))
+            merged_meta["pageRectByViewport"] = page_rects
+            source_id = str(final_url or url)[:512]
+            for rect_value in [merged_meta["pageRect"], *page_rects.values()]:
+                rect_value["source"] = source_id
+            background = next((captures.get(name, {}).get(selector, {}).get("pageBackground") for name in meta
+                               if captures.get(name, {}).get(selector, {}).get("pageBackground")), None)
+            if background:
+                merged_meta["pageBackground"] = str(background)[:4096]
         asset_records = []
         seen_assets: set[tuple] = set()
         for name in assets_by_viewport:

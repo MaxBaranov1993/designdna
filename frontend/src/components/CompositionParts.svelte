@@ -6,8 +6,8 @@
 </script>
 
 <details class="composition-parts nodrag nowheel">
-  <summary>Состав компонента · {inventory.parts.filter(part => part.kind === 'text').length} текстов · {inventory.parts.filter(part => part.kind === 'pixels').length} изображений</summary>
-  <p>Тексты хранятся в IR; внутренние детали изображений — в пикселях. Защищённые части редактируются через рабочую копию.</p>
+  <summary>Component contents · {inventory.parts.filter(part => part.kind === 'text').length} text fields · {inventory.parts.filter(part => part.kind === 'pixels').length} images</summary>
+  <p>Text is stored in IR; image details are stored as pixels. Edit protected parts in a working copy.</p>
   {#each PART_GROUPS as [key, title]}
     {@const group = inventory.parts.filter(part => part.group === key)}
     {#if group.length}
@@ -18,14 +18,14 @@
             <li title={`${part.path}${part.sourceKey ? ` · ${part.sourceKey}` : ''}`}>
               {#if part.image}<img src={part.image} alt={part.label} loading="lazy" />{/if}
               <span class="part-label">{part.label}</span>
-              <small>{part.protected ? 'Защищено' : part.kind === 'pixels' ? 'Ресурс' : 'IR'}</small>
+              <small>{part.protected ? 'Protected' : part.kind === 'pixels' ? 'Asset' : 'IR'}</small>
             </li>
           {/each}
         </ul>
       </details>
     {/if}
   {/each}
-  {#if inventory.truncated}<p>Показаны первые 5000 узлов.</p>{/if}
+  {#if inventory.truncated}<p>Showing the first 5000 nodes.</p>{/if}
 </details>
 
 <style>

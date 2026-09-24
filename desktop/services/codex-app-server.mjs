@@ -175,9 +175,9 @@ export class CodexAppServer extends EventEmitter {
   async steerTurn(params) { await this.start(); return this.request("turn/steer", params); }
   async interruptTurn(threadId, turnId) { await this.start(); return this.request("turn/interrupt", { threadId, turnId }); }
   async generateImage({ prompt, model = null, referenceImage = null, removeBackground = false }, { signal, timeoutMs } = {}) {
-    if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 20_000) throw new Error("Нужен промпт изображения до 20000 символов");
-    if (model != null && (typeof model !== "string" || !/^[a-zA-Z0-9._-]{1,100}$/.test(model))) throw new Error("Некорректная модель изображения");
-    if (removeBackground && !referenceImage) throw new Error("Подключите изображение для удаления фона");
+    if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 20_000) throw new Error("An image prompt of up to 20,000 characters is required");
+    if (model != null && (typeof model !== "string" || !/^[a-zA-Z0-9._-]{1,100}$/.test(model))) throw new Error("Invalid image model");
+    if (removeBackground && !referenceImage) throw new Error("Connect an image to remove its background");
     const directory = mkdtempSync(path.join(this.imageTempRoot, "ddna-raster-"));
     let cleanup = () => {};
     try {

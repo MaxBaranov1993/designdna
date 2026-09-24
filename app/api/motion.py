@@ -61,14 +61,14 @@ class MotionRenderReq(BaseModel):
 def motion_build(req: MotionBuildReq):
     """Build Motion IR and materialize editable preview scenes."""
     if not FEATURE_FLAGS.is_enabled("motionEditor"):
-        return err(404, "Motion Editor отключён feature flag.")
+        return err(404, "Motion Editor disabled by feature flag.")
     base_ir = ensure_current_ir(req.base_ir)
     base_errors = validate_ir(base_ir)
     interaction_errors = ir.validate_interaction(req.interaction)
     if base_errors:
-        return err(422, "Base IR не проходит schema: " + "; ".join(base_errors[:5]))
+        return err(422, "Base IR fails schema validation: " + "; ".join(base_errors[:5]))
     if interaction_errors:
-        return err(422, "Interaction IR не проходит schema: " + "; ".join(interaction_errors[:5]))
+        return err(422, "Interaction IR fails schema validation: " + "; ".join(interaction_errors[:5]))
     try:
         motion = ir.build_motion(req.interaction, req.composition, req.scene_settings, req.render_settings)
         scene_irs = []
@@ -76,7 +76,7 @@ def motion_build(req: MotionBuildReq):
             scene_ir = ir.replay_interaction(base_ir, req.interaction, scene["interactionSceneId"])
             replay_errors = validate_ir(scene_ir)
             if replay_errors:
-                raise ValueError("Motion scene создаёт невалидный IR: " + "; ".join(replay_errors[:5]))
+                raise ValueError("Motion scene creates invalid IR: " + "; ".join(replay_errors[:5]))
             scene_irs.append({"sceneId": scene["id"], "ir": ensure_current_ir(scene_ir)})
     except ValueError as exc:
         return err(422, str(exc))

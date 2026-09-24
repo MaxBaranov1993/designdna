@@ -29,7 +29,7 @@ export interface TimelineTrack {
   keyframes: TimelineKeyframe[];
 }
 
-export type TimelineProperty = "x" | "y" | "scale" | "rotation" | "opacity";
+export type TimelineProperty = "x" | "y" | "scale" | "rotation" | "opacity" | "blur" | "clip";
 
 export interface TimelineTransform {
   anchor: { x: number; y: number };
@@ -78,6 +78,8 @@ export interface SolvedTransform {
   scale: number;
   rotation: number;
   opacity: number;
+  blur: number;
+  clip: number;
   visible: boolean;
 }
 
@@ -87,7 +89,19 @@ export const TIMELINE_PROPERTY_DEFAULTS: Record<TimelineProperty, number> = {
   scale: 1,
   rotation: 0,
   opacity: 1,
+  blur: 0,
+  clip: 0,
 };
+
+/** clip-path для состояния слоя: маска-шторка снизу в процентах, 0 — без маски. */
+export function clipCss(state: { clip?: number }): string {
+  return state.clip && state.clip > 0.001 ? `inset(0 0 ${state.clip.toFixed(3)}% 0)` : "";
+}
+
+/** CSS filter для состояния слоя: размытие только когда оно задано. */
+export function filterCss(state: { blur?: number }): string {
+  return state.blur && state.blur > 0.001 ? `blur(${state.blur.toFixed(3)}px)` : "";
+}
 
 /* CSS-совместимые кривые именованных изингов (паритет с контрактом
  * в app/ir/timeline.py — EASING_BEZIERS). */
@@ -183,6 +197,8 @@ export function solveLayer(layer: TimelineLayer, t: number): SolvedTransform {
     scale: Math.max(0, solveTrack(props.scale, t, TIMELINE_PROPERTY_DEFAULTS.scale)),
     rotation: solveTrack(props.rotation, t, TIMELINE_PROPERTY_DEFAULTS.rotation),
     opacity: Math.min(1, Math.max(0, solveTrack(props.opacity, t, TIMELINE_PROPERTY_DEFAULTS.opacity))),
+    blur: Math.max(0, solveTrack(props.blur, t, TIMELINE_PROPERTY_DEFAULTS.blur)),
+    clip: Math.min(100, Math.max(0, solveTrack(props.clip, t, TIMELINE_PROPERTY_DEFAULTS.clip))),
     visible: t >= layer.in && t <= layer.out,
   };
 }
@@ -246,9 +262,31 @@ export class TimelineEngine {
   }
 }
 
+/** Идентификатор слоя камеры: один на документ, двигает всю композицию. */
+export const CAMERA_LAYER_ID = "camera";
+
+/** Камера применяется к обёртке кадра ([data-timeline-camera]) — ближайшей к root
+ *  снаружи или первой внутри. Без слоя камеры обёртка остаётся нетронутой. */
+export function applyCameraToDom(root: ParentNode, solved: Record<string, SolvedTransform>): void {
+  const state = solved[CAMERA_LAYER_ID];
+  const element = (root as Element).closest?.("[data-timeline-camera]")
+    || root.querySelector("[data-timeline-camera]");
+  if (!element) return;
+  const el = element as HTMLElement;
+  if (!state) {
+    el.style.transform = "";
+    return;
+  }
+  el.style.transformOrigin = "50% 50%";
+  el.style.transform =
+    `translate3d(${state.x.toFixed(3)}px, ${state.y.toFixed(3)}px, 0) ` +
+    `rotate(${state.rotation.toFixed(4)}deg) scale(${state.scale.toFixed(6)})`;
+}
+
 /** Применить решённое состояние к DOM: только композитные свойства.
  *  Слои помечаются атрибутом ``data-timeline-layer="<id>"``. */
 export function applySolvedToDom(root: ParentNode, solved: Record<string, SolvedTransform>): void {
+  applyCameraToDom(root, solved);
   const nodes = root.querySelectorAll("[data-timeline-layer]");
   nodes.forEach((node) => {
     const el = node as HTMLElement;
@@ -260,6 +298,8 @@ export function applySolvedToDom(root: ParentNode, solved: Record<string, Solved
     }
     el.style.visibility = state.visible ? "visible" : "hidden";
     el.style.opacity = state.opacity.toFixed(4);
+    el.style.filter = filterCss(state);
+    el.style.clipPath = clipCss(state);
     el.style.transform =
       `translate3d(${state.x.toFixed(3)}px, ${state.y.toFixed(3)}px, 0) ` +
       `rotate(${state.rotation.toFixed(4)}deg) scale(${state.scale.toFixed(6)})`;
@@ -271,5 +311,7 @@ export const Timeline = {
   solveTrack,
   solveLayer,
   applySolvedToDom,
+  applyCameraToDom,
+  cameraLayerId: CAMERA_LAYER_ID,
   propertyDefaults: TIMELINE_PROPERTY_DEFAULTS,
 };

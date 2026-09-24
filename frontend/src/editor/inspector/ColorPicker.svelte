@@ -242,7 +242,7 @@
     type="button"
     bind:this={swatchEl}
     class={`pi-cp-swatch ${transparent ? "pi-empty" : ""}`}
-    title="Открыть пикер цвета"
+    title="Open color picker"
     onclick={openPicker}
   >
     <span class="pi-cp-fill" style="background: {transparent ? 'transparent' : hex}"></span>

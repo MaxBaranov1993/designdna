@@ -2,10 +2,10 @@
 export type KitSection = 'overview' | 'colors' | 'fonts' | 'concept';
 export type KitEntry = { key: string; pool: 'components' | 'review' | 'suggestions'; component: Record<string, any> };
 const COLOR_LABELS: Record<string, string> = {
-  primary: 'Основной акцент', secondary: 'Дополнительный акцент', accent: 'Выделение',
-  background: 'Фон страницы', surface: 'Поверхность', card: 'Карточка', text: 'Основной текст',
-  foreground: 'Основной текст', textMuted: 'Вторичный текст', 'muted-foreground': 'Вторичный текст',
-  border: 'Границы', 'primary-foreground': 'Текст на акценте', muted: 'Приглушённый фон',
+  primary: 'Primary accent', secondary: 'Secondary accent', accent: 'Select',
+  background: 'Page background', surface: 'Surface', card: 'Card', text: 'Primary text',
+  foreground: 'Primary text', textMuted: 'Secondary text', 'muted-foreground': 'Secondary text',
+  border: 'Borders', 'primary-foreground': 'Text on accent', muted: 'Muted background',
 };
 export function kitColors(doc: Record<string, any>) {
   const semantic = doc.foundations?.colors?.semantic || {};
@@ -26,17 +26,17 @@ export function kitFonts(doc: Record<string, any>, entries: KitEntry[]) {
     for (const face of faces.filter(f => clean(f.family) === family && typeof f.url === 'string')) {
       unique.set(JSON.stringify([face.url, face.weight, face.style, face.unicodeRange]), face);
     }
-    const role = family === clean(typography.display?.family) ? 'Заголовки'
-      : family === clean(typography.body?.family) ? 'Основной текст' : 'Дополнительный шрифт';
+    const role = family === clean(typography.display?.family) ? 'Headings'
+      : family === clean(typography.body?.family) ? 'Primary text' : 'Additional font';
     return { family, role, faces: [...unique.values()] };
   });
 }
 export function kitConcept(doc: Record<string, any>) {
   const review = doc.styleGuide?.review;
-  const fields = [['tone', 'Характер'], ['density', 'Плотность'], ['cornerCharacter', 'Формы'],
-    ['colorUsage', 'Цвет'], ['typographyCharacter', 'Типографика'], ['imageryStyle', 'Изображения']];
+  const fields = [['tone', 'Character'], ['density', 'Density'], ['cornerCharacter', 'Shapes'],
+    ['colorUsage', 'Color'], ['typographyCharacter', 'Typography'], ['imageryStyle', 'Images']];
   return {
-    summary: String(doc.identity?.soul?.oneLine?.value || '').replace(/\btextMuted\b/g, 'вторичного текста').replace(/\btext\b/g, 'основного текста').replace(/\bbackground\b/g, 'фона'),
+    summary: String(doc.identity?.soul?.oneLine?.value || '').replace(/\btextMuted\b/g, 'secondary text').replace(/\btext\b/g, 'primary text').replace(/\bbackground\b/g, 'background'),
     traits: fields.filter(([key]) => typeof review?.[key] === 'string' && review[key])
       .map(([key, label]) => ({ label, text: String(review[key]) })),
     doRules: (Array.isArray(review?.doRules) ? review.doRules : []).filter((v: unknown) => typeof v === 'string'),

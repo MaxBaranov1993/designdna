@@ -34,37 +34,37 @@
   };
 </script>
 
-<div class="canvas-dock nodrag nopan nowheel" role="toolbar" aria-label="Навигация по канвасу" use:closeOnOutside>
-  <button title="Выбор и рамка (V)" aria-label="Выбор" aria-pressed={!handActive} onclick={() => tool = "select"}>
+<div class="canvas-dock nodrag nopan nowheel" role="toolbar" aria-label="Canvas navigation" use:closeOnOutside>
+  <button title="Select and marquee (V)" aria-label="Select" aria-pressed={!handActive} onclick={() => tool = "select"}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 3 15 9-7 2-3 7Z" /></svg>
   </button>
-  <button title="Рука (H) · удерживайте пробел для временного перемещения" aria-label="Рука" aria-pressed={handActive} onclick={() => tool = "hand"}>
+  <button title="Hand (H) · hold Space to pan temporarily" aria-label="Hand" aria-pressed={handActive} onclick={() => tool = "hand"}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12V6a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v7-4a2 2 0 0 1 4 0v8c0 4-3 7-7 7-3 0-4-2-6-4l-3-4a2 2 0 0 1 3-2l1 1" /></svg>
   </button>
   <span class="dock-divider"></span>
-  <button id="btn-undo" title="Отменить (Ctrl+Z)" aria-label="Отменить последнее изменение графа" disabled={!$flowGraphHistory.past.length} onclick={() => useFlowStore.getState().undoGraph()}>
+  <button id="btn-undo" title="Undo (Ctrl+Z)" aria-label="Undo the last graph change" disabled={!$flowGraphHistory.past.length} onclick={() => useFlowStore.getState().undoGraph()}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5-5 5 5 5M4 10h10a6 6 0 0 1 0 12" transform="translate(0 -2)" /></svg>
   </button>
-  <button id="btn-redo" title="Повторить (Ctrl+Shift+Z)" aria-label="Повторить отменённое изменение графа" disabled={!$flowGraphHistory.future.length} onclick={() => useFlowStore.getState().redoGraph()}>
+  <button id="btn-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo the last undone graph change" disabled={!$flowGraphHistory.future.length} onclick={() => useFlowStore.getState().redoGraph()}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 5 5-5 5m5-5H10a6 6 0 0 0 0 12" transform="translate(0 -2)" /></svg>
   </button>
   <span class="dock-divider"></span>
   <div class="dock-zoom">
-    <button class="dock-percent" title="Масштаб и навигация" aria-label="Масштаб" aria-haspopup="menu" aria-expanded={zoomOpen} onclick={() => (zoomOpen = !zoomOpen)}>
+    <button class="dock-percent" title="Zoom and navigation" aria-label="Zoom" aria-haspopup="menu" aria-expanded={zoomOpen} onclick={() => (zoomOpen = !zoomOpen)}>
       <span>{Math.round(viewport.current.zoom * 100)}%</span>
       <svg viewBox="0 0 24 24" aria-hidden="true" class="chev"><path d="m6 9 6 6 6-6" /></svg>
     </button>
     {#if zoomOpen}
       <div class="dock-menu" role="menu">
-        <button role="menuitem" onclick={() => void rf.zoomIn({ duration: duration() }).then(() => (zoomOpen = false))}><span>Увеличить</span><kbd>Ctrl +</kbd></button>
-        <button role="menuitem" onclick={() => void rf.zoomOut({ duration: duration() }).then(() => (zoomOpen = false))}><span>Уменьшить</span><kbd>Ctrl −</kbd></button>
-        <button role="menuitem" onclick={() => zoomTo(1)}><span>Масштаб 100 %</span><kbd>Ctrl 0</kbd></button>
-        <button role="menuitem" onclick={() => zoomTo(0.5)}><span>Масштаб 50 %</span></button>
+        <button role="menuitem" onclick={() => void rf.zoomIn({ duration: duration() }).then(() => (zoomOpen = false))}><span>Zoom in</span><kbd>Ctrl +</kbd></button>
+        <button role="menuitem" onclick={() => void rf.zoomOut({ duration: duration() }).then(() => (zoomOpen = false))}><span>Zoom out</span><kbd>Ctrl −</kbd></button>
+        <button role="menuitem" onclick={() => zoomTo(1)}><span>Zoom 100%</span><kbd>Ctrl 0</kbd></button>
+        <button role="menuitem" onclick={() => zoomTo(0.5)}><span>Zoom 50%</span></button>
         <span class="dock-menu-sep"></span>
-        <button id="btn-fit" role="menuitem" onclick={() => fit()}><span>Вписать весь граф</span><kbd>Shift 1</kbd></button>
-        <button role="menuitem" disabled={!selectedCount} onclick={() => fit(true)}><span>Вписать выделенное</span><kbd>Shift 2</kbd></button>
+        <button id="btn-fit" role="menuitem" onclick={() => fit()}><span>Fit entire graph</span><kbd>Shift 1</kbd></button>
+        <button role="menuitem" disabled={!selectedCount} onclick={() => fit(true)}><span>Fit selection</span><kbd>Shift 2</kbd></button>
         <span class="dock-menu-sep"></span>
-        <button role="menuitemcheckbox" aria-checked={showMinimap} onclick={() => { showMinimap = !showMinimap; zoomOpen = false; }}><span>Миникарта</span><i class:on={showMinimap}></i></button>
+        <button role="menuitemcheckbox" aria-checked={showMinimap} onclick={() => { showMinimap = !showMinimap; zoomOpen = false; }}><span>Minimap</span><i class:on={showMinimap}></i></button>
       </div>
     {/if}
   </div>

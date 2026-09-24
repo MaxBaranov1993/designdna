@@ -174,7 +174,7 @@ def test_capture_pipeline_reference_matches_editable_render(tmp_path, monkeypatc
     captured = scraper.capture_block_irs(
         'https://source.test/',
         [{'name': 'cards', 'kind': 'section', 'label': 'Cards', 'selector': '#block'}],
-        viewports=[{'name': 'tablet', 'width': 768, 'height': 844}],
+        viewports=[{'name': 'tablet', 'width': 768, 'height': 844}], engine='legacy',
     )
     report = fidelity_harness.evaluate_captures(captured, artifacts_dir=tmp_path / 'fidelity')['#block']
     assert not report['raster_fallback'], report
@@ -186,3 +186,12 @@ def test_capture_pipeline_reference_matches_editable_render(tmp_path, monkeypatc
     else:
         assert not report['gate']['passed'], report['gate']
         assert similarity < 85
+        # The snapshot engine never scrolls a block into place, so the same broken
+        # placement hook cannot shift its reference.
+        snapshot = scraper.capture_block_irs(
+            'https://source.test/',
+            [{'name': 'cards', 'kind': 'section', 'label': 'Cards', 'selector': '#block'}],
+            viewports=[{'name': 'tablet', 'width': 768, 'height': 844}], engine='snapshot',
+        )
+        snapshot_report = fidelity_harness.evaluate_captures(snapshot, artifacts_dir=tmp_path / 'fidelity-snapshot')['#block']
+        assert snapshot_report['gate']['passed'], snapshot_report['gate']

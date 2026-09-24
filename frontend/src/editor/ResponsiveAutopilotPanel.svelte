@@ -15,12 +15,12 @@
   >
     <div class="fe-responsive-card" role="dialog" aria-modal="true" aria-labelledby="responsive-title">
       <div class="fe-responsive-kicker">AI Responsive Autopilot · preview first</div>
-      <h2 id="responsive-title">{proposal.status === "loading" ? "Строю адаптивные ограничения…" : "Tablet и mobile готовы"}</h2>
+      <h2 id="responsive-title">{proposal.status === "loading" ? "Preparing responsive constraints…" : "Tablet and mobile ready"}</h2>
       {#if proposal.status === "loading"}
-        <div class="fe-responsive-loader"><i></i><span>Reflow, ширина, отступы, типографика и проверка overflow</span></div>
+        <div class="fe-responsive-loader"><i></i><span>Reflow, width, spacing, typography, and overflow checks</span></div>
       {/if}
       {#if proposal.status === "error"}
-        <div class="fe-responsive-error">Autopilot недоступен: {proposal.error}</div>
+        <div class="fe-responsive-error">Autopilot unavailable: {proposal.error}</div>
       {/if}
       {#if proposal.status === "ready"}
         <div class="fe-responsive-devices"><span>D<b>1440</b></span><i>→</i><span>T<b>768</b></span><i>→</i><span>M<b>390</b></span></div>
@@ -30,14 +30,14 @@
           {/each}
         </div>
         <div class={"fe-responsive-validation " + (proposal.warnings.length ? "warn" : "pass")}>
-          {proposal.warnings.length ? `Quality Gate оставил предупреждений: ${proposal.warnings.length}` : "✓ Кандидат прошёл детерминированный Quality Gate"}
+          {proposal.warnings.length ? `Quality Gate warnings remaining: ${proposal.warnings.length}` : "✓ Candidate passed the deterministic Quality Gate"}
         </div>
-        <p>Импортированные pixel-faithful блоки не перестраиваются автоматически. Все решения применяются одной операцией и доступны через Undo.</p>
+        <p>Pixel-faithful imported blocks are not rebuilt automatically. Changes apply as one operation and support Undo.</p>
       {/if}
       <div class="fe-responsive-actions">
-        <button class="fe-btn" data-act="dismiss-responsive-autopilot" onclick={() => ctl.dismissResponsiveProposal()}>Отмена</button>
+        <button class="fe-btn" data-act="dismiss-responsive-autopilot" onclick={() => ctl.dismissResponsiveProposal()}>Cancel</button>
         {#if proposal.status === "ready"}
-          <button class="fe-btn primary" data-act="apply-responsive-autopilot" onclick={() => ctl.applyResponsiveProposal(proposal)}>Применить адаптив</button>
+          <button class="fe-btn primary" data-act="apply-responsive-autopilot" onclick={() => ctl.applyResponsiveProposal(proposal)}>Apply responsive changes</button>
         {/if}
       </div>
     </div>

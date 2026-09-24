@@ -161,7 +161,7 @@ def test_real_render_fails_closed_on_corrupt_blob(tmp_path: Path) -> None:
 def test_real_render_fails_closed_on_missing_blob(tmp_path: Path) -> None:
     ir = _with_assets(tmp_path)
     ir["tree"][0]["children"][0]["src"] = f"ddna://blobs/{'c' * 64}.png"
-    with pytest.raises(ValueError, match="не найден"):
+    with pytest.raises(ValueError, match="not found"):
         render_timeline_video(_timeline(ir), ir, tmp_path / "out.mp4", data_dir=tmp_path)
 
 
@@ -171,7 +171,7 @@ def test_real_render_surfaces_font_drift_instead_of_silent_fallback(tmp_path: Pa
     ir["tokens"] = {"font": {"display": {"family": "Bebas Neue", "weight": 400},
                               "body": {"family": "Bebas Neue", "weight": 400},
                               "scale": "default"}}
-    with pytest.raises(ValueError, match="недоступен офлайн"):
+    with pytest.raises(ValueError, match="unavailable offline"):
         render_timeline_video(_timeline(ir), ir, tmp_path / "out.mp4", data_dir=tmp_path)
 
 
@@ -188,7 +188,7 @@ def test_real_render_fails_closed_on_blocked_request_with_clean_readiness(
         timeline_render.RENDER_DOCUMENT_HTML
         + '<link rel="stylesheet" href="https://harmless.example/reset.css">')
     ir = copy.deepcopy(DESIGN_IR)  # ни ассетов, ни шрифтов — readiness чистый
-    with pytest.raises(ValueError, match="выйти в сеть"):
+    with pytest.raises(ValueError, match="network request"):
         render_timeline_video(_timeline(ir), ir, tmp_path / "out.mp4", data_dir=tmp_path)
 
 
@@ -299,13 +299,13 @@ def test_font_materialization_good_corrupt_missing(tmp_path: Path) -> None:
     ir_bad = {"meta": {"fontFaces": [{"family": "F", "weight": "400", "style": "normal",
                                        "url": f"/fonts/{alien_name}"}]}, "tree": []}
     _assets, errors = materialize_render_assets(ir_bad, tmp_path)
-    assert errors and "подменён" in errors[0] and "sha1" in errors[0]
+    assert errors and "replaced" in errors[0] and "sha1" in errors[0]
 
     # missing: имя правильного формата, файла нет
     ir_missing = {"meta": {"fontFaces": [{"family": "F", "weight": "400", "style": "normal",
                                           "url": "/fonts/" + "e" * 16 + ".woff2"}]}, "tree": []}
     _assets, errors = materialize_render_assets(ir_missing, tmp_path)
-    assert errors and "не найден" in errors[0]
+    assert errors and "not found" in errors[0]
 
 
 def test_real_render_fails_closed_on_replaced_font(tmp_path: Path) -> None:
@@ -317,5 +317,5 @@ def test_real_render_fails_closed_on_replaced_font(tmp_path: Path) -> None:
     ir = copy.deepcopy(DESIGN_IR)
     ir["meta"] = {"fontFaces": [{"family": "FixtureFont", "weight": "400",
                                   "style": "normal", "url": font_url}]}
-    with pytest.raises(ValueError, match="подменён"):
+    with pytest.raises(ValueError, match="replaced"):
         render_timeline_video(_timeline(ir), ir, tmp_path / "out.mp4", data_dir=tmp_path)

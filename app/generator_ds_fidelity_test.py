@@ -40,7 +40,7 @@ def test_pill_radius_is_not_off_system_when_the_scale_has_pills() -> None:
     ]}]}
     messages = [w["message"] for w in resolver.validate_generation(ir, context)["warnings"]
                 if w["code"] == "off-system-radius"]
-    assert messages == ["Радиус 24 вне шкалы системы"]
+    assert messages == ["Radius 24 outside the system scale"]
     flat = {**context, "foundations": {"radii": [0, 8, 16]}, "styleGuide": {}}
     flat_messages = [w for w in resolver.validate_generation(ir, flat)["warnings"] if w["code"] == "off-system-radius"]
     assert len(flat_messages) == 2

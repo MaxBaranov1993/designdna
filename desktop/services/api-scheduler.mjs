@@ -4,8 +4,9 @@ export const isControlPath = path => /^\/api\/(?:block-parse\/job\/[^/]+(?:\/can
 
 /* Планировщик /api-трафика: три полосы вместо одного глобального мьютекса.
  *
- *  - exclusive  — тяжёлые capture-конвейеры (/api/block-parse): строго по
- *    одному, Chromium×viewports не параллелится.
+ *  - exclusive  — старт /api/block-parse: HTTP-вызовы строго по одному.
+ *    asyncJob освобождает полосу после submit; живые захваты ограничены
+ *    SOURCE_IMPORT_EXECUTOR (два слота), а не этой полосой.
  *  - project    — /api/project/*: строго по одному. Инвариант single-writer
  *    для projects.db и монотонность ревизий Live Project Session требуют,
  *    чтобы save/load не перегонялись между собой.

@@ -27,6 +27,6 @@ test('process diagram preserves tokens/source, uses editable primitives and keep
 });
 
 test('invalid process input is rejected before any insertion', () => {
-  assert.throws(() => diagramSection({}, 'Test', ['Only one']), /2 до 6/);
-  assert.throws(() => diagramSection({}, 'Test', Array(7).fill('A')), /2 до 6/);
+  assert.throws(() => diagramSection({}, 'Test', ['Only one']), /2 to 6/);
+  assert.throws(() => diagramSection({}, 'Test', Array(7).fill('A')), /2 to 6/);
 });

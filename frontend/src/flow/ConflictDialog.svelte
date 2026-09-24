@@ -15,6 +15,10 @@
 
   let { detail, onclose }: { detail: ProjectConflictDetail; onclose: () => void } = $props();
   let busy = $state(false);
+  // Edited during startup: the canvas is the compact cache, the saved project is the full one.
+  let whileLoading = $derived(detail.error === "edited-while-loading");
+  // The save would drop pages the user never deleted: the canvas lost them.
+  let pageLoss = $derived(detail.error === "page_loss");
   let primary: HTMLButtonElement | null = $state(null);
 
   $effect(() => {
@@ -24,12 +28,12 @@
   async function keepMine() {
     busy = true;
     try {
-      const ok = await resolveConflictKeepMine(detail.currentRevision);
+      const ok = await resolveConflictKeepMine(detail.currentRevision, pageLoss ? detail.missingPageIds || [] : []);
       if (ok) {
-        toast("Ваша версия записана в базу", "ok");
+        toast("Your version was saved to the database", "ok");
         onclose();
       } else {
-        toast("Не удалось записать: проверьте сервер и повторите", "error");
+        toast("Could not save: check the server and retry", "error");
       }
     } finally {
       busy = false;
@@ -42,10 +46,10 @@
       discardPendingDbSave();
       const ok = await useFlowStore.getState().replaceProjectFromDb();
       if (ok) {
-        toast("Загружена версия из базы", "ok");
+        toast("Database version loaded", "ok");
         onclose();
       } else {
-        toast("Не удалось загрузить проект из базы", "error");
+        toast("Could not load the project from the database", "error");
       }
     } finally {
       busy = false;
@@ -55,26 +59,49 @@
   async function exportJson() {
     busy = true;
     try { downloadJson("designai-graph.json", await embedGraphAssets(buildExportPayload(useFlowStore.getState()))); }
-    catch (error) { toast("Экспорт не завершён: " + (error instanceof Error ? error.message : String(error)), "error"); }
+    catch (error) { toast("Export did not finish: " + (error instanceof Error ? error.message : String(error)), "error"); }
     finally { busy = false; }
   }
 </script>
 
 <div class="conflict-backdrop" role="presentation">
   <div class="conflict-card" role="dialog" aria-modal="true" aria-labelledby="conflict-title" data-project-conflict>
-    <div class="conflict-kicker">Конфликт сохранения</div>
-    <h2 id="conflict-title">Проект изменён в другом окне</h2>
-    <p>
-      База содержит более новую версию, автосохранение приостановлено. Выберите, какая версия
-      остаётся: ваша перезапишет чужие правки, их версия заменит текущий холст.
-    </p>
+    <div class="conflict-kicker">Save conflict</div>
+    {#if pageLoss}
+      <h2 id="conflict-title">Saving would remove pages</h2>
+      <p>
+        The saved project has pages that are missing on the canvas: {(detail.missingPages || []).join(", ")}. Autosave is paused and nothing was overwritten. Load the saved project to get them back, or remove them for good.
+      </p>
+    {:else if whileLoading}
+      <h2 id="conflict-title">The canvas changed while the project was loading</h2>
+      <p>
+        Autosave is paused. The saved project is complete; the canvas shown during startup may miss large data such as page results and videos. Load the saved project, or keep the current canvas and overwrite it.
+      </p>
+    {:else}
+      <h2 id="conflict-title">Project changed in another window</h2>
+      <p>
+        The database contains a newer version. Autosave is paused. Choose which version to keep: yours will overwrite their changes; theirs will replace the current canvas.
+      </p>
+    {/if}
     <div class="conflict-actions">
-      <button class="conflict-btn" type="button" disabled={busy} onclick={exportJson}>Экспорт JSON</button>
+      <button class="conflict-btn" type="button" disabled={busy} onclick={exportJson}>Export JSON</button>
       <span class="conflict-spacer"></span>
-      <button class="conflict-btn" type="button" disabled={busy} onclick={takeTheirs}>Загрузить их версию</button>
-      <button bind:this={primary} class="conflict-btn primary" type="button" disabled={busy} onclick={keepMine}>
-        Оставить мои правки
-      </button>
+      {#if pageLoss}
+        <button class="conflict-btn" type="button" disabled={busy} onclick={keepMine}>Remove these pages</button>
+        <button bind:this={primary} class="conflict-btn primary" type="button" disabled={busy} onclick={takeTheirs}>
+          Load saved project
+        </button>
+      {:else if whileLoading}
+        <button class="conflict-btn" type="button" disabled={busy} onclick={keepMine}>Keep the current canvas</button>
+        <button bind:this={primary} class="conflict-btn primary" type="button" disabled={busy} onclick={takeTheirs}>
+          Load saved project
+        </button>
+      {:else}
+        <button class="conflict-btn" type="button" disabled={busy} onclick={takeTheirs}>Load their version</button>
+        <button bind:this={primary} class="conflict-btn primary" type="button" disabled={busy} onclick={keepMine}>
+          Keep my changes
+        </button>
+      {/if}
     </div>
   </div>
 </div>

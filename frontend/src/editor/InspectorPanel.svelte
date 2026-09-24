@@ -61,20 +61,20 @@
 
 <div class="fe-inspector">
   <div class="fe-insp-actions">
-    <button class="fe-abtn" data-act="semantic-select" title="Выделить элементы обычным текстовым запросом" aria-label="Умное выделение" disabled={busy} onclick={() => ctl.handleAct("semantic-select")}>⌘ Умное выделение</button>
-    <button class="fe-abtn" data-act="smart-axis" title="AI найдёт общую ось контента и покажет безопасный патч" aria-label="Выровнять ширину" disabled={busy} onclick={() => ctl.handleAct("smart-axis")}>✦ Выровнять ширину</button>
-    <button class="fe-abtn" data-act="quality-gate" title="Проверить сетку, overflow и ограничения; показать исправления до применения" aria-label="AI-проверка" disabled={busy} onclick={() => ctl.handleAct("quality-gate")}>✓ AI‑проверка</button>
-    <button class="fe-abtn" data-act="harmonize" title="Свести цвета, типографику, радиусы и тени разных источников в одну Style DNA" aria-label="Сделать цельно" disabled={busy} onclick={() => ctl.handleAct("harmonize")}>✦ Сделать цельно</button>
-    <button class="fe-abtn" data-act="responsive-autopilot" title="AI подготовит tablet/mobile constraints и проверит их до применения" aria-label="Адаптировать" disabled={busy} onclick={() => ctl.handleAct("responsive-autopilot")}>▣ Адаптировать</button>
-    <button class="fe-abtn" data-act="intent-locks" title="Защитить выбранные блоки от изменений AI" aria-label="Не менять" disabled={busy} onclick={() => ctl.handleAct("intent-locks")}>🔒 Не менять</button>
-    <button class="fe-abtn" data-act="style-dna" title="Style DNA" aria-label="Style DNA" disabled={busy} onclick={() => ctl.handleAct("style-dna")}>🧬 Style DNA</button>
-    <button class="fe-abtn" data-act="components" title="Вставить компонент дизайн-системы в страницу — с привязкой, которую принимает strict-режим" aria-label="Компоненты ДС" disabled={busy} onclick={() => ctl.handleAct("components")}>◈ Компоненты</button>
-    <button class="fe-abtn" data-act="rules" title="Правила, по которым работают генератор и судья; правила проекта редактируются здесь" aria-label="Правила" disabled={busy} onclick={() => ctl.handleAct("rules")}>📜 Правила</button>
+    <button class="fe-abtn" data-act="semantic-select" title="Select elements using a plain-language request" aria-label="Smart selection" disabled={busy} onclick={() => ctl.handleAct("semantic-select")}>⌘ Smart selection</button>
+    <button class="fe-abtn" data-act="smart-axis" title="AI will find the shared content axis and preview a safe patch" aria-label="Align widths" disabled={busy} onclick={() => ctl.handleAct("smart-axis")}>✦ Align widths</button>
+    <button class="fe-abtn" data-act="quality-gate" title="Check the grid, overflow, and constraints; preview fixes before applying" aria-label="AI check" disabled={busy} onclick={() => ctl.handleAct("quality-gate")}>✓ AI check</button>
+    <button class="fe-abtn" data-act="harmonize" title="Unify colors, typography, radii, and shadows from different sources into one shared palette" aria-label="Unify style" disabled={busy} onclick={() => ctl.handleAct("harmonize")}>✦ Unify style</button>
+    <button class="fe-abtn" data-act="responsive-autopilot" title="AI will prepare and validate tablet/mobile constraints before applying them" aria-label="Adapt" disabled={busy} onclick={() => ctl.handleAct("responsive-autopilot")}>▣ Adapt</button>
+    <button class="fe-abtn" data-act="intent-locks" title="Protect selected blocks from AI changes" aria-label="Protect" disabled={busy} onclick={() => ctl.handleAct("intent-locks")}>🔒 Protect</button>
+    <button class="fe-abtn" data-act="style-dna" title="Edit page color and type tokens" aria-label="Page tokens" disabled={busy} onclick={() => ctl.handleAct("style-dna")}>◈ Tokens</button>
+    <button class="fe-abtn" data-act="components" title="Insert a design system component with a reference accepted by strict mode" aria-label="DS components" disabled={busy} onclick={() => ctl.handleAct("components")}>◈ Components</button>
+    <button class="fe-abtn" data-act="rules" title="Rules used by Generator and the judge; edit project rules here" aria-label="Rules" disabled={busy} onclick={() => ctl.handleAct("rules")}>📜 Rules</button>
     <span class="fe-abtn-sep"></span>
-    <button class="fe-abtn" data-act="undo" bind:this={undoBtn} title="Отменить (Ctrl+Z)" aria-label="Отменить" aria-keyshortcuts="Control+Z" onclick={() => ctl.handleAct("undo")}>↩ Отменить</button>
-    <button class="fe-abtn" data-act="redo" bind:this={redoBtn} title="Повторить (Ctrl+Shift+Z)" aria-label="Вернуть" aria-keyshortcuts="Control+Shift+Z" onclick={() => ctl.handleAct("redo")}>↪ Вернуть</button>
-    <button class="fe-abtn" data-act="forward" title="Выше (])" aria-label="Выше" aria-keyshortcuts="]" disabled={busy || previewing} onclick={() => ctl.handleAct("forward")}>⇈ Выше</button>
-    <button class="fe-abtn" data-act="backward" title="Ниже ([)" aria-label="Ниже" aria-keyshortcuts="[" disabled={busy || previewing} onclick={() => ctl.handleAct("backward")}>⇊ Ниже</button>
+    <button class="fe-abtn" data-act="undo" bind:this={undoBtn} title="Undo (Ctrl+Z)" aria-label="Undo" aria-keyshortcuts="Control+Z" onclick={() => ctl.handleAct("undo")}>↩ Undo</button>
+    <button class="fe-abtn" data-act="redo" bind:this={redoBtn} title="Redo (Ctrl+Shift+Z)" aria-label="Redo" aria-keyshortcuts="Control+Shift+Z" onclick={() => ctl.handleAct("redo")}>↪ Redo</button>
+    <button class="fe-abtn" data-act="forward" title="Bring forward (])" aria-label="Bring forward" aria-keyshortcuts="]" disabled={busy || previewing} onclick={() => ctl.handleAct("forward")}>⇈ Bring forward</button>
+    <button class="fe-abtn" data-act="backward" title="Send backward ([)" aria-label="Send backward" aria-keyshortcuts="[" disabled={busy || previewing} onclick={() => ctl.handleAct("backward")}>⇊ Send backward</button>
   </div>
   {#if selCount}
     {#key tick}
@@ -95,6 +95,6 @@
       </div>
     {/key}
   {:else}
-    <div class="fe-insp-empty"><span>✦</span><strong>Выберите объект</strong><p>Нажмите элемент на холсте или в слоях. Затем опишите AI, что изменить.</p></div>
+    <div class="fe-insp-empty"><span>✦</span><strong>Select an object</strong><p>Select an element on the canvas or in Layers, then describe the change to AI.</p></div>
   {/if}
 </div>

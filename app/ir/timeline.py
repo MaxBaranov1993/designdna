@@ -21,7 +21,7 @@ from .schema import load_aux_schema
 TIMELINE_VERSION = "timeline-ir/1.0"
 CHANGE_SET_VERSION = "timeline-change-set/1.0"
 
-ANIMATABLE_PROPERTIES = ("x", "y", "scale", "rotation", "opacity")
+ANIMATABLE_PROPERTIES = ("x", "y", "scale", "rotation", "opacity", "blur", "clip")
 ALLOWED_EASINGS = ("linear", "ease", "ease-in", "ease-out", "ease-in-out", "cubic-bezier")
 LAYER_TYPES = ("component", "group", "camera", "overlay")
 
@@ -151,6 +151,10 @@ def validate(document: dict) -> list[str]:
                         formatted.append(f"{prefix}/transform/properties/opacity/keyframes/{kf_index}: value must be within [0, 1]")
                     if prop == "scale" and float(value) < 0:
                         formatted.append(f"{prefix}/transform/properties/scale/keyframes/{kf_index}: value must be >= 0")
+                    if prop == "blur" and not 0 <= float(value) <= 64:
+                        formatted.append(f"{prefix}/transform/properties/blur/keyframes/{kf_index}: value must be within 0..64")
+                    if prop == "clip" and not 0 <= float(value) <= 100:
+                        formatted.append(f"{prefix}/transform/properties/clip/keyframes/{kf_index}: value must be within 0..100")
     if total_keyframes > MAX_TOTAL_KEYFRAMES:
         formatted.append(f"keyframes: at most {MAX_TOTAL_KEYFRAMES} keyframes are allowed per timeline")
     if not formatted and document.get("story"):
@@ -347,80 +351,199 @@ def _previous_layer_property(layer: dict, path: str):
     return copy.deepcopy(layer.get(key))
 
 
+# Кинематографические кривые, которые пресеты пишут как cubic-bezier: CSS-имена
+# (ease-out и т.п.) слишком «механические» для продуктового ролика.
+NAMED_CURVES = {
+    "expo-out": (0.16, 1.0, 0.3, 1.0),
+    "quart-out": (0.25, 1.0, 0.5, 1.0),
+    "back-out": (0.34, 1.56, 0.64, 1.0),
+    "smooth": (0.65, 0.0, 0.35, 1.0),
+    "cinematic": (0.4, 0.0, 0.1, 1.0),
+}
+
+# Слой камеры: один на документ, двигает всю композицию (движок применяет его
+# трансформацию к обёртке страницы, а не к секции).
+CAMERA_LAYER_ID = "camera"
+CAMERA_PRESETS = ("camera-push", "camera-pull", "camera-pan", "camera-drift")
+
+
+def keyframe(t: int, value: float, curve: str | None = None) -> dict:
+    """Кейфрейм с именованной кривой (NAMED_CURVES) или CSS-изингом."""
+    item: dict = {"t": int(t), "value": value}
+    if curve in NAMED_CURVES:
+        item["easing"] = "cubic-bezier"
+        item["bezier"] = list(NAMED_CURVES[curve])
+    elif curve in ALLOWED_EASINGS and curve != "cubic-bezier":
+        item["easing"] = curve
+    return item
+
+
+def camera_layer(duration: int) -> dict:
+    return {
+        "id": CAMERA_LAYER_ID, "name": "Camera", "type": "camera", "parent": None,
+        "in": 0, "out": max(250, int(duration)),
+        "transform": {"anchor": {"x": 0.5, "y": 0.5}, "properties": {}},
+    }
+
+
+def has_camera_layer(timeline: dict) -> bool:
+    return any(isinstance(layer, dict) and layer.get("id") == CAMERA_LAYER_ID
+               for layer in (timeline.get("layers") or []))
+
+
+def ensure_camera_operations(timeline: dict) -> list[dict]:
+    """Операция add-layer для камеры, если её ещё нет (пустой список иначе)."""
+    if has_camera_layer(timeline):
+        return []
+    composition = timeline.get("composition") if isinstance(timeline.get("composition"), dict) else {}
+    return [{"kind": "add-layer", "target": CAMERA_LAYER_ID,
+             "value": camera_layer(int(composition.get("duration") or 6000))}]
+
+
+def merge_keyframe_operations(timeline: dict, operations: list[dict]) -> list[dict]:
+    """Слить set-keyframes по (слой, свойство): пресеты на одном свойстве
+    дополняют друг друга и существующий трек, а не затирают его.
+
+    Кейфреймы сортируются по времени; при совпадении времени побеждает более
+    поздняя операция. Остальные операции проходят без изменений и сохраняют
+    место первого set-keyframes своей группы.
+    """
+    layers = {str(layer.get("id")): layer for layer in (timeline.get("layers") or []) if isinstance(layer, dict)}
+    merged: dict[tuple[str, str], dict] = {}
+    result: list[dict] = []
+    added_layers: set[str] = set()
+    for op in operations:
+        if op.get("kind") == "add-layer":
+            # Несколько источников (шаблон + акцент) могут просить один и тот же
+            # слой камеры: второй add-layer сломал бы уникальность id.
+            target = str(op.get("target"))
+            if target in added_layers or target in layers:
+                continue
+            added_layers.add(target)
+            result.append(op)
+            continue
+        if op.get("kind") != "set-keyframes":
+            result.append(op)
+            continue
+        key = (str(op.get("target")), str(op.get("path")))
+        value = op.get("value")
+        incoming = value.get("keyframes") if isinstance(value, dict) else value
+        incoming = [kf for kf in (incoming or []) if isinstance(kf, dict)]
+        if key not in merged:
+            existing: list[dict] = []
+            layer = layers.get(key[0])
+            match = re.fullmatch(r"/transform/properties/([a-z]+)", key[1])
+            if layer and match:
+                track = ((layer.get("transform") or {}).get("properties") or {}).get(match.group(1))
+                existing = [kf for kf in ((track or {}).get("keyframes") or []) if isinstance(kf, dict)]
+            merged[key] = {"kind": "set-keyframes", "target": key[0], "path": key[1],
+                           "payload": copy.deepcopy(op.get("payload") or {}),
+                           "_by_t": {int(kf["t"]): copy.deepcopy(kf) for kf in existing}}
+            result.append(merged[key])
+        for kf in incoming:
+            merged[key]["_by_t"][int(kf["t"])] = copy.deepcopy(kf)
+    for op in merged.values():
+        by_t = op.pop("_by_t")
+        op["value"] = {"keyframes": [by_t[t] for t in sorted(by_t)]}
+    return result
+
+
 def preset_operations(preset: str, layer_ids: list[str], params: dict) -> list[dict]:
-    """Детерминированные операции пресетов (явные кейфреймы, без LLM)."""
+    """Детерминированные операции пресетов (явные кейфреймы, без LLM).
+
+    ``params``: start, duration, staggerMs, travel (px), curve (имя из
+    NAMED_CURVES или CSS-изинг) — переопределяет кривую пресета.
+    """
     start = max(0, int(params.get("start") or 0))
     duration = max(100, int(params.get("duration") or 800))
     stagger = max(0, int(params.get("staggerMs") or 0))
     travel = int(params.get("travel") or 240)
-    end = start + duration
+    curve_override = params.get("curve")
+    if curve_override is not None and curve_override not in NAMED_CURVES and curve_override not in ALLOWED_EASINGS:
+        raise ValueError(f"unknown curve: {curve_override!r}")
     operations: list[dict] = []
 
-    def fade_ops(layer_id: str, offset: int) -> list[dict]:
-        s = start + offset
-        e = s + duration
-        return [
-            {"kind": "set-keyframes", "target": layer_id, "path": "/transform/properties/opacity",
-             "value": {"keyframes": [
-                 {"t": s, "value": 0, "easing": "ease-out"},
-                 {"t": e, "value": 1}]},
-             "payload": {"preset": preset}},
-        ]
+    def curve(default: str) -> str:
+        return str(curve_override or default)
+
+    def track(layer_id: str, prop: str, keyframes: list[dict]) -> dict:
+        return {"kind": "set-keyframes", "target": layer_id, "path": f"/transform/properties/{prop}",
+                "value": {"keyframes": keyframes}, "payload": {"preset": preset}}
+
+    def fade_ops(layer_id: str, s: int, e: int) -> list[dict]:
+        return [track(layer_id, "opacity", [keyframe(s, 0, curve("expo-out")), keyframe(e, 1)])]
 
     for index, layer_id in enumerate(layer_ids):
-        offset = stagger * index
+        s = start + stagger * index
+        e = s + duration
+        mid = s + duration // 2
         if preset == "fade-in":
-            operations.extend(fade_ops(layer_id, offset))
+            operations.extend(fade_ops(layer_id, s, e))
         elif preset == "fade-in-up":
-            operations.extend(fade_ops(layer_id, offset))
-            s = start + offset
-            e = s + duration
-            operations.append({"kind": "set-keyframes", "target": layer_id, "path": "/transform/properties/y",
-                               "value": {"keyframes": [
-                                   {"t": s, "value": travel, "easing": "ease-out"},
-                                   {"t": e, "value": 0}]},
-                               "payload": {"preset": preset}})
+            operations.extend(fade_ops(layer_id, s, e))
+            operations.append(track(layer_id, "y", [keyframe(s, travel, curve("expo-out")), keyframe(e, 0)]))
+        elif preset == "slide-in-left":
+            operations.extend(fade_ops(layer_id, s, e))
+            operations.append(track(layer_id, "x", [keyframe(s, -travel, curve("expo-out")), keyframe(e, 0)]))
+        elif preset == "slide-in-right":
+            operations.extend(fade_ops(layer_id, s, e))
+            operations.append(track(layer_id, "x", [keyframe(s, travel, curve("expo-out")), keyframe(e, 0)]))
         elif preset == "zoom-in":
-            operations.extend(fade_ops(layer_id, offset))
-            s = start + offset
-            e = s + duration
-            operations.append({"kind": "set-keyframes", "target": layer_id, "path": "/transform/properties/scale",
-                               "value": {"keyframes": [
-                                   {"t": s, "value": 0.92, "easing": "ease-out"},
-                                   {"t": e, "value": 1}]},
-                               "payload": {"preset": preset}})
+            operations.extend(fade_ops(layer_id, s, e))
+            operations.append(track(layer_id, "scale", [keyframe(s, 0.92, curve("expo-out")), keyframe(e, 1)]))
+        elif preset == "scale-reveal":
+            operations.extend(fade_ops(layer_id, s, e))
+            operations.append(track(layer_id, "scale", [keyframe(s, 0.88, curve("back-out")), keyframe(e, 1)]))
+        elif preset == "focus-pull":
+            operations.extend(fade_ops(layer_id, s, e))
+            operations.append(track(layer_id, "blur", [keyframe(s, 14, curve("expo-out")), keyframe(e, 0)]))
+        elif preset == "wipe-reveal":
+            operations.append(track(layer_id, "clip", [keyframe(s, 100, curve("expo-out")), keyframe(e, 0)]))
+        elif preset == "wipe-out":
+            operations.append(track(layer_id, "clip", [keyframe(s, 0, curve("smooth")), keyframe(e, 100)]))
+        elif preset == "defocus":
+            operations.append(track(layer_id, "blur", [keyframe(s, 0, curve("smooth")), keyframe(e, 6)]))
+        elif preset == "rotate-in":
+            operations.extend(fade_ops(layer_id, s, e))
+            operations.append(track(layer_id, "rotation", [keyframe(s, -4, curve("expo-out")), keyframe(e, 0)]))
+            operations.append(track(layer_id, "y", [keyframe(s, travel // 3, curve("expo-out")), keyframe(e, 0)]))
         elif preset == "zoom-spotlight":
-            s = start + offset
-            e = s + duration
-            operations.append({"kind": "set-keyframes", "target": layer_id, "path": "/transform/properties/scale",
-                               "value": {"keyframes": [
-                                   {"t": s, "value": 1, "easing": "ease-in-out"},
-                                   {"t": e, "value": 1.25}]},
-                               "payload": {"preset": preset}})
+            operations.append(track(layer_id, "scale", [keyframe(s, 1, curve("cinematic")), keyframe(e, 1.12)]))
+        elif preset == "hero-focus":
+            operations.append(track(layer_id, "scale", [keyframe(s, 1, curve("quart-out")), keyframe(e, 1.04)]))
+        elif preset == "dim":
+            operations.append(track(layer_id, "opacity", [keyframe(s, 1, curve("smooth")), keyframe(e, 0.35)]))
+        elif preset == "fade-out":
+            operations.append(track(layer_id, "opacity", [keyframe(s, 1, curve("smooth")), keyframe(e, 0)]))
         elif preset == "pan-down":
-            s = start + offset
-            e = s + duration
-            operations.append({"kind": "set-keyframes", "target": layer_id, "path": "/transform/properties/y",
-                               "value": {"keyframes": [
-                                   {"t": s, "value": 0, "easing": "ease-in-out"},
-                                   {"t": e, "value": -travel}]},
-                               "payload": {"preset": preset}})
+            operations.append(track(layer_id, "y", [keyframe(s, 0, curve("cinematic")), keyframe(e, -travel)]))
+        elif preset == "drift-up":
+            operations.append(track(layer_id, "y", [keyframe(s, travel // 6, curve("linear")), keyframe(e, -(travel // 6))]))
         elif preset == "cta-pulse":
-            s = start + offset
-            mid = s + duration // 2
-            e = s + duration
-            operations.append({"kind": "set-keyframes", "target": layer_id, "path": "/transform/properties/scale",
-                               "value": {"keyframes": [
-                                   {"t": s, "value": 1, "easing": "ease-in-out"},
-                                   {"t": mid, "value": 1.08, "easing": "ease-in-out"},
-                                   {"t": e, "value": 1}]},
-                               "payload": {"preset": preset}})
+            operations.append(track(layer_id, "scale", [keyframe(s, 1, curve("smooth")), keyframe(mid, 1.08, curve("smooth")), keyframe(e, 1)]))
+        elif preset == "cta-bounce":
+            operations.append(track(layer_id, "y", [keyframe(s, 0, curve("back-out")), keyframe(mid, -14, curve("back-out")), keyframe(e, 0)]))
+            operations.append(track(layer_id, "scale", [keyframe(s, 1, curve("back-out")), keyframe(mid, 1.06, curve("back-out")), keyframe(e, 1)]))
+        elif preset == "camera-push":
+            operations.append(track(layer_id, "scale", [keyframe(s, 1, curve("cinematic")), keyframe(e, 1.08)]))
+        elif preset == "camera-pull":
+            operations.append(track(layer_id, "scale", [keyframe(s, 1.08, curve("cinematic")), keyframe(e, 1)]))
+        elif preset == "camera-pan":
+            operations.append(track(layer_id, "y", [keyframe(s, 0, curve("cinematic")), keyframe(e, -travel)]))
+        elif preset == "camera-drift":
+            operations.append(track(layer_id, "x", [keyframe(s, 0, curve("smooth")), keyframe(e, travel // 8)]))
+            operations.append(track(layer_id, "y", [keyframe(s, 0, curve("smooth")), keyframe(e, -(travel // 12))]))
         else:
-            raise ValueError(f"неизвестный пресет: {preset!r}")
+            raise ValueError(f"unknown preset: {preset!r}")
     return operations
 
 
-PRESET_NAMES = ("fade-in", "fade-in-up", "zoom-in", "zoom-spotlight", "pan-down", "cta-pulse")
+PRESET_NAMES = (
+    "fade-in", "fade-in-up", "slide-in-left", "slide-in-right", "zoom-in", "scale-reveal", "focus-pull", "rotate-in",
+    "wipe-reveal", "wipe-out",
+    "zoom-spotlight", "hero-focus", "dim", "defocus", "fade-out", "pan-down", "drift-up", "cta-pulse", "cta-bounce",
+    "camera-push", "camera-pull", "camera-pan", "camera-drift",
+)
 
 
 def _apply_operation(document: dict, op: dict) -> None:
@@ -437,55 +560,55 @@ def _apply_operation(document: dict, op: dict) -> None:
         composition = document.setdefault("composition", {})
         key = path.lstrip("/")
         if key not in {"width", "height", "fps", "duration", "background", "aspect"}:
-            raise ValueError(f"set-composition: неизвестный путь {path!r}")
+            raise ValueError(f"set-composition: unknown path {path!r}")
         composition[key] = op.get("value")
         return
     if kind == "add-layer":
         layer = op.get("value")
         if not isinstance(layer, dict):
-            raise ValueError("add-layer: value должен быть объектом слоя")
+            raise ValueError("add-layer: value must be a layer object")
         document.setdefault("layers", []).append(copy.deepcopy(layer))
         return
     if kind == "remove-layer":
         layers = document.get("layers") or []
         kept = [layer for layer in layers if not (isinstance(layer, dict) and layer.get("id") == target)]
         if len(kept) == len(layers):
-            raise ValueError(f"remove-layer: слой {target!r} не найден")
+            raise ValueError(f"remove-layer: layer {target!r} not found")
         document["layers"] = kept
         return
     if kind == "reorder-layer":
         layers = document.get("layers") or []
         index = next((i for i, layer in enumerate(layers) if isinstance(layer, dict) and layer.get("id") == target), None)
         if index is None:
-            raise ValueError(f"reorder-layer: слой {target!r} не найден")
+            raise ValueError(f"reorder-layer: layer {target!r} not found")
         new_index = int(op.get("value") or 0)
         layer = layers.pop(index)
         layers.insert(max(0, min(len(layers), new_index)), layer)
         return
     layer = _find_layer(document, target)
     if layer is None:
-        raise ValueError(f"слой {target!r} не найден")
+        raise ValueError(f"layer {target!r} not found")
     if kind == "set-layer-property":
         key = path.lstrip("/")
         if key not in {"in", "out", "parent", "name", "locked"}:
-            raise ValueError(f"set-layer-property: неизвестный путь {path!r}")
+            raise ValueError(f"set-layer-property: unknown path {path!r}")
         layer[key] = op.get("value")
         return
     if kind == "set-anchor":
         value = op.get("value")
         if not isinstance(value, dict):
-            raise ValueError("set-anchor: value должен быть {x, y}")
+            raise ValueError("set-anchor: value must be {x, y}")
         layer.setdefault("transform", {})["anchor"] = {"x": float(value.get("x", 0.5)), "y": float(value.get("y", 0.5))}
         return
     if kind == "set-keyframes":
         match = re.fullmatch(r"/transform/properties/([a-z]+)", path)
         if not match or match.group(1) not in ANIMATABLE_PROPERTIES:
-            raise ValueError(f"set-keyframes: недопустимый путь {path!r}")
+            raise ValueError(f"set-keyframes: invalid path {path!r}")
         prop = match.group(1)
         value = op.get("value")
         keyframes = value.get("keyframes") if isinstance(value, dict) else value
         if not isinstance(keyframes, list):
-            raise ValueError("set-keyframes: value должен содержать keyframes[]")
+            raise ValueError("set-keyframes: value must contain keyframes[]")
         transform = layer.setdefault("transform", {"anchor": {"x": 0.5, "y": 0.5}, "properties": {}})
         properties = transform.setdefault("properties", {})
         if keyframes:
@@ -495,7 +618,7 @@ def _apply_operation(document: dict, op: dict) -> None:
             # возвращали слой в исходное состояние без артефактов
             properties.pop(prop, None)
         return
-    raise ValueError(f"неизвестная операция: {kind!r}")
+    raise ValueError(f"unknown operation: {kind!r}")
 
 
 def build_change_set(document: dict, intent: str, operations: list[dict],
@@ -507,11 +630,11 @@ def build_change_set(document: dict, intent: str, operations: list[dict],
     состояние (договор atomic/reversible).
     """
     if not isinstance(document, dict):
-        raise ValueError("документ таймлайна обязателен")
+        raise ValueError("timeline document is required")
     if len(operations) > MAX_CHANGE_SET_OPERATIONS:
         raise ValueError(
-            f"слишком много операций ({len(operations)} > {MAX_CHANGE_SET_OPERATIONS}) — "
-            "сократите запрос или разбейте правки на несколько патчей")
+            f"too many operations ({len(operations)} > {MAX_CHANGE_SET_OPERATIONS}) — "
+            "shorten the request or split changes across multiple patches")
     work = copy.deepcopy(document)
     forward: list[dict] = []
     inverse: list[dict] = []
@@ -577,7 +700,7 @@ def build_change_set(document: dict, intent: str, operations: list[dict],
             inverse.extend(inv_restore)
             continue
         else:
-            raise ValueError(f"неизвестная операция: {kind!r}")
+            raise ValueError(f"unknown operation: {kind!r}")
         _apply_operation(work, op)
         forward.append(op)
         inverse.append(inv)
@@ -609,19 +732,19 @@ def apply_change_set(document: dict, change_set: dict, check_hash: bool = True) 
     if check_hash:
         expected = str(change_set.get("baseTimelineHash") or "")
         if expected and content_hash(document) != expected:
-            raise ValueError("baseTimelineHash не совпадает: таймлайн изменился с момента подготовки патча")
+            raise ValueError("baseTimelineHash mismatch: timeline changed after patch preparation")
     for precondition in change_set.get("preconditions") or []:
         if not isinstance(precondition, dict):
             continue
         kind = precondition.get("kind")
         if kind == "timeline-hash-match" and content_hash(document) != precondition.get("expected"):
-            raise ValueError("precondition timeline-hash-match не выполнен")
+            raise ValueError("timeline-hash-match precondition failed")
         if kind == "layer-exists" and _find_layer(document, str(precondition.get("target") or "")) is None:
-            raise ValueError(f"precondition layer-exists не выполнен: {precondition.get('target')!r}")
+            raise ValueError(f"layer-exists precondition failed: {precondition.get('target')!r}")
     work = copy.deepcopy(document)
     for op in change_set.get("operations") or []:
         if not isinstance(op, dict):
-            raise ValueError("операция обязана быть объектом")
+            raise ValueError("operation must be an object")
         kind = op.get("kind")
         if kind == "apply-preset":
             payload = op.get("payload") if isinstance(op.get("payload"), dict) else {}
@@ -634,7 +757,7 @@ def apply_change_set(document: dict, change_set: dict, check_hash: bool = True) 
         _apply_operation(work, op)
     errors = validate(work)
     if errors:
-        raise ValueError("Timeline IR после применения невалиден: " + "; ".join(errors[:5]))
+        raise ValueError("Timeline IR invalid after apply: " + "; ".join(errors[:5]))
     return work
 
 

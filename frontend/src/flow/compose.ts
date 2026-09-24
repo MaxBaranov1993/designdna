@@ -1,5 +1,6 @@
 import { deepClone } from "./dataflow";
 import type { IRObject, SourceViewport } from "./types";
+import { bandSection, isBandable, pageBackgroundOf, settleBandHeights } from "./source-layout";
 
 /* Ширины артборда по вьюпортам — зеркало DEFAULT_SOURCE_VIEWPORTS (scraper.py). */
 export const PAGE_VIEWPORT_WIDTHS: Record<SourceViewport, number> = {
@@ -112,6 +113,12 @@ function adaptStyleValue(
 ): string | null {
   const color = hex(value);
   if (!color) return null;
+  // A colour the page palette already has (a section generated with this site's
+  // design system) stays as is: remapping it by nearest role turned the site's
+  // blue eyebrow into near-black on the Page.
+  if (Object.values(target).some((t) => t && dist(color, t) <= 24)) {
+    return prop === "color" && contrast(color, bg) < 3 ? readable(color, bg) : color;
+  }
   const preferred =
     prop === "background"
       ? (["background", "surface", "primary", "accent", "border"] as ColorRole[])
@@ -281,8 +288,11 @@ export function composePage(
   const usedKeys = new Set<string>();
   const fontFaces = new Map<string, Record<string, unknown>>();
   const tree: IRNode[] = [];
+  // Captured Source sections go back to their page positions (bands); see source-layout.ts.
+  const layoutEntries: { section: IRNode; ir: IRObject; band: boolean }[] = [];
   for (const { name, ir } of blocks) {
     const meta = isRecord(ir.meta) ? ir.meta : {};
+    const bandable = isBandable(ir);
     for (const face of Array.isArray(meta.fontFaces) ? meta.fontFaces : []) {
       if (isRecord(face)) fontFaces.set(JSON.stringify(face), deepClone(face));
     }
@@ -317,21 +327,31 @@ export function composePage(
       });
       // секции обязаны течь в auto-колонке артборда страницы: позиционные остатки
       // блока (x/y/absolute от drag-правок в редакторе) ломали бы вертикальный стек
+      if (bandable) {
+        const band = bandSection(s, ir);
+        layoutEntries.push({ section: band, ir, band: true });
+        tree.push(band);
+        continue;
+      }
       const sf: IRNode = { ...((s.frame as IRNode) || {}), width: "fill" };
       delete sf.x;
       delete sf.y;
       delete sf.absolute;
       s.frame = sf;
+      layoutEntries.push({ section: s, ir, band: false });
       tree.push(s);
     }
   }
+  settleBandHeights(layoutEntries);
+  const pageBackground = pageBackgroundOf(layoutEntries);
   return {
     version: "1.1",
     meta: {
-      name: "Страница",
+      name: "Page",
       description: blocks.map((b) => b.name).join(" + "),
       activeViewport,
       ...(fontFaces.size ? { fontFaces: [...fontFaces.values()] } : {}),
+      ...(pageBackground ? { pageBackground } : {}),
     },
     // Канонический артборд всегда desktop: materializeResponsiveIR подставит
     // ширину активного вьюпорта при рендере, а редактор сохраняет canonical 1440.

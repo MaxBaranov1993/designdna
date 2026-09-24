@@ -80,7 +80,8 @@ export function outValue(n: FlowNode, port?: string, nodes?: FlowNode[], edges?:
       return n.data.variants?.[n.data.active]?.png || null;
     case "reference":
       if (port === "image") return n.data.image || (nodes && edges ? pullInput(nodes, edges, n, "image", visited) : null);
-      return n.data.brief || (n.data.fileName ? "Референс: " + n.data.fileName : "");
+      if (port === "ir") return n.data.ir || null;
+      return n.data.brief || (n.data.fileName ? "Reference: " + n.data.fileName : "");
     case "generator":
       return n.data.variants.length ? n.data.variants[n.data.active] || null : null;
     case "edit":

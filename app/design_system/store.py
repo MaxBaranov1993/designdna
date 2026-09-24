@@ -193,21 +193,21 @@ def restore_published(system_id: str, revision: int | None = None) -> dict:
                     "SELECT latest_revision, status FROM design_systems WHERE system_id=?",
                     (system_id,)).fetchone()
                 if not row or str(row[1] or "") != "published" or int(row[0] or 0) <= 0:
-                    raise ValueError("Нет опубликованной ревизии для восстановления")
+                    raise ValueError("No published revision to restore")
                 target = int(row[0])
             stored = con.execute(
                 "SELECT document FROM design_system_revisions WHERE system_id=? AND revision=?",
                 (system_id, target)).fetchone()
             if not stored:
-                raise ValueError(f"Ревизия {system_id}@{target} не найдена")
+                raise ValueError(f"Revision {system_id}@{target} not found")
             try:
                 document = json.loads(stored[0])
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"Ревизия {system_id}@{target} повреждена") from exc
+                raise ValueError(f"Revision {system_id}@{target} corrupted") from exc
             from .identity import ensure_identity
             ensure_identity(document)
             if document.get("status") != "published" or int(document.get("revision") or 0) <= 0:
-                raise ValueError("Восстановить можно только опубликованную ревизию")
+                raise ValueError("Only a published revision can be restored")
             digest = str(document.get("contentHash") or dsdoc.content_hash(document))
             published_copy = {**document, "status": "published", "revision": int(document["revision"]),
                               "contentHash": digest}
@@ -259,11 +259,11 @@ def resolve_ref(ref: dict) -> tuple[dict | None, str | None]:
         if latest > 0:
             document = get_revision(system_id, latest)
     if not document:
-        return None, f"Ревизия {system_id}@{revision} не найдена"
+        return None, f"Revision {system_id}@{revision} not found"
     if exact:
         expected = str(ref.get("contentHash") or "")
         if expected and document.get("contentHash") and expected != document["contentHash"]:
-            return None, "contentHash закреплённой ревизии не совпадает"
+            return None, "Pinned revision contentHash does not match"
     return document, None
 
 
@@ -310,10 +310,10 @@ def set_default(system_id: str | None, project_id: str = "default") -> dict:
                 "SELECT latest_revision, status FROM design_systems WHERE system_id=? AND project_id=?",
                 (system_id, project_id)).fetchone()
             if not row:
-                raise ValueError(f"Система {system_id} не найдена в проекте")
+                raise ValueError(f"System {system_id} not found in project")
             revision, status = int(row[0] or 0), str(row[1] or "")
             if status != "published" or revision <= 0:
-                raise ValueError("Назначить по умолчанию можно только опубликованную систему")
+                raise ValueError("Only a published system can be set as default")
             document = get_revision(system_id, revision)
             con.execute(
                 "INSERT OR REPLACE INTO design_system_meta (project_id, default_system_id, default_revision) VALUES (?,?,?)",

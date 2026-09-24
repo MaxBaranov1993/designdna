@@ -67,7 +67,7 @@ def asset_apply(req: AssetApplyReq):
     try:
         return asset_plan.apply(req.ir, req.slot, req.image)
     except ValueError as exc:
-        return err(409 if "план ресурсов" in str(exc) else 422, str(exc))
+        return err(409 if "asset plan" in str(exc) else 422, str(exc))
 
 
 @router.post("/api/generate/assets/reconcile")

@@ -272,7 +272,7 @@ def sanitize_generated_ir(ir: dict) -> dict:
             return
         media.pop("src", None)
         if not media.get("imagePrompt"):
-            media["imagePrompt"] = str(media.get("alt") or "изображение")
+            media["imagePrompt"] = str(media.get("alt") or "image")
 
     def normalize_node(node: object) -> None:
         if not isinstance(node, dict):
@@ -529,7 +529,7 @@ def migrate_project_payload(payload: dict) -> dict:
                     or slot in ("masterIr", "templateIr", "sourceArtifact", "sourcePack", "polish", "blocks")):
                 return value
             if value.get("version") in ("1.0", "1.1") and "tree" in value and "tokens" in value:
-                if slot not in ("ir", "variants", "channels"):
+                if slot not in ("ir", "variants", "mixVariants", "channels"):
                     return value
                 # A current captured IR may also be exposed as a channel or
                 # derived page input outside its Source node. Preserve it too.
@@ -543,7 +543,11 @@ def migrate_project_payload(payload: dict) -> dict:
                 # the wall clock, keeping repeated loads byte-identical.
                 recorded_at = provenance.get("createdAt") or _PROJECT_MIGRATION_TIME
                 return migrate_ir(value, source="project-load", recorded_at=str(recorded_at))
-            return {k: _migrate_value(v, k if slot != "channels" else "channels") for k, v in value.items()}
+            # Undo compares the entire result to its saved "after" snapshot.
+            # Both sides must undergo the identical migration on project load.
+            # Source/DS boundaries above remain opaque, including their history.
+            return {k: _migrate_value(v, "variants" if slot == "assetVersions" and k in ("before", "after")
+                                     else k if slot != "channels" else "channels") for k, v in value.items()}
         if isinstance(value, list):
             return [_migrate_value(v, slot) for v in value]
         return value

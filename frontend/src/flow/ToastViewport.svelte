@@ -30,8 +30,8 @@
       <button
         type="button"
         class="toast-close"
-        aria-label="Закрыть уведомление"
-        title="Закрыть"
+        aria-label="Dismiss notification"
+        title="Close"
         onclick={() => dismissToast(t.id)}
       >
         <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true" focusable="false">

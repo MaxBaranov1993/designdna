@@ -119,7 +119,7 @@ def test_commit_rejects_overlarge_operation_batch(client) -> None:
     resp = client.post("/api/timeline/commit", json={
         "timeline": timeline, "intent": "перегруз", "operations": operations})
     assert resp.status_code == 422
-    assert "операций" in resp.json()["error"]
+    assert "operations" in resp.json()["error"]
 
 
 def test_director_bounds_layers_per_step_on_huge_timeline() -> None:
@@ -147,7 +147,7 @@ def test_director_bounds_layers_per_step_on_huge_timeline() -> None:
 
 def test_asset_guard_rejects_any_remote_url() -> None:
     # приватный адрес — отказ (и без того офлайн)
-    with pytest.raises(ValueError, match="не ходит в сеть"):
+    with pytest.raises(ValueError, match="cannot access the network"):
         timeline_assets.validate_asset_url(f"https://10.0.0.1/assets/{HASH_HEX}.png")
     # «хэшеподобный» удалённый путь — тоже отказ: байты удалённого ответа
     # верифицировать детерминизмом контракта невозможно
@@ -156,11 +156,11 @@ def test_asset_guard_rejects_any_remote_url() -> None:
     with pytest.raises(ValueError, match="ddna://blobs"):
         timeline_assets.validate_asset_url(f"https://cdn.example.com/assets/{HASH_HEX}.png?sig=abc")
     # file:/javascript: и прочие схемы
-    with pytest.raises(ValueError, match="схема"):
+    with pytest.raises(ValueError, match="scheme"):
         timeline_assets.validate_asset_url("file:///etc/passwd")
     # большой data: URL
     huge = "data:image/png;base64," + "A" * (timeline_assets.MAX_DATA_URL_CHARS + 10)
-    with pytest.raises(ValueError, match="лимит"):
+    with pytest.raises(ValueError, match="limit"):
         timeline_assets.validate_asset_url(huge)
 
 
@@ -196,11 +196,11 @@ def test_materialize_verifies_sha_size_and_traversal(tmp_path: Path) -> None:
 
     ir_bad = {"tree": [{"id": "s", "type": "hero", "children": [{"type": "image", "src": f"ddna://blobs/{corrupt_sha}.png"}]}]}
     _assets, errors = timeline_assets.materialize_render_assets(ir_bad, tmp_path)
-    assert errors and "повреждён" in errors[0] and "sha256" in errors[0]
+    assert errors and "corrupted" in errors[0] and "sha256" in errors[0]
 
     ir_missing = {"tree": [{"id": "s", "type": "hero", "children": [{"type": "image", "src": f"ddna://blobs/{'a' * 64}.png"}]}]}
     _assets, errors = timeline_assets.materialize_render_assets(ir_missing, tmp_path)
-    assert errors and "не найден" in errors[0]
+    assert errors and "not found" in errors[0]
 
     fonts = tmp_path / "fonts"
     fonts.mkdir()
@@ -217,11 +217,11 @@ def test_materialize_verifies_sha_size_and_traversal(tmp_path: Path) -> None:
     ir_font_alien = {"meta": {"fontFaces": [{"family": "X", "weight": "400", "style": "normal",
                                              "url": f"/fonts/{alien_name}"}]}, "tree": []}
     _assets, errors = timeline_assets.materialize_render_assets(ir_font_alien, tmp_path)
-    assert errors and "подменён" in errors[0] and "sha1" in errors[0]
+    assert errors and "replaced" in errors[0] and "sha1" in errors[0]
     ir_font_missing = {"meta": {"fontFaces": [{"family": "X", "weight": "400", "style": "normal",
                                               "url": "/fonts/ffffffffffffffff.woff2"}]}, "tree": []}
     _assets, errors = timeline_assets.materialize_render_assets(ir_font_missing, tmp_path)
-    assert errors and "не найден" in errors[0]
+    assert errors and "not found" in errors[0]
 
 
 def test_render_blocks_remote_asset_endpoints(client, silent_submit) -> None:
@@ -229,13 +229,13 @@ def test_render_blocks_remote_asset_endpoints(client, silent_submit) -> None:
     bad_ir["tree"][0]["children"][0]["src"] = f"https://cdn.example.com/assets/{HASH_HEX}.png"
     errors = timeline_assets.validate_render_assets(bad_ir)
     assert errors and "/tree/0/children/0/src" in errors[0]
-    assert "не ходит в сеть" in errors[0]
+    assert "cannot access the network" in errors[0]
 
     # таймлайн собирается поверх того же IR, чтобы хэш-связка сошлась
     timeline = build(bad_ir, {"duration": 500})
     resp = client.post("/api/timeline/render", json={"timeline": timeline, "ir": bad_ir})
     assert resp.status_code == 422
-    assert "ассеты" in resp.json()["error"].lower()
+    assert "assets" in resp.json()["error"].lower()
 
 
 def test_render_accepts_verified_local_blob(client, silent_submit, tmp_path: Path, monkeypatch) -> None:
@@ -259,7 +259,7 @@ def test_render_accepts_verified_local_blob(client, silent_submit, tmp_path: Pat
     ir_missing["tree"][0]["children"][0]["src"] = f"ddna://blobs/{'b' * 64}.png"
     timeline_missing = build(ir_missing, {"duration": 500})
     resp = client.post("/api/timeline/render", json={"timeline": timeline_missing, "ir": ir_missing})
-    assert resp.status_code == 422 and "не найден" in resp.json()["error"]
+    assert resp.status_code == 422 and "not found" in resp.json()["error"]
 
 
 # --------------------------------------------------------------------------
@@ -283,7 +283,7 @@ def test_render_queue_is_bounded(client, silent_submit) -> None:
     timeline = _timeline(duration=500)
     resp = client.post("/api/timeline/render", json={"timeline": timeline, "ir": DESIGN_IR})
     assert resp.status_code == 429
-    assert "Очередь" in resp.json()["error"]
+    assert "queue" in resp.json()["error"]
 
 
 def test_cancel_queued_and_running_jobs(client) -> None:
@@ -356,7 +356,7 @@ def test_assist_reports_llm_fallback(client, monkeypatch) -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["planSource"] == "deterministic"
-    assert body["warning"] and "LLM-провайдер недоступен" in body["warning"]
+    assert body["warning"] and "LLM provider unavailable" in body["warning"]
 
 
 def test_direct_uses_llm_plan_when_available(monkeypatch) -> None:
@@ -376,3 +376,42 @@ def test_render_rejects_overlong_frame_budget(client, silent_submit) -> None:
     resp = client.post("/api/timeline/render", json={"timeline": timeline, "ir": DESIGN_IR})
     assert resp.status_code == 422
     assert "frame" in resp.json()["error"].lower()
+
+
+def test_promote_oversized_data_urls_to_blobs(tmp_path: Path) -> None:
+    """Oversized inline data: images become content-addressed blobs before render."""
+    import base64
+    from io import BytesIO
+    from PIL import Image
+
+    img = Image.new("RGB", (640, 640), (32, 160, 220))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    raw = buf.getvalue()
+    data_url = "data:image/png;base64," + base64.b64encode(raw).decode()
+    while len(data_url) <= timeline_assets.MAX_DATA_URL_CHARS:
+        img = Image.new("RGB", (img.size[0] + 160, img.size[1] + 160), (32, 160, 220))
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        raw = buf.getvalue()
+        data_url = "data:image/png;base64," + base64.b64encode(raw).decode()
+
+    ir = {
+        "tree": [
+            {
+                "type": "image",
+                "src": data_url,
+                "style": {"backgroundImage": f"url({data_url})"},
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match="limit"):
+        timeline_assets.validate_asset_url(data_url)
+    promoted = timeline_assets.promote_oversized_data_urls(ir, data_dir=tmp_path)
+    src = promoted["tree"][0]["src"]
+    assert src.startswith("ddna://blobs/") and src.endswith(".png")
+    assert "ddna://blobs/" in promoted["tree"][0]["style"]["backgroundImage"]
+    assert timeline_assets.validate_asset_url(src)
+    assets, errors = timeline_assets.materialize_render_assets(promoted, tmp_path)
+    assert errors == []
+    assert src in assets

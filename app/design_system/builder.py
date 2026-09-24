@@ -1,4 +1,4 @@
-﻿"""Builder: Source Pack → reference-faithful draft Design System.
+"""Builder: Source Pack → reference-faithful draft Design System.
 
 Observed masters are exact deep copies of Source component boundaries. Canonical
 taxonomy is metadata only: it may name/classify a captured component, but it must
@@ -22,12 +22,13 @@ from .document import component_fidelity_status
 from .document import content_hash as _content_hash
 from .document import new_document
 from .identity import extract_identity
+from .section_shell import measure_section_shell
 
 # Должен совпадать с blockparse.SOURCE_COMPILER_VERSION: пак записывает эту
 # версию, когда нода не передала свою. Расхождение (было "dom-v31" против
 # "dom-v39") помечало свежие захваты устаревшим парсером. Синхронность
 # проверяется тестом test_source_compiler_default_matches_pipeline.
-SOURCE_COMPILER_DEFAULT = "dom-v47"
+SOURCE_COMPILER_DEFAULT = "dom-v49"
 _GEN_STATES = ("hover", "loading", "error", "empty", "disabled")
 
 
@@ -225,21 +226,21 @@ _PERSON_NAME_RE = re.compile(r"^[A-ZА-ЯЁ][a-zа-яё]{2,}\s+[A-ZА-ЯЁ][a-z�
 _QUESTION_WORD_RE = re.compile(r"^(как|что|почему|где|когда|сколько|можно|нужно|какой|какая|есть)\b", re.IGNORECASE)
 
 _DEFAULT_CONTENT = {
-    "brand": "Бренд",
-    "nav": ["Главная", "Каталог", "Избранное", "Профиль"],
-    "cta": ["Подробнее", "В корзину", "Отправить"],
-    "heading": ["Популярные товары", "Новые поступления", "Выгодные предложения"],
-    "title": ["Компактная модель", "Премиальная модель", "Базовый пакет"],
+    "brand": "Brand",
+    "nav": ["Home", "Catalog", "Favorites", "Profile"],
+    "cta": ["Learn more", "Add to cart", "Submit"],
+    "heading": ["Popular products", "New arrivals", "Special offers"],
+    "title": ["Compact model", "Premium model", "Basic package"],
     "price": ["4 990 ₽", "12 400 ₽", "1 299 ₽"],
-    "category": ["Электроника", "Для дома", "Аксессуары", "Хобби"],
-    "badge": ["Хит", "Новинка", "-25%"],
-    "question": ["Как оформить доставку?", "Есть ли гарантия?", "Как оплатить заказ?"],
+    "category": ["Electronics", "Home", "Accessories", "Hobbies"],
+    "badge": ["Bestseller", "New", "-25%"],
+    "question": ["How does delivery work?", "Is there a warranty?", "How can I pay?"],
     "answer": [
-        "Курьер привезёт заказ в течение двух дней, дату можно выбрать при оформлении.",
-        "На все товары действует гарантия двенадцать месяцев с момента покупки.",
-        "Доступна оплата картой, наличными при получении и в рассрочку.",
+        "A courier will deliver within two days. Choose a date at checkout.",
+        "All products include a twelve-month warranty from the date of purchase.",
+        "Pay by card, cash on delivery, or installments.",
     ],
-    "caption": "Обновляйте контент через mock-данные",
+    "caption": "Update content through mock data",
 }
 
 # Англоязычный референс без товаров/цен не должен смешиваться с русскими
@@ -510,47 +511,47 @@ def _build_library(dna: dict, content: dict) -> list[dict]:
         specs.append({"key": key, "name": name, "category": category, "description": description,
                       "states": states, "mockFields": mock_fields, "build": build})
 
-    spec("button", "Button", "actions", "Кнопка действий; варианты из референса (заливка/контур/ghost)",
+    spec("button", "Button", "actions", "Action button; reference variants (filled/outline/ghost)",
          ["hover", "loading", "disabled"], [{"name": "text", "format": "cta"}],
          lambda: [_sec([_btn(dna, c["cta"][0], "primary"),
                         _btn(dna, c["cta"][1 % len(c["cta"])], "secondary"),
                         _btn(dna, c["cta"][2 % len(c["cta"])], "outline"),
                         _btn(dna, c["cta"][0], "ghost")], direction="row", gap=10, width=520)])
 
-    spec("icon-button", "Icon Button", "actions", "Квадратная кнопка-иконка (44×44, тач-зона)",
+    spec("icon-button", "Icon Button", "actions", "Square icon button (44×44 touch target)",
          ["hover", "disabled"], [{"name": "icon", "format": "word"}],
          lambda: [_sec([{**_btn(dna, "✎", "outline", width=44, height=44),
                          "style": {"borderRadius": px["button"], "fontSize": 16}},
                         {**_btn(dna, "♡", "ghost", width=44, height=44),
                          "style": {"fontSize": 16}}], direction="row", gap=10)])
 
-    spec("input", "Input", "forms", "Однострочное поле ввода в стиле референса",
+    spec("input", "Input", "forms", "Single-line input matching the reference style",
          ["focus", "error", "disabled"], [{"name": "placeholder", "format": "sentence"}],
          lambda: [_sec([_txt(dna, "Email", size=13, weight=600, muted=True, height=18),
                         _input_el(dna, "user@example.com")])])
 
-    spec("search", "Search Field", "forms", "Поисковая строка с кнопкой (типично для референса)",
+    spec("search", "Search Field", "forms", "Search bar with button (typical of the reference)",
          ["focus", "loading"], [{"name": "query", "format": "sentence"}],
          lambda: [_sec([{"type": "card", "role": "ds-field", "style": {"borderColor": border, "borderWidth": 1,
                                                                         "borderRadius": px["input"], "background": dna["color"]["background"]},
                         "frame": {"width": "fill", "height": 46, "layout": "auto", "direction": "row",
                                   "gap": 8, "align": "center", "padding": [0, 6, 0, 14]},
                         "children": [{"type": "icon", "icon": "⌕", "style": {"color": muted}, "frame": {"width": 22, "height": 22}},
-                                     _txt(dna, "Поиск по каталогу", muted=True, height=20),
+                                     _txt(dna, "Search catalog", muted=True, height=20),
                                      _btn(dna, c["cta"][0], "primary", height=36)]}])])
 
-    spec("textarea", "Textarea", "forms", "Многострочное поле (комментарий, сообщение)",
+    spec("textarea", "Textarea", "forms", "Multiline field (comment, message)",
          ["focus", "error"], [{"name": "text", "format": "sentence"}],
-         lambda: [_sec([_input_el(dna, "Комментарий к заказу…", multiline=True)])])
+         lambda: [_sec([_input_el(dna, "Order comment…", multiline=True)])])
 
-    spec("select", "Select", "forms", "Выпадающий список",
+    spec("select", "Select", "forms", "Dropdown",
          ["hover", "disabled"], [{"name": "value", "format": "word"}],
          lambda: [_sec([{**_input_el(dna, c["category"][0]), "frame": {"width": "fill", "height": 46, "layout": "auto",
                                                                         "direction": "row", "align": "center", "padding": [0, 14]},
                         "children": [_txt(dna, c["category"][0], size=15, height=20),
                                      _txt(dna, "▾", size=14, muted=True, height=20)]}])])
 
-    spec("checkbox", "Checkbox", "forms", "Чекбокс с подписью",
+    spec("checkbox", "Checkbox", "forms", "Checkbox with label",
          ["checked", "disabled"], [{"name": "label", "format": "sentence"}],
          lambda: [_sec([{"type": "card", "role": "ds-field", "style": {"background": dna["color"]["background"]},
                      "frame": {"width": "fill", "layout": "auto", "direction": "row", "gap": 10, "align": "center"},
@@ -559,9 +560,9 @@ def _build_library(dna: dict, content: dict) -> list[dict]:
                                    "frame": {"width": 20, "height": 20, "layout": "auto", "direction": "row",
                                              "justify": "center", "align": "center"},
                                    "children": [_txt(dna, "✓", size=13, color="#ffffff", height=16)]},
-                                  _txt(dna, "Согласен с условиями", size=14, height=20)]}])])
+                                  _txt(dna, "I agree to the terms", size=14, height=20)]}])])
 
-    spec("switch", "Switch", "forms", "Переключатель вкл/выкл",
+    spec("switch", "Switch", "forms", "On/off toggle",
          ["checked", "disabled"], [{"name": "label", "format": "sentence"}],
          lambda: [_sec([{"type": "card", "role": "ds-field", "style": {"background": dna["color"]["background"]},
                      "frame": {"width": "fill", "layout": "auto", "direction": "row", "gap": 10, "align": "center"},
@@ -570,21 +571,21 @@ def _build_library(dna: dict, content: dict) -> list[dict]:
                                    "children": [{"type": "rect", "fill": "#ffffff", "radius": 999,
                                                  "style": {"borderRadius": 999, "boxShadow": "0 1px 2px rgba(0,0,0,.2)"},
                                                  "frame": {"width": 18, "height": 18, "absolute": True, "x": 23, "y": 3}}]},
-                                  _txt(dna, "Уведомления", size=14, height=20)]}])])
+                                  _txt(dna, "Notifications", size=14, height=20)]}])])
 
-    spec("badge", "Badge", "feedback", "Метка статиса/скидки (контент — из референса)",
+    spec("badge", "Badge", "feedback", "Status/discount badge (reference content)",
          [], [{"name": "text", "format": "badge"}],
          lambda: [_sec([_badge_el(dna, c["badge"][0], "primary"),
                         _badge_el(dna, c["badge"][1 % len(c["badge"])], "muted"),
                         _badge_el(dna, c["badge"][2 % len(c["badge"])], "accent")], direction="row", gap=8)])
 
-    spec("alert", "Alert", "feedback", "Статусное сообщение (info/success/warning/error)",
+    spec("alert", "Alert", "feedback", "Status message (info/success/warning/error)",
          [], [{"name": "text", "format": "sentence"}],
          lambda: [_sec([_card_shell(dna, direction="row", gap=10, padding=14, background=surface,
                                     children=[{"type": "icon", "icon": "✓", "style": {"color": primary}, "frame": {"width": 22, "height": 22}},
-                                              _txt(dna, "Заказ оформлен — курьер приедет 26 августа", size=14, height=38)])])])
+                                              _txt(dna, "Order confirmed — your courier will arrive on August 26", size=14, height=38)])])])
 
-    spec("skeleton", "Skeleton", "feedback", "Плейсхолдер загрузки в стиле референса",
+    spec("skeleton", "Skeleton", "feedback", "Loading placeholder in the reference style",
          [], [],
          lambda: [_sec([{k: v for k, v in _card_shell(dna, gap=10).items() if k != "children"} |
                         {"children": [
@@ -595,18 +596,18 @@ def _build_library(dna: dict, content: dict) -> list[dict]:
                             {"type": "rect", "fill": border, "radius": 6, "style": {"borderRadius": 6},
                              "frame": {"width": 120, "height": 16}}]}])])
 
-    spec("divider", "Divider", "surfaces", "Разделитель", [], [],
+    spec("divider", "Divider", "surfaces", "Divider", [], [],
          lambda: [_sec([{"type": "divider", "style": {"background": border},
                          "frame": {"width": "fill", "height": 1}}])])
 
-    spec("card", "Card", "surfaces", "Базовая карточка-поверхность",
+    spec("card", "Card", "surfaces", "Basic surface card",
          [], [{"name": "title", "format": "title"}, {"name": "text", "format": "sentence"}],
          lambda: [_sec([_card_shell(dna, children=[
              _head(dna, c["heading"][0], 3),
-             _txt(dna, "Короткое описание содержимого карточки в две строки.", muted=True, height=40),
+             _txt(dna, "A short description of the card content in two lines.", muted=True, height=40),
              _btn(dna, c["cta"][0], "primary", height=38)])])])
 
-    spec("accordion", "Accordion / FAQ", "surfaces", "Раскрывающийся список вопросов-ответов (контент референса)",
+    spec("accordion", "Accordion / FAQ", "surfaces", "Expandable FAQ (reference content)",
          [], [{"name": "question", "format": "question"}, {"name": "answer", "format": "answer"}],
          lambda: [
              {"id": "ds-accordion", "type": "faq", "variant": "stack",
@@ -614,19 +615,19 @@ def _build_library(dna: dict, content: dict) -> list[dict]:
                         "items": [{"question": q, "answer": c["answer"][i % len(c["answer"])]}
                                   for i, q in enumerate(c["question"][:4])]}}])
 
-    spec("navbar", "Navbar", "navigation", "Шапка с меню и CTA (пункты — из референса)",
+    spec("navbar", "Navbar", "navigation", "Header with menu and CTA (reference items)",
          ["sticky"], [{"name": "items", "format": "nav"}],
          lambda: [{"id": "ds-navbar", "type": "navbar", "variant": "default",
                    "props": {"logoText": c["brand"],
                              "links": [{"label": item, "href": "#"} for item in c["nav"][:5]],
                              "cta": {"text": c["cta"][0], "variant": "primary"}, "sticky": True}}])
 
-    spec("breadcrumb", "Breadcrumb", "navigation", "Хлебные крошки", [], [{"name": "items", "format": "nav"}],
+    spec("breadcrumb", "Breadcrumb", "navigation", "Breadcrumbs", [], [{"name": "items", "format": "nav"}],
          lambda: [_sec([{"type": "card", "role": "ds-field", "style": {"background": dna["color"]["background"]},
                      "frame": {"width": "fill", "layout": "auto", "direction": "row", "gap": 6, "align": "center"},
                      "children": [_txt(dna, " / ".join([c["nav"][0], c["category"][0]]), size=13, muted=True, height=18)]}])])
 
-    spec("tabs", "Tabs", "navigation", "Набор вкладок", ["hover"], [{"name": "items", "format": "nav"}],
+    spec("tabs", "Tabs", "navigation", "Tab group", ["hover"], [{"name": "items", "format": "nav"}],
          lambda: [_sec([{"type": "card", "role": "ds-field",
                      "style": {"background": dna["color"]["background"], "borderColor": border,
                                "borderWidth": 1, "borderRadius": px["button"]},
@@ -637,7 +638,7 @@ def _build_library(dna: dict, content: dict) -> list[dict]:
                          _btn(dna, c["nav"][1 % len(c["nav"])], "ghost", height=34),
                          _btn(dna, c["nav"][2 % len(c["nav"])], "ghost", height=34)]}])])
 
-    spec("pagination", "Pagination", "navigation", "Постраничная навигация", ["disabled"], [{"name": "page", "format": "word"}],
+    spec("pagination", "Pagination", "navigation", "Pagination", ["disabled"], [{"name": "page", "format": "word"}],
          lambda: [_sec([{"type": "card", "role": "ds-field", "style": {"background": dna["color"]["background"]},
                      "frame": {"width": "fill", "layout": "auto", "direction": "row", "gap": 6},
                      "children": [_btn(dna, "‹", "outline", width=36, height=36)] +
@@ -645,37 +646,37 @@ def _build_library(dna: dict, content: dict) -> list[dict]:
                                    for i in range(3)] +
                                   [_btn(dna, "›", "outline", width=36, height=36)]}])])
 
-    spec("footer", "Footer", "navigation", "Подвал с колонками ссылок (контент референса)",
+    spec("footer", "Footer", "navigation", "Footer with link columns (reference content)",
          [], [{"name": "items", "format": "nav"}],
          lambda: [{"id": "ds-footer", "type": "footer", "variant": "columns",
-                   "props": {"logoText": c["brand"], "tagline": "Маркетплейс-референс для UI Kit",
+                   "props": {"logoText": c["brand"], "tagline": "Marketplace reference for UI Kit",
                              "columns": [{"title": col, "links": [{"label": item, "href": "#"} for item in c["nav"][:3]]}
                                          for col in c["category"][:3]],
                              "copyright": f"© 2026 {c['brand']}"}}])
 
-    spec("product-card", "Product Card", "content", "Карточка товара: фото, бейдж, цена, CTA (моки — из референса)",
+    spec("product-card", "Product Card", "content", "Product card: photo, badge, price, CTA (reference-based mocks)",
          ["loading", "empty"], [{"name": "title", "format": "title"}, {"name": "price", "format": "price"},
                                 {"name": "badge", "format": "badge"}, {"name": "image", "format": "url"}],
          lambda: [_sec([{"type": "card", "role": "ds-grid", "style": {"background": dna["color"]["background"]},
                      "frame": {"width": "fill", "layout": "auto", "direction": "row", "gap": 14, "wrap": True},
                      "children": [_product_card_el(dna, c, i) for i in range(2)]}], width=640)])
 
-    spec("category-tile", "Category Tile", "content", "Плитка категории (названия — из референса)",
+    spec("category-tile", "Category Tile", "content", "Category tile (reference names)",
          [], [{"name": "label", "format": "category"}],
          lambda: [_sec([{"type": "card", "role": "ds-grid", "style": {"background": dna["color"]["background"]},
                      "frame": {"width": "fill", "layout": "auto", "direction": "row", "gap": 12, "wrap": True},
                      "children": [_tile_el(dna, label, i) for i, label in enumerate(c["category"][:4])]}], width=560)])
 
-    spec("article-card", "Article Card", "content", "Карточка материала/поста (журнал референса)",
+    spec("article-card", "Article Card", "content", "Article/post card (reference journal)",
          [], [{"name": "title", "format": "title"}, {"name": "text", "format": "sentence"}],
          lambda: [_sec([_card_shell(dna, padding=0, children=[
              {"type": "image", "alt": c["heading"][0],
               "style": {"borderRadius": px["card"], "background": border},
               "frame": {"width": "fill", "height": 130}},
              _head(dna, c["heading"][0], 3),
-             _txt(dna, "Анонс материала: пара строк о содержании и дате публикации.", muted=True, height=40)])])])
+             _txt(dna, "Article preview: a few lines about its content and publication date.", muted=True, height=40)])])])
 
-    spec("carousel", "Carousel", "content", "Карусель слайдов с точками (как в референсе)",
+    spec("carousel", "Carousel", "content", "Slide carousel with dots (as in the reference)",
          ["loading"], [{"name": "title", "format": "title"}, {"name": "price", "format": "price"}],
          lambda: [_sec([_head(dna, c["heading"][0], 3),
                         _product_card_el(dna, c, 0),
@@ -686,15 +687,15 @@ def _build_library(dna: dict, content: dict) -> list[dict]:
                                      [{"type": "rect", "fill": border, "radius": 999, "style": {"borderRadius": 999},
                                        "frame": {"width": 8, "height": 8}} for _ in range(3)]}], width=420)])
 
-    spec("cta-banner", "CTA Banner", "content", "Промо-блок с заголовком и кнопками",
+    spec("cta-banner", "CTA Banner", "content", "Promo block with heading and buttons",
          [], [{"name": "heading", "format": "heading"}],
          lambda: [{"id": "ds-cta", "type": "cta", "variant": "default",
                    "props": {"heading": c["heading"][0],
-                             "subheading": "Соберите блок в стиле референса за один промпт.",
+                             "subheading": "Build a block in the reference style with one prompt.",
                              "ctaPrimary": {"text": c["cta"][0], "variant": "primary"},
                              "ctaSecondary": {"text": c["cta"][1 % len(c["cta"])], "variant": "outline"}}}])
 
-    spec("price", "Price", "content", "Цена: текущая + зачёркнутая старая (формат референса)",
+    spec("price", "Price", "content", "Price: current + struck-through previous price (reference format)",
          [], [{"name": "price", "format": "price"}],
          lambda: [_sec([{"type": "card", "role": "ds-field", "style": {"background": dna["color"]["background"]},
                      "frame": {"width": "fill", "layout": "auto", "direction": "row", "gap": 10, "align": "center"},
@@ -702,29 +703,29 @@ def _build_library(dna: dict, content: dict) -> list[dict]:
                                        color=primary, height=26),
                                   _txt(dna, c["price"][1 % len(c["price"])], size=14, muted=True, height=20)]}])])
 
-    spec("rating", "Rating", "content", "Рейтинг звёздами", [], [{"name": "value", "format": "word"}],
+    spec("rating", "Rating", "content", "Star rating", [], [{"name": "value", "format": "word"}],
          lambda: [_sec([{"type": "card", "role": "ds-field", "style": {"background": dna["color"]["background"]},
                      "frame": {"width": "fill", "layout": "auto", "direction": "row", "gap": 8, "align": "center"},
                      "children": [{"type": "rating", "value": 4, "style": {}, "frame": {"width": 110, "height": 20}},
-                                  _txt(dna, "4,2 · 128 оценок", size=13, muted=True, height=18)]}])])
+                                  _txt(dna, "4.2 · 128 reviews", size=13, muted=True, height=18)]}])])
 
-    spec("list", "List", "content", "Список пунктов с маркерами", [], [{"name": "items", "format": "sentence"}],
+    spec("list", "List", "content", "Bulleted list", [], [{"name": "items", "format": "sentence"}],
          lambda: [_sec([{"type": "list", "items": c["nav"][:4], "style": {},
                      "frame": {"width": "fill", "height": 120}}])])
 
-    spec("avatar", "Avatar", "media", "Аватар с именем и ролью (синтетические персоналии)",
+    spec("avatar", "Avatar", "media", "Avatar with name and role (synthetic identities)",
          [], [{"name": "name", "format": "name"}, {"name": "role", "format": "word"}],
-         lambda: [_sec([_avatar_el(dna, "Анна Ковалёва", "Продавец· 4,9")])])
+         lambda: [_sec([_avatar_el(dna, "Anna Kovaleva", "Seller · 4.9")])])
 
-    spec("heading", "Heading", "typography", "Заголовки шкалы референса (display→h3)",
+    spec("heading", "Heading", "typography", "Headings in the reference scale (display→h3)",
          [], [{"name": "text", "format": "heading"}],
          lambda: [_sec([_head(dna, c["heading"][0], 1), _head(dna, c["heading"][1 % len(c["heading"])], 2),
                         _head(dna, c["heading"][2 % len(c["heading"])], 3)], width=560)])
 
-    spec("text", "Text", "typography", "Основной и вспомогательный текст",
+    spec("text", "Text", "typography", "Body and supporting text",
          [], [{"name": "text", "format": "sentence"}],
-         lambda: [_sec([_txt(dna, "Основной текст абзаца в теле сайта референса.", size=16, height=26),
-                        _txt(dna, "Вспомогательная подпись и уточнения.", size=13, muted=True, height=20)],
+         lambda: [_sec([_txt(dna, "Main paragraph text in the reference site body.", size=16, height=26),
+                        _txt(dna, "Supporting caption and details.", size=13, muted=True, height=20)],
                        width=520)])
 
     return specs
@@ -980,6 +981,9 @@ def _foundations_from_tokens(tokens: dict, viewports: list, blocks: list | None 
             "radiusCount": len(measured["radii"]),
         },
     }
+    shell = measure_section_shell(blocks or [])
+    if shell:
+        foundations["sectionShell"] = shell
     if isinstance(tokens, dict) and tokens.get("iconStyle"):
         foundations["iconStyle"] = tokens["iconStyle"]
     if isinstance(tokens, dict) and tokens.get("imageDirection"):

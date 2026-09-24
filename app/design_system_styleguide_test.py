@@ -139,8 +139,8 @@ def test_every_master_is_present_and_renderable(built):
 
 def test_states_are_reported_as_unobserved_not_drawn(built):
     _document, html_text, _report = built
-    assert "не наблюдались в источнике" in html_text
-    assert "DesignDNA не рисует то, чего не измерил" in html_text
+    assert "not observed in the source" in html_text
+    assert "DesignDNA does not invent unmeasured states" in html_text
 
 
 def test_page_carries_no_verification_chrome(built):
@@ -187,7 +187,7 @@ def test_fidelity_footnote_appears_only_when_asked(built):
     assert "Точность:" not in default_html
 
     with_fidelity, _ = styleguide.render_styleguide(measured, include_fidelity=True)
-    assert "Точность: desktop 93.4%" in with_fidelity
+    assert "Fidelity: desktop 93.4%" in with_fidelity
     # Только проценты: ни порогов, ни вердиктов, ни причин отклонения.
     assert "Порог публикации" not in with_fidelity
     assert "нужна проверка" not in with_fidelity
@@ -210,13 +210,13 @@ def test_review_masters_are_rendered_as_ordinary_components(built):
 def test_style_section_describes_the_site(built):
     document, html_text, _report = built
     style = html_text[html_text.index('id="style"'):html_text.index('id="tokens"')]
-    assert "Стиль сайта" in html_text
+    assert "Site style" in html_text
     assert document["sourceRefs"][0]["url"] in style
     one_line = document["identity"]["soul"]["oneLine"]["value"]
     assert one_line[:40] in style
-    assert "Дизайн-язык" in style
+    assert "Design language" in style
     # Голос копирайта показан цитатами, а не пересказом.
-    assert "Голос копирайта" in style or "Слова сайта" in style
+    assert "Copy voice" in style or "Site vocabulary" in style
     assert "«" in style
 
 
@@ -261,7 +261,7 @@ def test_every_card_offers_a_copyable_master_reference(built):
         assert f'id="snip-{key}"' in html_text, key
         assert f'data-target="snip-{key}"' in html_text, key
     assert "componentRef" in html_text and "masterHash" in html_text
-    assert "× на сайте" in html_text
+    assert "× on site" in html_text
 
 
 def test_viewport_switcher_survives(built):

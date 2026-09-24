@@ -9,6 +9,7 @@
   import { generatorInputKey } from "../flow/generator-inputs";
   import { flowActivePageId } from "../flow/state";
   import { pullInput } from "../flow/dataflow";
+  import { nodeInputHint } from "../flow/node-readiness";
   import type { GeneratorFlowNode, GeneratorNodeData } from "../flow/types";
   import NodeShell from "./NodeShell.svelte";
   import NodeStatus from "./NodeStatus.svelte";
@@ -24,6 +25,7 @@
 
   let busy = $derived(!!$flowBusy[Number(id)]);
   let selfNode = $derived($flowNodes.find((node) => Number(node.id) === Number(id)) || null);
+  let inputHint = $derived(nodeInputHint($flowNodes, $flowEdges, selfNode));
   let wiredDs = $derived.by(() => {
     if (!selfNode) return null;
     const raw = pullInput($flowNodes, $flowEdges, selfNode, "designSystem") as
@@ -93,18 +95,18 @@
     && data.generationContext?.inputKey === generatorInputKey($flowNodes, $flowEdges, selfNode, $flowDesignSystemPicker));
   let activeReview = $derived(!busy && resultCurrent ? generatorData.qualityReviews?.[data.active] || null : null);
   const surfaceOptions = [
-    ["auto", "Определить по задаче"], ["landing", "Лендинг"], ["catalog", "Поиск и каталог"],
-    ["detail", "Карточка объекта"], ["checkout", "Запись и оформление"], ["dashboard", "Кабинет и аналитика"],
-    ["form", "Форма и настройки"], ["editor", "Редактор"], ["ai-workspace", "AI-интерфейс"],
-    ["article", "Статья и журнал"], ["feed", "Лента"], ["component", "Один компонент"],
+    ["auto", "Infer from task"], ["landing", "Landing page"], ["catalog", "Search and catalog"],
+    ["detail", "Detail page"], ["checkout", "Booking and checkout"], ["dashboard", "Dashboard and analytics"],
+    ["form", "Form and settings"], ["editor", "Editor"], ["ai-workspace", "AI interface"],
+    ["article", "Article and journal"], ["feed", "Feed"], ["component", "Single component"],
   ];
   const styleOptions = [
-    ["auto", "По задаче и дизайн-системе"], ["minimal", "Спокойный минимализм"], ["enterprise", "Информационный"],
-    ["marketplace", "Поиск на первом месте"], ["editorial", "Редакционный"], ["swiss", "Строгая сетка"],
-    ["product-led", "Демонстрация продукта"], ["luxury", "Сдержанный предметный"], ["organic", "Материальный"],
-    ["playful", "Иллюстративный"], ["brutal", "Плакатный"], ["industrial", "Технический"],
-    ["soft-pastel", "Мягкая палитра"], ["bento", "Модульный"], ["glass", "Многослойный"],
-    ["immersive", "Иммерсивный"], ["retro", "Ретро"],
+    ["auto", "From task and design system"], ["minimal", "Quiet minimalism"], ["enterprise", "Information-focused"],
+    ["marketplace", "Search-first"], ["editorial", "Editorial"], ["swiss", "Strict grid"],
+    ["product-led", "Product showcase"], ["luxury", "Restrained and tangible"], ["organic", "Material"],
+    ["playful", "Illustrative"], ["brutal", "Poster"], ["industrial", "Technical"],
+    ["soft-pastel", "Soft palette"], ["bento", "Modular"], ["glass", "Layered"],
+    ["immersive", "Immersive"], ["retro", "Retro"],
   ];
 
   async function selectDirection(direction: string) {
@@ -130,27 +132,27 @@
     <div class="foot-left">
       <select
         class="f-count gen-count nodrag"
-        aria-label="Число вариантов"
-        title="Число вариантов"
+        aria-label="Number of variants"
+        title="Number of variants"
         value={String(count)}
         onchange={(e) => $flow.setNodeData(Number(id), { count: Number(e.currentTarget.value) })}
       >
-        <option value="1">1 вариант</option>
-        <option value="2">2 варианта</option>
+        <option value="1">1 variant</option>
+        <option value="2">2 variants</option>
       </select>
     </div>
     <div class="foot-right">
-      <button class="btn-node primary small f-run nodrag" disabled={busy} onclick={() => $flow.runNode(Number(id))}>
-        {#if busy}<span class="spinner"></span>{:else}<span>▶</span>{/if} Сгенерировать
+      <button class="btn-node primary small f-run nodrag" disabled={busy || !!inputHint} title={inputHint || "Generate variants"} onclick={() => $flow.runNode(Number(id))}>
+        {#if busy}<span class="spinner"></span>{:else}<span>▶</span>{/if} Generate
       </button>
     </div>
   {/snippet}
   <InPorts type="generator" />
   {#if activeIr && (!resultCurrent || busy)}
-    <div class="dna-field-hint" style="padding: 8px 12px">{busy ? "Идёт новый запуск · оценка появится после проверки" : "Результат предыдущего запуска · запустите ноду для текущего промпта"}</div>
+    <div class="dna-field-hint" style="padding: 8px 12px">{busy ? "New run in progress · score appears after verification" : "Previous run result · run the node for the current prompt"}</div>
   {/if}
   <div class="n-hero nodrag">
-    <IrPreview class="f-preview" ir={emptyResult ? null : activeIr} height={220} fitHeight empty={emptyResult ? "В прошлом ответе нет содержимого макета" : "Варианты появятся после запуска"} />
+    <IrPreview class="f-preview" ir={emptyResult ? null : activeIr} height={220} fitHeight empty={emptyResult ? "Previous response contains no layout content" : "Variants appear after running"} />
     {#if data.variants.length > 1}
       <span class="n-hero-tag">{data.active + 1} / {data.variants.length}</span>
     {/if}
@@ -160,7 +162,7 @@
       {#each data.variants as v, i (i)}
         <div
           class={"thumb nodrag" + (i === data.active ? " active" : "")}
-          title={generatorData.variantDirections?.[i] || directions[i]?.label || `Направление ${i + 1}`}
+          title={generatorData.variantDirections?.[i] || directions[i]?.label || `Direction ${i + 1}`}
           role="button"
           tabindex="0"
           onkeydown={(event) => {
@@ -176,23 +178,23 @@
             $flow.propagate(Number(id));
           }}
         >
-          <span class="tbadge">{generatorData.variantDirections?.[i] || directions[i]?.label || `Направление ${i + 1}`}</span>
+          <span class="tbadge">{generatorData.variantDirections?.[i] || directions[i]?.label || `Direction ${i + 1}`}</span>
           <IrPreview ir={v} height={72} empty="" />
         </div>
       {/each}
     </div>
   {/if}
   {#if directions.length}
-    <section class="direction-picker nodrag" aria-label="Направление арт-дирекции">
+    <section class="direction-picker nodrag" aria-label="Art direction">
       <div class="direction-heading">
-        <span>Арт-дирекция</span>
+        <span>Art direction</span>
         <button
           class:active={selectedDirection === "all"}
           class="direction-all"
           type="button"
           disabled={busy}
           onclick={() => void selectDirection("all")}
-        >Все направления</button>
+        >All directions</button>
       </div>
       <div class="direction-chips">
         {#each directions as direction (direction.id)}
@@ -207,17 +209,17 @@
           >
             <strong>{direction.label}</strong>
             {#if direction.motivation}<span>{direction.motivation}</span>{/if}
-            {#if direction.tradeoff}<small>Компромисс: {direction.tradeoff}</small>{/if}
+            {#if direction.tradeoff}<small>Tradeoff: {direction.tradeoff}</small>{/if}
           </button>
         {/each}
       </div>
     </section>
   {/if}
   {#if activeReview && activeReview.passed === null}
-    <div class="gen-policy-summary nodrag" role="status">Предпросмотр создан. Визуальная проверка не завершена.</div>
+    <div class="gen-policy-summary nodrag" role="status">Preview created. Visual verification incomplete.</div>
   {:else if activeReview && activeReview.passed === false}
     <div class="revision-status nodrag" role="status">
-      <strong>Нужна доработка{activeReview.score == null ? "" : ` · ${activeReview.score}/100`}</strong>
+      <strong>Needs refinement{activeReview.score == null ? "" : ` · ${activeReview.score}/100`}</strong>
       {#if activeReview.reasons.length}
         <ul>
           {#each activeReview.reasons as reason}
@@ -236,13 +238,17 @@
   </div>
   <AssetRunDetails runs={data.assetRuns} generationStartedAt={data.generationContext?.startedAt} {busy} onRetry={(slotId) => void $flow.retryGeneratorAssets(Number(id), slotId)} />
   <ConceptRunDetails runs={data.conceptRuns} />
-  {#if dsRef}
-    <div class="gen-ds-row nodrag" data-ds-source={dsRef.wired ? "wire" : "project"}
-      title={dsRef.wired ? "Дизайн-система пришла по проводу: генерация собирается из её токенов и мастеров" : "Дизайн-система придёт в генерацию из глобального выбора проекта"}>
-      <span class="gen-ds-label">◈ {dsName} · {dsRef.wired ? "провод" : "проект"}</span>
+  {#if dsRef?.wired}
+    {#if !dsRef.published}
+      <div class="gen-ds-warn nodrag" role="status">DS draft — will publish automatically when run.</div>
+    {/if}
+  {:else if dsRef}
+    <div class="gen-ds-row nodrag" data-ds-source="project"
+      title="No Design system wire — using project default. Prefer wiring UI Kit → Design system.">
+      <span class="gen-ds-label">◈ {dsName} · project</span>
       <select
         class="gen-ds-mode f-ds-mode"
-        title="Режим: strict — только мастера и токены; extend — мастера + новое в токенах; style-only — токены и характер"
+        title="Mode: strict — masters and tokens only; extend — masters + new content; style-only — tokens and character"
         value={usageMode}
         onchange={(e) => $flow.setNodeData(Number(id), { designSystemUsageMode: e.currentTarget.value })}
       >
@@ -250,98 +256,93 @@
         <option value="extend">extend</option>
         <option value="style-only">style-only</option>
       </select>
-      {#if !dsRef.wired}
-        <button
-          class="gen-ds-off"
-          title="Генерировать без дизайн-системы"
-          onclick={() => $flow.setNodeData(Number(id), { designSystemSelection: "none" })}
-        >×</button>
-      {/if}
-    </div>
-    {#if dsRef.wired && !dsRef.published}
-      <div class="gen-ds-warn nodrag" role="status">ДС черновик — опубликуется автоматически при запуске.</div>
-    {/if}
-  {:else if dsOptedOut}
-    <div class="gen-ds-row nodrag">
-      <span class="gen-ds-label">ДС отключена для этой ноды</span>
       <button
         class="gen-ds-off"
-        title="Вернуть дизайн-систему проекта"
+        title="Generate without a design system"
+        onclick={() => $flow.setNodeData(Number(id), { designSystemSelection: "none" })}
+      >×</button>
+    </div>
+  {:else if dsOptedOut}
+    <div class="gen-ds-row nodrag">
+      <span class="gen-ds-label">DS disabled</span>
+      <button
+        class="gen-ds-off"
+        title="Restore project design system"
         onclick={() => $flow.setNodeData(Number(id), { designSystemSelection: "inherit" })}
       >↺</button>
     </div>
   {/if}
   {#if hasReference}
-    <div class="gen-ref-row nodrag" title="Экраны с порта reference уйдут в промпт как паттерн: те же мастера, плотность и роли текста">▣ Референс-экраны подключены</div>
+    <div class="gen-ref-row nodrag" title="Screens from the reference port become prompt patterns: the same masters, density, and text roles">▣ Reference screens connected</div>
   {/if}
   <details class="n-details gen-design-options nodrag nowheel">
-    <summary>Задача и направление{generationLog?.policy?.surfaceLabel ? ` · ${generationLog.policy.surfaceLabel}` : ""}</summary>
+    <summary>Task and direction{generationLog?.policy?.surfaceLabel ? ` · ${generationLog.policy.surfaceLabel}` : ""}</summary>
     <div class="gen-design-body">
-      <label>Тип экрана
-        <select aria-label="Тип экрана" disabled={busy} value={data.surface || "auto"}
+      <label>Screen type
+        <select aria-label="Screen type" disabled={busy} value={data.surface || "auto"}
           onchange={(event) => $flow.setNodeData(Number(id), { surface: event.currentTarget.value, selectedDirection: "all", directions: [] })}>
           {#each surfaceOptions as option}<option value={option[0]}>{option[1]}</option>{/each}
         </select>
       </label>
-      <label>Визуальное направление
-        <select aria-label="Визуальное направление" disabled={busy || !!dsRef} value={data.designStyle || "auto"}
+      <label>Visual direction
+        <select aria-label="Visual direction" disabled={busy || !!dsRef} value={data.designStyle || "auto"}
           onchange={(event) => $flow.setNodeData(Number(id), { designStyle: event.currentTarget.value, selectedDirection: "all" })}>
           {#each styleOptions as option}<option value={option[0]}>{option[1]}</option>{/each}
         </select>
       </label>
-      <small>{dsRef ? "Внешний вид задаёт выбранная дизайн-система." : "Без дизайн-системы генератор создаст согласованные основы под задачу."}</small>
+      <small>{dsRef ? "The selected design system defines the visual style." : "Without a design system, Generator creates consistent foundations for the task."}</small>
     </div>
   </details>
   {#if generationLog}
-    <section class="gen-log nodrag f-gen-log" aria-label="Журнал решений генерации">
+    <section class="gen-log nodrag f-gen-log" aria-label="Generation decision log">
       <button type="button" class="gen-log-head" onclick={() => (logOpen = !logOpen)} aria-expanded={logOpen}>
-        <span>Журнал решений</span>
+        <span>Decision log</span>
         <span class="gen-log-sum">
           {#if generationLog.designSystem}◈ {generationLog.designSystem.usageMode}{/if}
           {#if generationLog.strictFallback}· fallback {generationLog.strictFallback}{/if}
-          {#if activeLog}· автофиксов {activeLog.autofixes || 0} · линт {lintWarnings.length}{lintErrors.length ? ` · ошибок ${lintErrors.length}` : ""}{/if}
+          {#if activeLog}· automatic fixes {activeLog.autofixes || 0} · lint {lintWarnings.length}{lintErrors.length ? ` · errors ${lintErrors.length}` : ""}{/if}
           {logOpen ? " ▴" : " ▾"}
         </span>
       </button>
       {#if logOpen}
         <dl class="gen-log-body">
-          <dt>Тип продукта</dt><dd>{generationLog.product || "—"}</dd>
-          <dt>Токены</dt><dd>{generationLog.tokensLocked ? "залочены из ДС / style DNA" : "подобраны из design KB"}</dd>
+          <dt>Product type</dt><dd>{generationLog.product || "—"}</dd>
+          <dt>Tokens</dt><dd>{generationLog.tokensLocked ? "locked from Design System" : "selected from design KB"}</dd>
           {#if generationLog.designSystem}
-            <dt>Дизайн-система</dt>
+            <dt>Design system</dt>
             <dd>{generationLog.designSystem.name || "—"} · {generationLog.designSystem.usageMode}
-              · мастеров доступно {generationLog.designSystem.componentsAvailable ?? 0}, точных в контексте {(generationLog.designSystem.mastersInContext || []).length}
-              {#if (generationLog.designSystem.summariesInContext || []).length}· сводок {(generationLog.designSystem.summariesInContext || []).length}{/if}
-              {#if (generationLog.designSystem.decorSignatures || []).length}· декор-сигнатур {(generationLog.designSystem.decorSignatures || []).length}{/if}
-              {#if generationLog.designSystem.estimatedTokens}· контекст ≈{generationLog.designSystem.estimatedTokens}/{generationLog.designSystem.tokenBudget} ток.{/if}
-              {#if generationLog.designSystem.errors}· отказов strict {generationLog.designSystem.errors}{/if}
-              {#if generationLog.designSystem.recovered}· материализован точный мастер{/if}
+              · masters available {generationLog.designSystem.componentsAvailable ?? 0}, exact in context {(generationLog.designSystem.mastersInContext || []).length}
+              {#if (generationLog.designSystem.summariesInContext || []).length}· summaries {(generationLog.designSystem.summariesInContext || []).length}{/if}
+              {#if (generationLog.designSystem.decorSignatures || []).length}· decoration signatures {(generationLog.designSystem.decorSignatures || []).length}{/if}
+              {#if generationLog.designSystem.estimatedTokens}· context ≈{generationLog.designSystem.estimatedTokens}/{generationLog.designSystem.tokenBudget} tokens{/if}
+              {#if generationLog.designSystem.errors}· strict rejections {generationLog.designSystem.errors}{/if}
+              {#if generationLog.designSystem.recovered}· exact master materialized{/if}
             </dd>
             {#if (generationLog.designSystem.mastersInContext || []).length}
-              <dt>Мастера в контексте</dt><dd>{(generationLog.designSystem.mastersInContext || []).join(", ")}</dd>
+              <dt>Masters in context</dt><dd>{(generationLog.designSystem.mastersInContext || []).join(", ")}</dd>
             {/if}
             {#if (generationLog.designSystem.referenceImages || []).length}
-              <dt>Референсы ДС</dt>
+              <dt>DS references</dt>
               <dd>{(generationLog.designSystem.referenceImages || []).map((item) => `${item.attached === false ? "✗ " : ""}${item.label || item.componentKey || ""}${item.skipped ? ` (${item.skipped})` : ""}`).join("; ")}</dd>
             {/if}
             {#if (generationLog.designSystem.identityScores || []).some((score) => typeof score === "number")}
               <dt>Identity</dt>
-              <dd>{(generationLog.designSystem.identityScores || []).map((score, i) => `вариант ${i + 1}: ${typeof score === "number" ? `${score}/100` : "—"}`).join(", ")}{(generationLog.designSystem.identityScores || []).some((score) => typeof score === "number" && score < 70) ? " · ниже 70: результат отходит от характера системы" : ""}</dd>
+              <dd>{(generationLog.designSystem.identityScores || []).map((score, i) => `variant ${i + 1}: ${typeof score === "number" ? `${score}/100` : "—"}`).join(", ")}{(generationLog.designSystem.identityScores || []).some((score) => typeof score === "number" && score < 70) ? " · below 70: result deviates from the system character" : ""}</dd>
             {/if}
             {#if generationLog.designSystem.pinnedMaster}
-              <dt>Референс</dt><dd>пиннутый мастер: {generationLog.designSystem.pinnedMaster}</dd>
+              <dt>Reference</dt><dd>pinned master: {generationLog.designSystem.pinnedMaster}</dd>
             {/if}
             {#if generationLog.strictFallback}
-              <dt>Strict fallback</dt><dd>{generationLog.strictFallback === "extend" ? "мастера не использованы, результат принят в режиме extend" : generationLog.strictFallback}</dd>
+              <dt>Strict fallback</dt><dd>{generationLog.strictFallback === "extend" ? "masters were not used; result accepted in extend mode" : generationLog.strictFallback}</dd>
             {/if}
           {:else}
-            <dt>Дизайн-система</dt><dd>не подключена</dd>
+            <dt>Design system</dt><dd>not connected</dd>
           {/if}
-          <dt>Правила проекта</dt><dd>{generationLog.projectRules ? "применены" : "не заданы"}</dd>
-          <dt>Референс-экраны</dt><dd>{generationLog.referenceScreens || 0}</dd>
+          <dt>Project rules</dt><dd>{generationLog.projectRules ? "applied" : "not set"}</dd>
+          <dt>Reference screens</dt><dd>{generationLog.referenceScreens || 0}</dd>
           {#if activeLog}
             {#if (activeLog.journal || []).length}
-              <dt>Автофиксы</dt>
+              <dt>Automatic fixes</dt>
               <dd><ul>{#each (activeLog.journal || []).slice(0, 8) as line}<li>{line}</li>{/each}</ul></dd>
             {/if}
             {#if lintWarnings.length || lintErrors.length}
@@ -353,8 +354,9 @@
       {/if}
     </section>
   {/if}
+  {#if inputHint}<div class="n-hint nodrag">{inputHint}</div>{/if}
   <NodeStatus {id} />
-  <OutPorts type="generator" />
+  <OutPorts {id} type="generator" />
 </NodeShell>
 
 <style>

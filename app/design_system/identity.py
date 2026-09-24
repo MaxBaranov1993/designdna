@@ -244,7 +244,7 @@ def build_identity_tests(identity: dict, measurements: dict) -> list[dict]:
     if ratio:
         tests.append({
             "id": "identity.type.display-body-ratio", "kind": "font-ratio", "severity": "soft",
-            "description": "Сохранить характерный контраст display/body",
+            "description": "Preserve the distinctive display/body contrast",
             "expected": {"min": round(max(1.1, ratio * 0.82), 2), "max": round(ratio * 1.22, 2)},
             "provenance": "measured", "confidence": 0.82,
         })
@@ -252,7 +252,7 @@ def build_identity_tests(identity: dict, measurements: dict) -> list[dict]:
     if count:
         tests.append({
             "id": "identity.type.scale-size-count", "kind": "font-size-count", "severity": "soft",
-            "description": "Не раздувать типографическую шкалу",
+            "description": "Keep the typography scale compact",
             "expected": {"min": max(2, count - 2), "max": max(3, count + 2)},
             "provenance": "measured", "confidence": 0.78,
         })
@@ -261,14 +261,14 @@ def build_identity_tests(identity: dict, measurements: dict) -> list[dict]:
         top = dict(list(sorted(coverage.items(), key=lambda pair: pair[1], reverse=True))[:4])
         tests.append({
             "id": "identity.palette.role-coverage", "kind": "palette-coverage", "severity": "soft",
-            "description": "Сохранить иерархию цветовых ролей, а не только hex-палитру",
+            "description": "Preserve color role hierarchy, not just the HEX palette",
             "expected": {"roles": top, "tolerance": 0.16},
             "provenance": "measured", "confidence": (identity.get("paletteCoverage") or {}).get("confidence", 0.6),
         })
     if measurements.get("styledNodeCount", 0) >= 20 and measurements.get("shadowCount") == 0:
         tests.append({
             "id": "identity.surface.no-shadow", "kind": "absent-style", "severity": "hard",
-            "description": "Не использовать тени: в источнике они устойчиво отсутствуют",
+            "description": "Do not use shadows: they are consistently absent from the source",
             "expected": {"property": "shadow", "max": 0},
             "provenance": "measured", "confidence": 0.94,
         })
@@ -287,15 +287,15 @@ def extract_identity(blocks: list, foundations: dict, *, patterns: dict | None =
 
     traits: list[str] = []
     if ratio and ratio >= 2.2:
-        traits.append("выразительный контраст крупной и основной типографики")
+        traits.append("expressive contrast between display and body typography")
     if coverage:
         dominant = next(iter(coverage))
-        traits.append(f"доминирующая роль {dominant} с дозированными акцентами")
+        traits.append(f"dominant role {dominant} with restrained accents")
     if shadows_absent:
-        traits.append("плоские поверхности без декоративных теней")
+        traits.append("flat surfaces without decorative shadows")
     if radius_values:
-        traits.append("последовательная геометрия скруглений")
-    one_line = "; ".join(traits[:3]) or "Сдержанная система, построенная на токенах и повторяемой композиционной иерархии"
+        traits.append("consistent corner-radius geometry")
+    one_line = "; ".join(traits[:3]) or "A restrained system built on tokens and a recurring compositional hierarchy"
     identity["soul"]["oneLine"] = fact(one_line, "inferred", 0.72 if irs else 0.35, method="deterministic-trait-summary")
     identity["relationships"] = {
         "displayToBody": fact(ratio, "measured", 0.86, method="max-display/median-body") if ratio else fact(None, "default", 0.0),
@@ -313,26 +313,26 @@ def extract_identity(blocks: list, foundations: dict, *, patterns: dict | None =
     }
     signatures: list[dict] = []
     if ratio:
-        signatures.append({"id": "sig-type-contrast", "name": "Display/body contrast", "rule": f"Display около {ratio:.2f}× body", "provenance": "measured", "confidence": 0.86, "confirmed": False})
+        signatures.append({"id": "sig-type-contrast", "name": "Display/body contrast", "rule": f"Display around {ratio:.2f}× body", "provenance": "measured", "confidence": 0.86, "confirmed": False})
     if coverage:
         role, value = next(iter(coverage.items()))
-        signatures.append({"id": "sig-palette-dominance", "name": "Palette dominance", "rule": f"Роль {role} занимает около {round(value * 100)}% измеренной поверхности", "provenance": "measured", "confidence": measured.get("paletteCoverageConfidence", 0.6), "confirmed": False})
-    signatures.append({"id": "sig-token-discipline", "name": "Token discipline", "rule": "Цвет, типографика, интервалы и радиусы берутся из foundations", "provenance": "inferred", "confidence": 0.72, "confirmed": False})
+        signatures.append({"id": "sig-palette-dominance", "name": "Palette dominance", "rule": f"Role {role} covers about {round(value * 100)}% of the measured surface", "provenance": "measured", "confidence": measured.get("paletteCoverageConfidence", 0.6), "confirmed": False})
+    signatures.append({"id": "sig-token-discipline", "name": "Token discipline", "rule": "Colors, typography, spacing, and radii come from foundations", "provenance": "inferred", "confidence": 0.72, "confirmed": False})
     if shadows_absent:
-        signatures.append({"id": "sig-flat-surface", "name": "Flat surface", "rule": "Иерархия строится без декоративных теней", "provenance": "measured", "confidence": 0.92 if measured.get("styledNodeCount", 0) >= 20 else 0.68, "confirmed": False})
+        signatures.append({"id": "sig-flat-surface", "name": "Flat surface", "rule": "Hierarchy is built without decorative shadows", "provenance": "measured", "confidence": 0.92 if measured.get("styledNodeCount", 0) >= 20 else 0.68, "confirmed": False})
     if radius_values:
-        signatures.append({"id": "sig-radius-system", "name": "Radius system", "rule": "Использовать только наблюдаемую шкалу скруглений", "provenance": "measured" if measured.get("radii") else "inferred", "confidence": 0.8, "confirmed": False})
+        signatures.append({"id": "sig-radius-system", "name": "Radius system", "rule": "Use only the observed corner-radius scale", "provenance": "measured" if measured.get("radii") else "inferred", "confidence": 0.8, "confirmed": False})
     identity["signatures"] = signatures[:9]
     identity["bans"] = []
     if shadows_absent:
         confidence = 0.94 if measured.get("styledNodeCount", 0) >= 20 else 0.68
-        identity["bans"].append({"id": "ban-decorative-shadows", "rule": "Не добавлять декоративные тени", "severity": "hard" if confidence >= 0.9 else "soft", "provenance": "measured", "confidence": confidence, "confirmed": False})
+        identity["bans"].append({"id": "ban-decorative-shadows", "rule": "Do not add decorative shadows", "severity": "hard" if confidence >= 0.9 else "soft", "provenance": "measured", "confidence": confidence, "confirmed": False})
     identity["archetypes"] = _archetypes(blocks)
     identity["motion"] = {"character": fact("quiet and functional", "default", 0.25), "reducedMotionRequired": True}
     identity["voice"] = {"density": fact("concise", "inferred", 0.45), "case": fact("sentence", "inferred", 0.45)}
     identity["uncertainty"] = [
-        {"field": "motion", "reason": "Статический Source не доказывает характер motion", "requiresConfirmation": True},
-        {"field": "voice", "reason": "Контента недостаточно для надёжного brand voice", "requiresConfirmation": True},
+        {"field": "motion", "reason": "A static Source does not establish motion character", "requiresConfirmation": True},
+        {"field": "voice", "reason": "Insufficient content for a reliable brand voice", "requiresConfirmation": True},
     ]
     tests = build_identity_tests(identity, measured)
     return identity, tests, measured
@@ -355,20 +355,20 @@ def evaluate_identity(ir: dict, identity: dict, tests: list[dict], foundations: 
         if kind == "font-ratio":
             actual = measured.get("displayBodyRatio")
             passed = actual is not None and float(expected.get("min", 0)) <= actual <= float(expected.get("max", 999))
-            results.append(_result(test, passed, actual, "Соотношение display/body"))
+            results.append(_result(test, passed, actual, "Display/body ratio"))
         elif kind == "font-size-count":
             actual = measured.get("fontSizeCount", 0)
             passed = int(expected.get("min", 0)) <= actual <= int(expected.get("max", 999))
-            results.append(_result(test, passed, actual, "Количество размеров шрифта"))
+            results.append(_result(test, passed, actual, "Number of font sizes"))
         elif kind == "absent-style" and expected.get("property") == "shadow":
             actual = measured.get("shadowCount", 0)
-            results.append(_result(test, actual <= int(expected.get("max", 0)), actual, "Количество теней"))
+            results.append(_result(test, actual <= int(expected.get("max", 0)), actual, "Number of shadows"))
         elif kind == "palette-coverage":
             actual_roles = measured.get("paletteCoverage") or {}
             tolerance = float(expected.get("tolerance", 0.16))
             deltas = {role: round(abs(float(actual_roles.get(role, 0)) - float(value)), 4) for role, value in (expected.get("roles") or {}).items()}
             passed = bool(deltas) and max(deltas.values()) <= tolerance
-            results.append(_result(test, passed, {"roles": actual_roles, "deltas": deltas}, "Покрытие цветовых ролей"))
+            results.append(_result(test, passed, {"roles": actual_roles, "deltas": deltas}, "Color role coverage"))
         else:
             results.append(_result(test, True, None, "Advisory test is not machine-enforced"))
     hard = [item for item in results if not item["passed"] and item["severity"] == "hard"]
@@ -392,18 +392,18 @@ def validate_identity_schema(document: dict) -> list[dict]:
     errors: list[dict] = []
     signatures = identity.get("signatures") or []
     if not 3 <= len(signatures) <= 9:
-        errors.append({"code": "identity-signature-count", "message": "Identity должен содержать от 3 до 9 signature-правил"})
+        errors.append({"code": "identity-signature-count", "message": "Identity must contain 3–9 signature rules"})
     ids: set[str] = set()
     for item in signatures + (identity.get("bans") or []) + (document.get("identityTests") or []):
         item_id = str(item.get("id") or "") if isinstance(item, dict) else ""
         if not item_id:
-            errors.append({"code": "identity-missing-id", "message": "У identity-правила отсутствует стабильный id"})
+            errors.append({"code": "identity-missing-id", "message": "Identity rule has no stable ID"})
         elif item_id in ids:
-            errors.append({"code": "identity-duplicate-id", "message": f"Дублируется identity id: {item_id}"})
+            errors.append({"code": "identity-duplicate-id", "message": f"Duplicate identity ID: {item_id}"})
         ids.add(item_id)
     for ban in identity.get("bans") or []:
         if ban.get("severity") == "hard" and float(ban.get("confidence") or 0) < 0.9 and not ban.get("confirmed"):
-            errors.append({"code": "identity-unconfirmed-hard-ban", "message": f"Hard-ban {ban.get('id')} требует confidence ≥ 0.9 или подтверждения пользователя"})
+            errors.append({"code": "identity-unconfirmed-hard-ban", "message": f"Hard-ban {ban.get('id')} requires confidence ≥ 0.9 or user confirmation"})
     return errors
 
 

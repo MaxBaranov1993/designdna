@@ -73,7 +73,7 @@ def test_off_palette_color_is_reported_with_nearest_token_and_snapped_when_close
     fixed, journal = qualitygate.autofix(ir)
     assert fixed["tree"][0]["children"][0]["style"]["color"] == "#111318"
     assert fixed["tree"][0]["children"][3]["fill"] == "#2f4bd9cc"  # alpha сохранена
-    assert len([j for j in journal if j.startswith("rule token-color")]) == 2
+    assert len([j for j in journal if j.startswith("token-color rule")]) == 2
     assert qualitygate.check(fixed, rules=_rules("token-color")) == []
 
 

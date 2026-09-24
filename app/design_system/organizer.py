@@ -61,9 +61,9 @@ CATEGORY_SECTION = {
 # элементы, их сочетания и собранные из них блоки. Без этой оси каталог
 # выглядит плоской свалкой карточек, по которой непонятно, с чего начинать.
 ATOMIC_LEVELS = (
-    ("atoms", "Атомы", "Неделимые элементы: кнопки, поля, метки, иконки"),
-    ("molecules", "Молекулы", "Сочетания атомов: поле поиска, пункт меню, заголовок секции"),
-    ("organisms", "Организмы", "Собранные блоки: карточки, навигация, футер, секции"),
+    ("atoms", "Atoms", "Individual elements: buttons, inputs, labels, icons"),
+    ("molecules", "Molecules", "Groups of atoms: search field, menu item, section heading"),
+    ("organisms", "Organisms", "Assembled blocks: cards, navigation, footer, sections"),
 )
 ROLE_ATOMIC = {
     "button": "atoms",

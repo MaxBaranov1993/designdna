@@ -1,7 +1,7 @@
 // Native Codex imageGeneration items contain raster bytes, not assistant prose.
 // This runs on the same authorized subscription as the rest of the desktop.
 export async function generateCodexImage(codex, input, { signal, cwd, model = null, timeoutMs = 240_000 } = {}) {
-  if (signal?.aborted) throw new Error("Генерация изображения отменена");
+  if (signal?.aborted) throw new Error("Image generation cancelled");
   return new Promise((resolve, reject) => {
     let threadId = "", turnId = "", settled = false, mustInterrupt = false, interrupted = false;
     let image = null, failure = null;
@@ -22,9 +22,9 @@ export async function generateCodexImage(codex, input, { signal, cwd, model = nu
       error ? reject(error) : resolve(value);
     };
     const cancel = (message) => { mustInterrupt = true; interrupt(); finish(new Error(message)); };
-    const abort = () => cancel("Генерация изображения отменена");
+    const abort = () => cancel("Image generation cancelled");
     const serverError = error => finish(error);
-    const timer = setTimeout(() => cancel("GPT Image не завершил генерацию за 4 минуты"), timeoutMs);
+    const timer = setTimeout(() => cancel("GPT Image did not finish within 4 minutes"), timeoutMs);
     const notification = ({ method, params = {} }) => {
       if (String(params.threadId || "") !== threadId || !threadId) return;
       const eventTurn = String(params.turnId || params.turn?.id || "");
@@ -33,28 +33,28 @@ export async function generateCodexImage(codex, input, { signal, cwd, model = nu
       if (method === "item/completed" && params.item?.type === "imageGeneration") {
         const item = params.item;
         if (item.status !== "completed" || item.failure) {
-          failure = new Error(item.failure?.message || "GPT Image не смог создать изображение");
+          failure = new Error(item.failure?.message || "GPT Image could not create an image");
           return;
         }
         const result = item.result;
         if (typeof result !== "string" || result.length > 28_000_000
           || !/^[A-Za-z0-9+/]+={0,2}$/.test(result)) {
-          failure = new Error("GPT Image вернул некорректные данные изображения");
+          failure = new Error("GPT Image returned invalid image data");
           return;
         }
         const bytes = Buffer.from(result, "base64");
         const mime = bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")) ? "image/png"
           : bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255])) ? "image/jpeg" : null;
         if (!mime || bytes.toString("base64").replace(/=+$/, "") !== result.replace(/=+$/, "")) {
-          failure = new Error("GPT Image не вернул PNG или JPEG");
+          failure = new Error("GPT Image returned neither PNG nor JPEG");
           return;
         }
         image = { image: `data:${mime};base64,${result}`, transparent: item.transparentBackground === true };
       }
       if (method === "turn/completed") {
         const turn = params.turn;
-        if (turn?.status !== "completed") return finish(new Error(turn?.error?.message || "Генерация изображения прервана"));
-        finish(failure || (!image ? new Error("Codex не вернул изображение. Проверьте доступность GPT Image в подключённом аккаунте") : null), image);
+        if (turn?.status !== "completed") return finish(new Error(turn?.error?.message || "Image generation interrupted"));
+        finish(failure || (!image ? new Error("Codex returned no image. Check GPT Image availability in the connected account") : null), image);
       }
     };
     codex.on("notification", notification);
@@ -66,7 +66,7 @@ export async function generateCodexImage(codex, input, { signal, cwd, model = nu
       if (settled) return;
       const account = await codex.account();
       if (settled) return;
-      if (account?.account?.type !== "chatgpt") throw new Error("Для GPT Image войдите в ChatGPT через Agents → Connections → Codex");
+      if (account?.account?.type !== "chatgpt") throw new Error("For GPT Image, sign in to ChatGPT through Agents → Connections → Codex");
       const thread = await codex.startThread({
         ...(model ? { model } : {}),
         modelProvider: "openai", cwd, approvalPolicy: "never", sandbox: "read-only", ephemeral: true,
@@ -80,7 +80,7 @@ export async function generateCodexImage(codex, input, { signal, cwd, model = nu
       }
       threadId = String(thread.thread?.id || "");
       if (!threadId || thread.modelProvider !== "openai" || (thread.thread?.modelProvider && thread.thread.modelProvider !== "openai")) {
-        throw new Error("Codex не подтвердил подключение OpenAI для GPT Image");
+        throw new Error("Codex did not confirm the OpenAI connection for GPT Image");
       }
       const started = await codex.startTurn({ threadId, input });
       turnId = String(started?.turn?.id || turnId);

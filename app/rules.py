@@ -25,9 +25,9 @@ DATA_ROOT = settings.data_dir()
 MAX_PROJECT_RULES = 20_000  # символов; больше — это уже документ, а не правила
 
 _BUILTIN = (
-    ("design", "Ремесло генерации (DESIGN.md)", "DESIGN.md"),
-    ("blocks", "Библиотека блоков (BLOCKS.md)", "BLOCKS.md"),
-    ("rubric", "Рубрика vision-судьи (RUBRIC.md)", "RUBRIC.md"),
+    ("design", "Generation craft (DESIGN.md)", "DESIGN.md"),
+    ("blocks", "Block library (BLOCKS.md)", "BLOCKS.md"),
+    ("rubric", "Vision judge rubric (RUBRIC.md)", "RUBRIC.md"),
 )
 
 
@@ -58,10 +58,10 @@ def project_rules() -> str:
 
 def normalize(text: str) -> str:
     if not isinstance(text, str):
-        raise ValueError("Правила должны быть текстом")
+        raise ValueError("Rules must be text")
     cleaned = text.replace("\r\n", "\n").strip()
     if len(cleaned) > MAX_PROJECT_RULES:
-        raise ValueError(f"Правила проекта длиннее {MAX_PROJECT_RULES} символов")
+        raise ValueError(f"Project rules exceed {MAX_PROJECT_RULES} characters")
     return cleaned
 
 

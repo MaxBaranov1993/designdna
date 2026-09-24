@@ -127,6 +127,77 @@ function setup(failed = new Set()) {
 }
 function options(onChange = () => {}) { return { signal: new AbortController().signal, scope: { check() {} }, onStage() {}, onChange }; }
 
+test('reconcile outage preserves complete slots and retry never regenerates their images', async () => {
+  const calls = setup(), underlying = globalThis.fetch;
+  globalThis.fetch = (path, opts) => path.endsWith('/reconcile')
+    ? Promise.resolve(new Response(JSON.stringify({error:'verification unavailable'}), {status:503})) : underlying(path, opts);
+  const snapshots = [];
+  const first = await executeAssetPlan(variants(), run(), options((ir, state) => snapshots.push({ir, state})));
+  assert.equal(first.run.status, 'partial');
+  assert.match(first.run.verificationError, /verification unavailable/);
+  assert.deepEqual(first.run.plan.slots.map(s => s.status), ['complete', 'complete', 'complete']);
+  assert.ok(snapshots.some(s => s.ir[0].tree[0].children[1].src && !s.state.verificationError));
+  assert.equal(calls.filter(c => c[0] === 'image').length, 3);
+  globalThis.fetch = underlying;
+  const second = await executeAssetPlan(first.variants, first.run, options());
+  assert.equal(second.run.status, 'complete');
+  assert.equal(second.run.verificationError, undefined);
+  assert.equal(calls.filter(c => c[0] === 'image').length, 3);
+});
+
+test('transient reconciliation failure automatically retries only the check', async () => {
+  const calls = setup(), underlying = globalThis.fetch;
+  let checks = 0;
+  globalThis.fetch = (path, opts) => path.endsWith('/reconcile') && ++checks === 1
+    ? Promise.reject(new Error('temporary check failure')) : underlying(path, opts);
+  const output = await executeAssetPlan(variants(), run(), options());
+  assert.equal(output.run.status, 'complete');
+  assert.equal(checks, 2);
+  assert.equal(calls.filter(c => c[0] === 'image').length, 3);
+});
+
+test('cancellation during reconciliation retains every previously committed image', async () => {
+  setup(); const underlying = globalThis.fetch;
+  const controller = new AbortController(), snapshots = [];
+  globalThis.fetch = (path, opts) => {
+    if (path.endsWith('/reconcile')) { controller.abort(); return Promise.reject(new DOMException('Cancelled', 'AbortError')); }
+    return underlying(path, opts);
+  };
+  await assert.rejects(executeAssetPlan(variants(), run(), {...options((ir, state) => snapshots.push({ir,state})),signal:controller.signal}), e => e.name === 'AbortError');
+  const last = snapshots.at(-1);
+  assert.deepEqual(last.state.plan.slots.map(s => s.status), ['complete','complete','complete']);
+  assert.ok(last.ir[0].tree[0].children.slice(1).every(n => n.src));
+  assert.equal(settleInterruptedAssets([last.state])[0].status, 'cancelled');
+});
+
+test('result verification retry preserves original undo and tolerates key order but not edited content', async () => {
+  store.getState().loadGraph({nodes:[],edges:[],nextId:1});
+  const id = store.getState().addNode('derive',0,0).id;
+  const original = variants();
+  store.getState().setNodeData(id,{variants:original});
+  const calls = setup(), underlying = globalThis.fetch;
+  globalThis.fetch = (path, opts) => path.endsWith('/prepare') ? Promise.resolve(response(run().plan))
+    : path.endsWith('/reconcile') ? Promise.reject(new Error('check unavailable')) : underlying(path,opts);
+  await fillResultAssets(id);
+  assert.ok(store.getState().nodes[0].data.assetRuns.at(-1).verificationError);
+  globalThis.fetch = underlying; // retry must not prepare/generate new images
+  await fillResultAssets(id,false,'*');
+  const data = store.getState().nodes[0].data;
+  assert.equal(data.assetRuns.at(-1).status,'complete');
+  assert.equal(data.assetVersions.length,1);
+  assert.equal(calls.filter(c=>c[0]==='image').length,3);
+  const reorder = value => Array.isArray(value) ? value.map(reorder) : value && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value).reverse().map(([k,v])=>[k,reorder(v)])) : value;
+  store.getState().setNodeData(id,{variants:reorder(data.variants)});
+  assert.equal(resultAssetsAreCurrent(store.getState().nodes[0]),true);
+  const reordered=store.getState().nodes[0].data.variants;
+  const changed=structuredClone(reordered);changed[0].tree[0].children[0].text='new user text';
+  store.getState().setNodeData(id,{variants:changed});undoResultAssets(id);
+  assert.deepEqual(store.getState().nodes[0].data.variants,changed);
+  store.getState().setNodeData(id,{variants:reordered});undoResultAssets(id);
+  assert.deepEqual(store.getState().nodes[0].data.variants,original);
+});
+
 test('failed slot preserves successful peers and retry only calls the missing image', async () => {
   const failed = new Set(['Subject 1']), calls = setup(failed), snapshots = [];
   const original = variants();

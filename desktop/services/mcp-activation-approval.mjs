@@ -63,10 +63,10 @@ export function createMcpActivationApprover({ showMessageBox }) {
       }
       const result = await showMessageBox({
         type: "warning",
-        title: "Запуск MCP-серверов",
-        message: "DesignDNA запустит локальные процессы MCP-серверов.",
-        detail: `Проверьте команды — они выполняются на этом компьютере с вашими правами:\n\n${summarizeMcpSpec(spec)}`,
-        buttons: ["Разрешить запуск", "Отмена"],
+        title: "Start MCP servers",
+        message: "DesignDNA will start local MCP server processes.",
+        detail: `Review the commands — they run on this computer with your permissions:\n\n${summarizeMcpSpec(spec)}`,
+        buttons: ["Allow launch", "Cancel"],
         defaultId: 1,
         cancelId: 1,
         noLink: true,

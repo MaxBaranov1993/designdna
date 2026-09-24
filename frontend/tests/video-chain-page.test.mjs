@@ -12,13 +12,13 @@ test("Motion Design keeps planning separate from the confirmed paid Seedance cal
   const ports = await readFile(new URL("../src/flow/ports.ts", import.meta.url), "utf-8");
 
   assert.match(ports, /motiondesign: \{ title: "Motion Design"/);
-  assert.match(ports, /\{ name: "video", label: "готовое видео", kind: "video" \}/);
+  assert.match(ports, /\{ name: "video", label: "rendered video", kind: "video" \}/);
   assert.match(store, /planMotionDesign:/);
   assert.match(store, /runMotionDesign: async \(id, confirmedPaid\)/);
   assert.match(store, /confirmed_paid: true/);
   assert.match(store, /type: "video_url"/);
-  assert.match(store, /job сохранён/);
-  assert.match(node, /Подтверждаю платный вызов/);
+  assert.match(store, /job saved/);
+  assert.match(node, /I confirm the paid call/);
   const params = await readFile(new URL("../src/inspector/MotionDesignParams.svelte", import.meta.url), "utf-8");
   assert.match(params, /Claude Code/);
   assert.match(params, /GPT-5\.6 Sol/);

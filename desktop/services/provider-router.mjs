@@ -123,12 +123,12 @@ export async function chatWithProvider({
   const model = openaiModel(resolved, source.model);
 
   if (resolved === "codex") {
-    if (!codex) throw new Error("Codex не подключён. Откройте Agents → Connections.");
+    if (!codex) throw new Error("Codex is not connected. Open Agents → Connections.");
     return chatViaCodex({ codex, source, messages, model: source.model, profile, signal, effort, requestedProvider: "codex", fallback });
   }
 
   if (resolved === "claude") {
-    if (!claude) throw new Error("Claude не подключён. Откройте Agents → Connections.");
+    if (!claude) throw new Error("Claude is not connected. Open Agents → Connections.");
     const claudeResolvedModel = claudeModel(source.model);
     const claudeMessages = source.system
       ? [{ role: "system", content: source.system }, ...(source.messages || messages || [])]
@@ -155,13 +155,13 @@ export async function chatWithProvider({
   // GPT (Sol / Astra) по подписке: Codex CLI с явной моделью
   if (GPT_PROVIDERS.has(resolved) && gptTransport !== "openai") {
     if (!codex) {
-      throw new Error("GPT работает по подписке через Codex CLI, а Codex не подключён. Откройте Agents → Connections и войдите в ChatGPT.");
+      throw new Error("GPT uses your subscription through Codex CLI, which is not connected. Open Agents → Connections and sign in to ChatGPT.");
     }
     return chatViaCodex({ codex, source, messages, model, profile, signal, effort, requestedProvider: resolved, fallback });
   }
 
   if (!credentials.has("openai")) {
-    throw new Error("OpenAI не подключён. Добавьте API key в Agents → Connections.");
+    throw new Error("OpenAI is not connected. Add an API key in Agents → Connections.");
   }
   const envelope = createEnvelope({
     ...source,

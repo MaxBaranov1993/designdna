@@ -340,14 +340,14 @@ def _label_style(document: dict) -> str:
                    if _is_mono(n["style"].get("fontFamily"))), "")
     parts = []
     if mono >= len(eyebrows) / 2:
-        parts.append(f"моноширинный {family or 'mono'}".strip())
+        parts.append(f"monospace {family or 'mono'}".strip())
     if upper >= len(eyebrows) / 2:
         parts.append("uppercase")
     if tracked >= len(eyebrows) / 2:
-        parts.append("с разрядкой")
+        parts.append("with tracking")
     sizes = sorted(float(n["style"].get("fontSize") or 0) for n in eyebrows)
     if sizes:
-        parts.append(f"кегль ~{int(sizes[len(sizes) // 2])}px")
+        parts.append(f"font size ~{int(sizes[len(sizes) // 2])}px")
     return ", ".join(parts)
 
 
@@ -359,10 +359,10 @@ def _typography_character(foundations: dict) -> str:
     serif_markers = ("Serif", "Playfair", "Prata", "Cormorant", "Garamond", "Lora", "Vollkorn",
                      "Merriweather", "Literata", "Georgia", "Times")
     mono_markers = ("Mono", "Code", "Courier")
-    kind = ("моноширинный" if any(m in display for m in mono_markers)
-            else "серифный" if any(m in display for m in serif_markers) else "гротеск")
-    heaviness = "тяжёлый" if weight >= 700 else "средний" if weight >= 500 else "лёгкий"
-    pairing = "одна гарнитура на всё" if display and display == body else f"пара {display} + {body}"
+    kind = ("monospace" if any(m in display for m in mono_markers)
+            else "serif" if any(m in display for m in serif_markers) else "sans-serif")
+    heaviness = "heavy" if weight >= 700 else "medium" if weight >= 500 else "light"
+    pairing = "one typeface throughout" if display and display == body else f"pair {display} + {body}"
     return f"{kind} display ({display or '—'}, {heaviness} {weight}); {pairing}"
 
 
@@ -442,8 +442,8 @@ def style_profile(document: dict) -> dict:
         "density": measured["density"],
         "shadowUsage": measured["shadowUsage"],
         "paletteCharacter": (
-            "монохром с одним акцентом" if len(brand) <= 1
-            else f"{len(brand)} брендовых цвета" if len(brand) <= 3 else "многоцветная палитра"
+            "monochrome with one accent" if len(brand) <= 1
+            else f"{len(brand)} brand colors" if len(brand) <= 3 else "multicolor palette"
         ),
         "accent": semantic.get("accent") or semantic.get("primary"),
         "typographyCharacter": _typography_character(foundations),
@@ -491,7 +491,7 @@ def profile_prompt(document: dict) -> str:
             lines.append(f"- {brief.get('brand') or ''} {brief.get('url') or ''}".strip())
         if brief.get("headings"):
             lines.append("- Заголовки сайта: " + " | ".join(brief["headings"][:5]))
-    for key, label in (("audience", "Аудитория"), ("offer", "Оффер"), ("tone", "Голос текста")):
+    for key, label in (("audience", "Audience"), ("offer", "Оффер"), ("tone", "Голос текста")):
         if brief.get(key):
             lines.append(f"- {label}: {brief[key]}")
     if brief.get("sections"):
@@ -527,7 +527,7 @@ def profile_prompt(document: dict) -> str:
     if voice.get("badge"):
         lines.append("- Бейджи/цены: " + " | ".join(voice["badge"][:4]))
     review = guide.get("review") or {}
-    for key, label in (("tone", "Тон"), ("colorUsage", "Цвет"), ("typographyCharacter", "Типографика (ревью)"),
+    for key, label in (("tone", "Tone"), ("colorUsage", "Color"), ("typographyCharacter", "Типографика (ревью)"),
                        ("imageryStyle", "Имиджи")):
         if review.get(key):
             lines.append(f"- {label}: {review[key]}")

@@ -16,6 +16,8 @@ class ProjectSaveReq(BaseModel):
     # CAS-режим: SHA-256 ревизии с прошлого load/save (get.revision).
     # Без поля — прежнее поведение last-write-wins (совместимость, beacon).
     expectedRevision: str | None = None
+    # Pages the user deleted since the last load/save: the only pages a save may drop.
+    deletedPages: list[str] = []
     user_id: str = project_store.DEFAULT_USER_ID
     project_id: str = project_store.DEFAULT_PROJECT_ID
 
@@ -40,9 +42,12 @@ def project_save(req: ProjectSaveReq):
             req.expectedRevision,
             user_id=req.user_id,
             project_id=req.project_id,
+            deleted_pages=req.deletedPages,
         )
         if result.get("stale"):
             return JSONResponse(result, status_code=409)
+        if result.get("pageLoss"):
+            return JSONResponse({**result, "error": "page_loss"}, status_code=409)
         return result
     return project_store.save_project(req.project, req.user_id, req.project_id)
 

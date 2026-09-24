@@ -3,31 +3,32 @@
   let { runs = [], busy = false, onRetry, generationStartedAt, currentResult = true }: { runs?: AssetRun[]; busy?: boolean; onRetry?: (id?: string) => void; generationStartedAt?: number; currentResult?: boolean } = $props();
   let latest = $derived(runs.at(-1));
   let current = $derived(currentResult && (!generationStartedAt || !latest?.generationStartedAt || latest.generationStartedAt === generationStartedAt));
-  const labels = { planned: "Ожидает", running: "Создаётся", complete: "Готово", failed: "Нужна попытка" };
+  const labels = { planned: "Pending", running: "Creating", complete: "Done", failed: "Retry needed" };
 </script>
 
 {#if latest}
   <details class="asset-history nodrag" data-asset-history>
-    <summary>{current ? `Изображения · ${latest.plan.slots.filter(slot => slot.status === "complete").length}/${latest.plan.slots.length}` : `История изображений · ${runs.length}`}</summary>
+    <summary>{current ? `Images · ${latest.plan.slots.filter(slot => slot.status === "complete").length}/${latest.plan.slots.length}` : `Image history · ${runs.length}`}</summary>
     {#if current && latest.status !== "complete" && onRetry}
-      <button class="dna-btn-ghost" disabled={busy} onclick={() => onRetry?.()}>Продолжить создание изображений</button>
+      <button class="dna-btn-ghost" disabled={busy} onclick={() => onRetry?.()}>{latest.verificationError && latest.plan.slots.every(slot => slot.status === "complete") ? "Retry image verification" : "Continue creating images"}</button>
     {/if}
     {#each [...runs].reverse() as run (run.id)}
       <details class="asset-run" open={run.id === latest.id}>
-        <summary>{new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {run.status === "complete" ? "Готово" : run.status === "running" && busy ? "В работе" : "Не завершено"}</summary>
+        <summary>{new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {run.status === "complete" ? "Done" : run.status === "running" && busy ? "Running" : "Incomplete"}</summary>
+        {#if run.verificationError}<p>Completed images are saved. Verification did not finish: {run.verificationError}</p>{/if}
         {#each run.plan.slots as slot (slot.id)}
           <div class="asset-slot" data-asset-id={slot.id} data-asset-status={slot.status}>
             {#if slot.result}<img src={slot.result.src} alt={slot.subject} />{/if}
-            <div><strong>{slot.subject}</strong><small>{labels[slot.status]} · вариант {slot.variant + 1}{slot.result ? ` · ${slot.result.width}×${slot.result.height}` : ""}</small>
+            <div><strong>{slot.subject}</strong><small>{labels[slot.status]} · variant {slot.variant + 1}{slot.result ? ` · ${slot.result.width}×${slot.result.height}` : ""}</small>
               {#if slot.error}<p>{slot.error}</p>{/if}
-              {#if current && run.id === latest.id && slot.status !== "complete" && onRetry}<button class="dna-btn-ghost" disabled={busy} onclick={() => onRetry?.(slot.id)}>Повторить изображение</button>{/if}
+              {#if current && run.id === latest.id && slot.status !== "complete" && onRetry}<button class="dna-btn-ghost" disabled={busy} onclick={() => onRetry?.(slot.id)}>Retry image</button>{/if}
             </div>
           </div>
         {/each}
         {#if run.quality?.length}
-          <details><summary>Проверка ресурсов</summary>
+          <details><summary>Asset verification</summary>
             {#each run.quality as evidence, index}
-              <p>Вариант {index + 1}: {evidence?.status === "pass" ? "файлы проверены" : evidence?.status === "fail" ? "есть ошибки" : "не проверено"}{evidence ? ` · полей текста в IR: ${evidence.nativeTextCount}` : ""}</p>
+              <p>Variant {index + 1}: {evidence?.status === "pass" ? "files verified" : evidence?.status === "fail" ? "errors found" : "not verified"}{evidence ? ` · text fields in IR: ${evidence.nativeTextCount}` : ""}</p>
               {#each [...(evidence?.errors || []), ...(evidence?.warnings || [])] as issue}<p>{issue.problem}</p>{/each}
             {/each}
           </details>

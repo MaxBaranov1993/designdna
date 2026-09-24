@@ -77,7 +77,7 @@ test('restoration refuses mismatched source and does not corrupt history', () =>
   const version = data().revisions[0];
   state().setNodeData(id, { ir: { ...ir, frame: { width: 390 } } });
   const before = structuredClone(data());
-  assert.throws(() => commit(version.timeline, { kind: 'restore', label: 'Restore', restoredFrom: version.id }), /другой исходной/);
+  assert.throws(() => commit(version.timeline, { kind: 'restore', label: 'Restore', restoredFrom: version.id }), /another source/);
   assert.deepEqual(data(), before);
 });
 test('+ Video starts from an assembled page snapshot without replacing the original graph', () => {
@@ -125,7 +125,7 @@ test('multiple page inputs survive persistence and later page changes reject sta
   assert.deepEqual(data().revisions.at(-1).timeline, manualBeforeSourceChange);
   assert.ok(state().getNodeIrRevision(id) > revision);
   assert.equal(state().commitTimeline(id, doc, revision, doc), false);
-  assert.throws(() => commit(version.timeline, {kind:'restore',label:'Restore',restoredFrom:version.id}), /другой исходной/);
+  assert.throws(() => commit(version.timeline, {kind:'restore',label:'Restore',restoredFrom:version.id}), /another source/);
   state().removeVideoInput(id,'page2');
   assert.deepEqual(data().inputs,['ir']);
   assert.equal(state().edges.some(e => e.target === String(id) && e.targetHandle === 'page2'),false);

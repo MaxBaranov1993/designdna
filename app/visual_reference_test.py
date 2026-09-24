@@ -66,7 +66,7 @@ def test_concept_stored_separately_and_forbidden_as_final_resource():
     reference = visual_reference.prepare(visual_reference.VisualReference(image=png(), role="composition", conceptOnly=True))
     ir = {"tree": [{"type": "image", "imagePrompt": "Standalone object"}]}
     plan = prepare([ir], {"conceptHash": stored["result"]["sha256"]})
-    with pytest.raises(ValueError, match="Эскиз"):
+    with pytest.raises(ValueError, match="sketch"):
         apply(ir, plan["slots"][0], png())
     assert visual_reference.concept_used_in_output({"tree": [{"src": stored["result"]["src"]}]}, reference)
     actual = apply(ir, plan["slots"][0], png("red"))

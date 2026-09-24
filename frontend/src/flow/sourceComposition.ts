@@ -1,4 +1,5 @@
 import { composePage } from "./compose";
+import { isSourceBand } from "./source-layout";
 import { deepClone, outValue } from "./dataflow";
 import type {
   FlowEdge,
@@ -47,7 +48,14 @@ function walkPair(
   if (sourceId && composedRef) output[composedRef] = sourceId;
   if (sourceRef && composedRef) refMap[sourceRef] = composedRef;
   const sourceChildren = Array.isArray(source.children) ? source.children : [];
-  const composedChildren = Array.isArray(composed.children) ? composed.children : [];
+  // A Page band wraps the original section box: pair source children with the box's children.
+  let target = composed;
+  if (isSourceBand(composed)) {
+    target = (composed.children as Record<string, unknown>[])[0];
+    const boxRef = nodeRef(target);
+    if (sourceId && boxRef) output[boxRef] = sourceId;
+  }
+  const composedChildren = Array.isArray(target.children) ? target.children : [];
   sourceChildren.forEach((child, index) => {
     if (isRecord(child) && isRecord(composedChildren[index])) {
       walkPair(child, composedChildren[index], input, output, refMap, sourceId);

@@ -22,8 +22,9 @@ const bundle = (file) => {
 const { useFlowStore: store, resolveDesignSystemAiProvider } = await bundle('flow/store');
 const { NODE_DEFS, portsOfNode, defaultData } = await bundle('flow/ports');
 const { parseLegacyPayload, payloadToRf, buildSavePayload, buildPagesProjectPayload, prepareProjectForStorage, compactForStorage } = await bundle('flow/serialize');
-const { offloadBlobsInPlace } = await bundle('desktop/blobStore');
+const { offloadBlobsInPlace, offloadTimelineStories } = await bundle('desktop/blobStore');
 const { outValue } = await bundle('flow/dataflow');
+const { nodeInputHint } = await bundle('flow/node-readiness');
 after(() => rmSync(dir, { recursive: true, force: true }));
 const ir = (text) => ({ version: '1.1', frame: { width: 1440 }, tree: [{ id: 'hero', type: 'hero', variant: 'center', props: { heading: text } }] });
 const reset = () => store.setState({ nodes: [], edges: [], nextId: 1, statuses: {}, busy: {}, graphHistory: { past: [], future: [] } });
@@ -31,6 +32,36 @@ const add = (type) => store.getState().addNode(type, 0, 0).id;
 const patch = (id, data) => store.getState().setNodeData(id, data);
 const node = (id) => store.getState().nodes.find(n => Number(n.id) === id);
 const connect = (a, ap, b, bp) => store.getState().connect({ node: a, port: ap }, { node: b, port: bp });
+
+test('Reference forwards exact IR, refreshes downstream output and preserves user language', () => {
+  reset(); const source = add('generator'), reference = add('reference'), consumer = add('generator');
+  const original = ir('Пользовательский текст'); original.tree[0].componentRef = 'kit/card@1';
+  patch(source, { variants: [original], active: 0 });
+  patch(reference, { brief: 'Keep this style hint' });
+  connect(source, 'ir', reference, 'ir'); connect(reference, 'ir', consumer, 'reference');
+  assert.deepEqual(outValue(node(reference), 'ir'), original);
+  assert.equal(outValue(node(reference), 'out'), 'Keep this style hint');
+  assert.ok(portsOfNode(node(reference)).out.some(p => p.name === 'ir' && p.kind === 'ir'));
+  const updated = ir('Новая версия'); patch(source, { variants: [updated] });
+  store.getState().propagate(source);
+  assert.deepEqual(outValue(node(reference), 'ir'), updated);
+  patch(source, { variants: [] }); store.getState().propagate(source);
+  assert.equal(outValue(node(reference), 'ir'), null);
+});
+
+test('input readiness checks actual output and follows prompt fallback and dynamic slots', () => {
+  reset(); const generator = add('generator'), prompt = add('prompt'), mix = add('mix'), page = add('page');
+  const hint = id => nodeInputHint(store.getState().nodes, store.getState().edges, node(id));
+  assert.match(hint(generator), /prompt/i);
+  patch(generator, { ownPrompt: 'Create a card' }); assert.equal(hint(generator), '');
+  connect(prompt, 'out', generator, 'prompt'); assert.equal(hint(generator), '', 'empty wire uses own prompt');
+  patch(generator, { ownPrompt: '' }); patch(prompt, { text: 'Build a page' }); assert.equal(hint(generator), '');
+  connect(generator, 'ir', mix, 'a'); connect(generator, 'ir', page, 'a');
+  assert.match(hint(page), /completed result/);
+  patch(generator, { variants: [ir('Ready')], active: 0 }); assert.equal(hint(page), '');
+  assert.match(hint(mix), /two/);
+  connect(generator, 'ir', mix, 'b'); assert.equal(hint(mix), '');
+});
 
 const dsFixture = (provider = 'codex') => {
   reset(); const source = add('sourceimport'), ds = add('designsystem');
@@ -79,8 +110,8 @@ test('legacy UI Kit without Source screenshots stops before AI and explains reco
       referenceAssets:{capture:{referencePreviews:{},blockSizes:{desktop:{width:100,height:50}}}}}});
     globalThis.fetch = async () => { throw new Error('Missing evidence must be detected before preparing AI'); };
     assert.equal(await store.getState().runDesignSystemAi(ds,'master-review'),null);
-    assert.match(node(ds).data.lastError,/Нет исходных снимков Source/);
-    assert.match(node(ds).data.lastError,/Обновите Source Import/);
+    assert.match(node(ds).data.lastError,/Missing original Source snapshots/);
+    assert.match(node(ds).data.lastError,/Refresh Source Import/);
     assert.equal(node(ds).data.pipelineStatus['master-review'].status,'failed');
     assert.equal(node(ds).data.document.reviewComponents.header.sourceRef.evidenceKey,'capture');
   } finally {globalThis.fetch=previousFetch;}
@@ -129,6 +160,42 @@ test('generic offload never traverses DS documents or canonical IR even for deta
     assert.equal(await offloadBlobsInPlace(payload), false);
     assert.equal(JSON.stringify(payload), before); assert.equal(puts, 0);
     assert.equal(JSON.stringify(compactForStorage(payload)), before);
+  } finally { window.designDNA = desktop; }
+});
+
+test('timeline story page copies are offloaded to blobs, canonical page IR stays inline', async () => {
+  const desktop = window.designDNA;
+  try {
+    const png = 'data:image/png;base64,' + 'B'.repeat(40000);
+    const pageIr = { ...ir('Page'), tree: [{ id: 'hero', type: 'image', src: png }] };
+    const timeline = () => ({ layers: [{ id: 'l' }], story: { pages: [{ id: 'ir', name: 'Page', ir: JSON.parse(JSON.stringify(pageIr)) }] } });
+    const payload = { data: { ir: JSON.parse(JSON.stringify(pageIr)), timeline: timeline(), revisions: [{ id: 'r1', sourceIr: JSON.parse(JSON.stringify(pageIr)), timeline: timeline() }] } };
+    window.designDNA = { blobs: { put: async () => ({ name: 'c'.repeat(64) + '.png', sha256: 'c'.repeat(64) }) } };
+    assert.equal(await offloadBlobsInPlace(payload), true);
+    const ref = 'ddna://blobs/' + 'c'.repeat(64) + '.png';
+    assert.equal(payload.data.timeline.story.pages[0].ir.tree[0].src, ref);
+    assert.equal(payload.data.revisions[0].timeline.story.pages[0].ir.tree[0].src, ref, 'revisions shrink the same way');
+    assert.equal(JSON.stringify(payload.data.timeline), JSON.stringify(payload.data.revisions[0].timeline), 'revision equality survives');
+    assert.equal(payload.data.ir.tree[0].src, png, 'the canonical page IR is untouched');
+    assert.equal(payload.data.revisions[0].sourceIr.tree[0].src, png, 'the revision source IR is untouched');
+  } finally { window.designDNA = desktop; }
+});
+
+test('stored Video nodes shrink once: one blob put per distinct story image, canonical IR untouched', async () => {
+  const desktop = window.designDNA;
+  try {
+    const png = 'data:image/png;base64,' + 'D'.repeat(40000);
+    const pageIr = { ...ir('Page'), tree: [{ id: 'a', type: 'image', src: png }, { id: 'b', type: 'image', src: png }] };
+    const timeline = () => ({ layers: [{ id: 'l' }], story: { pages: [{ id: 'ir', name: 'Page', ir: JSON.parse(JSON.stringify(pageIr)) }] } });
+    const data = { ir: JSON.parse(JSON.stringify(pageIr)), timeline: timeline(), revisions: [{ sourceIr: JSON.parse(JSON.stringify(pageIr)), timeline: timeline() }] };
+    let puts = 0;
+    window.designDNA = { blobs: { put: async () => { puts++; return { name: 'd'.repeat(64) + '.png', sha256: 'd'.repeat(64) }; } } };
+    assert.equal(await offloadTimelineStories(data), 4);
+    assert.equal(puts, 1, 'identical images are stored once');
+    assert.equal(data.timeline.story.pages[0].ir.tree[1].src, 'ddna://blobs/' + 'd'.repeat(64) + '.png');
+    assert.equal(data.ir.tree[0].src, png);
+    assert.equal(data.revisions[0].sourceIr.tree[0].src, png);
+    assert.equal(await offloadTimelineStories(data), 0, 'a compact node is left as is');
   } finally { window.designDNA = desktop; }
 });
 
@@ -568,7 +635,7 @@ test('invalid supplied master pins surface one structured input failure before c
 test('Source AI repair provider failure survives final import and a cached rerun', async () => {
   const previousFetch = globalThis.fetch, desktop = window.designDNA;
   try {
-    reset(); const source = add('sourceimport'); patch(source, { url: 'https://example.test', mine: true, aiProvider: 'codex' });
+    reset(); const source = add('sourceimport'); patch(source, { url: 'https://example.test', mine: true, aiProvider: 'codex', captureViewports: ['tablet', 'mobile'], aiRepair: true });
     window.designDNA = { providers: { chatRequest: async () => { throw new Error('Codex не подключён'); } } };
     globalThis.fetch = async (url) => {
       if (url === '/api/block-parse') return jsonResponse({ blocks: [{ name: 'hero', selector: 'hero', ir: ir('Captured'), fidelityReport: { gate: { passed: false } } }] });
@@ -577,7 +644,7 @@ test('Source AI repair provider failure survives final import and a cached rerun
     await store.getState().runSourceImport(source);
     assert.equal(node(source).data.blocks.length, 1); assert.equal(node(source).data.pipelineStatus.repair.status, 'failed');
     assert.equal(node(source).data.pipelineStatus.fidelity.status, 'warning'); assert.equal(store.getState().statuses[source].kind, 'err');
-    assert.match(store.getState().statuses[source].text, /AI-аккаунт/);
+    assert.match(store.getState().statuses[source].text, /AI account/);
     await store.getState().runSourceImport(source);
     assert.equal(store.getState().statuses[source].kind, 'err'); assert.equal(node(source).data.pipelineStatus.repair.status, 'failed');
   } finally { globalThis.fetch = previousFetch; window.designDNA = desktop; }
@@ -586,7 +653,7 @@ test('Source AI repair provider failure survives final import and a cached rerun
 test('Source repair re-offloads expanded screenshot evidence before committing blocks', async () => {
   const previousFetch = globalThis.fetch, desktop = window.designDNA;
   try {
-    reset(); const source = add('sourceimport'); patch(source,{url:'https://example.test',mine:true});
+    reset(); const source = add('sourceimport'); patch(source,{url:'https://example.test',mine:true,captureViewports:['tablet','mobile'],aiRepair:true});
     const preview='data:image/png;base64,Y2FwdHVyZQ==';
     const block={name:'header',selector:'header',ir:ir('Captured'),preview,previews:{desktop:preview},fidelityReport:{gate:{passed:false}}};
     let puts=0;
@@ -602,6 +669,39 @@ test('Source repair re-offloads expanded screenshot evidence before committing b
     assert.equal(puts,2,'initial capture and the expanded repair result must both be persisted');
     assert.equal(node(source).data.blocks[0].previews.desktop,'ddna://blobs/'+'a'.repeat(64)+'.png');
   } finally {globalThis.fetch=previousFetch;window.designDNA=desktop;}
+});
+
+test('Source import captures desktop only by default and skips AI refine/repair without touching the provider', async () => {
+  const previousFetch = globalThis.fetch, desktop = window.designDNA;
+  try {
+    reset(); const source = add('sourceimport'); patch(source, { url: 'https://example.test', mine: true, aiProvider: 'codex', aiRefine: true });
+    let providerCalls = 0;
+    window.designDNA = { providers: { chatRequest: async () => { providerCalls++; throw new Error('must not be called'); } } };
+    const requests = [];
+    globalThis.fetch = async (url, init) => {
+      requests.push(url);
+      assert.equal(url, '/api/block-parse');
+      const body = JSON.parse(init.body);
+      assert.deepEqual(body.viewports.map(v => v.name), ['desktop']);
+      assert.equal(body.fullResolutionEvidence, true, 'desktop keeps lossless evidence as blob refs');
+      return jsonResponse({ blocks: [{ name: 'hero', selector: 'hero', ir: ir('Captured'), fidelityReport: { gate: { passed: false } } }], ambiguities: [{ selector: 'hero' }] });
+    };
+    await store.getState().runSourceImport(source);
+    assert.equal(providerCalls, 0);
+    assert.deepEqual(requests, ['/api/block-parse']);
+    assert.equal(node(source).data.pipelineStatus.repair.status, 'skipped');
+    assert.match(node(source).data.pipelineStatus.repair.message, /AI repair is off/);
+    assert.equal(node(source).data.pipelineStatus.refine.status, 'skipped');
+    assert.equal(node(source).data.pipelineStatus.fidelity.status, 'warning');
+    // legacy "precise" projects keep all three viewports and AI repair
+    const legacy = add('sourceimport'); patch(legacy, { url: 'https://example.test', mine: true, importProfile: 'precise' });
+    let legacyViewports = null;
+    globalThis.fetch = async (url, init) => { legacyViewports = JSON.parse(init.body).viewports.map(v => v.name); return jsonResponse({ blocks: [] }); };
+    window.designDNA = undefined;
+    await store.getState().runSourceImport(legacy);
+    assert.deepEqual(legacyViewports, ['desktop', 'tablet', 'mobile']);
+    assert.equal(node(source).data.blocks.length, 1);
+  } finally { globalThis.fetch = previousFetch; window.designDNA = desktop; }
 });
 
 test('source reimport preserves artifact wire and clears editors whose block disappeared', async () => {

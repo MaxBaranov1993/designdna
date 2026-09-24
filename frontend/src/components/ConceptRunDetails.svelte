@@ -5,13 +5,13 @@
 
 {#if runs.length}
   <details class="concept-history nodrag" data-concept-history>
-    <summary>Визуальный эскиз · {runs.at(-1)?.status === "complete" ? "готов" : runs.at(-1)?.status === "running" ? "создаётся" : "не завершён"}</summary>
+    <summary>Visual concept · {runs.at(-1)?.status === "complete" ? "ready" : runs.at(-1)?.status === "running" ? "creating" : "incomplete"}</summary>
     {#each [...runs].reverse() as run (run.id)}
       <div class="concept-run">
-        <small>{new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ориентир композиции</small>
-        {#if run.result}<img src={run.result.src} alt="Эскиз композиции" />{/if}
-        {#if run.error}<p>{run.error}. Макет можно собрать без эскиза.</p>{/if}
-        {#if run.prompt}<details><summary>Задание эскиза</summary><p>{run.prompt}</p></details>{/if}
+        <small>{new Date(run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · composition reference</small>
+        {#if run.result}<img src={run.result.src} alt="Composition concept" />{/if}
+        {#if run.error}<p>{run.error}. You can build the layout without a concept.</p>{/if}
+        {#if run.prompt}<details><summary>Concept prompt</summary><p>{run.prompt}</p></details>{/if}
       </div>
     {/each}
   </details>

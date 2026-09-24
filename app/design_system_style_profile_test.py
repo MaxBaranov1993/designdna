@@ -80,7 +80,7 @@ def test_style_profile_and_prompt_carry_atmosphere_and_copy_voice():
     assert _valid(guide["irTokens"]) == []
     profile = guide["profile"]
     assert profile["mode"] == "dark" and profile["cornerCharacter"] == "subtle"
-    assert "моноширинный" in profile["typographyCharacter"]
+    assert "monospace" in profile["typographyCharacter"]
     assert profile["copyVoice"]["heading"] == ["Sending Engine"]
     assert profile["copyVoice"]["eyebrow"] == ["2 · TURN IT ON WHEN READY"]
     assert profile["copyVoice"]["cta"] == ["Start free"]

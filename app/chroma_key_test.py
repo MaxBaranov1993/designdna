@@ -51,11 +51,11 @@ def test_despill_only_changes_keyed_edge_and_preserves_input():
 
 
 def test_rejects_absent_key_empty_mask_and_bad_parameters():
-    with pytest.raises(ValueError, match='всё изображение'):
+    with pytest.raises(ValueError, match='entire image'):
         remove_chroma(url(Image.new('RGB', (8, 8), '#00ff00')))
-    with pytest.raises(ValueError, match='не найден'):
+    with pytest.raises(ValueError, match='not found'):
         remove_chroma(url(fixture()), color='#0000ff')
-    with pytest.raises(ValueError, match='формате'):
+    with pytest.raises(ValueError, match='#RRGGBB'):
         remove_chroma(url(fixture()), color='green')
 
 

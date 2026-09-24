@@ -2,7 +2,6 @@
   import { captureNodeUpload } from "../flow/store";
   import { flow } from "../flow/state";
   import { commitNodeText, flushNodeText } from "../flow/textcommit";
-  import { toast } from "../flow/toast";
   import type { ReferenceNodeData } from "../flow/types";
 
   let { id, data }: { id: number; data: ReferenceNodeData } = $props();
@@ -21,20 +20,20 @@
 
 <div class="dna-insp-fields">
   <div class="dna-field">
-    <div class="dna-field-cap">Роль изображения</div>
+    <div class="dna-field-cap">Image role</div>
     <select value={data.role || "style"} onchange={(e) => $flow.setNodeData(id, { role: e.currentTarget.value as NonNullable<ReferenceNodeData["role"]> })}>
-      <option value="style">Стиль: палитра и характер</option>
-      <option value="composition">Композиция: расположение и иерархия</option>
-      <option value="reproduce">Воспроизведение исходника</option>
+      <option value="style">Style: palette and character</option>
+      <option value="composition">Composition: layout and hierarchy</option>
+      <option value="reproduce">Reproduce the original</option>
     </select>
-    <div class="dna-field-hint">Подключите выход «картинка» к «Референсу» Генератора. Точные компоненты дизайн-системы сохраняют приоритет.</div>
+    <div class="dna-field-hint">Connect the image output to Generator Reference. Exact design system components retain priority.</div>
   </div>
   <div class="dna-field">
-    <div class="dna-field-cap">Описание стиля</div>
+    <div class="dna-field-cap">Style description</div>
     <textarea
       rows="5"
       value={data.brief}
-      placeholder="Что взять из референса: плотность, тон, характер кнопок…"
+      placeholder="What to take from the reference: density, tone, button style…"
       oninput={(e) => {
         const value = e.currentTarget.value;
         commitNodeText(`reference:${id}:brief`, () => {
@@ -46,20 +45,13 @@
     ></textarea>
   </div>
   <div class="dna-field">
-    <div class="dna-field-cap">Изображение</div>
+    <div class="dna-field-cap">Image</div>
     <label class="dna-btn-ghost" style="cursor: pointer">
-      {data.fileName ? `Заменить · ${data.fileName}` : "Выбрать скриншот"}
+      {data.fileName ? `Replace · ${data.fileName}` : "Choose screenshot"}
       <input type="file" accept="image/*" hidden onchange={onFile} />
     </label>
     {#if data.image}
-      <button class="dna-btn-ghost" onclick={() => $flow.setNodeData(id, { image: null, fileName: "" })}>Убрать изображение</button>
+      <button class="dna-btn-ghost" onclick={() => $flow.setNodeData(id, { image: null, fileName: "" })}>Remove image</button>
     {/if}
   </div>
-  <label class="dna-insp-check">
-    <input type="checkbox" checked={!!data.decomposed} onchange={(e) => {
-      if (e.currentTarget.checked) { toast("Разбор референса на компоненты появится в Фазе B2"); e.currentTarget.checked = false; return; }
-      $flow.setNodeData(id, { decomposed: false });
-    }} />
-    <span>Разбить на компоненты</span>
-  </label>
 </div>

@@ -15,7 +15,7 @@ import math
 import re
 from typing import Any
 
-from . import master_summary
+from . import master_summary, section_shell
 from .identity import ensure_identity
 
 STRICT_DEFAULT_BUDGET = 32_000
@@ -406,6 +406,19 @@ def compile_profile(context: dict, *, brief: str = "", archetype_id: str = "", t
         if voice.get("heading") or voice.get("cta"):
             compact_profile["copyVoice"] = {key: (voice.get(key) or [])[:3] for key in ("heading", "eyebrow", "cta", "badge") if voice.get(key)}
         add("styleguide.profile", f"- Style profile (match this atmosphere): {_json(compact_profile)}", required=True)
+
+    # Оболочка секции: колонка, вертикальный ритм и стили эйбрау/заголовков/
+    # поверхностей/кнопок, измеренные по Source. Без неё новая секция
+    # выходит «универсальной карточкой» на белом фоне вне сетки страницы.
+    shell = section_shell.shell_prompt_payload(foundations.get("sectionShell") or {})
+    if shell:
+        add("foundations.section-shell",
+            "- SECTION SHELL (measured on the source page; a new section MUST sit in this grid): "
+            + _json(shell)
+            + ". Use newSectionRoot for the root frame (content spans content.x..content.x+content.width), keep "
+            "sectionPadding, open titled sections with the eyebrow style and its gapBelow, and style cards, "
+            "inputs and buttons with the listed surfaces/buttons exactly; no new colours, radii or shadows.",
+            required=True)
 
     # Декоративные сигнатуры считаются из мастеров в контексте: моно-лейблы,
     # статус-пилюли, стрелки, разделители, однострочная форма, тонкие рамки.

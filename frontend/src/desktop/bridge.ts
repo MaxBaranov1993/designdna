@@ -43,9 +43,13 @@ export function installDesktopFetchBridge(): void {
     // Project and Design System documents persist compact ddna:// evidence
     // handles. Expanding them would re-inflate Source screenshots into IPC JSON
     // and immutable SQLite revisions. One-shot render/QA APIs still get pixels.
+    // Timeline documents are stored in the Video node with every revision; the
+    // offline renderer reads ddna://blobs itself, so expanding them only inflated
+    // the project (14 MB per timeline copy on a Source page).
     const keepsBlobRefs = url.pathname.startsWith("/api/project/")
       || url.pathname.startsWith("/api/export/")
-      || url.pathname.startsWith("/api/design-system/");
+      || url.pathname.startsWith("/api/design-system/")
+      || url.pathname.startsWith("/api/timeline/");
     if (requestText && !keepsBlobRefs) {
       requestText = await expandBlobRefs(requestText);
     }
@@ -58,7 +62,7 @@ export function installDesktopFetchBridge(): void {
     const cancelled = new Promise<never>((_, reject) => {
       abort = () => {
         void bridge.cancel('long', requestId).catch(() => undefined);
-        reject(signal.reason || new DOMException('Запрос отменён', 'AbortError'));
+        reject(signal.reason || new DOMException('Request cancelled', 'AbortError'));
       };
       signal.addEventListener('abort', abort, { once: true });
     });

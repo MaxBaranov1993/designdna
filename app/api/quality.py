@@ -174,13 +174,13 @@ def _parse_quality_scorecard(raw: str, model_route: str) -> dict:
     try:
         parsed = json.loads(llm.extract_json(raw))
     except (json.JSONDecodeError, ValueError) as e:
-        raise ValueError(f"судья вернул невалидный JSON: {e}") from e
+        raise ValueError(f"judge returned invalid JSON: {e}") from e
     if not isinstance(parsed, dict):
-        raise ValueError("судья вернул не объект")
+        raise ValueError("judge returned a non-object")
     try:
         score = int(parsed.get("score"))
     except (TypeError, ValueError) as e:
-        raise ValueError("судья не вернул числовой score") from e
+        raise ValueError("judge returned no numeric score") from e
     issues = []
     for item in parsed.get("issues", []):
         if not isinstance(item, dict):
@@ -254,7 +254,7 @@ def _quality_repair_messages(ir: dict, scorecard: dict, brief: str, surface: str
                      + (f" → {instruction}" if instruction else ""))
     general = str(scorecard.get("repair_instruction") or "").strip()
     if not lines and not general:
-        return None, "судья не дал инструкций для repair"
+        return None, "judge provided no repair instructions"
     instructions = "\n".join(lines)
     if general:
         instructions = (instructions + "\n\n" if instructions else "") + f"Общая инструкция судьи: {general}"
@@ -326,7 +326,7 @@ def _round_failure(req: QualityPassReq, repaired: dict, initial: dict, current: 
     old_critical = sum(issue.get("severity") == "critical" for issue in initial.get("issues", []))
     new_critical = sum(issue.get("severity") == "critical" for issue in scorecard.get("issues", []))
     if int(scorecard["score"]) < int(current.get("score", 0)) or new_critical > old_critical:
-        return "Повторная оценка выявила регрессию; раунд отклонён"
+        return "Re-evaluation found a regression; round rejected"
     return None
 
 
@@ -397,7 +397,7 @@ def _judge_images(screenshot: bytes) -> list[str]:
 
 def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None, *, provider: str = "auto", effort: str = "medium", surface: str = "auto") -> dict:
     """Render IR and ask the standalone server's vision model for a scorecard."""
-    run_registry.stage(run_id, "render", "Рендерю IR для визуальной проверки")
+    run_registry.stage(run_id, "render", "Rendering IR for visual verification")
     # Server rejudges render afresh; repairs reuse these exact first screens.
     image_data_url = _render_quality_evidence(ir, brief)["images"]
     rubric = (APP_ROOT / "prompts" / "RUBRIC.md").read_text(encoding="utf-8")
@@ -418,7 +418,7 @@ def _quality_scorecard(ir: dict, brief: str, run_id: str | None = None, *, provi
         + "\n\n## Карта Design IR для адресных правок\n"
         + json.dumps(ir, ensure_ascii=False)
     )
-    run_registry.stage(run_id, "judge", "Vision-судья оценивает скриншот")
+    run_registry.stage(run_id, "judge", "Vision judge is evaluating the screenshot")
     raw = llm.chat_vision(
         provider, image_data_url, prompt, QUALITY_JUDGE_SYSTEM, 0.2,
         role="quality_judge", reasoning_effort=effort,
@@ -436,14 +436,14 @@ def _quality_finish(req, output_ir, initial, final, repair, *, visual=False):
     if repair["applied"]:
         failure = generator_policy.repair_guard(req.ir, output_ir, surface, req.designSystem, brief=req.brief)
         if not req.rejudge or final is initial:
-            failure = failure or "Починка не прошла повторную оценку"
+            failure = failure or "Repair failed re-evaluation"
         # Регрессия — ниже балл или новые critical-замечания. Раньше любое
         # переформулированное судьёй замечание считалось «новым» и откатывало
         # починку, поэтому результат оставался с первой оценкой.
         old_critical = sum(1 for i in initial.get("issues", []) if i.get("severity") == "critical")
         new_critical = sum(1 for i in final.get("issues", []) if i.get("severity") == "critical")
         if final.get("score", 0) < initial.get("score", 0) or new_critical > old_critical:
-            failure = failure or "Повторная оценка выявила регрессию; починка отменена"
+            failure = failure or "Re-evaluation found a regression; repair reverted"
         if failure:
             output_ir, final = copy.deepcopy(req.ir), initial
             repair.update(applied=False, error=failure)
@@ -515,14 +515,14 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
     """
     schema_errors = validate_ir(sanitize_font_face_weights(req.ir))
     if schema_errors:
-        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
+        return err(422, "IR fails schema validation: " + "; ".join(schema_errors[:5]))
     deterministic_before = generator_policy.lint(req.ir, generator_policy.surface_for(req.brief, req.surface, req.ir))
     try:
         initial = _quality_scorecard(req.ir, req.brief, run_id, provider=req.provider, effort=req.effort, surface=req.surface)
     except Exception as e:
-        return err(502, f"Quality Pass judge недоступен: {e}")
+        return err(502, f"Quality Pass judge unavailable: {e}")
     if run_registry.is_cancelled(run_id):
-        return err(CANCELLED_STATUS, "Quality Pass отменён")
+        return err(CANCELLED_STATUS, "Quality Pass cancelled")
     min_score = max(0, min(int(req.min_score), 100))
     surface = generator_policy.surface_for(req.brief, req.surface, req.ir)
     output_ir = copy.deepcopy(req.ir)
@@ -535,7 +535,7 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
         if not _needs_repair(current, min_score, deterministic):
             break
         repair["attempted"] = True
-        run_registry.stage(run_id, "repair", f"Починка по замечаниям судьи ({index}/{max_rounds})")
+        run_registry.stage(run_id, "repair", f"Repairing judge findings ({index}/{max_rounds})")
         repaired, repair_error = _quality_repair(
             current_ir, current, req.brief, provider=req.provider, effort=req.effort, surface=req.surface,
             round_index=index, history=repair["rounds"], min_score=min_score, design_system=req.designSystem)
@@ -548,12 +548,12 @@ def _quality_pass(req: QualityPassReq, run_id: str | None):
             repair["rounds"].append({"round": index, "applied": True, "score": None, "issues": None})
             break
         if run_registry.is_cancelled(run_id):
-            return err(CANCELLED_STATUS, "Quality Pass отменён")
-        run_registry.stage(run_id, "rejudge", f"Повторная оценка ({index}/{max_rounds})")
+            return err(CANCELLED_STATUS, "Quality Pass cancelled")
+        run_registry.stage(run_id, "rejudge", f"Re-evaluating ({index}/{max_rounds})")
         try:
             scorecard = _quality_scorecard(repaired, req.brief, run_id, provider=req.provider, effort=req.effort, surface=req.surface)
         except Exception as e:
-            repair["error"] = f"rejudge недоступен: {e}"
+            repair["error"] = f"rejudge unavailable: {e}"
             repair["rounds"].append({"round": index, "applied": False, "error": repair["error"]})
             break
         failure = _round_failure(req, repaired, initial, current, scorecard, surface)
@@ -580,16 +580,16 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
     """
     schema_errors = validate_ir(sanitize_font_face_weights(req.ir))
     if schema_errors:
-        return err(422, "IR не проходит schema: " + "; ".join(schema_errors[:5]))
+        return err(422, "IR fails schema validation: " + "; ".join(schema_errors[:5]))
     outputs = req.outputs
     repairs, rejudges = _round_outputs(outputs)
     for stage, raw in [("judge", outputs.judge), *(("repair", item) for item in repairs), *(("rejudge", item) for item in rejudges)]:
         if raw is not None and len(raw.encode("utf-8")) > 2 * 1024 * 1024:
-            return err(413, f"Quality Pass {stage}: ответ Codex слишком большой")
+            return err(413, f"Quality Pass {stage}: Codex response too large")
     if outputs.judge is None and (repairs or rejudges):
-        return err(422, "Quality Pass: repair/rejudge без judge — неконсистентное состояние Codex")
+        return err(422, "Quality Pass: repair/rejudge without judge — inconsistent Codex state")
     if len(rejudges) > len(repairs):
-        return err(422, "Quality Pass: rejudge без repair — неконсистентное состояние Codex")
+        return err(422, "Quality Pass: rejudge without repair — inconsistent Codex state")
 
     surface = generator_policy.surface_for(req.brief, req.surface, req.ir)
     deterministic_before = generator_policy.lint(req.ir, surface)
@@ -603,12 +603,12 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
         initial = _parse_quality_scorecard(outputs.judge, "Codex app-server / quality_judge")
         initial["mode"] = "component" if _component_quality_mode(req.ir) else "page"
     except Exception as e:
-        return err(502, f"Quality Pass judge вернул неверный ответ: {e}")
+        return err(502, f"Quality Pass judge returned an invalid response: {e}")
 
     min_score = max(0, min(int(req.min_score), 100))
     needs_repair = _needs_repair(initial, min_score, deterministic_before)
     if repairs and (not req.repair or not needs_repair):
-        return err(422, "Quality Pass: repair не запрашивался — неконсистентное состояние Codex")
+        return err(422, "Quality Pass: repair not requested — inconsistent Codex state")
     output_ir = copy.deepcopy(req.ir)
     repair = {"attempted": False, "applied": False, "error": None, "rounds": []}
     final = initial
@@ -648,7 +648,7 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
             scorecard = _parse_quality_scorecard(rejudges[index - 1], "Codex app-server / quality_judge")
             scorecard["mode"] = "component" if _component_quality_mode(repaired) else "page"
         except Exception as e:
-            return err(502, f"Quality Pass rejudge вернул неверный ответ: {e}")
+            return err(502, f"Quality Pass rejudge returned an invalid response: {e}")
         consumed = index
         failure = _round_failure(req, repaired, initial, current, scorecard, surface)
         repair["rounds"].append({"round": index, "applied": not failure, "score": scorecard["score"],
@@ -663,6 +663,6 @@ def quality_pass_codex_step(req: QualityPassCodexReq):
             break
 
     if rejudges and consumed == 0 and not repair["applied"]:
-        return err(422, "Quality Pass: rejudge без применённого repair — неконсистентное состояние Codex")
+        return err(422, "Quality Pass: rejudge without applied repair — inconsistent Codex state")
     visual = bool(req.visualReview and cache_store.get("generator-visual", _quality_visual_key(output_ir, req.brief)))
     return _quality_finish(req, output_ir, initial, final, repair, visual=visual)

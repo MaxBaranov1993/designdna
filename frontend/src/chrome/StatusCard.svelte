@@ -28,7 +28,7 @@
         if (!node) return [];
         const def = node.type ? NODE_DEFS[node.type as NodeType] : null;
         return [{ id: Number(id), pageId: page.id, pageName: page.name,
-          key: JSON.stringify([page.id, id]), title: def?.title || `Нода ${id}`, progress: runtime!.progresses[Number(id)] || null }];
+          key: JSON.stringify([page.id, id]), title: def?.title || `Node ${id}`, progress: runtime!.progresses[Number(id)] || null }];
       });
     });
   });
@@ -51,7 +51,7 @@
     menuOpen = false;
     transferBusy = true;
     try { downloadJson("designai-graph.json", await embedGraphAssets(buildExportPayload(useFlowStore.getState()))); }
-    catch (error) { toast("Экспорт не завершён: " + (error instanceof Error ? error.message : String(error)), "error"); }
+    catch (error) { toast("Export did not finish: " + (error instanceof Error ? error.message : String(error)), "error"); }
     finally { transferBusy = false; }
   };
   const onImportFile = (event: Event) => {
@@ -66,11 +66,11 @@
       try {
         const restored = await restoreGraphAssets(JSON.parse(String(reader.result)));
         const now = get();
-        if (now.nodes !== initial.nodes || now.edges !== initial.edges || now.activePageId !== initial.activePageId) throw new Error("Граф изменился во время импорта. Повторите импорт в нужном листе");
+        if (now.nodes !== initial.nodes || now.edges !== initial.edges || now.activePageId !== initial.activePageId) throw new Error("The graph changed during import. Import again on the intended sheet");
         now.loadGraph(parseLegacyPayload(restored));
-        toast("Граф загружен", "ok");
+        toast("Graph loaded", "ok");
       } catch (error) {
-        toast("Не удалось прочитать JSON: " + (error instanceof Error ? error.message : String(error)), "error");
+        toast("Could not read JSON: " + (error instanceof Error ? error.message : String(error)), "error");
       } finally { transferBusy = false; }
     };
     reader.readAsText(file);
@@ -89,11 +89,11 @@
   <div style="padding: 0 6px 0 4px"><EngineStatus /></div>
   <span class="pc-vsep"></span>
   <div style="position: relative">
-    <button class="sc-btn" disabled={transferBusy} aria-busy={transferBusy} aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>{transferBusy ? "Ресурсы…" : "Экспорт ▾"}</button>
+    <button class="sc-btn" disabled={transferBusy} aria-busy={transferBusy} aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>{transferBusy ? "Assets…" : "Export ▾"}</button>
     {#if menuOpen}
       <div class="sc-menu" role="menu">
-        <button class="pc-item" id="btn-export" role="menuitem" onclick={onExport}><span class="name">Экспорт графа · JSON</span></button>
-        <button class="pc-item" id="btn-import" role="menuitem" onclick={() => { fileInput?.click(); menuOpen = false; }}><span class="name">Импорт графа · JSON</span></button>
+        <button class="pc-item" id="btn-export" role="menuitem" onclick={onExport}><span class="name">Export graph · JSON</span></button>
+        <button class="pc-item" id="btn-import" role="menuitem" onclick={() => { fileInput?.click(); menuOpen = false; }}><span class="name">Import graph · JSON</span></button>
       </div>
     {/if}
   </div>
@@ -102,21 +102,21 @@
 
 <div class="sc-tasks" aria-live="polite">
   <button class="sc-tasks-head" aria-expanded={tasksOpen} onclick={() => (tasksOpen = !tasksOpen)}>
-    <span>Задачи</span>
+    <span>Tasks</span>
     {#if tasks.length}<span class="n">{tasks.length}</span>{/if}
     <span style="color: var(--dna-dim); font-size: 9px">{tasksOpen ? "▲" : "▼"}</span>
   </button>
   {#if tasksOpen}
     <div class="sc-tasks-list">
       {#if !tasks.length}
-        <div class="task-row"><span>Сейчас ничего не выполняется.</span></div>
+        <div class="task-row"><span>No tasks are running.</span></div>
       {/if}
       {#each tasks as task (task.key)}
         {@const measured = !!task.progress && Number.isFinite(task.progress.percent)}
-        <div class="task-row" role="button" tabindex="0" title="Показать ноду" onclick={() => showTask(task)} onkeydown={(event) => event.key === "Enter" && showTask(task)}>
+        <div class="task-row" role="button" tabindex="0" title="Show node" onclick={() => showTask(task)} onkeydown={(event) => event.key === "Enter" && showTask(task)}>
           <b>{task.pageName} · {task.title}</b>
-          <button class="task-x" title="Отменить" aria-label="Отменить задачу" onclick={(event) => { event.stopPropagation(); void bindPageState(task.pageId)().cancelRun(task.id); }}>✕</button>
-          <span>{task.progress ? `${task.progress.label}${task.progress.stage ? ` · ${task.progress.stage}` : ""} · ${clock(task.progress.startedAt)}` : "выполняется…"}</span>
+          <button class="task-x" title="Cancel" aria-label="Cancel task" onclick={(event) => { event.stopPropagation(); void bindPageState(task.pageId)().cancelRun(task.id); }}>✕</button>
+          <span>{task.progress ? `${task.progress.label}${task.progress.stage ? ` · ${task.progress.stage}` : ""} · ${clock(task.progress.startedAt)}` : "running…"}</span>
           <div class="task-bar" class:indeterminate={!measured}><i style={measured ? `width: ${Math.round(Number(task.progress!.percent))}%` : ""}></i></div>
         </div>
       {/each}

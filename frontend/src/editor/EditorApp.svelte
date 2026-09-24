@@ -42,7 +42,7 @@
 </script>
 
 <!-- клавиатура редактора (порт keydown из editor.js) — активна только в открытой сессии -->
-<svelte:document onkeydown={(e) => ctl.onKeydown(e)} />
+<svelte:document onkeydown={(e) => ctl.onKeydown(e)} onkeyup={(e) => ctl.onKeyup(e)} />
 
 <div bind:this={overlay} class="dna-editor" style="display: {$editorUi.isOpen ? 'flex' : 'none'}" aria-busy={$editorUi.aiBusy} data-editor-open={$editorUi.isOpen ? "true" : "false"}>
   <TopBar />

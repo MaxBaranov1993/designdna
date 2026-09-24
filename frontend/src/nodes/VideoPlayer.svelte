@@ -3,7 +3,7 @@
   /* Встроенный плеер ноды (Weavy: кадр + тайм-код, ⏮ ▶ ⏭, loop). В десктопе
    * ссылка /api/… не играет напрямую (нет HTTP под file://) — тянем через
    * fetch-мост и отдаём blob: URL; в браузере relative URL играет как есть. */
-  let { src, label = "видео" }: { src: string; label?: string } = $props();
+  let { src, label = "video" }: { src: string; label?: string } = $props();
 
   let video: HTMLVideoElement | null = $state(null);
   let resolved = $state<string | null>(null);
@@ -57,7 +57,7 @@
 
 <div class="n-hero n-player">
   {#if error}
-    <div class="n-hero-empty">Видео не загрузилось: {error}</div>
+    <div class="n-hero-empty">Video failed to load: {error}</div>
   {:else if resolved}
     <!-- svelte-ignore a11y_media_has_caption -->
     <video
@@ -67,7 +67,7 @@
       preload="metadata"
       {loop}
       aria-label={label}
-      onerror={() => { error = video?.error?.message || "Не удалось декодировать видео"; }}
+      onerror={() => { error = video?.error?.message || "Could not decode video"; }}
       onplay={() => (playing = true)}
       onpause={() => (playing = false)}
       ontimeupdate={() => (time = video?.currentTime || 0)}
@@ -76,16 +76,16 @@
     ></video>
     <span class="n-hero-tag">{fmt(time)}</span>
   {:else}
-    <div class="n-hero-empty">Загрузка видео…</div>
+    <div class="n-hero-empty">Loading video…</div>
   {/if}
 </div>
-<div class="n-transport nodrag" role="group" aria-label="Транспорт">
-  <button title="В начало" aria-label="В начало" onclick={() => seek(0)}>⏮</button>
-  <button class="play" title={playing ? "Пауза (Space)" : "Играть (Space)"} aria-label={playing ? "Пауза" : "Играть"} onclick={toggle}>{playing ? "❚❚" : "▶"}</button>
-  <button title="В конец" aria-label="В конец" onclick={() => seek(duration)}>⏭</button>
-  <input class="scrub" type="range" min="0" max={duration || 0} step="0.01" value={time} aria-label="Позиция" oninput={(e) => seek(Number(e.currentTarget.value))} />
+<div class="n-transport nodrag" role="group" aria-label="Playback controls">
+  <button title="Jump to start" aria-label="Jump to start" onclick={() => seek(0)}>⏮</button>
+  <button class="play" title={playing ? "Pause (Space)" : "Play (Space)"} aria-label={playing ? "Pause" : "Play"} onclick={toggle}>{playing ? "❚❚" : "▶"}</button>
+  <button title="Jump to end" aria-label="Jump to end" onclick={() => seek(duration)}>⏭</button>
+  <input class="scrub" type="range" min="0" max={duration || 0} step="0.01" value={time} aria-label="Position" oninput={(e) => seek(Number(e.currentTarget.value))} />
   <span class="tcode">{fmt(duration)}</span>
-  <button class:on={loop} title="Повтор" aria-label="Повтор" aria-pressed={loop} onclick={() => (loop = !loop)}>↻</button>
+  <button class:on={loop} title="Loop" aria-label="Loop" aria-pressed={loop} onclick={() => (loop = !loop)}>↻</button>
 </div>
 
 <style>

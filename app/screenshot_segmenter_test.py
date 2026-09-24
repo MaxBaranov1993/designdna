@@ -52,7 +52,7 @@ def test_tile_grid_covers_image_with_overlap():
     assert tiles, "непустое изображение обязано дать тайлы"
     covered_x = max(t["x"] + t["width"] for t in tiles)
     covered_y = max(t["y"] + t["height"] for t in tiles)
-    assert covered_x == 2000 and covered_y == 900, "тайлы обязаны покрыть всё изображение"
+    assert covered_x == 2000 and covered_y == 900, "тайлы обязаны покрыть entire image"
     assert all(t["width"] <= seg.TILE_SIZE and t["height"] <= seg.TILE_SIZE for t in tiles)
     # маленький скриншот — один тайл, без лишних заданий модели
     assert len(seg.tile_grid(800, 600)) == 1

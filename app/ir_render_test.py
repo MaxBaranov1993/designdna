@@ -56,3 +56,12 @@ def test_render_neutralizes_non_asset_hrefs_before_asset_guard():
     assert out["tree"][1]["href"] == "ddna://blobs/abc.png"
     # исходник не мутирован
     assert ir["tree"][0]["props"]["links"][0]["href"] == "mailto:a@b.c"
+
+
+def test_generic_family_keywords_are_never_aliased_to_bundled_inter():
+    ir = {"tree": [{"type": "text", "text": "12:41:09  plan",
+                    "style": {"fontFamily": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"}},
+                   {"type": "text", "text": "Body", "style": {"fontFamily": "Commissioner, sans-serif"}}]}
+    requested = ir_render._requested_font_families(ir)
+    assert "ui-monospace" not in requested, "a generic keyword must fall through to the next family"
+    assert "Commissioner" in requested

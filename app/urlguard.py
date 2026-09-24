@@ -9,6 +9,7 @@ HTTPX-соединения повторно резолвятся и закреп
 """
 import ipaddress
 import socket
+import time
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
@@ -22,8 +23,12 @@ MAX_REDIRECTS = 5
 # DNS-кэш для одного процесса: Source Import скачивает 5-8 шрифтов с одного
 # домена, каждый вызов resolve_public_ips делал полный getaddrinfo. Профиль:
 # rsale.net — 9.2с на 8 запросов → ~0.5с с кэшем.
-_DNS_CACHE: dict[str, tuple[tuple[str, ...], str | None]] = {}
+#
+# Negative entries must expire: a transient getaddrinfo failure in the long-lived
+# desktop_worker otherwise permanently blocks that host until app restart.
+_DNS_CACHE: dict[str, tuple[tuple[str, ...], str | None, float | None]] = {}
 _DNS_CACHE_MAX = 256
+_DNS_NEGATIVE_TTL_S = 5.0
 
 
 @dataclass(frozen=True)
@@ -34,39 +39,51 @@ class PublicHttpResponse:
     content: bytes
 
 
+def _cache_put(cache_key: str, ips: tuple[str, ...], error: str | None, *, expires_at: float | None) -> None:
+    if len(_DNS_CACHE) >= _DNS_CACHE_MAX and cache_key not in _DNS_CACHE:
+        # Drop the oldest expired/negative entry first; otherwise drop an arbitrary key.
+        stale = next((key for key, value in _DNS_CACHE.items()
+                      if value[2] is not None and value[2] <= time.monotonic()), None)
+        _DNS_CACHE.pop(stale if stale is not None else next(iter(_DNS_CACHE)), None)
+    _DNS_CACHE[cache_key] = (ips, error, expires_at)
+
+
 def resolve_public_ips(host: str, port: int) -> tuple[str, ...]:
     """Resolve a host and return only after every answer is proven globally routable."""
     cache_key = host.lower()
     cached = _DNS_CACHE.get(cache_key)
     if cached is not None:
-        ips_str, cached_error = cached
-        if cached_error:
-            raise ValueError(cached_error)
-        return ips_str
+        ips_str, cached_error, expires_at = cached
+        if cached_error is not None:
+            if expires_at is None or expires_at <= time.monotonic():
+                _DNS_CACHE.pop(cache_key, None)
+            else:
+                raise ValueError(cached_error)
+        else:
+            return ips_str
     try:
         ips = [ipaddress.ip_address(host.strip("[]"))]
     except ValueError:
         try:
             infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
         except (OSError, UnicodeError) as e:
-            if len(_DNS_CACHE) < _DNS_CACHE_MAX:
-                _DNS_CACHE[cache_key] = ((), f"Хост {host!r} не резолвится: {e}")
-            raise ValueError(f"Хост {host!r} не резолвится: {e}") from None
+            error = f"Host {host!r} cannot resolve: {e}"
+            _cache_put(cache_key, (), error, expires_at=time.monotonic() + _DNS_NEGATIVE_TTL_S)
+            raise ValueError(error) from None
         ips = [ipaddress.ip_address(info[4][0]) for info in infos]
     if not ips:
-        if len(_DNS_CACHE) < _DNS_CACHE_MAX:
-            _DNS_CACHE[cache_key] = ((), f"Хост {host!r} не резолвится")
-        raise ValueError(f"Хост {host!r} не резолвится")
+        error = f"Host {host!r} cannot resolve"
+        _cache_put(cache_key, (), error, expires_at=time.monotonic() + _DNS_NEGATIVE_TTL_S)
+        raise ValueError(error)
     for ip in ips:
         if _bad_ip(ip):
-            error = f"Хост {host!r} ведёт во внутреннюю сеть ({ip}) — запрос заблокирован"
-            if len(_DNS_CACHE) < _DNS_CACHE_MAX:
-                _DNS_CACHE[cache_key] = ((), error)
+            error = f"Host {host!r} points to a private network ({ip}) — request blocked"
+            # Policy failures are stable for the process lifetime.
+            _cache_put(cache_key, (), error, expires_at=None)
             raise ValueError(error)
     # Preserve resolver preference while avoiding duplicate connection attempts.
     result = tuple(dict.fromkeys(str(ip) for ip in ips))
-    if len(_DNS_CACHE) < _DNS_CACHE_MAX:
-        _DNS_CACHE[cache_key] = (result, None)
+    _cache_put(cache_key, result, None, expires_at=None)
     return result
 
 
@@ -92,7 +109,7 @@ class PublicSyncBackend(httpcore.SyncBackend):
                 last_error = exc
         if last_error is not None:
             raise last_error
-        raise ValueError(f"Хост {host!r} не имеет допустимых IP-адресов")
+        raise ValueError(f"Host {host!r} has no valid IP addresses")
 
 
 class PublicHTTPTransport(httpx.HTTPTransport):
@@ -113,16 +130,16 @@ def validate_public_url(url: str) -> str:
     """Возвращает нормализованный URL или бросает ValueError (SSRF-гард)."""
     p = urlparse((url or "").strip())
     if p.scheme not in ALLOWED_SCHEMES:
-        raise ValueError(f"Схема {p.scheme or '<пусто>'!r} не разрешена — только http/https")
+        raise ValueError(f"Scheme {p.scheme or '<empty>'!r} is not allowed — only http/https")
     host = p.hostname
     if not host:
-        raise ValueError("В URL нет хоста")
+        raise ValueError("URL has no host")
     if p.username is not None or p.password is not None:
-        raise ValueError("Логин и пароль в URL не разрешены")
+        raise ValueError("Username and password are not allowed in URLs")
     try:
         port = p.port or (443 if p.scheme == "https" else 80)
     except ValueError as e:
-        raise ValueError(f"Недопустимый порт: {e}") from None
+        raise ValueError(f"Invalid port: {e}") from None
     resolve_public_ips(host, port)
     return p.geturl()
 
@@ -131,7 +148,7 @@ def fetch_public_bytes(url: str, *, timeout: float, headers: dict[str, str] | No
                        max_bytes: int, max_redirects: int = MAX_REDIRECTS) -> PublicHttpResponse:
     """GET public HTTP(S) URL with per-hop validation and a hard body limit."""
     if max_bytes < 1:
-        raise ValueError("Лимит ответа должен быть положительным")
+        raise ValueError("Response limit must be positive")
     current = validate_public_url(url)
     with httpx.Client(
         follow_redirects=False,
@@ -146,9 +163,9 @@ def fetch_public_bytes(url: str, *, timeout: float, headers: dict[str, str] | No
                     location = response.headers.get("location")
                     if not location:
                         response.raise_for_status()
-                        raise ValueError("Redirect не содержит Location")
+                        raise ValueError("Redirect has no Location header")
                     if redirect_count >= max_redirects:
-                        raise ValueError(f"Слишком много redirect-ов (>{max_redirects})")
+                        raise ValueError(f"Too many redirects (>{max_redirects})")
                     current = validate_public_url(urljoin(current, location))
                     continue
 
@@ -160,19 +177,19 @@ def fetch_public_bytes(url: str, *, timeout: float, headers: dict[str, str] | No
                     except ValueError:
                         declared_size = None
                     if declared_size is not None and declared_size > max_bytes:
-                        raise ValueError(f"Ответ превышает лимит {max_bytes} байт")
+                        raise ValueError(f"Response exceeds limit {max_bytes} bytes")
                 body = bytearray()
                 for chunk in response.iter_bytes():
                     body.extend(chunk)
                     if len(body) > max_bytes:
-                        raise ValueError(f"Ответ превышает лимит {max_bytes} байт")
+                        raise ValueError(f"Response exceeds limit {max_bytes} bytes")
                 return PublicHttpResponse(
                     url=str(response.url),
                     status_code=response.status_code,
                     headers=dict(response.headers),
                     content=bytes(body),
                 )
-    raise ValueError("Не удалось загрузить URL")
+    raise ValueError("Could not load URL")
 
 
 def validate_browser_request_url(url: str, validate_url=validate_public_url) -> str:
@@ -202,7 +219,7 @@ def install_playwright_url_guard(context, validate_url=validate_public_url,
         try:
             parsed = urlparse(route.url)
             if parsed.scheme not in {"ws", "wss"}:
-                raise ValueError("Недопустимая WebSocket-схема")
+                raise ValueError("Invalid WebSocket scheme")
             equivalent = parsed._replace(
                 scheme="https" if parsed.scheme == "wss" else "http",
             ).geturl()

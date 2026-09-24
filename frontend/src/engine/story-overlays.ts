@@ -2,7 +2,7 @@ export type StoryOverlay = { id: string; anchorTarget: string; title?: string; w
   background?: string; color?: string; accent?: string; items: Array<{id: string; text: string; selected?: boolean}> };
 
 export function overlayTargets(overlays: StoryOverlay[] = []) {
-  return overlays.flatMap(panel => [{id: `overlay.${panel.id}`, label: panel.title || "Меню", kind: "card"},
+  return overlays.flatMap(panel => [{id: `overlay.${panel.id}`, label: panel.title || "Menu", kind: "card"},
     ...panel.items.map(item => ({id: `overlay.${panel.id}.${item.id}`, label: item.text, kind: "button"}))]);
 }
 
@@ -12,7 +12,7 @@ export function renderStoryOverlays(root: HTMLElement, ir: any, overlays: StoryO
   const panels: HTMLElement[] = [];
   for (const overlay of overlays) {
     const anchor = find(root, overlay.anchorTarget);
-    if (!anchor) throw new Error(`Не найден элемент для окна: ${overlay.anchorTarget}`);
+    if (!anchor) throw new Error(`No element found for window: ${overlay.anchorTarget}`);
     const style = getComputedStyle(anchor), color = ir.tokens?.color || {};
     const panel = document.createElement("div");
     panel.dataset.storyTarget = `overlay.${overlay.id}`;

@@ -161,10 +161,16 @@ def render_master_png(page, comp: dict, viewport: str) -> bytes:
         if image.size != (int(size["width"]), int(size["height"])):
             raise ValueError("Source review canvas size mismatch")
         x, y, w, h = (float(bounds[k]) for k in ("x", "y", "width", "height"))
-        if min(x, y) < 0 or min(w, h) <= 0 or x + w > image.width + .5 or y + h > image.height + .5:
+        # Same clamp as styleguide.proof_crop: an absolute capture may keep a part of the
+        # component outside its section; both crops cover the identical visible part.
+        inside_w = max(0.0, min(x + w, image.width) - max(x, 0.0))
+        inside_h = max(0.0, min(y + h, image.height) - max(y, 0.0))
+        if min(w, h) <= 0 or inside_w * inside_h < 0.6 * w * h:
             raise ValueError("Source review crop is outside its section")
+        sx, sy = max(0.0, x), max(0.0, y)
+        sw, sh = min(image.width - sx, w), min(image.height - sy, h)
         output = io.BytesIO()
-        image.crop((int(x), int(y), int(x+w), int(y+h))).save(output, format="PNG")
+        image.crop((int(sx), int(sy), int(sx + sw), int(sy + sh))).save(output, format="PNG")
         return output.getvalue()
     preview, width, height = proof_aligned_preview(comp, viewport)
     resolved, errors = scraper.resolve_ir_blobs(preview)

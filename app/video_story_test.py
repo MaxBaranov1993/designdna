@@ -60,11 +60,11 @@ def test_unknown_page_or_missing_navigation_is_rejected():
     plan = plan_fixture(); plan["edits"][0]["actions"][6]["toPageId"] = "missing"
     with pytest.raises(ValueError): generate(plan=plan)
     plan = plan_fixture(); del plan["edits"][0]["actions"][6]
-    with pytest.raises(ValueError, match="неактивной"): generate(plan=plan)
+    with pytest.raises(ValueError, match="inactive"): generate(plan=plan)
 
 
 def test_missing_information_is_returned_as_a_question_without_fabricated_video():
-    with pytest.raises(ValueError, match="Нужно уточнить"):
+    with pytest.raises(ValueError, match="Clarification needed"):
         generate(plan={"question": "Какую цену ввести?"})
 
 
@@ -100,3 +100,16 @@ def test_ai_can_soften_existing_actions_without_replacing_content():
     assert revert_change_set(after,changes) == before
     plan['edits'][0]['changes']['easing']='unknown'
     with pytest.raises(ValueError): generate(before,plan)
+
+
+def test_prompt_targets_keep_late_forms_on_long_source_pages():
+    """A contact form after thousands of Source nodes stays targetable."""
+    from video_story import PROMPT_TARGET_LIMIT, targets
+    filler = [{"type": "text", "text": f"row {i}", "children": []} for i in range(700)]
+    form = {"type": "composition", "children": [{"type": "input", "placeholder": "Name"},
+                                                {"type": "button", "text": "Send"}]}
+    ir = {"tree": [{"type": "source-block", "children": filler}, form]}
+    shown = targets(ir, None, PROMPT_TARGET_LIMIT)
+    assert len(shown) == PROMPT_TARGET_LIMIT
+    assert {"s1.children.0", "s1.children.1"} <= {t["id"] for t in shown}, "controls of the last section are shown"
+    assert len(targets(ir)) == 704, "validation sees every element"

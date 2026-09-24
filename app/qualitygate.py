@@ -105,9 +105,9 @@ def _check_single_h1(ir) -> list:
         return []
     if not h1:
         return [{"path": "tree",
-                 "message": "нет ни одного h1 среди heading-элементов"}]
+                 "message": "no h1 among heading elements"}]
     return [{"path": p,
-             "message": f"h1 должен быть ровно один, найдено {len(h1)}"}
+             "message": f"exactly one h1 required; found {len(h1)}"}
             for p, _ in h1]
 
 
@@ -125,7 +125,7 @@ def _fix_single_h1(ir) -> list:
             seen = True
             continue
         el["level"] = 2
-        journal.append(f"rule single-h1 понизило {path}.level: 1 -> 2")
+        journal.append(f"single-h1 rule demoted {path}.level: 1 -> 2")
     return journal
 
 
@@ -171,10 +171,10 @@ def _check_button_text(ir) -> list:
     out = []
     for path, text in _iter_buttons(ir):
         if not isinstance(text, str) or not text.strip():
-            out.append({"path": path, "message": "пустой текст кнопки"})
+            out.append({"path": path, "message": "empty button text"})
         elif len(text) > MAX_BUTTON_LEN:
             out.append({"path": path,
-                        "message": f"текст кнопки длиннее {MAX_BUTTON_LEN} "
+                        "message": f"button text exceeds {MAX_BUTTON_LEN} "
                                    f"({len(text)})"})
     return out
 
@@ -196,7 +196,7 @@ def _check_image_alt(ir) -> list:
     for path, node in _iter_images(ir):
         alt = node.get("alt")
         if not isinstance(alt, str) or not alt.strip():
-            out.append({"path": path, "message": "изображение без alt"})
+            out.append({"path": path, "message": "image without alt text"})
     return out
 
 
@@ -210,10 +210,10 @@ def _check_heading_limits(ir) -> list:
                 continue
             if key == "heading" and len(v) > MAX_HEADING_LEN:
                 out.append({"path": path,
-                            "message": f"heading длиннее {MAX_HEADING_LEN} ({len(v)})"})
+                            "message": f"heading exceeds {MAX_HEADING_LEN} ({len(v)})"})
             elif key == "subheading" and len(v) > MAX_SUBHEADING_LEN:
                 out.append({"path": path,
-                            "message": f"subheading длиннее {MAX_SUBHEADING_LEN} ({len(v)})"})
+                            "message": f"subheading exceeds {MAX_SUBHEADING_LEN} ({len(v)})"})
     return out
 
 
@@ -235,7 +235,7 @@ def contrast_ratio(color_a: str, color_b: str) -> float:
     """Контраст двух hex-цветов по WCAG (1..21)."""
     la, lb = _wcag_luminance(color_a), _wcag_luminance(color_b)
     if la is None or lb is None:
-        raise ValueError(f"некорректный hex-цвет: {color_a!r} / {color_b!r}")
+        raise ValueError(f"invalid HEX color: {color_a!r} / {color_b!r}")
     hi, lo = max(la, lb), min(la, lb)
     return (hi + 0.05) / (lo + 0.05)
 
@@ -259,7 +259,7 @@ def _check_contrast(ir) -> list:
         ratio = contrast_ratio(c_fg, c_bg)
         if ratio < WCAG_AA:
             out.append({"path": f"tokens.color.{fg}",
-                        "message": f"контраст {c_fg} к {c_bg} = {ratio:.2f} "
+                        "message": f"contrast {c_fg} against {c_bg} = {ratio:.2f} "
                                    f"< {WCAG_AA} (WCAG AA)"})
     return out
 
@@ -299,7 +299,7 @@ def _fix_contrast(ir) -> list:
             if contrast_ratio(best, bg) < WCAG_AA:
                 best = "#000000" if bg_light else "#ffffff"
         colors[fg_key] = best
-        journal.append(f"rule contrast починило tokens.color.{fg_key}: {fg} -> {best}")
+        journal.append(f"contrast rule fixed tokens.color.{fg_key}: {fg} -> {best}")
     return journal
 
 
@@ -331,7 +331,7 @@ def _check_grid(ir) -> list:
         v = container[key]
         if v % GRID_STEP != 0:
             out.append({"path": path,
-                        "message": f"{format(v, 'g')} не кратно {GRID_STEP} (сетка)"})
+                        "message": f"{format(v, 'g')} is not a multiple of {GRID_STEP} (grid)"})
     return out
 
 
@@ -347,7 +347,7 @@ def _fix_grid(ir) -> list:
         nv = _snap8(v)
         if nv != v:
             container[key] = nv
-            journal.append(f"rule grid-8 починило {path}: {format(v, 'g')} → {nv}")
+            journal.append(f"grid-8 rule fixed {path}: {format(v, 'g')} → {nv}")
     return journal
 
 
@@ -370,27 +370,27 @@ def _geom_violations(frame, path, W, H) -> list:
     h, y = frame.get("height"), frame.get("y")
     if _is_num(w) and w > W:
         out.append({"path": f"{path}.width",
-                    "message": f"ширина {format(w, 'g')} больше артборда {format(W, 'g')}"})
+                    "message": f"width {format(w, 'g')} exceeds artboard {format(W, 'g')}"})
     if _is_num(x):
         if x < 0:
             out.append({"path": f"{path}.x",
-                        "message": f"x={format(x, 'g')} — выход за левый край артборда"})
+                        "message": f"x={format(x, 'g')} — exceeds left artboard edge"})
         elif _is_num(w) and x + w > W:
             out.append({"path": f"{path}.x",
-                        "message": f"x+width={format(x + w, 'g')} выходит за правый край "
-                                   f"артборда {format(W, 'g')}"})
+                        "message": f"x+width={format(x + w, 'g')} exceeds right edge of "
+                                   f"artboard {format(W, 'g')}"})
     if H is not None:
         if _is_num(h) and h > H:
             out.append({"path": f"{path}.height",
-                        "message": f"высота {format(h, 'g')} больше артборда {format(H, 'g')}"})
+                        "message": f"height {format(h, 'g')} exceeds artboard {format(H, 'g')}"})
         if _is_num(y):
             if y < 0:
                 out.append({"path": f"{path}.y",
-                            "message": f"y={format(y, 'g')} — выход за верхний край артборда"})
+                            "message": f"y={format(y, 'g')} — exceeds top artboard edge"})
             elif _is_num(h) and y + h > H:
                 out.append({"path": f"{path}.y",
-                            "message": f"y+height={format(y + h, 'g')} выходит за нижний край "
-                                       f"артборда {format(H, 'g')}"})
+                            "message": f"y+height={format(y + h, 'g')} exceeds bottom edge of "
+                                       f"artboard {format(H, 'g')}"})
     return out
 
 
@@ -417,7 +417,7 @@ def _fix_overflow(ir) -> list:
         size, pos = container.get(size_key), container.get(pos_key)
         if _is_num(size) and size > limit:
             container[size_key] = limit
-            journal.append(f"rule frame-overflow починило {path}.{size_key}: "
+            journal.append(f"frame-overflow rule fixed {path}.{size_key}: "
                            f"{format(size, 'g')} → {format(limit, 'g')}")
             size = limit
         if _is_num(pos):
@@ -425,7 +425,7 @@ def _fix_overflow(ir) -> list:
             np = _clamp(pos, 0, hi)
             if np != pos:
                 container[pos_key] = np
-                journal.append(f"rule frame-overflow починило {path}.{pos_key}: "
+                journal.append(f"frame-overflow rule fixed {path}.{pos_key}: "
                                f"{format(pos, 'g')} → {format(np, 'g')}")
 
     for i, base, sec in _iter_sections(ir):
@@ -450,7 +450,7 @@ def _check_fonts(ir) -> list:
                 if isinstance(face, dict) and isinstance(face.get("family"), str)}
     if len(families) > 2:
         return [{"path": "tokens.font",
-                 "message": f"больше двух шрифтов: {', '.join(sorted(families))}"}]
+                 "message": f"more than two fonts: {', '.join(sorted(families))}"}]
     return []
 
 
@@ -482,7 +482,7 @@ def _fix_tap_target(ir) -> list:
         h = frame.get("height")
         if _is_num(h) and 0 < h < MIN_TAP_TARGET:
             frame["height"] = MIN_TAP_TARGET
-            journal.append(f"rule tap-target починило {path}.frame.height: {h} -> {MIN_TAP_TARGET}")
+            journal.append(f"tap-target rule fixed {path}.frame.height: {h} -> {MIN_TAP_TARGET}")
     return journal
 
 
@@ -512,7 +512,7 @@ def _fix_min_font_size(ir, minimum: int = MIN_FONT_SIZE) -> list:
         size = style["fontSize"]
         if 0 < size < minimum:
             style["fontSize"] = minimum
-            journal.append(f"rule min-font-size починило {path}.style.fontSize: {size} -> {minimum}")
+            journal.append(f"min-font-size rule fixed {path}.style.fontSize: {size} -> {minimum}")
     return journal
 
 
@@ -573,7 +573,7 @@ def _check_invisible_text(ir) -> list:
         color = _hex6((node.get("style") or {}).get("color"))
         if color and bg and color == bg:
             out.append({"path": f"{path}.style.color",
-                        "message": f"цвет текста {color} совпадает с фоном — текст невидим"})
+                        "message": f"text color {color} matches the background — text is invisible"})
     return out
 
 
@@ -592,7 +592,7 @@ def _fix_invisible_text(ir) -> list:
             continue
         old = style.get("color")
         style["color"] = replacement
-        journal.append(f"rule invisible-text починило {path}.style.color: {old} -> {replacement}")
+        journal.append(f"invisible-text rule fixed {path}.style.color: {old} -> {replacement}")
     return journal
 
 
@@ -603,7 +603,7 @@ def min_font_rule(minimum: int) -> dict:
     до 12px: генератору только что велели воспроизвести её labelStyle."""
     floor = max(MIN_FONT_SIZE_FLOOR, int(minimum))
     return {"id": "min-font-size", "severity": SEVERITY_ERROR,
-            "description": f"текст не мельче {floor}px",
+            "description": f"text no smaller than {floor}px",
             "check": lambda ir: _check_min_font_size(ir, floor),
             "fix": lambda ir: _fix_min_font_size(ir, floor)}
 
@@ -648,9 +648,9 @@ def _check_free_overlap(ir) -> list:
                 cpath = f"{path}.children[{i}]"
                 x, y, w, h = r
                 if pw is not None and x + w > pw + 0.5:
-                    out.append({"path": f"{cpath}.frame", "message": f"x+width={format(x + w, 'g')} выходит за ширину родителя {format(pw, 'g')}"})
+                    out.append({"path": f"{cpath}.frame", "message": f"x+width={format(x + w, 'g')} exceeds parent width {format(pw, 'g')}"})
                 if ph is not None and y + h > ph + 0.5:
-                    out.append({"path": f"{cpath}.frame", "message": f"y+height={format(y + h, 'g')} выходит за высоту родителя {format(ph, 'g')}"})
+                    out.append({"path": f"{cpath}.frame", "message": f"y+height={format(y + h, 'g')} exceeds parent height {format(ph, 'g')}"})
                 rects.append((cpath, r))
             for a in range(len(rects)):
                 for b in range(a + 1, len(rects)):
@@ -661,7 +661,7 @@ def _check_free_overlap(ir) -> list:
                     smaller = min(aw * ah, bw * bh)
                     if smaller > 0 and inter / smaller > FREE_OVERLAP_RATIO:
                         out.append({"path": f"{pb}.frame",
-                                    "message": f"перекрывает {pa} на {round(100 * inter / smaller)}% площади"})
+                                    "message": f"overlaps {pa} by {round(100 * inter / smaller)}% of area"})
         for i, child in enumerate(children):
             walk(child, f"{path}.children[{i}]")
 
@@ -855,8 +855,8 @@ def _check_token_color(ir) -> list:
         if hex6 in palette:
             continue
         near = _nearest_token(hex6, palette)
-        hint = f"; ближайший токен {near[1]} ({near[0]}, ΔE {near[2]:.2f})" if near else ""
-        out.append({"path": path, "message": f"цвет {hex6} не из токенов документа{hint}"})
+        hint = f"; nearest token {near[1]} ({near[0]}, ΔE {near[2]:.2f})" if near else ""
+        out.append({"path": path, "message": f"color {hex6} is not from document tokens{hint}"})
     return out
 
 
@@ -874,7 +874,7 @@ def _fix_token_color(ir, strict_tokens=False) -> list:
         new = near[0] + alpha
         old = container[key]
         container[key] = new
-        journal.append(f"rule token-color починило {path}: {old} -> {new} ({near[1]})")
+        journal.append(f"token-color rule fixed {path}: {old} -> {new} ({near[1]})")
     return journal
 
 
@@ -890,8 +890,8 @@ def _check_token_font(ir) -> list:
         name = _family_name(style.get("fontFamily"))
         if name and name not in families:
             out.append({"path": f"{path}.style.fontFamily",
-                        "message": f"шрифт «{name}» не из дизайн-системы "
-                                   f"(разрешены: {', '.join(sorted(families))})"})
+                        "message": f"font “{name}” is not from design system "
+                                   f"(allowed: {', '.join(sorted(families))})"})
     return out
 
 
@@ -908,7 +908,7 @@ def _fix_token_font(ir, strict_tokens=False) -> list:
         name = _family_name(style.get("fontFamily"))
         if name and name not in families:
             old = style.pop("fontFamily")
-            journal.append(f"rule token-font починило {path}.style.fontFamily: «{old}» снят, наследуется токен")
+            journal.append(f"token-font rule fixed {path}.style.fontFamily: «{old}” removed; token inherited")
     return journal
 
 
@@ -958,9 +958,9 @@ def _check_type_role_drift(ir) -> list:
         if not isinstance(spec, dict) or not isinstance(style, dict):
             continue
         for key, actual, expected in _role_drift(style, spec):
-            why = "роль" if explicit else f"уровень h{el.get('level') or 2} → роль"
+            why = "role" if explicit else f"level h{el.get('level') or 2} → role"
             out.append({"path": f"{path}.style.{key}",
-                        "message": f"{key} {actual} расходится с {why} {role} ({expected})"})
+                        "message": f"{key} {actual} differs from {why} {role} ({expected})"})
     return out
 
 
@@ -983,57 +983,57 @@ def _fix_type_role_drift(ir, strict_tokens=False) -> list:
             continue
         for key, actual, expected in _role_drift(style, spec):
             style.pop(key, None)
-            journal.append(f"rule type-role-drift починило {path}.style.{key}: {actual} снят, роль {role} даёт {expected}")
+            journal.append(f"type-role-drift rule fixed {path}.style.{key}: {actual} removed; role {role} provides {expected}")
     return journal
 
 
 RULES = [
     {"id": "single-h1", "severity": SEVERITY_ERROR,
-     "description": "ровно один h1 среди heading-элементов",
+     "description": "exactly one h1 among heading elements",
      "check": _check_single_h1, "fix": _fix_single_h1},
     {"id": "button-text", "severity": SEVERITY_ERROR,
-     "description": f"у всех кнопок/cta непустой текст длиной не более {MAX_BUTTON_LEN}",
+     "description": f"all buttons/CTAs have non-empty text no longer than {MAX_BUTTON_LEN}",
      "check": _check_button_text},
     {"id": "image-alt", "severity": SEVERITY_ERROR,
-     "description": "у всех изображений есть непустой alt",
+     "description": "all images have non-empty alt text",
      "check": _check_image_alt},
     {"id": "heading-limits", "severity": SEVERITY_ERROR,
-     "description": f"heading не длиннее {MAX_HEADING_LEN}, "
-                    f"subheading не длиннее {MAX_SUBHEADING_LEN} (лимиты схемы)",
+     "description": f"heading no longer than {MAX_HEADING_LEN}, "
+                    f"subheading no longer than {MAX_SUBHEADING_LEN} (schema limits)",
      "check": _check_heading_limits},
     {"id": "contrast", "severity": SEVERITY_ERROR,
-     "description": f"контраст текста к фону не ниже {WCAG_AA} (WCAG AA, по tokens)",
+     "description": f"text/background contrast at least {WCAG_AA} (WCAG AA, from tokens)",
      "check": _check_contrast, "fix": _fix_contrast},
     {"id": "grid-8", "severity": SEVERITY_ERROR,
-     "description": f"отступы/размеры секций кратны {GRID_STEP} (сетка snap)",
+     "description": f"section spacing/sizes are multiples of {GRID_STEP} (snap grid)",
      "check": _check_grid, "fix": _fix_grid},
     {"id": "frame-overflow", "severity": SEVERITY_ERROR,
-     "description": "frame секций не выходит за границы артборда",
+     "description": "section frames stay within artboard bounds",
      "check": _check_overflow, "fix": _fix_overflow},
     {"id": "fonts-limit", "severity": SEVERITY_ERROR,
-     "description": "не более двух шрифтов (display+body токены)",
+     "description": "no more than two fonts (display + body tokens)",
      "check": _check_fonts},
     {"id": "tap-target", "severity": SEVERITY_ERROR,
-     "description": f"интерактивные элементы не ниже {MIN_TAP_TARGET}px (WCAG 2.2, 2.5.8)",
+     "description": f"interactive elements are at least {MIN_TAP_TARGET}px (WCAG 2.2, 2.5.8)",
      "check": _check_tap_target, "fix": _fix_tap_target},
     {"id": "min-font-size", "severity": SEVERITY_ERROR,
-     "description": f"текст не мельче {MIN_FONT_SIZE}px",
+     "description": f"text no smaller than {MIN_FONT_SIZE}px",
      "check": _check_min_font_size, "fix": _fix_min_font_size},
     {"id": "invisible-text", "severity": SEVERITY_ERROR,
-     "description": "цвет текста не совпадает с фоном под ним",
+     "description": "text color differs from the background beneath it",
      "check": _check_invisible_text, "fix": _fix_invisible_text},
     {"id": "free-overlap", "severity": SEVERITY_ERROR,
-     "description": "во free-раскладке дети не перекрываются и не выходят за границы родителя",
+     "description": "free-layout children do not overlap or exceed parent bounds",
      "check": _check_free_overlap},
     # DS-lint: дисциплина токенов (предупреждения — они не роняют gate, но чинятся)
     {"id": "token-color", "severity": SEVERITY_WARNING,
-     "description": "цвета элементов только из токенов документа (color / v2.color / primitives)",
+     "description": "element colors come only from document tokens (color / v2.color / primitives)",
      "check": _check_token_color, "fix": _fix_token_color, "strict_aware": True},
     {"id": "token-font", "severity": SEVERITY_WARNING,
-     "description": "семейства шрифтов только из токенов документа (display / body / fontFaces)",
+     "description": "font families come only from document tokens (display / body / fontFaces)",
      "check": _check_token_font, "fix": _fix_token_font, "strict_aware": True},
     {"id": "type-role-drift", "severity": SEVERITY_WARNING,
-     "description": "кегль/интерлиньяж/вес/разрядка текста совпадают с ролью типографики (typeRole или уровень заголовка)",
+     "description": "font size, line height, weight, and tracking match the typography role (typeRole or heading level)",
      "check": _check_type_role_drift, "fix": _fix_type_role_drift, "strict_aware": True},
 ]
 RULES_BY_ID = {r["id"]: r for r in RULES}
@@ -1042,7 +1042,7 @@ RULES_BY_ID = {r["id"]: r for r in RULES}
 def check(ir, rules=None) -> list:
     """Прогнать правила; вернуть список нарушений {rule, path, message, severity}."""
     if not isinstance(ir, dict):
-        raise ValueError("IR должен быть объектом")
+        raise ValueError("IR must be an object")
     out = []
     for rule in (RULES if rules is None else rules):
         for v in rule["check"](ir):
@@ -1056,7 +1056,7 @@ def autofix(ir, strict_tokens: bool = False, *, rules=None) -> tuple:
     strict_tokens=True (ДС в режиме strict): цвета вне палитры снапятся к ближайшему
     токену всегда, а не только при малом ΔE."""
     if not isinstance(ir, dict):
-        raise ValueError("IR должен быть объектом")
+        raise ValueError("IR must be an object")
     fixed = copy.deepcopy(ir)
     journal = []
     for rule in (RULES if rules is None else rules):
@@ -1094,57 +1094,57 @@ def check_constraints(ir, constraints) -> list:
     lock требует присутствия поля; диапазоны отсутствующее поле пропускают.
     """
     if not isinstance(ir, dict):
-        raise ValueError("IR должен быть объектом")
+        raise ValueError("IR must be an object")
     if not isinstance(constraints, list):
-        raise ValueError("constraints должен быть списком")
+        raise ValueError("constraints must be a list")
     out = []
     for i, c in enumerate(constraints):
         if not isinstance(c, dict):
-            raise ValueError(f"constraint #{i}: не объект")
+            raise ValueError(f"constraint #{i}: not an object")
         path = c.get("path")
         if not isinstance(path, str) or not path:
-            raise ValueError(f"constraint #{i}: нет path")
+            raise ValueError(f"constraint #{i}: no path")
         keys = set(c) - {"path"}
         unknown = keys - _CONSTRAINT_CHECKS
         if unknown:
-            raise ValueError(f"constraint #{i}: неизвестные ключи {sorted(unknown)}")
+            raise ValueError(f"constraint #{i}: unknown keys {sorted(unknown)}")
         if not keys:
-            raise ValueError(f"constraint #{i}: пустое ограничение (нет проверок)")
+            raise ValueError(f"constraint #{i}: empty constraint (no checks)")
         if "enum" in c and not isinstance(c["enum"], list):
-            raise ValueError(f"constraint #{i}: enum должен быть списком")
+            raise ValueError(f"constraint #{i}: enum must be a list")
         for k in ("min", "max"):
             if k in c and not _is_num(c[k]):
-                raise ValueError(f"constraint #{i}: {k} должен быть числом")
+                raise ValueError(f"constraint #{i}: {k} must be a number")
         if "max_len" in c and not isinstance(c["max_len"], int):
-            raise ValueError(f"constraint #{i}: max_len должен быть целым")
+            raise ValueError(f"constraint #{i}: max_len must be an integer")
 
         found, value = get_path(ir, path)
         if "lock" in c:
             if not found:
-                out.append(_cv(path, "поле отсутствует, а залочено"))
+                out.append(_cv(path, "field is missing but locked"))
             elif value != c["lock"]:
-                out.append(_cv(path, f"залочено значение {c['lock']!r}, "
-                                     f"фактически {value!r}"))
+                out.append(_cv(path, f"locked value {c['lock']!r}, "
+                                     f"actual {value!r}"))
         if not found:
             continue
         if "enum" in c and value not in c["enum"]:
-            out.append(_cv(path, f"значение {value!r} не входит в {c['enum']!r}"))
+            out.append(_cv(path, f"value {value!r} is not in {c['enum']!r}"))
         for bound in ("min", "max"):
             if bound not in c:
                 continue
             if not _is_num(value):
-                out.append(_cv(path, f"ожидалось число для {bound}, "
-                                     f"фактически {value!r}"))
+                out.append(_cv(path, f"expected a number for {bound}, "
+                                     f"actual {value!r}"))
             elif bound == "min" and value < c["min"]:
-                out.append(_cv(path, f"значение {format(value, 'g')} меньше "
-                                     f"минимума {format(c['min'], 'g')}"))
+                out.append(_cv(path, f"value {format(value, 'g')} below "
+                                     f"minimum {format(c['min'], 'g')}"))
             elif bound == "max" and value > c["max"]:
-                out.append(_cv(path, f"значение {format(value, 'g')} больше "
-                                     f"максимума {format(c['max'], 'g')}"))
+                out.append(_cv(path, f"value {format(value, 'g')} above "
+                                     f"maximum {format(c['max'], 'g')}"))
         if "max_len" in c:
             if not isinstance(value, str):
-                out.append(_cv(path, f"ожидалась строка для max_len, "
-                                     f"фактически {value!r}"))
+                out.append(_cv(path, f"expected a string for max_len, "
+                                     f"actual {value!r}"))
             elif len(value) > c["max_len"]:
-                out.append(_cv(path, f"длина {len(value)} больше max_len {c['max_len']}"))
+                out.append(_cv(path, f"length {len(value)} exceeds max_len {c['max_len']}"))
     return out

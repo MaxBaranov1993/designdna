@@ -28,16 +28,16 @@
 
   /* ---------- справочники (зеркало прототипа хендоффа) ---------- */
   const propDefs: Array<{ k: PropKey; label: string; dims: 1 | 2 }> = [
-    { k: "p", label: "Позиция", dims: 2 },
-    { k: "s", label: "Масштаб", dims: 1 },
-    { k: "r", label: "Поворот", dims: 1 },
-    { k: "o", label: "Прозрачность", dims: 1 },
+    { k: "p", label: "Position", dims: 2 },
+    { k: "s", label: "Zoom", dims: 1 },
+    { k: "r", label: "Rotation", dims: 1 },
+    { k: "o", label: "Opacity", dims: 1 },
   ];
   const toolDefs = [
-    { id: "move", label: "Перемещение", icon: "✥" },
-    { id: "scale", label: "Масштаб", icon: "⤢" },
-    { id: "rotate", label: "Поворот", icon: "⟳" },
-    { id: "opacity", label: "Прозрачность", icon: "◐" },
+    { id: "move", label: "Movement", icon: "✥" },
+    { id: "scale", label: "Zoom", icon: "⤢" },
+    { id: "rotate", label: "Rotation", icon: "⟳" },
+    { id: "opacity", label: "Opacity", icon: "◐" },
   ] as const;
   const toolProp: Record<string, PropKey> = { move: "p", scale: "s", rotate: "r", opacity: "o" };
 
@@ -113,7 +113,7 @@
     scenes.forEach((scene, i) => {
       const ir = data.sceneIrs.find((item) => item.sceneId === scene.id)?.ir || data.ir;
       const { headings, first } = collectTexts(ir);
-      const texts = (headings.length ? headings : [first || `Сцена ${String(i + 1).padStart(2, "0")}`]).slice(0, 4);
+      const texts = (headings.length ? headings : [first || `Scene ${String(i + 1).padStart(2, "0")}`]).slice(0, 4);
       texts.forEach((text, k) => {
         out.push({
           id: `d${i}-${k}`,
@@ -215,8 +215,8 @@
     // --group-color, полупрозрачные варианты считает CSS через color-mix.
     src: { label: `Source Import${srcDomain ? " · " + srcDomain : ""}`, color: "var(--dna-action)" },
     kit: { label: "Design System / UI Kit", color: "var(--dna-violet)" },
-    gen: { label: "Генератор · Design IR", color: "var(--dna-violet-l)" },
-    media: { label: "Медиа · загружено", color: "var(--dna-artifact)" },
+    gen: { label: "Generator · Design IR", color: "var(--dna-violet-l)" },
+    media: { label: "Media · uploaded", color: "var(--dna-artifact)" },
   });
   let projectGroups = $derived.by(() => {
     const src: Array<{ name: string; kind: string }> = [];
@@ -228,7 +228,7 @@
         const sec = section as Record<string, unknown>;
         const name = String(sec.id || sec.type || "section");
         const isSource = sec.type === "source-block" || sec.variant === "dom-capture";
-        (isSource ? src : gen).push({ name, kind: isSource ? "блок" : "секция" });
+        (isSource ? src : gen).push({ name, kind: isSource ? "block" : "section" });
       });
     }
     const groups: Array<{ key: MotionCompLayer["group"]; items: Array<{ name: string; kind: string }> }> = [];
@@ -336,9 +336,9 @@
       ? [
           { k: "X", v: `${Math.round(vals.p[0])}`, f: "x", d: 20 },
           { k: "Y", v: `${Math.round(vals.p[1])}`, f: "y", d: 20 },
-          { k: "Масштаб", v: vals.s.toFixed(2), f: "s", d: 0.05 },
-          { k: "Поворот", v: `${Math.round(vals.r)}°`, f: "r", d: 5 },
-          { k: "Прозрачность", v: vals.o.toFixed(2), f: "o", d: 0.1 },
+          { k: "Zoom", v: vals.s.toFixed(2), f: "s", d: 0.05 },
+          { k: "Rotation", v: `${Math.round(vals.r)}°`, f: "r", d: 5 },
+          { k: "Opacity", v: vals.o.toFixed(2), f: "o", d: 0.1 },
         ]
       : [],
   );
@@ -360,7 +360,7 @@
 
   let propLabel = $derived((propDefs.find((p) => p.k === moPropSel) || propDefs[0]).label);
   let keyInfo = $derived(
-    selectedLayer ? `${selectedLayer.props[moPropSel].keys.length} кейфрейм(ов) · ${(lt / 1000).toFixed(2)} с` : "—",
+    selectedLayer ? `${selectedLayer.props[moPropSel].keys.length} keyframe(s) · ${(lt / 1000).toFixed(2)} s` : "—",
   );
 
   const addKey = () => {
@@ -462,7 +462,7 @@
     if (total <= 0) return [] as Array<{ label: string; left: number }>;
     const stepS = Math.max(1, Math.ceil(total / 6000));
     const out: Array<{ label: string; left: number }> = [];
-    for (let s = 0; s * 1000 <= total; s += stepS) out.push({ label: `${s}с`, left: pct(s * 1000) });
+    for (let s = 0; s * 1000 <= total; s += stepS) out.push({ label: `${s}s`, left: pct(s * 1000) });
     return out;
   });
 
@@ -592,8 +592,8 @@
         base_ir: snapshot.ir, interaction: snapshot.interaction, composition: snapshot.composition,
         scene_settings: snapshot.sceneSettings, render_settings: snapshot.renderSettings,
       });
-      if (!built.motion) throw new Error("Не удалось собрать движение");
-      if (!isCurrent()) throw new Error("Вход изменился — повторите рендер");
+      if (!built.motion) throw new Error("Could not build motion");
+      if (!isCurrent()) throw new Error("Input changed — render again");
       $flow.setNodeData(nodeId, { motion: built.motion, layers, renderJob: null });
       let job = await api<MotionRenderJob>("/api/motion/render", {
         base_ir: snapshot.ir,
@@ -605,7 +605,7 @@
       $flow.setNodeData(nodeId, { renderJob: job });
       const deadline = Date.now() + 15 * 60_000;
       while (job.status === "queued" || job.status === "rendering") {
-        if (Date.now() > deadline) throw new Error("Рендер не завершился за 15 минут. Проверьте состояние сервера.");
+        if (Date.now() > deadline) throw new Error("Render did not finish within 15 minutes. Check server status.");
         await new Promise((resolve) => window.setTimeout(resolve, 400));
         job = await apiGet<MotionRenderJob>(`/api/motion/render/${job.id}`);
         if (!isCurrent()) return;
@@ -636,42 +636,42 @@
       <span class="motion-comp-meta">{data.composition.width} × {data.composition.height} · {data.composition.fps} fps</span>
     </div>
     <div class="motion-transport">
-      <button class="motion-jump" title="В начало" aria-label="В начало · Jump to start" onclick={() => { playing = false; playhead = 0; }}>|◀</button>
+      <button class="motion-jump" title="Jump to start" aria-label="Jump to start" onclick={() => { playing = false; playhead = 0; }}>|◀</button>
       <button class="motion-play" aria-label={playing ? "Pause" : "Play"} onclick={() => { if (playhead >= total) playhead = 0; playing = !playing; }}>{playing ? "❙❙" : "▶"}</button>
       <span class="motion-time">{formatTime(playhead)} / {formatTime(total)}</span>
     </div>
     <div class="motion-actions">
-      <button disabled={rendering || !canUndo} onclick={() => restoreLayers()}>Отменить</button>
-      <button disabled={rendering || !canRedo} onclick={() => restoreLayers(true)}>Повторить</button>
+      <button disabled={rendering || !canUndo} onclick={() => restoreLayers()}>Cancel</button>
+      <button disabled={rendering || !canRedo} onclick={() => restoreLayers(true)}>Retry</button>
       <span class="motion-badge">Design IR</span>
-      {#if rendering}<span class="motion-render-progress">Рендер {renderJob?.progress || 0}%</span>{/if}
+      {#if rendering}<span class="motion-render-progress">Render {renderJob?.progress || 0}%</span>{/if}
       {#if renderJob?.status === "complete" && renderJob.downloadUrl}
         {#if desktopFiles}
-          <button class="motion-download" onclick={downloadVideo}><span class="motion-desktop-label">Скачать {renderJob.result?.bytes ? formatBytes(renderJob.result.bytes) : "видео"}</span><span class="motion-mobile-label">Сохранить</span></button>
+          <button class="motion-download" onclick={downloadVideo}><span class="motion-desktop-label">Download {renderJob.result?.bytes ? formatBytes(renderJob.result.bytes) : "video"}</span><span class="motion-mobile-label">Save</span></button>
         {:else}
-          <a class="motion-download" href={renderJob.downloadUrl} download={renderJob.filename}><span class="motion-desktop-label">Скачать {renderJob.result?.bytes ? formatBytes(renderJob.result.bytes) : "видео"}</span><span class="motion-mobile-label">Сохранить</span></a>
+          <a class="motion-download" href={renderJob.downloadUrl} download={renderJob.filename}><span class="motion-desktop-label">Download {renderJob.result?.bytes ? formatBytes(renderJob.result.bytes) : "video"}</span><span class="motion-mobile-label">Save</span></a>
         {/if}
       {/if}
-      <button class="motion-inspector-toggle" onclick={() => (inspectorOpen = !inspectorOpen)}>{inspectorOpen ? "Кадр" : "Инспектор"}</button>
-      <button class="motion-close" title="Закрыть Motion Editor" onclick={onClose}>Закрыть</button>
+      <button class="motion-inspector-toggle" onclick={() => (inspectorOpen = !inspectorOpen)}>{inspectorOpen ? "Frame" : "Inspector"}</button>
+      <button class="motion-close" title="Close Motion Editor" onclick={onClose}>Close</button>
       <button
         class="motion-export"
-        aria-label={`Экспорт ${renderSettings.format.toUpperCase()} · Export ${renderSettings.format.toUpperCase()}`}
+        aria-label={`Export ${renderSettings.format.toUpperCase()} · Export ${renderSettings.format.toUpperCase()}`}
         disabled={busy || rendering || !data.motion}
         onclick={startRender}
-      >{rendering ? "Экспортирую..." : `Экспорт ${renderSettings.format.toUpperCase()}`}</button>
+      >{rendering ? "Exporting…" : `Export ${renderSettings.format.toUpperCase()}`}</button>
     </div>
   </header>
 
   <div class="motion-main">
     <aside class="motion-project">
-      <div class="motion-sec-title">ПРОЕКТ · ИЗ ПРЕДЫДУЩИХ НОД</div>
+      <div class="motion-sec-title">PROJECT · FROM PREVIOUS NODES</div>
       <div class="motion-project-groups">
         {#each projectGroups as group (group.key)}
           <div class="motion-project-group">
             <div class="motion-project-head"><i style="background:{groupMeta[group.key].color}"></i><span>{groupMeta[group.key].label}</span></div>
             {#each group.items as item, i (group.key + "-" + i)}
-              <button class="motion-project-item" title="Добавить слоем" onclick={() => addAssetLayer(item.name, group.key)}>
+              <button class="motion-project-item" title="Add as layer" onclick={() => addAssetLayer(item.name, group.key)}>
                 <span class="motion-project-glyph" style="--group-color:{groupMeta[group.key].color}">◈</span>
                 <span class="motion-project-name">{item.name}</span>
                 <span class="motion-project-kind">{item.kind}</span>
@@ -685,7 +685,7 @@
             <button class="motion-project-item" onclick={() => (moLayerSel = layer.id)}>
               <span class="motion-project-glyph" style="--group-color:{groupMeta.media.color}">▣</span>
               <span class="motion-project-name">{layer.name}</span>
-              <span class="motion-project-kind">слой</span>
+              <span class="motion-project-kind">layer</span>
             </button>
           {/each}
         </div>
@@ -693,8 +693,8 @@
       <div class="motion-import">
         <button class="motion-dropzone" onclick={() => fileInput?.click()}>
           <span class="motion-dropzone-icon">↥</span>
-          <strong>Импорт изображений</strong>
-          <span>PNG, JPG, WebP → слой</span>
+          <strong>Import images</strong>
+          <span>PNG, JPG, WebP → layer</span>
         </button>
         <input class="motion-file-input" type="file" multiple accept="image/*" bind:this={fileInput} onchange={onUpload} />
       </div>
@@ -716,7 +716,7 @@
             <span class="motion-tool-icon">{tool.icon}</span>{tool.label}
           </button>
         {/each}
-        <span class="motion-tools-hint">Тяните слой в кадре — правка пишется в кейфрейм</span>
+        <span class="motion-tools-hint">Drag a layer in the frame — changes are saved to a keyframe</span>
       </div>
 
       <div class="motion-stage" bind:this={stageEl}>
@@ -740,13 +740,13 @@
               {/each}
             </div>
           </div>
-          <span class="motion-scene-badge">{String(activeIndex + 1).padStart(2, "0")} · Сцена</span>
+          <span class="motion-scene-badge">{String(activeIndex + 1).padStart(2, "0")} · Scene</span>
         </div>
       </div>
 
       <footer class="motion-timeline">
         <div class="motion-timeline-head">
-          <div class="motion-cols-label">СЛОИ И СВОЙСТВА</div>
+          <div class="motion-cols-label">LAYERS AND PROPERTIES</div>
           <div class="motion-timebar">
             <input
               aria-label="Motion playhead"
@@ -813,12 +813,12 @@
 
     <aside class={`motion-inspector ${inspectorOpen ? "open" : ""}`} inert={rendering}>
       <div class="motion-insp-head">
-        <span class="motion-sec-title">СЛОЙ</span>
-        <button class="motion-del-layer" onclick={delLayer}>Удалить</button>
+        <span class="motion-sec-title">LAYER</span>
+        <button class="motion-del-layer" onclick={delLayer}>Delete</button>
       </div>
       <div class="motion-layer-chip">{selectedLayer ? selectedLayer.name : "—"}</div>
 
-      <div class="motion-sec-title">ТРАНСФОРМАЦИЯ</div>
+      <div class="motion-sec-title">TRANSFORM</div>
       <div class="motion-steppers">
         {#each transformRows as row (row.f)}
           <div class="motion-stepper">
@@ -831,19 +831,19 @@
       </div>
 
       <div class="motion-kf-card">
-        <div class="motion-kf-title">Кейфреймы · {propLabel}</div>
+        <div class="motion-kf-title">Keyframes · {propLabel}</div>
         <div class="motion-kf-info">{keyInfo}</div>
         <div class="motion-kf-actions">
-          <button class="motion-kf-add" onclick={addKey}>◆ Добавить</button>
-          <button class="motion-kf-del" onclick={delKey}>Убрать</button>
+          <button class="motion-kf-add" onclick={addKey}>◆ Add</button>
+          <button class="motion-kf-del" onclick={delKey}>Remove</button>
         </div>
       </div>
 
       <div class="motion-divider"></div>
-      <div class="motion-sec-title">КОМПОЗИЦИЯ</div>
+      <div class="motion-sec-title">COMPOSITION</div>
 
       <div class="motion-chip-group">
-        <div class="motion-chip-label">Кадр</div>
+        <div class="motion-chip-label">Frame</div>
         <div class="motion-chips">
           <button class={data.composition.width > data.composition.height ? "active" : ""} onclick={() => $flow.setNodeData(nodeId, { composition: { ...data.composition, width: 1920, height: 1080 } })}>16:9</button>
           <button class={data.composition.height > data.composition.width ? "active" : ""} onclick={() => $flow.setNodeData(nodeId, { composition: { ...data.composition, width: 1080, height: 1920 } })}>9:16</button>
@@ -851,7 +851,7 @@
         </div>
       </div>
       <div class="motion-chip-group">
-        <div class="motion-chip-label">Частота кадров</div>
+        <div class="motion-chip-label">Frame rate</div>
         <div class="motion-chips">
           {#each [24, 30, 60] as fps (fps)}
             <button class={data.composition.fps === fps ? "active" : ""} onclick={() => $flow.setNodeData(nodeId, { composition: { ...data.composition, fps } })}>{fps} fps</button>
@@ -859,14 +859,14 @@
         </div>
       </div>
       <div class="motion-chip-group">
-        <div class="motion-chip-label">Формат</div>
+        <div class="motion-chip-label">Format</div>
         <div class="motion-chips">
           <button class={renderSettings.format === "mp4" ? "active" : ""} onclick={() => $flow.setNodeData(nodeId, { renderSettings: { ...renderSettings, format: "mp4" }, renderJob: null })}>MP4 / H.264</button>
           <button class={renderSettings.format === "webm" ? "active" : ""} onclick={() => $flow.setNodeData(nodeId, { renderSettings: { ...renderSettings, format: "webm" }, renderJob: null })}>WebM / VP9</button>
         </div>
       </div>
       <div class="motion-chip-group">
-        <div class="motion-chip-label">Качество</div>
+        <div class="motion-chip-label">Quality</div>
         <div class="motion-chips">
           {#each [["draft", "Draft"], ["high", "High"], ["lossless", "Lossless"]] as [value, label] (value)}
             <button
@@ -876,14 +876,14 @@
           {/each}
         </div>
       </div>
-      {#if renderJob?.status === "error"}<div class="motion-render-error">{renderJob.error || "Рендер не удался"}</div>{/if}
+      {#if renderJob?.status === "error"}<div class="motion-render-error">{renderJob.error || "Render failed"}</div>{/if}
 
       <div class="motion-divider"></div>
-      <div class="motion-sec-title">КОМПОЗИЦИЯ · {String(activeIndex + 1).padStart(2, "0")}</div>
-      <label class="motion-field">Длительность · Duration, ms
+      <div class="motion-sec-title">COMPOSITION · {String(activeIndex + 1).padStart(2, "0")}</div>
+      <label class="motion-field">Duration, ms
         <input type="number" min="250" max="30000" value={data.sceneSettings[activeSourceId]?.duration ?? activeScene?.duration ?? 1200} oninput={(event) => updateScene({ duration: Number(event.currentTarget.value) })} />
       </label>
-      <label class="motion-field">Переход · Transition
+      <label class="motion-field">Transition
         <select value={data.sceneSettings[activeSourceId]?.transition ?? transition.type} onchange={(event) => updateScene({ transition: event.currentTarget.value as MotionSceneSettings["transition"] })}>
           <option value="cut">Cut</option>
           <option value="fade">Fade</option>
@@ -892,7 +892,7 @@
           <option value="zoom">Zoom</option>
         </select>
       </label>
-      <label class="motion-field">Длительность перехода, мс
+      <label class="motion-field">Transition duration, ms
         <input type="number" min="0" max="30000" value={data.sceneSettings[activeSourceId]?.transitionDuration ?? transition.duration} oninput={(event) => updateScene({ transitionDuration: Number(event.currentTarget.value) })} />
       </label>
       <label class="motion-field">Easing
@@ -905,7 +905,7 @@
         </select>
       </label>
 
-      <button class="motion-apply" aria-label="Применить таймлайн · Apply timeline" disabled={busy} onclick={() => $flow.runNode(nodeId)}>{busy ? "Применяю..." : "Применить таймлайн"}</button>
+      <button class="motion-apply" aria-label="Apply timeline" disabled={busy} onclick={() => $flow.runNode(nodeId)}>{busy ? "Applying…" : "Apply timeline"}</button>
     </aside>
   </div>
 </div>

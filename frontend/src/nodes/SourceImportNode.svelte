@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { captureNodeUpload } from "../flow/store";
+  import { captureNodeUpload, sourceAiRepair, sourceCaptureViewports } from "../flow/store";
   import type { NodeProps } from "@xyflow/svelte";
   import IrPreview from "../components/IrPreview.svelte";
   import CompositionParts from "../components/CompositionParts.svelte";
@@ -28,6 +28,18 @@
 
   let busy = $derived(!!$flowBusy[Number(id)]);
   let previewMode = $derived(data.previewMode || "reference");
+  let captureViewports = $derived(sourceCaptureViewports(data));
+  let aiRepair = $derived(sourceAiRepair(data));
+  let capturedViewports = $derived(new Set(Object.keys(((data.blocks?.find((block) => block.ir)?.ir as { responsive?: { viewports?: Record<string, unknown> } } | undefined)?.responsive?.viewports) || {})));
+  const toggleViewport = (name: "tablet" | "mobile") => {
+    const next = captureViewports.filter((item) => item !== "desktop" && item !== name) as ("tablet" | "mobile")[];
+    if (!captureViewports.includes(name)) next.push(name);
+    $flow.setNodeData(Number(id), { captureViewports: next, importedUrl: null });
+  };
+  const addViewport = (name: "tablet" | "mobile") => {
+    toggleViewport(name);
+    void $flow.runNode(Number(id));
+  };
   let expandedBlock = $state<string | null>(null);
   let litCount = $derived(data.blocks.filter((b) => b.lit && !b.error).length);
 
@@ -76,10 +88,10 @@
   {#snippet footer()}
     <div class="foot-left">
       {#if data.mode === "url" && data.importedUrl && data.blocks.length}
-        <button class="btn-node small f-refresh nodrag" disabled={busy} onclick={refreshImport} title="Повторно загрузить страницу и обновить локальный результат">Обновить</button>
-        <button class="btn-node small f-create-ds nodrag" disabled={busy || !data.blocks?.length} title="Собрать UI Kit и дизайн-систему из этого Source" onclick={createDesignSystem}>◈ UI Kit &amp; ДС</button>
+        <button class="btn-node small f-refresh nodrag" disabled={busy} onclick={refreshImport} title="Reload the page and refresh the local result">Refresh</button>
+        <button class="btn-node small f-create-ds nodrag" disabled={busy || !data.blocks?.length} title="Build UI Kit and design system from this Source" onclick={createDesignSystem}>◈ UI Kit &amp; DS</button>
       {:else if data.blocks.length}
-        <span>{litCount} из {data.blocks.length} блоков на выходе</span>
+        <span>{litCount} of {data.blocks.length} output blocks</span>
       {/if}
     </div>
     <div class="foot-right">
@@ -88,13 +100,13 @@
         disabled={busy || (data.mode === "url" && !data.mine)}
         onclick={() => $flow.runNode(Number(id))}
       >
-        {#if busy}<span class="spinner"></span>{/if} Импорт
+        {#if busy}<span class="spinner"></span>{/if} Import
       </button>
     </div>
   {/snippet}
-  <div class="seg-row n-seg grow nodrag" role="group" aria-label="Источник">
+  <div class="seg-row n-seg grow nodrag" role="group" aria-label="Source">
     <button class={"seg-btn" + (data.mode === "url" ? " active" : "")} onclick={() => $flow.setNodeData(Number(id), { mode: "url" })}>URL</button>
-    <button class={"seg-btn" + (data.mode === "screenshot" ? " active" : "")} onclick={() => $flow.setNodeData(Number(id), { mode: "screenshot" })}>Скриншот</button>
+    <button class={"seg-btn" + (data.mode === "screenshot" ? " active" : "")} onclick={() => $flow.setNodeData(Number(id), { mode: "screenshot" })}>Screenshot</button>
   </div>
   {#if data.mode === "url"}
     <input
@@ -114,31 +126,54 @@
         }
       }}
     />
-    <label class="bp-mine nodrag" title="Импортируйте только свои страницы или страницы, на которые есть право">
+    <label class="bp-mine nodrag" title="Only import pages you own or have permission to use">
       <input
         type="checkbox"
         class="f-mine"
         checked={data.mine}
         onchange={(e) => $flow.setNodeData(Number(id), { mine: e.currentTarget.checked })}
       />
-      это мой сайт / есть право
+      I own this site / have permission
     </label>
     {#if !data.mine}
-      <div class="bp-hint">Запуск доступен после отметки «это мой сайт / есть право»</div>
+      <div class="bp-hint">Confirm site ownership or permission to enable import</div>
     {/if}
   {:else}
     {#if data.image}
       <div class="n-hero nodrag"><img class="ref-img" alt="screenshot" src={data.image} /></div>
     {/if}
     <label class="ref-drop nodrag">
-      {data.image ? (data.fileName || "screenshot") + " (заменить)" : "Загрузить скриншот элемента"}
+      {data.image ? (data.fileName || "screenshot") + " (replace)" : "Upload element screenshot"}
       <input type="file" accept="image/*" hidden onchange={onFile} />
     </label>
+  {/if}
+  {#if data.mode === "url"}
+    <div class="seg-row n-seg grow nodrag source-viewports" role="group" aria-label="Viewports to capture">
+      <button class="seg-btn active" disabled title="Desktop 1440 px is always captured" aria-pressed="true">Desktop</button>
+      <button class={"seg-btn" + (captureViewports.includes("tablet") ? " active" : "")} disabled={busy}
+        aria-pressed={captureViewports.includes("tablet")} title="Also capture tablet 768 px (about +20 s)"
+        onclick={() => toggleViewport("tablet")}>+ Tablet</button>
+      <button class={"seg-btn" + (captureViewports.includes("mobile") ? " active" : "")} disabled={busy}
+        aria-pressed={captureViewports.includes("mobile")} title="Also capture mobile 390 px (about +20 s)"
+        onclick={() => toggleViewport("mobile")}>+ Mobile</button>
+    </div>
+    <label class="bp-mine nodrag source-ai-repair" title="AI repairs blocks that fail the visual check (slower, uses your AI account)">
+      <input type="checkbox" checked={aiRepair} disabled={busy}
+        onchange={(e) => $flow.setNodeData(Number(id), { aiRepair: e.currentTarget.checked, importedUrl: null })} />
+      AI repair
+    </label>
+    <div class="bp-hint">Exact page snapshot · {captureViewports.join(" + ")}{aiRepair ? " · AI repair" : ""}</div>
+    {#if data.blocks?.length && !busy}
+      {#each (["tablet", "mobile"] as const).filter((name) => !capturedViewports.has(name)) as name (name)}
+        <button class="btn-node small nodrag source-add-viewport" onclick={() => addViewport(name)}
+          title={`Capture the ${name} layout of the same page`}>+ Capture {name}</button>
+      {/each}
+    {/if}
   {/if}
   {#if data.lastRun}
     <div class="source-run-diagnostics" title={`Pipeline ${data.lastRun.pipelineVersion || "unknown"}`}>
       <div class="source-run-summary">
-        <span>{data.lastRun.cached ? "Из кэша" : "Измерено"}</span>
+        <span>{data.lastRun.cached ? "From cache" : "Measured"}</span>
         <strong>{(data.lastRun.totalMs / 1000).toFixed(1)}s</strong>
       </div>
       <div class="source-run-stages">
@@ -151,9 +186,9 @@
   {#if data.sourceArtifact}
     <div class="source-artifact-summary" title={data.sourceArtifact.version}>
       <strong>Source Artifact</strong>
-      <span>{data.sourceArtifact.summary.componentCount} components</span>
-      <span>{data.sourceArtifact.summary.observedStateCount} states</span>
-      <span>{data.sourceArtifact.summary.viewportCount} viewports</span>
+      <span>{data.sourceArtifact.summary?.componentCount ?? 0} components</span>
+      <span>{data.sourceArtifact.summary?.observedStateCount ?? 0} states</span>
+      <span>{data.sourceArtifact.summary?.viewportCount ?? 0} viewports</span>
     </div>
   {/if}
   {#if data.blocks.length}
@@ -171,7 +206,7 @@
               />
               <span class="bp-name">{b.label || b.name}</span>
               {#if b.kind}<span class="bp-kind">{b.kind}</span>{/if}
-              {#if b.cached}<span class="bp-cached">из кэша</span>{/if}
+              {#if b.cached}<span class="bp-cached">from cache</span>{/if}
               {#if b.source}<span class="bp-cached">{b.source}{b.layers ? ` · ${b.layers} layers` : ""}</span>{/if}
               {#if b.repeat?.count && b.repeat.count > 1}
                 <span class="bp-repeat">{b.repeat.count}× {b.repeat.kind || "item"} → 1 block</span>
@@ -182,10 +217,10 @@
                 class="bp-expand nodrag"
                 class:active={expandedBlock === b.name}
                 aria-expanded={expandedBlock === b.name}
-                title={expandedBlock === b.name ? "Скрыть preview" : "Показать preview"}
+                title={expandedBlock === b.name ? "Hide preview" : "Show preview"}
                 onclick={() => expandedBlock = expandedBlock === b.name ? null : b.name}
               >
-                {expandedBlock === b.name ? "Скрыть" : "Preview"}
+                {expandedBlock === b.name ? "Hide" : "Preview"}
               </button>
             {/if}
           </div>
@@ -227,7 +262,7 @@
     </div>
   {/if}
   <NodeStatus {id} />
-  <OutPorts type="sourceimport" {data} />
+  <OutPorts {id} type="sourceimport" {data} />
 </NodeShell>
 
 {#snippet sourceReferencePreview(src?: string)}

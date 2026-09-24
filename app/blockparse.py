@@ -44,13 +44,13 @@ _SEMANTIC_ROLES = {
     "gallery", "navigation", "status", "toolbar", "profile", "panel", "section",
 }
 
-SOURCE_COMPILER_VERSION = "dom-v47"
+SOURCE_COMPILER_VERSION = "dom-v49"
 SOURCE_ARTIFACT_VERSION = "source-artifact/1.0"
 
 # Hidden blocks (display:none / zero box / no visual content) are not import
 # errors; they are omitted from Source Import outputs. Both English compiler
 # diagnostics and the legacy Russian guard are recognized.
-_HIDDEN_BLOCK_ERRORS = ("not visible", "не виден", "no editable visible layers")
+_HIDDEN_BLOCK_ERRORS = ("not visible", "no editable visible layers")
 
 
 def _elapsed_ms(started_at: float) -> int:
@@ -480,14 +480,14 @@ def collect_ambiguities(blocks: list[dict]) -> list[dict]:
                 "block": name,
                 "selector": block.get("selector"),
                 "label": block.get("label"),
-                "reason": "структура не определила роль блока однозначно",
+                "reason": "structure did not identify the block role unambiguously",
             })
         if block.get("truncatedAfter"):
             items.append({
                 "type": "truncated",
                 "block": name,
                 "dropped": int(block["truncatedAfter"]),
-                "reason": "страница дала больше блоков, чем разрешает лимит",
+                "reason": "page contains more blocks than the limit allows",
             })
         unnamed: list[str] = []
         for node in _walk_ir_nodes(block["ir"].get("tree") or []):
@@ -506,7 +506,7 @@ def collect_ambiguities(blocks: list[dict]) -> list[dict]:
                 "type": "unnamed-components",
                 "block": name,
                 "sourceKeys": unnamed[:40],
-                "reason": "имя компонента выведено из формы содержимого, а не из разметки",
+                "reason": "component name inferred from content shape rather than markup",
             })
     return items
 
@@ -689,7 +689,8 @@ def parse_blocks(url: str, blocks: list | None = None,
                  viewports: list[dict] | None = None,
                  auth_cookies: list[dict] | None = None,
                  full_resolution_evidence: bool = False,
-                 on_stage: Callable[[str, int, dict[str, int]], None] | None = None) -> dict:
+                 on_stage: Callable[[str, int, dict[str, int]], None] | None = None,
+                 engine: str = "snapshot") -> dict:
     """BlockParse: список блоков-IR + design-токены по URL.
 
     blocks — опциональный список {name, selector}: клонировать только их
@@ -718,11 +719,11 @@ def parse_blocks(url: str, blocks: list | None = None,
         wanted = []
         for b in blocks:
             if not isinstance(b, dict) or not str(b.get("selector", "")).strip():
-                raise ValueError("Каждый блок должен быть объектом с полем selector.")
+                raise ValueError("Each block must be an object with a selector field.")
             wanted.append({"name": str(b.get("name") or f"block-{len(wanted) + 1}"),
                            "selector": str(b["selector"]).strip()})
         if not wanted:
-            raise ValueError("Пустой список блоков.")
+            raise ValueError("Empty block list.")
     stage_done("prepare")
 
     # кэш полного разбора — только когда берём все блоки (выборочный список не кэшируем)
@@ -730,6 +731,7 @@ def parse_blocks(url: str, blocks: list | None = None,
     viewport_key = json.dumps({
         "viewports": viewports or "default",
         "fullResolutionEvidence": bool(full_resolution_evidence),
+        "engine": engine,
     }, sort_keys=True, separators=(",", ":"))
     full_key = cache_store.key_url(SOURCE_COMPILER_VERSION + "|" + SOURCE_CAPTURE_VERSION
                                    + "|" + viewport_key + "|" + url)
@@ -771,7 +773,7 @@ def parse_blocks(url: str, blocks: list | None = None,
             except ValueError:
                 raise
             except Exception as e:
-                raise RuntimeError(f"не удалось загрузить {url}: {e}")
+                raise RuntimeError(f"could not load {url}: {e}")
         stage_done("renderDom")
         stage_started = time.perf_counter()
         wanted = detect_blocks(html)
@@ -780,8 +782,8 @@ def parse_blocks(url: str, blocks: list | None = None,
         wanted = _refine_ambiguous_blocks(html, wanted, provider)
         stage_done("semanticRefine")
         if not wanted:
-            raise RuntimeError("на странице не найдено ни одного блока "
-                               "(нет семантических тегов и заголовков)")
+            raise RuntimeError("no blocks found on the page "
+                               "(no semantic tags or headings)")
 
     # Токены страницы приезжают из capture (замер живого DOM); CSS-фолбэк по
     # inline <style> больше не нужен — без capture осмысленных токенов нет.
@@ -793,8 +795,9 @@ def parse_blocks(url: str, blocks: list | None = None,
     stage_started = time.perf_counter()
 
     def capture_progress(viewport_name: str, viewport_index: int,
-                         viewport_count: int, elapsed_ms: int) -> None:
-        cancel_token.check()  # между viewport'ами захвата
+                         viewport_count: int, elapsed_ms: int,
+                         block_index: int = 0, block_count: int = 0) -> None:
+        cancel_token.check()  # между viewport'ами / блоками захвата
         if on_stage is None:
             return
         stage_name = "capture" + viewport_name[:1].upper() + viewport_name[1:]
@@ -803,26 +806,30 @@ def parse_blocks(url: str, blocks: list | None = None,
             "captureCompileElapsed": elapsed_ms,
             "captureViewportIndex": viewport_index,
             "captureViewportCount": viewport_count,
+            "captureBlockIndex": block_index,
+            "captureBlockCount": block_count,
         })
 
+    capture_timings: dict[str, int] = {}
     try:
         if wanted is None:
             captured, rendered_tokens, wanted = capture_block_irs(
                 url, None, return_tokens=True, return_blocks=True,
                 viewports=viewports, cookies=auth_cookies,
-                on_progress=capture_progress)
+                on_progress=capture_progress, engine=engine, timings=capture_timings)
         else:
             captured, rendered_tokens = capture_block_irs(
                 url, wanted, return_tokens=True, viewports=viewports, cookies=auth_cookies,
-                on_progress=capture_progress)
+                on_progress=capture_progress, engine=engine, timings=capture_timings)
         tokens = _normalize_captured_page_tokens(rendered_tokens, source=url)
     except Exception as e:
         traceback.print_exc()
         if wanted is None:
             raise RuntimeError(f"source capture failed before block detection: {e}") from e
-        captured = {b["selector"]: {"error": f"не удалось снять DOM-слепок: {e}"}
+        captured = {b["selector"]: {"error": f"could not capture DOM snapshot: {e}"}
                     for b in wanted}
         tokens = None
+    timings_ms.update({key: int(value) for key, value in capture_timings.items()})
     stage_done("captureCompile")
 
     stage_started = time.perf_counter()
@@ -832,7 +839,7 @@ def parse_blocks(url: str, blocks: list | None = None,
     for b in wanted:  # порядок детекции остаётся порядком выходных портов
         head = {"name": b["name"], "selector": b["selector"],
                 "label": b.get("label") or b["name"], "kind": b.get("kind", "section")}
-        item = captured.get(b["selector"], {"error": "DOM-слепок не получен"})
+        item = captured.get(b["selector"], {"error": "DOM snapshot not received"})
         if item.get("error"):
             # Responsive duplicates that are hidden at the canonical desktop viewport
             # are not meaningful Source Import outputs. The compiler emits English

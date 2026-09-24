@@ -25,7 +25,7 @@
     const value = pullInput($flowNodes, $flowEdges, selfNode, "reference");
     return isImageSource(value);
   });
-  const STYLES: Array<[ImageStyle, string]> = [["vector", "Вектор"], ["texture", "Текстура"], ["icon", "Иконка"]];
+  const STYLES: Array<[ImageStyle, string]> = [["vector", "Vector"], ["texture", "Texture"], ["icon", "Icon"]];
 
   const download = async () => {
     if (!active) return;
@@ -38,38 +38,38 @@
 <NodeShell {id} type="image" {selected}>
   {#snippet footer()}
     <div class="foot-left">
-      <span>{active?.width || data.width}×{active?.height || data.height}{data.tileable ? " · тайл" : ""}{hasReference ? " · по референсу" : ""}</span>
-      {#if active}<button class="btn-node small nodrag" onclick={() => void download()}>Скачать</button>{/if}
+      <span>{active?.width || data.width}×{active?.height || data.height}{data.tileable ? " · tile" : ""}{hasReference ? " · from reference" : ""}</span>
+      {#if active}<button class="btn-node small nodrag" onclick={() => void download()}>Download</button>{/if}
     </div>
     <div class="foot-right">
       <button class="btn-node primary small f-run nodrag" disabled={busy} onclick={() => $flow.runNode(nodeId)}>
-        {#if busy}<span class="spinner"></span>{:else}<span>▶</span>{/if} Сгенерировать
+        {#if busy}<span class="spinner"></span>{:else}<span>▶</span>{/if} Generate
       </button>
     </div>
   {/snippet}
   <InPorts type="image" />
   <div class="n-hero nodrag" style="aspect-ratio: {data.width} / {data.height}; max-height: 260px">
     {#if active}
-      <img class="img-result" class:tile={data.tileable} alt="Сгенерированное изображение" src={active.png} />
+      <img class="img-result" class:tile={data.tileable} alt="Generated result" src={active.png} />
       {#if variants.length > 1}<span class="n-hero-tag">{activeIndex + 1} / {variants.length}</span>{/if}
     {:else}
-      <div class="n-hero-empty">{busy ? (data.engine === "raster" ? "GPT Image создаёт изображение…" : "Модель рисует SVG…") : hasReference ? "Референс подключён — нажмите «Сгенерировать»" : "Картинка появится после запуска"}</div>
+      <div class="n-hero-empty">{busy ? (data.engine === "raster" ? "GPT Image is generating an image…" : "Model is drawing SVG…") : hasReference ? "Reference connected — click Generate" : "Image appears after running"}</div>
     {/if}
   </div>
   {#if variants.length > 1}
-    <div class="n-seg nodrag" role="group" aria-label="Варианты">
+    <div class="n-seg nodrag" role="group" aria-label="Variants">
       {#each variants as _, index (index)}
         <button disabled={busy} class:active={index === activeIndex} onclick={() => { $flow.setNodeData(nodeId, { active: index }); $flow.propagate(nodeId); }}>{index + 1}</button>
       {/each}
     </div>
   {/if}
-  {#if data.engine !== "raster"}<div class="n-seg grow nodrag" role="group" aria-label="Стиль">
+  {#if data.engine !== "raster"}<div class="n-seg grow nodrag" role="group" aria-label="Style">
     {#each STYLES as [value, label] (value)}
       <button class:active={data.style === value} disabled={busy} onclick={() => $flow.setNodeData(nodeId, { style: value })}>{label}</button>
     {/each}
   </div>{/if}
   <NodeStatus {id} />
-  <OutPorts type="image" {data} />
+  <OutPorts {id} type="image" {data} />
 </NodeShell>
 
 <style>

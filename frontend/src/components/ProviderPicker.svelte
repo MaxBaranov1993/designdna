@@ -38,10 +38,10 @@
     class="f-provider-select nodrag"
     value={provider}
     onchange={(e) => onChange({ provider: e.currentTarget.value as NodeProvider, effort })}
-    aria-label="Провайдер"
+    aria-label="Provider"
   >
     {#each PROVIDERS.filter((option) => !accountsOnly || ["codex", "claude"].includes(option.value)) as option (option.value)}
-      <option value={option.value}>{accountsOnly ? (option.value === "codex" ? "GPT · мой аккаунт" : "Claude · мой аккаунт") : option.label}</option>
+      <option value={option.value}>{accountsOnly ? (option.value === "codex" ? "GPT · my account" : "Claude · my account") : option.label}</option>
     {/each}
   </select>
   {#if supportsEffort}
@@ -49,7 +49,7 @@
       class="f-effort-select nodrag"
       value={effort}
       onchange={(e) => onChange({ provider, effort: e.currentTarget.value })}
-      aria-label="Усилие"
+      aria-label="Effort"
     >
       {#each EFFORTS as option (option.value)}
         <option value={option.value}>{option.label}</option>

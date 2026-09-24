@@ -38,11 +38,11 @@ def test_jpeg_encodes_actual_jpeg_with_white_matte():
 
 
 def test_background_removal_rejects_opaque_or_empty_results():
-    with pytest.raises(ValueError, match="прозрачном"):
+    with pytest.raises(ValueError, match="transparent"):
         convert_image(picture(), require_transparency=True)
     image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
     output = io.BytesIO(); image.save(output, "PNG")
-    with pytest.raises(ValueError, match="прозрачном"):
+    with pytest.raises(ValueError, match="transparent"):
         convert_image("data:image/png;base64," + base64.b64encode(output.getvalue()).decode(), require_transparency=True)
     with pytest.raises(ValueError, match="PNG"):
         convert_image(picture(True), "jpeg", True)
@@ -97,5 +97,5 @@ def test_background_mask_preserves_original_rgb_canvas_and_antialiased_edges():
 
 
 def test_background_mask_rejects_color_photo_instead_of_making_a_false_cutout():
-    with pytest.raises(ValueError, match="цветное"):
+    with pytest.raises(ValueError, match="color"):
         apply_background_mask(picture(), picture())

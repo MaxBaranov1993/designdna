@@ -19,7 +19,7 @@ export function generatorVisualReference(nodes: FlowNode[], edges: FlowEdge[], n
   const source = nodes.find(node => node.id === edge?.source);
   const reference = source?.type === "reference" ? source.data as ReferenceNodeData : undefined;
   const role = (node.data as GeneratorNodeData).referenceRole || reference?.role || "style";
-  return { image: value, role, origin: reference?.fileName || String((source?.data as Record<string, unknown> | undefined)?.label || source?.type || "Референс"), notes: (reference?.brief || "").slice(0, 2000) };
+  return { image: value, role, origin: reference?.fileName || String((source?.data as Record<string, unknown> | undefined)?.label || source?.type || "Reference"), notes: (reference?.brief || "").slice(0, 2000) };
 }
 
 export function conceptRunPatch(history: ConceptRun[] | undefined, run: ConceptRun): ConceptRun[] {
@@ -29,21 +29,21 @@ export function conceptRunPatch(history: ConceptRun[] | undefined, run: ConceptR
 }
 
 export function settleInterruptedConcepts(history: ConceptRun[] | undefined): ConceptRun[] | undefined {
-  return history?.map(run => run.status !== "running" ? run : { ...run, status: "cancelled", finishedAt: Date.now(), error: "Эскиз был прерван" });
+  return history?.map(run => run.status !== "running" ? run : { ...run, status: "cancelled", finishedAt: Date.now(), error: "Sketch interrupted" });
 }
 
 export async function createVisualConcept(run: ConceptRun, request: {
   brief: string; tokens?: Record<string, unknown>; designSystem?: Record<string, unknown> | null;
 }, options: { signal: AbortSignal; check(): void; onChange(run: ConceptRun): void; model?: string; reference?: VisualReference }) {
   const current = structuredClone(run), { signal } = options;
-  const check = () => { options.check(); if (signal.aborted) throw new DOMException("Отменено", "AbortError"); };
+  const check = () => { options.check(); if (signal.aborted) throw new DOMException("Cancelled", "AbortError"); };
   const publish = () => { check(); options.onChange(structuredClone(current)); };
   publish();
   const requestId = `concept-${run.id}`;
   const cancel = () => { void window.designDNA?.providers.cancel(requestId).catch(() => {}); };
   signal.addEventListener("abort", cancel, { once: true });
   try {
-    if (run.provider !== "codex" || !window.designDNA?.providers.imageRequest) throw new Error("Для эскиза выберите изображения через аккаунт Codex");
+    if (run.provider !== "codex" || !window.designDNA?.providers.imageRequest) throw new Error("Select images through your Codex account to create a sketch");
     const prepared = await api<{ prompt: string }>("/api/generate/concept/prepare", { ...request,
       referenceNotes: options.reference?.notes || "", referenceRole: options.reference?.role || "style" }, { signal });
     check(); current.prompt = prepared.prompt; publish();

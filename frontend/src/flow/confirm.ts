@@ -29,7 +29,7 @@ export function confirmDialog(options: ConfirmOptions): Promise<boolean> {
       title: options.title,
       message: options.message,
       confirmLabel: options.confirmLabel,
-      cancelLabel: options.cancelLabel ?? "Отмена",
+      cancelLabel: options.cancelLabel ?? "Cancel",
       danger: options.danger ?? false,
       resolve,
     };

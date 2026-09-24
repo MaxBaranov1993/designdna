@@ -29,7 +29,7 @@
     try {
       payload = JSON.parse(await file.text());
     } catch {
-      if (sequence === fileSequence && scope.owns()) get().setNodeData(targetId, { lastError: `«${file.name}» не разбирается как JSON` });
+      if (sequence === fileSequence && scope.owns()) get().setNodeData(targetId, { lastError: `«${file.name}” cannot be parsed as JSON` });
       return;
     }
     if (sequence === fileSequence && scope.owns()) await get().importDesignSystemDocument(targetId, payload, file.name);
@@ -38,18 +38,18 @@
 
 <div class="dna-insp-fields">
   <div class="dna-field">
-    <div class="dna-field-cap">Система</div>
-    <div class="dna-field-value"><span>{data.name || "Без имени"}</span><span class="dna-out-kind">{data.status === "published" ? `v${data.revision}` : data.status}</span></div>
-    {#if data.defaultSet}<div class="dna-field-hint">Система проекта по умолчанию.</div>{/if}
+    <div class="dna-field-cap">System</div>
+    <div class="dna-field-value"><span>{data.name || "Untitled"}</span><span class="dna-out-kind">{data.status === "published" ? `v${data.revision}` : data.status}</span></div>
+    {#if data.defaultSet}<div class="dna-field-hint">Default project system.</div>{/if}
   </div>
   <label class="dna-insp-check">
     <input type="checkbox" checked={data.autoPublish !== false} onchange={(event) => $flow.setNodeData(id, { autoPublish: event.currentTarget.checked })} />
-    <span>Автопубликация после сборки</span>
+    <span>Auto-publish after build</span>
   </label>
   <div class="dna-field">
-    <div class="dna-field-cap">AI для всех действий</div>
+    <div class="dna-field-cap">AI for all actions</div>
     <select data-ds-ai-provider value={data.aiProvider || "inherit"} disabled={busy} onchange={(event) => $flow.setNodeData(id, { aiProvider: event.currentTarget.value as DesignSystemAiProvider })}>
-      <option value="inherit">Из Source · {resolvedProvider}</option>
+      <option value="inherit">From Source · {resolvedProvider}</option>
       <option value="codex">Codex</option>
       <option value="claude">Claude Opus</option>
       <option value="openai">GPT-5.6 Sol</option>
@@ -57,12 +57,12 @@
     </select>
   </div>
   <div class="dna-field">
-    <div class="dna-field-cap">Источник системы</div>
+    <div class="dna-field-cap">System source</div>
     {#if !data.systemId}
-      <button class="dna-btn-ghost" data-ds-action="build" disabled={!canBuild || busy} onclick={() => $flow.rebuildDesignSystemFromSource(id)}>Собрать из Source</button>
+      <button class="dna-btn-ghost" data-ds-action="build" disabled={!canBuild || busy} onclick={() => $flow.rebuildDesignSystemFromSource(id)}>Build from Source</button>
     {/if}
     <input class="ds-file" type="file" accept=".json,application/json" hidden bind:this={fileInput} onchange={onFile} />
-    <button class="dna-btn-ghost" data-ds-action="import" disabled={busy} title="Документ DesignDNA, W3C / Tokens Studio JSON или карта shadcn" onclick={() => fileInput?.click()}>Загрузить JSON</button>
+    <button class="dna-btn-ghost" data-ds-action="import" disabled={busy} title="DesignDNA document, W3C / Tokens Studio JSON, or shadcn map" onclick={() => fileInput?.click()}>Upload JSON</button>
   </div>
   {#if data.lastError}
     <div class="dna-insp-log err">{String(data.lastError)}</div>
@@ -70,8 +70,8 @@
   {#each Object.entries(data.pipelineStatus || {}) as [stage, result]}
     {#if result.timings}
       <details class="dna-field" data-ds-timings={stage}>
-        <summary>{stage}: {Math.round(result.timings.elapsedMs / 1000)} с · запросов {result.timings.requests}</summary>
-        <div class="dna-field-hint">Подготовка снимков: {Math.round(result.timings.prepareMs / 1000)} с. Серверная проверка: {Math.round(result.timings.applyMs / 1000)} с. AI суммарно по запросам: {Math.round(result.timings.providerMs / 1000)} с. Повторов из-за сети: {result.timings.retries}.</div>
+        <summary>{stage}: {Math.round(result.timings.elapsedMs / 1000)} s · requests {result.timings.requests}</summary>
+        <div class="dna-field-hint">Snapshot preparation: {Math.round(result.timings.prepareMs / 1000)} s. Server validation: {Math.round(result.timings.applyMs / 1000)} s. Total AI request time: {Math.round(result.timings.providerMs / 1000)} s. Network retries: {result.timings.retries}.</div>
       </details>
     {/if}
   {/each}

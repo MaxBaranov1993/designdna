@@ -1,6 +1,9 @@
 async (blocks) => {
                   const num = (v) => Number.parseFloat(v) || 0;
                   const round2 = (v) => Math.round(Number(v || 0) * 100) / 100;
+                  // Absolute mode (html.to.design default): every child is pinned by its
+                  // measured rect; auto-layout inference is a separate, optional pass.
+                  let ABSOLUTE_MODE=false;
                   // ---- цвет: rgb/rgba, color(srgb|display-p3), oklch, oklab, lab, lch, color-mix ----
                   const clamp01=(v)=>Math.max(0,Math.min(1,v));
                   const gamma=(v)=>v<=0.0031308?12.92*v:1.055*Math.pow(v,1/2.4)-0.055;
@@ -129,6 +132,43 @@ async (blocks) => {
                   }
                   const visible = (el,r,cs) => r.width>=1 && r.height>=1 && cs.display!=='none' &&
                     cs.visibility!=='hidden' && Number(cs.opacity)!==0;
+                  /* A text-only box collapsed to zero height (`height:0; line-height:0`) still
+                   * paints its glyphs as overflow — the "→" of a CTA button. Returns the rect
+                   * of the painted glyphs, or null. */
+                  const glyphOverflow = (el,r,cs) => {
+                    if(el.children.length || cs.display==='none' || cs.visibility==='hidden' || Number(cs.opacity)===0
+                       || cs.overflow!=='visible' || !(r.width>=1 || r.height>=1)) return null;
+                    if(!(el.textContent||'').trim()) return null;
+                    const range=document.createRange(); range.selectNodeContents(el);
+                    const gr=range.getBoundingClientRect();
+                    return gr.width>=1 && gr.height>=1 ? gr : null;
+                  };
+                  /* line-height:normal resolved from the font's own metrics (height of an
+                   * inline-block line box). The IR renderer inherits a design default
+                   * (1.6) when lineHeight is absent, which pushed single-line captured
+                   * text below its measured box and clipped it (CTA labels). */
+                  const NORMAL_LH=new Map();
+                  const normalLineHeight=(cs)=>{
+                    const size=num(cs.fontSize);
+                    if(!(size>0)) return null;
+                    const k=[cs.fontFamily,cs.fontWeight,cs.fontStyle,cs.fontStretch,size].join('|');
+                    if(NORMAL_LH.has(k)) return NORMAL_LH.get(k);
+                    let ratio=null;
+                    try{
+                      const probe=document.createElement('span');
+                      probe.textContent='HgЙ';
+                      for(const [prop,value] of [['position','absolute'],['visibility','hidden'],['display','inline-block'],
+                        ['white-space','nowrap'],['line-height','normal'],['padding','0'],['border','0'],['margin','0'],
+                        ['font-family',cs.fontFamily],['font-size',cs.fontSize],['font-weight',cs.fontWeight],
+                        ['font-style',cs.fontStyle],['font-stretch',cs.fontStretch]]) probe.style.setProperty(prop,value,'important');
+                      (document.body||document.documentElement).appendChild(probe);
+                      const h=probe.getBoundingClientRect().height;
+                      probe.remove();
+                      if(h>0) ratio=Math.min(10,Math.max(.5,Math.round(h/size*1000)/1000));
+                    }catch(e){ ratio=null; }
+                    NORMAL_LH.set(k,ratio);
+                    return ratio;
+                  };
                   const safeEnum = (v, allowed, fallback) => allowed.includes(v) ? v : fallback;
                   const SAFE_ALIGNS=['left','center','right','justify','start','end'];
                   const styleOf = (cs, warnings) => {
@@ -147,9 +187,8 @@ async (blocks) => {
                       fontFamily:String(cs.fontFamily||'').replace(/["']/g,'').slice(0,160),
                       fontSize:Math.min(512,Math.max(1,num(cs.fontSize))),
                       fontWeight:Math.min(900,Math.max(100,Number.parseInt(cs.fontWeight,10)||400)),
-                      // line-height:unknown (normal) НЕ подставляем 1.2 — рендер
-                      // оставляет CSS normal и браузер берёт метрики шрифта
-                      lineHeight:lhPx>0?Math.min(10,Math.max(.5,lhPx/Math.max(1,num(cs.fontSize)))):null,
+                      // line-height:normal — не константа 1.2, а метрики шрифта (normalLineHeight)
+                      lineHeight:lhPx>0?Math.min(10,Math.max(.5,lhPx/Math.max(1,num(cs.fontSize)))):normalLineHeight(cs),
                       letterSpacing:Math.max(-20,Math.min(100,num(cs.letterSpacing))),
                       borderColor:hasBorder?(uniformC?(bc[0]||'#e0e0e0'):null):null,
                       borderWidth:uniformW?bw[0]:null,
@@ -306,6 +345,7 @@ async (blocks) => {
                     // измеренным x/y и остаётся независимым selectable/editable
                     // слоем внутри своего DOM-родителя (иерархия сохраняется).
                     let auto=(explicitFlex||(!explicitGrid&&childRects.length>0)) && !positionedKids && !hasOverlap && !marginedKids && !flexingKids;
+                    if(ABSOLUTE_MODE) auto=false;
                     // не-flex контейнеры: дети могут быть разведены MARGIN-ами (не gap).
                     // Меряем фактические зазоры: равномерные → auto с measuredGap;
                     // неравномерные → free с пиннингом детей (pixel-perfect).
@@ -424,6 +464,7 @@ async (blocks) => {
                     return out.slice(0, 192);
                   };
                   const compileBlock = (block) => {
+                    ABSOLUTE_MODE=!!block.absolute;
                     const root=document.querySelector(block.selector);
                     if(!root) return {selector:block.selector,error:'DOM element not found'};
                     const rr=root.getBoundingClientRect(), rcs=getComputedStyle(root);
@@ -602,12 +643,60 @@ async (blocks) => {
                       }
                       return area;
                     }
+                    /* A tilted card (`rotate(-2deg)`) was measured as its post-transform
+                     * bounding box with the rotation dropped: children landed in the wrong
+                     * places and the tilt disappeared. A pure 2D rotation around the box
+                     * centre is compiled untransformed and replayed as frame.transform,
+                     * so the node stays editable and renders like the source. */
+                    const pureRotation = (el,cs) => {
+                      const raw=String(cs.transform||'none');
+                      const m=raw.match(/^matrix\(\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*\)$/);
+                      if(!m) return null;
+                      const [a,b,c,d]=m.slice(1,5).map(Number);
+                      if(![a,b,c,d].every(Number.isFinite) || Math.abs(b)<0.005) return null;
+                      if(Math.abs(a-d)>0.01 || Math.abs(b+c)>0.01 || Math.abs(Math.hypot(a,b)-1)>0.03) return null;
+                      const w=el.offsetWidth, h=el.offsetHeight;
+                      const origin=String(cs.transformOrigin||'').split(' ').map(Number.parseFloat);
+                      if(!(w>0 && h>0) || Math.abs((origin[0]||0)-w/2)>1 || Math.abs((origin[1]||0)-h/2)>1) return null;
+                      return raw;
+                    };
                     const compile = (el,parentRect,parentAuto,rootEl) => {
+                      const rotation=el.style ? pureRotation(el,getComputedStyle(el)) : null;
+                      if(!rotation) return compileBox(el,parentRect,parentAuto,rootEl);
+                      const inline=el.style.getPropertyValue('transform'), priority=el.style.getPropertyPriority('transform');
+                      el.style.setProperty('transform','none','important');
+                      let node=null;
+                      try{ node=compileBox(el,parentRect,parentAuto,rootEl); }
+                      finally{
+                        if(inline) el.style.setProperty('transform',inline,priority); else el.style.removeProperty('transform');
+                      }
+                      if(node && node.frame){ node.frame.transform=rotation; node.frame.absolute=true; }
+                      return node;
+                    };
+                    const compileBox = (el,parentRect,parentAuto,rootEl) => {
                       const tag=String(el.tagName||'').toUpperCase();
                       if(['SCRIPT','STYLE','NOSCRIPT','TEMPLATE'].includes(tag)) return null;
                       const r=el.getBoundingClientRect(), cs=getComputedStyle(el);
                       const key=pathOf(el,rootEl);
-                      if(!visible(el,r,cs)){ recordDropped(key,'invisible',false); return null; }
+                      if(!visible(el,r,cs)){
+                        // A text-only box collapsed to zero height (`height:0`, `line-height:0`)
+                        // still paints its glyphs as overflow: the "→" of a CTA button.
+                        // Emit the glyphs at their real rect instead of dropping them.
+                        const gr=glyphOverflow(el,r,cs);
+                        if(gr){
+                          visited++;
+                          const gstyle=cleanTextStyle(styleOf(cs,warnings));
+                          delete gstyle.textAlign;
+                          // the collapsed box's line-height (0) is not the glyph line
+                          gstyle.lineHeight=Math.min(10,Math.max(.5,Math.round(gr.height/Math.max(1,num(cs.fontSize))*1000)/1000));
+                          const gframe={width:round2(gr.width),height:round2(gr.height),
+                            x:round2(gr.left-parentRect.left),y:round2(gr.top-parentRect.top),absolute:true};
+                          emitted++; pushRootRect(gr,key);
+                          return {type:'text',text:(el.textContent||'').replace(/\s+/g,' ').trim().slice(0,1000),
+                            sourceKey:key,style:gstyle,frame:gframe};
+                        }
+                        recordDropped(key,'invisible',false); return null;
+                      }
                       visited++;
                       let type='card', role=tag.toLowerCase();
                       if(/^H[1-4]$/.test(tag)) type='heading';
@@ -661,6 +750,21 @@ async (blocks) => {
                             const fillComputed=String(getComputedStyle(el).fill||'').trim();
                             if(fillComputed && fillComputed!=='none' && !clone.getAttribute('fill'))
                               clone.setAttribute('fill',fillComputed);
+                            // Paint set by CSS classes (`.step-icon path{stroke:#0a67ff}`) does not
+                            // travel with the markup: a standalone SVG fell back to black fills.
+                            // Inline the computed paint of every descendant.
+                            const sourceNodes=[...el.querySelectorAll('*')], cloneNodes=[...clone.querySelectorAll('*')];
+                            sourceNodes.forEach((source,index)=>{
+                              const target=cloneNodes[index]; if(!target) return;
+                              const computed=getComputedStyle(source);
+                              for(const [prop,attr] of [['fill','fill'],['stroke','stroke'],['strokeWidth','stroke-width'],
+                                ['strokeLinecap','stroke-linecap'],['strokeLinejoin','stroke-linejoin'],['fillOpacity','fill-opacity'],
+                                ['strokeOpacity','stroke-opacity']]){
+                                const value=String(computed[prop]||'').trim();
+                                if(value && !(prop==='fillOpacity'||prop==='strokeOpacity') || (value && value!=='1')) target.setAttribute(attr,value);
+                              }
+                              if(computed.opacity && computed.opacity!=='1') target.setAttribute('opacity',computed.opacity);
+                            });
                             let text=clone.outerHTML.replace(/currentColor/g,
                               String(getComputedStyle(el).color||'#000').trim()||'#000');
                             if(!/xmlns\s*=/.test(text)) text=text.replace(/^<svg/i,'<svg xmlns="http://www.w3.org/2000/svg"');
@@ -812,7 +916,15 @@ async (blocks) => {
                           sourceKey:lkey,sourceMeta:{kind:'background-image',reason:'gradient',layer:i},
                           style:{backgroundImage:bg.css},frame:{absolute:true,x:0,y:0,width:elW,height:elH}};
                       };
-                      const directText=String(el.innerText||el.textContent||'').replace(/\s+/g,' ').trim();
+                      // Preformatted text keeps its spacing: code/trace blocks align columns with
+                      // runs of spaces (`<pre>` rows "12:41:09  load_context   ✓").
+                      const rawText=String(el.innerText||el.textContent||'');
+                      const preWs=['pre','pre-wrap','break-spaces'].includes(cs.whiteSpace);
+                      const directText=preWs
+                        ? rawText.replace(/^\n+|\s+$/g,'')
+                        : cs.whiteSpace==='pre-line'
+                          ? rawText.split('\n').map(line=>line.replace(/[ \t]+/g,' ').trim()).join('\n').trim()
+                          : rawText.replace(/\s+/g,' ').trim();
                       const childRects=[...el.children].map(c=>c.getBoundingClientRect()).filter(x=>x.width>=1&&x.height>=1);
                       const layout=layoutOf(el,cs,childRects);
                       const childParentAuto=layout.layout==='auto';
@@ -904,11 +1016,11 @@ async (blocks) => {
                             if(rectsOf(start,mid).length<=1){ best=mid; lo=mid+1; } else hi=mid-1;
                           }
                           const fragment=raw.slice(start,best);
-                          const piece=fragment.replace(/\s+/g,' ').trim();
+                          const piece=preWs ? fragment.replace(/\n/g,'').trimEnd() : fragment.replace(/\s+/g,' ').trim();
                           // The emitted text is trimmed; measure the same substring.
                           // Keeping the leading-space bbox joined inline labels to
                           // their text ("Output:who") and shifted every glyph left.
-                          const leftTrim=fragment.length-fragment.trimStart().length;
+                          const leftTrim=preWs ? fragment.length-fragment.replace(/^\n+/,'').length : fragment.length-fragment.trimStart().length;
                           const rightTrim=fragment.length-fragment.trimEnd().length;
                           const rects=piece ? rectsOf(start+leftTrim,best-rightTrim) : [];
                           if(piece && rects.length){
@@ -928,7 +1040,8 @@ async (blocks) => {
                       };
                       [...el.childNodes].forEach((child,idx)=>{
                         if(child.nodeType===Node.TEXT_NODE){
-                          const text=(child.textContent||'').replace(/\s+/g,' ').trim();
+                          const text=preWs ? (child.textContent||'').replace(/^\n+|\s+$/g,'')
+                            : (child.textContent||'').replace(/\s+/g,' ').trim();
                           if(text) directOnlyText=(directOnlyText+' '+text).trim();
                           if(text && !isContainer) inlineTextNodes.push({node:child,idx});
                           if(!text || !isContainer) return;
@@ -966,7 +1079,7 @@ async (blocks) => {
                           emitted++; pushRootRect({left:r.left+textFrame.x,top:r.top+textFrame.y,width:textFrame.width,height:textFrame.height},tnode.sourceKey);
                         } else if(child.nodeType===Node.ELEMENT_NODE){
                           const ccr=child.getBoundingClientRect(), ccs=getComputedStyle(child);
-                          if(!visible(child,ccr,ccs)){
+                          if(!visible(child,ccr,ccs) && !(isContainer && glyphOverflow(child,ccr,ccs))){
                             if(ccr.width>=1 && ccr.height>=1 && ccs.display!=='none'
                                && ccs.position!=='absolute' && ccs.position!=='fixed') droppedFlowKids++;
                             return;

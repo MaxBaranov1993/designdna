@@ -20,14 +20,14 @@ export function videoHistoryPatch(
     parentId = entry.id;
   };
   if (data.timeline && (!current || !same(current.timeline, data.timeline) || !same(current.sourceIr, data.ir))) {
-    append(data.timeline, { kind: current ? "manual" : "initial", label: current ? "Ручные правки" : "Исходный монтаж" });
+    append(data.timeline, { kind: current ? "manual" : "initial", label: current ? "Manual edits" : "Original timeline" });
   }
   if (change.restoredFrom) {
     const target = revisions.find((item) => item.id === change.restoredFrom);
     const sourcePages = (data.sourcePages || []).map(({ id, ir }) => ({ id, ir }));
     const targetPages = ((target?.timeline as any)?.story?.pages || []).filter((page: any) => !page.generatedFrom).map(({ id, ir }: any) => ({ id, ir }));
     if (!target || !same(target.sourceIr, data.ir) || !same(target.timeline, next) || (targetPages.length > 0 && !same(targetPages, sourcePages))) {
-      throw new Error("Версия относится к другой исходной странице. Подключите прежнюю страницу перед восстановлением.");
+      throw new Error("This version belongs to another source page. Connect the original page before restoring.");
     }
     parentId = target.id;
   }
@@ -44,7 +44,7 @@ export function videoSourceCheckpoint(data: TimelineNodeData): Pick<TimelineNode
   if (current && same(current.timeline, data.timeline) && same(current.sourceIr, data.ir)) return {};
   const entry: VideoRevision = {
     id: crypto.randomUUID(), parentId: data.activeRevisionId || null, createdAt: new Date().toISOString(),
-    kind: "manual", label: "Монтаж перед изменением страниц", sourceIr: copy(data.ir), timeline: copy(data.timeline),
+    kind: "manual", label: "Timeline before page changes", sourceIr: copy(data.ir), timeline: copy(data.timeline),
   };
   return { revisions: [...revisions, entry], activeRevisionId: entry.id };
 }

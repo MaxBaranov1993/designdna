@@ -19,7 +19,7 @@ import { NODE_DEFS, defaultData, portsOfNode } from "./ports";
 import { deepClone, outValue, pullInput, reachable } from "./dataflow";
 import { generatorInputKey } from "./generator-inputs";
 import { conceptRunPatch, createVisualConcept, generatorVisualReference, settleInterruptedConcepts } from "./generator-visual";
-import { assetRunPatch, effectiveAssetProvider, executeAssetPlan, hasImagePrompts, reconcileAssets, settleInterruptedAssets } from "./generator-assets";
+import { assetRunPatch, effectiveAssetProvider, executeAssetPlan, hasImagePrompts, verifyAssetPlan, settleInterruptedAssets } from "./generator-assets";
 import type { AssetPlan, AssetRun } from "./generator-assets";
 import { inputFingerprint } from "./fingerprint";
 import { runDesktopAiQueue } from "./desktop-ai-queue";
@@ -30,10 +30,12 @@ import { composeSourceInputs, sourceInputForPort } from "./sourceComposition";
 import type { SourceInputBlock } from "./sourceComposition";
 import {
   DEFAULT_VIEW,
-  FLOW_LS_KEY,
   buildPagesProjectPayload,
-  compactLegacyLocalStorage,
+  clearLocalProjectCache,
+  flushProjectToDb,
+  noteDeletedPage,
   loadPagesProjectFromDb,
+  blockDbSaveForHydrationConflict,
   loadPagesProjectFromStorage,
   loadFromStorage,
   makeRfEdge,
@@ -42,7 +44,7 @@ import {
 } from "./serialize";
 import { toast } from "./toast";
 import { fitFlowView, focusFlowNode } from "./graphdev";
-import { offloadSourceEvidenceInPlace } from "../desktop/blobStore";
+import { offloadSourceEvidenceInPlace, offloadTimelineStories } from "../desktop/blobStore";
 import type {
   AnyNodeData,
   FlowPage,
@@ -82,10 +84,10 @@ import type {
 function friendlyProviderError(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
   const detail = raw.replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, "").trim();
-  if (/OpenAI API key|Codex не подключён|Claude не подключён|Codex CLI|Claude Code|нет подключённого AI-аккаунта|Agents\s*→\s*Connections/i.test(detail)) {
-    return "AI-аккаунт не подключён. Откройте Agents → Connections.";
+  if (/OpenAI API key|Codex не подключён|Claude не подключён|Codex CLI|Claude Code|(?:Codex|Claude) (?:is )?not connected|No AI account|нет подключённого AI-аккаунта|Agents\s*→\s*Connections/i.test(detail)) {
+    return "No AI account is connected. Open Agents → Connections.";
   }
-  return detail || "AI не ответил. Повторите запуск.";
+  return detail || "AI did not respond. Run again.";
 }
 
 /* Провайдер ноды: поддерживаемый выбор проходит как есть, ретро-значения из
@@ -187,7 +189,7 @@ export async function runDesktopDesignSystemAi(
       || (current.data as DesignSystemNodeData).revision !== revision
       || currentSource?.id !== source?.id
       || (currentSource ? sourceKitFingerprint(currentSource.data) : null) !== sourceFingerprint) {
-      throw new DOMException("Source или документ изменился — повторите AI-операцию", "AbortError");
+      throw new DOMException("Source or document changed — retry the AI operation", "AbortError");
     }
   };
   const stage = (status: AiPipelineStage["status"], message: string) => {
@@ -208,7 +210,7 @@ export async function runDesktopDesignSystemAi(
   signal.addEventListener("abort", cancelChat);
   get().setNodeData(nodeId, { _dsAiRun: runToken, _dsAiRetryable: false, busyAction: operation, lastError: "" });
   get().setBusy(nodeId, true);
-  stage("running", `${PROVIDER_LABELS[provider]} · ${operation}: подготовка…`);
+  stage("running", `${PROVIDER_LABELS[provider]} · ${operation}: preparing…`);
   const request = async <T>(path: string, body: unknown): Promise<T> => {
     const requestStarted = Date.now();
     try {
@@ -220,7 +222,7 @@ export async function runDesktopDesignSystemAi(
         if (detail && typeof detail === "object") {
           const first = Array.isArray(detail.errors) ? detail.errors[0] : null;
           throw Object.assign(new Error([detail.message || detail.code || `HTTP ${response.status}`,
-            first?.message, first?.path, detail.errors?.length > 1 ? `Ошибок: ${detail.errors.length}` : ""].filter(Boolean).join(" · ")),
+            first?.message, first?.path, detail.errors?.length > 1 ? `Errors: ${detail.errors.length}` : ""].filter(Boolean).join(" · ")),
             { httpStatus: response.status, detail });
         }
         throw new Error(String(detail || `HTTP ${response.status}`));
@@ -238,7 +240,7 @@ export async function runDesktopDesignSystemAi(
         systemId: node.data.systemId, revision: Number(node.data.revision) || 0,
       });
       guard();
-      if (!loaded.document || loaded.document.id !== node.data.systemId) throw new Error(loaded.error || "Документ Design System недоступен");
+      if (!loaded.document || loaded.document.id !== node.data.systemId) throw new Error(loaded.error || "Design System document unavailable");
       originalDocument = loaded.document;
       workingDocument = deepClone(loaded.document);
     }
@@ -246,7 +248,7 @@ export async function runDesktopDesignSystemAi(
       const assets = (originalDocument.referenceAssets || {}) as Record<string, { referencePreviews?: Record<string, unknown> }>;
       const missing = Object.values(originalDocument.reviewComponents || {}).filter((component: any) =>
         component?.sourceRef?.evidenceKey && !Object.values(assets[component.sourceRef.evidenceKey]?.referencePreviews || {}).some(Boolean));
-      if (missing.length) throw new Error(`Нет исходных снимков Source для ${missing.length} мастеров. Обновите Source Import и выполните синхронизацию UI Kit; повтор AI-ревью без снимков не поможет.`);
+      if (missing.length) throw new Error(`Missing original Source snapshots for ${missing.length} masters. Refresh Source Import and synchronize the UI Kit; repeating AI review without snapshots will not help.`);
     }
     let result: DesignSystemAiResult;
     const warnings: string[] = [];
@@ -259,7 +261,7 @@ export async function runDesktopDesignSystemAi(
     };
     if (window.designDNA?.providers?.chatRequest || provider === "codex" || provider === "claude") {
       const desktop = window.designDNA;
-      if (!desktop?.providers?.chatRequest) throw new Error(`${PROVIDER_LABELS[provider]}: требуется подключённый desktop-аккаунт`);
+      if (!desktop?.providers?.chatRequest) throw new Error(`${PROVIDER_LABELS[provider]}: a connected desktop account is required`);
       guard();
       let preparation = await request<DesktopDsPreparation>("/api/design-system/desktop-ai/prepare", {
         document: workingDocument, operation, provider, reasoningEffort: effort, repair: options.repair ?? true,
@@ -269,7 +271,7 @@ export async function runDesktopDesignSystemAi(
         guard();
         if (!preparation.prepareId || !preparation.documentHash || !Array.isArray(preparation.tasks)
           || preparation.provider !== provider || preparation.operation !== operation
-          || seen.has(preparation.prepareId) || seen.size >= 4) throw new Error("Некорректный desktop AI contract");
+          || seen.has(preparation.prepareId) || seen.size >= 4) throw new Error("Invalid desktop AI contract");
         seen.add(preparation.prepareId);
         stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}…`);
         const outputs = new Map<string, string>();
@@ -277,12 +279,12 @@ export async function runDesktopDesignSystemAi(
         const parallel = preparation.stage.startsWith("master-") ? 2 : 1;
         const runTask = async (task: DesktopDsPreparation["tasks"][number], taskIndex: number, correction?: string) => {
           guard();
-          stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: готово ${completed}/${preparation.tasks.length} · ${correction ? "исправление формата 1/1" : [task.componentKey || `проверка ${taskIndex + 1}`, task.viewport].filter(Boolean).join(" / ")}…`);
+          stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: done ${completed}/${preparation.tasks.length} · ${correction ? "format repair 1/1" : [task.componentKey || `verification ${taskIndex + 1}`, task.viewport].filter(Boolean).join(" / ")}…`);
           if (task.status === "unsupported") {
-            warnings.push(`${task.componentKey || task.id}${task.viewport ? ` (${task.viewport})` : ""}: ${task.reason || "Нет исходного снимка для проверки"}`);
+            warnings.push(`${task.componentKey || task.id}${task.viewport ? ` (${task.viewport})` : ""}: ${task.reason || "No original snapshot to verify"}`);
             completed++; return;
           }
-          if (task.status !== "ready" || !task.messages?.length) throw new Error("Некорректная AI-задача");
+          if (task.status !== "ready" || !task.messages?.length) throw new Error("Invalid AI task");
           const chatId = `${runToken}:${task.id}${correction ? ":format-correction" : ""}`;
           activeChatIds.add(chatId);
           const profile = preparation.stage === "master-repair" ? "quality_repair"
@@ -329,10 +331,10 @@ export async function runDesktopDesignSystemAi(
                   // it silently doubles the wait; retry only transport failures.
                   if (attempt || !/ECONNRESET|ETIMEDOUT|\b429\b|\b50[234]\b/i.test(message)) throw error;
                   timings.retries++;
-                  stage("running", `${PROVIDER_LABELS[provider]} · повтор временно прерванного запроса…`);
+                  stage("running", `${PROVIDER_LABELS[provider]} · retrying a temporarily interrupted request…`);
                 } finally { timings.providerMs += Date.now() - chatStarted; activeChatIds.delete(attemptId); }
               }
-              throw new Error("AI-запрос не завершён");
+              throw new Error("AI request incomplete");
             };
             const answer = await chat();
             guard();
@@ -340,10 +342,10 @@ export async function runDesktopDesignSystemAi(
             const answeredProvider = answer.transport?.requestedProvider || answer.provider;
             if (answeredProvider && answeredProvider !== provider
               && !(provider === "astra" && answeredProvider === "openai" && answer.transport?.model === "gpt-6-astra"))
-              throw new Error("AI ответил через другой провайдер");
+              throw new Error("AI responded through a different provider");
             outputs.set(task.id, answer.content);
             if (!correction) completed++;
-            stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: готово ${completed}/${preparation.tasks.length}…`);
+            stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: done ${completed}/${preparation.tasks.length}…`);
           } finally { activeChatIds.delete(chatId); }
         };
         guard();
@@ -354,7 +356,7 @@ export async function runDesktopDesignSystemAi(
           .map((task) => ({ taskId: task.id, output: outputs.get(task.id)! }));
         const apply = () => {
           guard(); // In particular, cancel/stale answers must never reach /apply.
-          stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: серверная проверка ответа и fidelity…`);
+          stage("running", `${PROVIDER_LABELS[provider]} · ${preparation.stage}: server validation and fidelity check…`);
           return request<DesignSystemAiResult>("/api/design-system/desktop-ai/apply", {
             prepareId: preparation.prepareId, documentHash: preparation.documentHash, document: workingDocument, responses: responses(),
           });
@@ -377,13 +379,13 @@ export async function runDesktopDesignSystemAi(
           }
         }
         guard();
-        if (result.error || !result.document) throw new Error(result.error || "AI не вернул документ");
+        if (result.error || !result.document) throw new Error(result.error || "AI returned no document");
         collectResults(result.results);
         workingDocument = result.document;
         acceptedSummary = result.summary;
         hasAcceptedStage = true;
         if (result.complete === true) break;
-        if (!result.nextPreparation) throw new Error("AI завершился без финальной проверки");
+        if (!result.nextPreparation) throw new Error("AI finished without final validation");
         preparation = result.nextPreparation;
       }
     } else {
@@ -392,7 +394,7 @@ export async function runDesktopDesignSystemAi(
         document: workingDocument, provider, reasoningEffort: effort, viewport: options.viewport || "desktop",
       });
       guard();
-      if (result.error || !result.document) throw new Error(result.error || "AI не вернул документ");
+      if (result.error || !result.document) throw new Error(result.error || "AI returned no document");
       collectResults(result.results);
     }
     if (operation === "master-review") {
@@ -400,7 +402,7 @@ export async function runDesktopDesignSystemAi(
       for (const key of keys) {
         const verdict = verdicts.get(key);
         if (!verdict || verdict.approved !== true || verdict.supported === false || verdict.rejected?.length)
-          warnings.push(`${key}: ${verdict?.error || verdict?.rejected?.join("; ") || verdict?.summary || "мастер не одобрен"}`);
+          warnings.push(`${key}: ${verdict?.error || verdict?.rejected?.join("; ") || verdict?.summary || "master not approved"}`);
       }
       result.results = [...verdicts.values()];
       result.reviewed = verdicts.size;
@@ -410,7 +412,7 @@ export async function runDesktopDesignSystemAi(
     options.beforeCommit?.();
     guard(); // beforeCommit is external code; recheck before saving node state.
     get().setNodeData(nodeId, { document: result.document, summary: result.summary, status: "draft", lastError: warnings.join("; ") });
-    stage(warnings.length ? "warning" : "success", warnings.length ? `Проверка не завершена: ${warnings.length} замечаний. Подробности в диагностике.` : `${PROVIDER_LABELS[provider]} · ${operation}: завершено`);
+    stage(warnings.length ? "warning" : "success", warnings.length ? `Verification incomplete: ${warnings.length} issues. See diagnostics for details.` : `${PROVIDER_LABELS[provider]} · ${operation}: complete`);
     get().propagate(nodeId);
     return result;
   } catch (error) {
@@ -421,7 +423,7 @@ export async function runDesktopDesignSystemAi(
         // later failure/cancel, but never replace an edited/reconnected/deleted node.
         guard(true);
         get().setNodeData(nodeId, { document: workingDocument, summary: acceptedSummary, status: "draft" });
-        message += " · Предыдущий принятый этап сохранён; текущий этап не завершён";
+        message += " · Previous accepted stage preserved; current stage incomplete";
       } catch { /* Stale identity/content must retain the newer local state. */ }
     }
     stage(error instanceof DOMException && error.name === "AbortError" ? "cancelled" : "failed", message);
@@ -448,14 +450,14 @@ function chatRoute(provider: NodeProvider, effort: unknown) {
 }
 
 async function cancellableChat(request: Parameters<NonNullable<Window["designDNA"]>["providers"]["chatRequest"]>[0], signal?: AbortSignal) {
-  if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
+  if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
   const desktop = window.designDNA!;
   const id = request.id || newRunId();
   const cancel = () => { void desktop.providers.cancel(id).catch(() => undefined); };
   signal?.addEventListener("abort", cancel, { once: true });
   try {
     const result = await desktop.providers.chatRequest({ ...request, id });
-    if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
+    if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
     return result;
   } finally { signal?.removeEventListener("abort", cancel); }
 }
@@ -487,9 +489,9 @@ async function qualityPassCycle(
   // результат или не исчерпает max_rounds; судья — один раз.
   const outputs: { judge?: string; repairs: string[]; rejudges: string[] } = { repairs: [], rejudges: [] };
   for (;;) {
-    if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
+    if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
     const res = await api<QualityPassResp>("/api/quality-pass/codex-step", { ...request, outputs }, { signal });
-    if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
+    if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
     const pending = res.pending;
     if (!pending) return res;
     const stage = pending.stage as "judge" | "repair" | "rejudge";
@@ -497,9 +499,9 @@ async function qualityPassCycle(
       || (stage === "repair" && (outputs.repairs.length >= QUALITY_PASS_MAX_ROUNDS || outputs.repairs.length !== outputs.rejudges.length))
       || (stage === "rejudge" && outputs.rejudges.length !== outputs.repairs.length - 1)
       || !["judge", "repair", "rejudge"].includes(stage);
-    if (inconsistent) throw new Error("Quality Pass: некорректная последовательность этапов");
+    if (inconsistent) throw new Error("Quality Pass: invalid stage sequence");
     const round = typeof pending.round === "number" && pending.round > 1 ? ` ${pending.round}/${QUALITY_PASS_MAX_ROUNDS}` : "";
-    onStage(stage === "repair" ? `починка${round}` : stage === "rejudge" ? `повторная оценка${round}` : "судья");
+    onStage(stage === "repair" ? `repair${round}` : stage === "rejudge" ? `re-evaluation${round}` : "judge");
     const answer = await cancellableChat({
       // Усилие судьи наследует ноду: на CLI-провайдерах high — это минуты
       // thinking на каждый вариант, выбор скорости/строгости за пользователем.
@@ -573,7 +575,7 @@ function generatorVariantDirections(
     }
     const meta = ((variant as Record<string, any>).meta || {}) as Record<string, any>;
     const label = meta.directionLabel || meta.designDirectionLabel || meta.designDirection || meta.direction || meta.tone;
-    return label ? String(label) : (directions[index]?.label || `Направление ${index + 1}`);
+    return label ? String(label) : (directions[index]?.label || `Direction ${index + 1}`);
   });
 }
 
@@ -665,9 +667,9 @@ function directMotionDesignPrompt(brief: string, video: VideoArtifact | null) {
 async function videoReferenceUrl(video: VideoArtifact): Promise<string> {
   if (/^https:\/\//i.test(video.downloadUrl)) return video.downloadUrl;
   const response = await fetch(video.downloadUrl);
-  if (!response.ok) throw new Error(`Не удалось прочитать готовое видео: HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`Could not read rendered video: HTTP ${response.status}`);
   const blob = await response.blob();
-  if (blob.size > 48 * 1024 * 1024) throw new Error("Готовое видео больше лимита reference 48 MiB");
+  if (blob.size > 48 * 1024 * 1024) throw new Error("Rendered video exceeds the 48 MiB reference limit");
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
@@ -728,7 +730,7 @@ async function refineSourceWithAi(
   const chat = (request: Parameters<typeof cancellableChat>[0]) => cancellableChat(request, signal);
   const desktop = window.designDNA;
   if (!desktop) return null;
-  setStatus(id, "AI-уточнение структуры…");
+  setStatus(id, "AI structure refinement…");
   const instruction = [
     "Ты уточняешь результат автоматического разбора веб-страницы на компоненты.",
     "Дай человекочитаемые названия компонентам и уточни роли блоков.",
@@ -754,12 +756,12 @@ async function refineSourceWithAi(
   });
   guard();
   const match = String(answer.content || "").match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("AI-уточнение: ответ не содержит JSON");
+  if (!match) throw new Error("AI refinement: response contains no JSON");
   let operations: unknown;
   try {
     operations = (JSON.parse(match[0]) as { operations?: unknown }).operations;
   } catch {
-    throw new Error("AI-уточнение: некорректный JSON");
+    throw new Error("AI refinement: invalid JSON");
   }
   if (!Array.isArray(operations) || !operations.length) return null;
   const applied = await callApi<{ blocks: BlockParseResp["blocks"]; sourceArtifact: unknown; appliedCount: number }>(
@@ -769,7 +771,7 @@ async function refineSourceWithAi(
   );
   guard();
   if (!applied?.appliedCount) return null;
-  setStatus(id, `AI-уточнение: ${applied.appliedCount} правок`);
+  setStatus(id, `AI refinement: ${applied.appliedCount} edits`);
   return { ...response, blocks: applied.blocks, sourceArtifact: applied.sourceArtifact as never };
 }
 
@@ -811,7 +813,7 @@ async function segmentScreenshotWithAi(
   const rawOutputs: Array<{ tileIndex: number; content: string }> = [];
   for (const [index, task] of tasks.entries()) {
     guard();
-    setStatus(id, `Разметка компонентов: тайл ${index + 1}/${tasks.length}…`);
+    setStatus(id, `Component markup: tile ${index + 1}/${tasks.length}…`);
     const answer = await chat({
       ...chatRoute(provider, effort),
       messages: task.messages,
@@ -820,7 +822,7 @@ async function segmentScreenshotWithAi(
     rawOutputs.push({ tileIndex: task.tileIndex, content: answer.content });
   }
 
-  setStatus(id, "Проверяю рамки по пикселям…");
+  setStatus(id, "Checking bounds against pixels…");
   const applied = await callApi<SegmentResp>("/api/reproduce/segment", { image, rawOutputs });
   guard();
   if (!applied?.block || !(applied.regions || []).length) return null;
@@ -885,7 +887,7 @@ async function repairSourceWithAi(
     let providerError: unknown = null;
     for (const [index, task] of tasks.entries()) {
       guard();
-      setStatus(id, `AI-починка ${round}/${REPAIR_MAX_ROUNDS}: диагностика ${index + 1}/${tasks.length}…`);
+      setStatus(id, `AI repair ${round}/${REPAIR_MAX_ROUNDS}: diagnostics ${index + 1}/${tasks.length}…`);
       try {
         const answer = await chat({
           ...chatRoute(provider, effort),
@@ -901,15 +903,15 @@ async function repairSourceWithAi(
         if (!rawOutputs.length) break;
       }
     }
-    if (providerError) onWarning(`AI-починка: ${friendlyProviderError(providerError)}`);
+    if (providerError) onWarning(`AI repair: ${friendlyProviderError(providerError)}`);
     if (!rawOutputs.length) {
       if (providerError) {
-        setStatus(id, `AI-починка пропущена: ${friendlyProviderError(providerError)}`);
+        setStatus(id, `AI repair skipped: ${friendlyProviderError(providerError)}`);
       }
       break;
     }
 
-    setStatus(id, `AI-починка ${round}/${REPAIR_MAX_ROUNDS}: перепроверяю сходство…`);
+    setStatus(id, `AI repair ${round}/${REPAIR_MAX_ROUNDS}: rechecking similarity…`);
     guard();
     const applied = await callApi<RepairApplyResp>("/api/block-parse/repair", {
       blocks: current.blocks, viewport, rawOutputs,
@@ -933,15 +935,15 @@ async function repairSourceWithAi(
   }
 
   if (!improved) {
-    setStatus(id, "AI-починка: улучшений не найдено — расхождения остаются на ревью");
+    setStatus(id, "AI repair: no improvement found — differences still need review");
     return null;
   }
   const left = (current.blocks || []).filter((block) => !blockGatePassed(block)).length;
   setStatus(
     id,
     left
-      ? `AI-починка: +${totalGain}% сходства, ${totalApplied} правок · ${left} блок(ов) на ревью`
-      : `AI-починка: +${totalGain}% сходства, ${totalApplied} правок · все блоки прошли гейт`,
+      ? `AI repair: +${totalGain}% similarity, ${totalApplied} edits · ${left} block(s) need review`
+      : `AI repair: +${totalGain}% similarity, ${totalApplied} edits · all blocks passed the gate`,
     left ? undefined : "ok",
   );
   return current;
@@ -1087,37 +1089,15 @@ export interface FlowStoreState {
   restoreDesignSystemEditorApply: (editNodeId: number, previousIr: IRObject | null) => void;
 }
 
-/* Стартовое состояние — из сейва designai-flow-v1 (битый сейв → пустой граф) */
+/* Стартовое состояние — пустой лист до ответа SQLite (единственное хранилище
+ * проекта). localStorage-кэш больше не читается при старте: на больших
+ * проектах он был урезанной копией и подменял полный проект. */
 const emptyGraph = { nodes: [] as FlowNode[], edges: [] as FlowEdge[], view: { ...DEFAULT_VIEW }, nextId: 1 };
-// Компактизация legacy-блоба (parse + stringify мегабайт) не нужна для
-// первой отрисовки — уводим в idle-слот после boot, а не блокируем FCP.
-if (typeof requestIdleCallback === "function") requestIdleCallback(() => compactLegacyLocalStorage(), { timeout: 8_000 });
-else setTimeout(compactLegacyLocalStorage, 1_500);
-const projectSaved = loadPagesProjectFromStorage();
-if (projectSaved) {
-  /* pages-проект полностью заменяет legacy-ключ: убираем мёртвый блоб,
-   * который иначе занимает мегабайты квоты localStorage. */
-  try {
-    localStorage.removeItem(FLOW_LS_KEY);
-  } catch {
-    /* приватный режим и т.п. — не критично */
-  }
-}
-const saved = projectSaved ? null : loadFromStorage();
-const initialSingle = saved ? payloadToRf(saved) : emptyGraph;
-const initialPages: FlowPage[] = projectSaved?.pages || [
-  {
-    id: "page-1",
-    name: "Page 1",
-    ...initialSingle,
-  },
-];
-const initialActivePageId = projectSaved?.activePageId || initialPages[0].id;
-const initialActiveGraph = initialPages.find((page) => page.id === initialActivePageId) || initialPages[0];
-const initialChannels = projectSaved?.channels || {};
-const initialDesignSystems: DesignSystemsRegistry =
-  (projectSaved as unknown as { designSystems?: DesignSystemsRegistry } | null)?.designSystems
-  || { systems: [], defaultSystemRef: null };
+const initialPages: FlowPage[] = [{ id: "page-1", name: "Page 1", ...emptyGraph }];
+const initialActivePageId = initialPages[0].id;
+const initialActiveGraph = initialPages[0];
+const initialChannels: Record<string, IRObject | null> = {};
+const initialDesignSystems: DesignSystemsRegistry = { systems: [], defaultSystemRef: null };
 
 export interface DesignSystemsRegistry {
   systems: Array<Record<string, unknown> & { systemId: string; name: string; status: string; revision: number; contentHash?: string }>;
@@ -1276,22 +1256,58 @@ let localDirtySinceInit = false;
  * снимок — две ссылки, а не копия проекта. Запись — ДО структурной мутации
  * (add/delete/connect/move); правки data нод не пишутся (у полей ввода свой
  * нативный undo, а смешивать их со структурой — терять текст по Ctrl+Z). */
-export type GraphSnapshot = { nodes: FlowNode[]; edges: FlowEdge[] };
+/* Source Import viewports: desktop always, tablet/mobile on demand. Saved projects
+ * with the old "precise" profile keep capturing all three with AI repair. */
+export const SOURCE_VIEWPORT_SIZES: Record<"desktop" | "tablet" | "mobile", { width: number; height: number }> = {
+  desktop: { width: 1440, height: 900 },
+  tablet: { width: 768, height: 1024 },
+  mobile: { width: 390, height: 844 },
+};
+
+export function sourceCaptureViewports(data: Pick<SourceImportNodeData, "captureViewports" | "importProfile">): ("desktop" | "tablet" | "mobile")[] {
+  const extra = Array.isArray(data.captureViewports)
+    ? data.captureViewports
+    : data.importProfile === "precise" ? ["tablet", "mobile"] as const : [];
+  return ["desktop", ...(["tablet", "mobile"] as const).filter((name) => extra.includes(name))];
+}
+
+export function sourceAiRepair(data: Pick<SourceImportNodeData, "aiRepair" | "importProfile">): boolean {
+  return typeof data.aiRepair === "boolean" ? data.aiRepair : data.importProfile === "precise";
+}
+
+export type GraphSnapshot = { nodes: FlowNode[]; edges: FlowEdge[]; dataKeys?: Record<string, string[]> };
 export type GraphHistory = { past: GraphSnapshot[]; future: GraphSnapshot[] };
+// Structural history owns geometry/membership, not newer data on surviving nodes.
+// Removed nodes still restore their snapshot; no data is borrowed across types.
+function restoreGraphNodes(snapshot: GraphSnapshot, current: FlowNode[]): FlowNode[] {
+  const live = new Map(current.map(node => [node.id, node]));
+  return snapshot.nodes.map(node => {
+    const existing = live.get(node.id);
+    if (existing?.type !== node.type) return node;
+    const keys = snapshot.dataKeys?.[node.id];
+    if (!keys) return { ...node, data: existing.data } as FlowNode;
+    const data = { ...existing.data } as Record<string, unknown>;
+    for (const key of keys) {
+      if (Object.hasOwn(node.data, key)) data[key] = (node.data as Record<string, unknown>)[key];
+      else delete data[key];
+    }
+    return { ...node, data } as FlowNode;
+  });
+}
 export type StatusLogEntry = { at: number; text: string; kind?: "ok" | "err" | "warn" };
 const STATUS_LOG_LIMIT = 30;
 const EMPTY_GRAPH_HISTORY: GraphHistory = { past: [], future: [] };
 const GRAPH_HISTORY_LIMIT = 50;
 let graphHistoryMuted = 0;
 
-function recordGraphHistory(get: () => FlowStoreState, set: FlowSet): void {
+function recordGraphHistory(get: () => FlowStoreState, set: FlowSet, dataKeys?: GraphSnapshot['dataKeys']): void {
   if (graphHistoryMuted > 0) return;
   const st = get();
   const past = st.graphHistory.past.length >= GRAPH_HISTORY_LIMIT
     ? st.graphHistory.past.slice(1)
     : st.graphHistory.past;
   set({
-    graphHistory: { past: [...past, { nodes: st.nodes, edges: st.edges }], future: [] },
+    graphHistory: { past: [...past, { nodes: st.nodes, edges: st.edges, dataKeys }], future: [] },
   });
 }
 
@@ -1370,9 +1386,9 @@ export function captureNodeScope(get: () => FlowStoreState, id: number) {
   const visible = () => owns() && useFlowStore.getState().activePageId === pageId;
   let inputCurrent = () => true;
   const check = () => {
-    if (!owns()) throw new DOMException("Лист или нода изменились", "AbortError");
-    if (runAborts.get(key)?.signal.aborted) throw new DOMException("Отменено", "AbortError");
-    if (!inputCurrent()) throw new DOMException("Входные данные изменились. Запустите ноду заново.", "AbortError");
+    if (!owns()) throw new DOMException("Sheet or node changed", "AbortError");
+    if (runAborts.get(key)?.signal.aborted) throw new DOMException("Cancelled", "AbortError");
+    if (!inputCurrent()) throw new DOMException("Inputs changed. Run the node again.", "AbortError");
   };
   return { owns, visible, get, check,
     api: <T>(path: string, body: unknown, init?: { signal?: AbortSignal; runId?: string }) =>
@@ -1382,7 +1398,7 @@ export function captureNodeScope(get: () => FlowStoreState, id: number) {
     watchInputs(test: () => boolean) { inputCurrent = test; }, async wait<T>(promise: Promise<T>): Promise<T> {
     const signal = runAborts.get(key)?.signal;
     const value = await promise;
-    if (signal?.aborted) throw new DOMException("Отменено", "AbortError");
+    if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
     check();
     return value;
   } };
@@ -1459,7 +1475,7 @@ function watchRunStages(get: () => FlowStoreState, id: number, runId: string, ex
       expectedMs,
       label,
       ...(run.stageLabel ? {
-        stage: `${run.stageLabel}${received > 0 && run.status === "running" ? ` · получено ${receivedLabel} зн.` : ""}`,
+        stage: `${run.stageLabel}${received > 0 && run.status === "running" ? ` · received ${receivedLabel} chars` : ""}`,
       } : {}),
       ...(typeof run.percent === "number" ? { percent: run.percent } : {}),
     });
@@ -1503,9 +1519,9 @@ function isAbortError(error: unknown): boolean {
 function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreState { return ({
   designSystems: initialDesignSystems,
   designSystemPicker: emptyPicker,
-  // A clean desktop profile has no localStorage snapshot. Until SQLite has
-  // answered, the empty canvas must not sync over the canonical project.
-  projectHydrated: Boolean(projectSaved),
+  // Until SQLite has answered, the empty canvas must not sync over the
+  // canonical project (the canvas shows a loading state meanwhile).
+  projectHydrated: false,
   nodes: hydratePageBridgeNodes(initialActiveGraph.nodes, initialChannels),
   edges: initialActiveGraph.edges,
   view: initialActiveGraph.view,
@@ -1606,12 +1622,15 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if (!outP || !inP) return false;
     // правило 3: kind выхода входит в набор kind входа
     if (!(inP.kinds || [inP.kind]).includes(outP.kind)) {
-      toast(`Несовместимые порты: ${outP.kind} → ${inP.kind}`, "error");
+      const tip = outP.kind === "tokens" && inP.name === "designSystem"
+        ? "Generator needs Design system (purple), not Tokens. Tokens are for Reskin / Derive / Page."
+        : `Incompatible ports: ${outP.kind} → ${inP.kind}`;
+      toast(tip, "error");
       return false;
     }
     // правило 4: проверка циклов — DFS, путь to -> from уже существует?
     if (reachable(toNode, fromNode, state.edges)) {
-      toast("Нельзя: соединение создаёт цикл", "error");
+      toast("Cannot connect: this would create a cycle", "error");
       return false;
     }
     // правило 5: один провод на вход — существующее ребро в тот же вход заменяется
@@ -1638,9 +1657,9 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const targets = [...new Set(get().edges.filter((edge) => edge.source === sid).map((edge) => Number(edge.target)))];
     recordGraphHistory(get, set);
     if (graphHistoryMuted === 0) {
-      toast("Нода удалена · Ctrl+Z вернёт", "info", {
+      toast("Node deleted · Ctrl+Z to restore", "info", {
         key: "graph-delete",
-        action: { label: "Вернуть", run: () => void get().undoGraph() },
+        action: { label: "Redo", run: () => void get().undoGraph() },
       });
     }
     set((state) => {
@@ -1675,7 +1694,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     withGraphHistoryMuted(() => {
       for (const edge of connected) get().deleteEdge(edge.id);
     });
-    get().setStatus(id, `Разорвано связей: ${connected.length}`, "ok");
+    get().setStatus(id, `Connections removed: ${connected.length}`, "ok");
     return connected.length;
   },
 
@@ -1815,21 +1834,22 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if (runId) void api(`/api/runs/${runId}/cancel`, {}).catch(() => undefined);
     const controller = runAborts.get(nodeRunKey(get().activePageId, id));
     controller?.abort();
-    if (controller) get().setStatus(id, "Отменено", "err");
+    if (controller) get().setStatus(id, "Cancelled", "err");
   },
 
   undoGraph: () => {
     const st = get();
     const prev = st.graphHistory.past[st.graphHistory.past.length - 1];
     if (!prev) return false;
-    const current: GraphSnapshot = { nodes: st.nodes, edges: st.edges };
+    const current: GraphSnapshot = { nodes: st.nodes, edges: st.edges, dataKeys: prev.dataKeys };
     invalidateRemovedNodes(get, prev.nodes);
     set({
-      nodes: prev.nodes,
+      nodes: restoreGraphNodes(prev, st.nodes),
       edges: prev.edges,
       graphHistory: { past: st.graphHistory.past.slice(0, -1), future: [...st.graphHistory.future, current] },
     });
     resyncAfterGraphRestore(get, current.edges, prev.edges);
+    for (const id of Object.keys(prev.dataKeys || {})) get().refreshInputs(Number(id));
     return true;
   },
 
@@ -1837,14 +1857,15 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const st = get();
     const next = st.graphHistory.future[st.graphHistory.future.length - 1];
     if (!next) return false;
-    const current: GraphSnapshot = { nodes: st.nodes, edges: st.edges };
+    const current: GraphSnapshot = { nodes: st.nodes, edges: st.edges, dataKeys: next.dataKeys };
     invalidateRemovedNodes(get, next.nodes);
     set({
-      nodes: next.nodes,
+      nodes: restoreGraphNodes(next, st.nodes),
       edges: next.edges,
       graphHistory: { past: [...st.graphHistory.past, current], future: st.graphHistory.future.slice(0, -1) },
     });
     resyncAfterGraphRestore(get, current.edges, next.edges);
+    for (const id of Object.keys(next.dataKeys || {})) get().refreshInputs(Number(id));
     return true;
   },
 
@@ -1872,7 +1893,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       get().setNodeData(consId, { ir: ir ? deepClone(ir) : null });
       if (ir) {
         get().setNodeData(consId, { ir: deepClone(ir) });
-        get().setStatus(consId, "IR получен — можно разбить на компоненты", "ok");
+        get().setStatus(consId, "Reference IR received — available at the IR output", "ok");
         get().propagate(consId, visited);
       }
     } else if (cons.type === "designui") {
@@ -1890,22 +1911,22 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         get().setNodeData(consId, { sourceNodeId: Number(source.id), sourceUpdate: changed });
         if (changed) get().setStatus(consId, cons.data.systemId
           ? "Source changed — review and Sync before publishing"
-          : "Source подключён — соберите UI Kit");
+          : "Source connected — build the UI Kit");
       } else {
         get().setNodeData(consId, { sourceNodeId: null, sourceUpdate: false });
       }
     } else if (cons.type === "page" || cons.type === "generator" || cons.type === "reskin") {
-      get().setStatus(consId, "Входы изменены — запустите ноду для обновления результата");
+      get().setStatus(consId, "Inputs changed — run the node to update the result");
     } else if (cons.type === "mix") {
-      get().setStatus(consId, "Входы обновлены — нажмите «Смешать»");
+      get().setStatus(consId, "Inputs updated — click Mix");
     } else if (cons.type === "derive") {
-      get().setStatus(consId, "Входы обновлены — нажмите Derive");
+      get().setStatus(consId, "Inputs updated — click Derive");
     } else if (cons.type === "qualitypass") {
       const ir = pullInput(nodes, edges, cons, "ir");
       if (!ir) get().setNodeData(consId, { ir: null, result: null });
       if (ir) {
         get().setNodeData(consId, { ir: deepClone(ir), result: null });
-        get().setStatus(consId, "IR получен — запустите Quality Pass");
+        get().setStatus(consId, "IR received — run Quality Pass");
       }
     } else if (cons.type === "recorder") {
       const ir = pullInput(nodes, edges, cons, "ir");
@@ -1926,7 +1947,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         motion: null,
         sceneIrs: [],
       });
-      get().setStatus(consId, designIr ? "Design IR получен — соберите движение" : "Подключите Design IR");
+      get().setStatus(consId, designIr ? "Design IR received — build motion" : "Connect Design IR");
       get().propagate(consId, visited);
     } else if (cons.type === "motiondesign") {
       const sourceMotion = pullInput(nodes, edges, cons, "motion") as IRObject | null;
@@ -1942,10 +1963,10 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       get().setStatus(
         consId,
         sourceVideo
-          ? "Готовое видео и параметры подключены — подготовьте Seedance prompt"
+          ? "Rendered video and settings connected — prepare a Seedance prompt"
           : (sourceMotion || sourceTimeline || String(connectedPrompt || "").trim())
-            ? "Параметры движения получены — подготовьте Seedance prompt"
-            : "Подключите видео/IR или введите отдельный prompt",
+            ? "Motion settings received — prepare a Seedance prompt"
+            : "Connect video/IR or enter a standalone prompt",
       );
     } else if (cons.type === "timeline") {
       const sourcePages = videoPages(nodes, edges, cons);
@@ -1953,7 +1974,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       if (JSON.stringify(cons.data.ir) === JSON.stringify(designIr) && JSON.stringify(cons.data.sourcePages || []) === JSON.stringify(sourcePages)) return;
       get().setNodeData(consId, { ir: designIr ? deepClone(designIr) : null, sourcePages: deepClone(sourcePages), timeline: null, renderJob: null, ...videoSourceCheckpoint(cons.data) });
       get().propagate(consId, visited);
-      get().setStatus(consId, designIr ? `Подключено страниц: ${sourcePages.length}` : "Подключите начальную страницу");
+      get().setStatus(consId, designIr ? `Pages connected: ${sourcePages.length}` : "Connect the starting page");
     } else if (cons.type === "pagebridge") {
       get().runPageBridge(consId);
       get().propagate(consId, visited);
@@ -2002,7 +2023,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       pullInput(st.nodes, st.edges, n, "prompt") || data.ownPrompt || "",
     ).trim();
     if (!brief) {
-      if (scope.owns()) get().setStatus(id, "Нет промта: подключите провод или заполните поле", "err");
+      if (scope.owns()) get().setStatus(id, "No prompt: connect a wire or fill in the field", "err");
       return;
     }
     const designSystemInput = pullInput(st.nodes, st.edges, n, "designSystem");
@@ -2026,17 +2047,17 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const providerLabel = provider === "codex"
       ? PROVIDER_LABELS.codex
       : `${PROVIDER_LABELS[provider]} · ${effort}`;
-    if (scope.owns()) get().setStatus(id, `Генерация (${providerLabel}, ${count})… 20–120 сек`);
+    if (scope.owns()) get().setStatus(id, `Generating (${providerLabel}, ${count})… 20–120 sec`);
     const signal = beginRunAbort(id, get().activePageId);
     get().setNodeData(id, { qualityScores: [], qualityReviews: [] });
     let stopPoll: () => void = () => {};
     if (scope.owns()) get().setBusy(id, true);
     const startedAt = Date.now();
-    const progressLabel = `Генерация · ${providerLabel}`;
+    const progressLabel = `Generation · ${providerLabel}`;
     let designSystemRef: Record<string, unknown> | null = null;
     // Стадии честные: клиент знает только «ждём модель» и «Quality Pass»,
     // процента у синхронного POST нет — NodeShell показывает indeterminate.
-    if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Готовлю промпт" });
+    if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Preparing prompt" });
     try {
       // ДС по проводу приоритетнее глобального выбора проекта: граф говорит,
       // от какой системы генерировать. Черновик не годится — strict-контекст
@@ -2049,20 +2070,20 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           const dsNode = get().nodes.find((node) => Number(node.id) === dsId);
           const dsData = dsNode?.data as DesignSystemNodeData | undefined;
           if (get().busy[dsId] || dsData?._dsFinishing) {
-            get().setStatus(id, "Дизайн-система ещё обрабатывается. Дождитесь завершения проверки и повторите генерацию.", "err");
+            get().setStatus(id, "The design system is still processing. Wait for verification to finish, then generate again.", "err");
             return;
           }
           const needsReview = !!dsData?.sourceUpdate || Number(dsData?.summary?.reviewMasters || 0) > 0
             || Object.keys(dsData?.document?.reviewComponents || {}).length > 0;
-          if (scope.owns()) get().setStatus(id, needsReview ? "Проверяю и дорабатываю ДС…" : "Публикую ДС…");
+          if (scope.owns()) get().setStatus(id, needsReview ? "Reviewing and refining the DS…" : "Publishing DS…");
           publishingDs = true;
           const ready = !needsReview || await scope.wait(get().finishDesignSystem(dsId));
           const published = ready && ((get().nodes.find((node) => Number(node.id) === dsId)?.data as DesignSystemNodeData | undefined)?.status === "published"
             || await scope.wait(get().publishDesignSystem(dsId)));
           if (!published) {
             const dsNode = get().nodes.find((node) => Number(node.id) === Number((wiredDs as { nodeId?: number }).nodeId));
-            const reason = String((dsNode?.data as DesignSystemNodeData | undefined)?.lastError || "публикация заблокирована");
-            if (scope.owns()) get().setStatus(id, `Дизайн-система не готова: ${reason}. Откройте диагностику ноды UI Kit.`, "err");
+            const reason = String((dsNode?.data as DesignSystemNodeData | undefined)?.lastError || "publication blocked");
+            if (scope.owns()) get().setStatus(id, `Design system not ready: ${reason}. Open UI Kit node diagnostics.`, "err");
             if (scope.owns()) get().setBusy(id, false);
             if (scope.owns()) get().setProgress(id, null);
             return;
@@ -2074,7 +2095,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           publishingDs = false;
         }
         if (wiredDs?.status !== "published") {
-          if (scope.owns()) get().setStatus(id, `ДС «${wiredDs?.name || wiredDs?.systemId}» не опубликована. Откройте ноду ДС → AI-ревью`, "err");
+          if (scope.owns()) get().setStatus(id, `DS “${wiredDs?.name || wiredDs?.systemId}” is unpublished. Open the DS node → AI review`, "err");
           if (scope.owns()) get().setBusy(id, false);
           if (scope.owns()) get().setProgress(id, null);
           return;
@@ -2103,7 +2124,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           } as IRObject]
         : undefined;
       if (data.conceptMode === "on" && visualReference?.role !== "reproduce") {
-        get().setProgress(id, { expectedMs: 120_000, label: "Эскиз", stage: "Создаю визуальное направление" });
+        get().setProgress(id, { expectedMs: 120_000, label: "Sketch", stage: "Creating a visual direction" });
         const concept = await createVisualConcept({ id: newRunId(), inputKey, startedAt: Date.now(),
           conceptOnly: true, status: "running", provider: effectiveAssetProvider(data.assetMode, provider) },
           { brief, tokens, designSystem: designSystemRef }, { signal, check: scope.check, model: data.assetModel, reference: visualReference,
@@ -2113,7 +2134,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
             },
           });
         if (concept.result) {
-          visualReference = { image: concept.result.src, role: "composition", conceptOnly: true, origin: "Эскиз генерации" };
+          visualReference = { image: concept.result.src, role: "composition", conceptOnly: true, origin: "Generation sketch" };
           conceptHash = concept.result.sha256;
         }
       }
@@ -2140,7 +2161,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       let res: GenerateResp;
       if (!desktop) {
         const runId = newRunId();
-        if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Модель генерирует IR" });
+        if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Model is generating IR" });
         stopPoll = watchRunStages(get, id, runId, 90_000, progressLabel);
         try {
           res = await scope.wait(scope.api<GenerateResp>("/api/generate", { ...request, runId }, { signal, runId }));
@@ -2153,7 +2174,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         if (prepared.artDirection?.messages?.length) {
           // Арт-направления идут через транспорт Electron (регулятор, трасса,
           // GPT по подписке через Codex), а не из Python-воркера.
-          if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: progressLabel, stage: "Модель предлагает арт-направления" });
+          if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: progressLabel, stage: "Model is proposing art directions" });
           const directionsAnswer = await scope.wait(cancellableChat({
             ...chatRoute(provider, "medium"),
             profile: "art_direction",
@@ -2167,11 +2188,11 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           // материализовал точную копию мастера, модель не нужна.
           res = prepared;
         } else {
-          if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы генератора");
+          if (!prepared.prompts?.length) throw new Error("Could not prepare Generator requests");
           const rawOutputs: string[] = [];
           for (let i = 0; i < prepared.prompts.length; i += 1) {
             const many = prepared.prompts.length > 1 ? ` ${i + 1}/${prepared.prompts.length}` : "";
-            if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: `Модель генерирует IR${many}` });
+            if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: `Model is generating IR${many}` });
             const answer = await scope.wait(cancellableChat({
               ...chatRoute(provider, effort),
               messages: prepared.prompts[i].messages,
@@ -2179,7 +2200,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
             if (signal.aborted) throw new DOMException("cancelled", "AbortError");
             rawOutputs.push(answer.content);
           }
-          if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Проверка схемы и автофиксы" });
+          if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: progressLabel, stage: "Schema validation and automatic fixes" });
           res = await scope.wait(scope.api<GenerateResp>("/api/generate", { ...request, rawOutputs, preparedContextId: prepared.preparedContextId }, { signal }));
         }
       }
@@ -2206,10 +2227,10 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           const assetScope = { check: () => {
             scope.check();
             const now = get().nodes.find(node => Number(node.id) === id)?.data as GeneratorNodeData;
-            if (inputFingerprint(now?.variants) !== expected) throw new DOMException("Варианты изменились", "AbortError");
+            if (inputFingerprint(now?.variants) !== expected) throw new DOMException("Variants changed", "AbortError");
           } };
           const result = await executeAssetPlan(variants, assetRun, { signal, scope: assetScope,
-            onStage: stage => get().setProgress(id, { expectedMs: 120_000, label: "Изображения", stage }),
+            onStage: stage => get().setProgress(id, { expectedMs: 120_000, label: "Images", stage }),
             onChange: (next, run) => {
               const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
               get().setNodeData(id, { variants: next, assetRuns: assetRunPatch(now.assetRuns, run) });
@@ -2227,8 +2248,8 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       let repairedCount = 0;
       for (let i = 0; i < variants.length; i += 1) {
         const label = variants.length > 1 ? ` ${i + 1}/${variants.length}` : "";
-        if (scope.owns()) get().setStatus(id, `Quality Pass${label}: судья…`);
-        if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage: "Судья оценивает" });
+        if (scope.owns()) get().setStatus(id, `Quality Pass${label}: judging…`);
+        if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: `Quality Pass${label}`, stage: "Judge is evaluating" });
         const qpRunId = newRunId();
         const stopQpPoll = desktop ? () => {} : watchRunStages(get, id, qpRunId, 60_000, `Quality Pass${label}`);
         try {
@@ -2255,7 +2276,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         } catch (qpError) {
       if (!scope.owns()) return;
           if (isAbortError(qpError) || signal.aborted) throw qpError;
-          console.warn("Quality Pass: вариант оставлен без оценки", qpError);
+          console.warn("Quality Pass: variant left unscored", qpError);
           qualityScores.push(null);
           qualityReviews.push({ score: null, passed: null, reasons: [] });
         } finally {
@@ -2263,56 +2284,59 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         }
       }
       if (assetRun) {
-        variants = await scope.wait(reconcileAssets(variants, assetRun, signal, scope));
-        assetRun.status = assetRun.plan.slots.every(slot => slot.status === "complete") ? "complete" : "partial";
+        variants = await scope.wait(verifyAssetPlan(variants, assetRun, signal, scope));
+        assetRun.status = !assetRun.verificationError && assetRun.plan.slots.every(slot => slot.status === "complete") ? "complete" : "partial";
+        if (assetRun.verificationError) for (const review of qualityReviews) {
+          review.passed = false; review.reasons.push("Images saved; verification needs to be retried");
+        }
         const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
         get().setNodeData(id, { assetRuns: assetRunPatch(now.assetRuns, assetRun) });
         for (const slot of assetRun.plan.slots.filter(slot => slot.status !== "complete")) {
           if (qualityReviews[slot.variant]) {
             qualityReviews[slot.variant].passed = false;
-            qualityReviews[slot.variant].reasons.push(`Изображение не готово: ${slot.subject.slice(0, 100)}`);
+            qualityReviews[slot.variant].reasons.push(`Image not ready: ${slot.subject.slice(0, 100)}`);
           }
         }
       }
       if (scope.owns()) get().setNodeData(id, { variants: [...variants], active: 0, qualityScores, qualityReviews, generationContext, variantDirections, ...directionPatch } as unknown as Partial<GeneratorNodeData>);
-      const errNote = res.errors && res.errors.length ? `, ошибок: ${res.errors.length}` : "";
+      const errNote = res.errors && res.errors.length ? `, errors: ${res.errors.length}` : "";
       const fixedCount = (res.qa || []).reduce((s, q) => s + (q.fixed || 0), 0);
-      const qaNote = fixedCount ? `, автофиксов QA: ${fixedCount}` : "";
-      const designNote = res.design?.label ? `, тип: ${res.design.label}` : "";
+      const qaNote = fixedCount ? `, QA fixes: ${fixedCount}` : "";
+      const designNote = res.design?.label ? `, type: ${res.design.label}` : "";
       const qpNote = qualityScores.length
         ? ` · QP ${qualityScores.map((score) => (score == null ? "—" : score)).join("/")}`
-        + (repairedCount ? ` (починок: ${repairedCount})` : "")
+        + (repairedCount ? ` (repairs: ${repairedCount})` : "")
         : "";
       const needsRevision = qualityReviews
         .map((review, index) => ({ review, index }))
         .filter(({ review }) => review.passed === false || (review.score != null && review.score < 80));
       const strictFallback = String((generationLog as Record<string, unknown> | undefined)?.strictFallback || "");
       if (strictFallback === "extend") {
-        if (scope.owns()) get().setStatus(id, "strict: мастера не использованы, результат принят в режиме extend", "err");
+        if (scope.owns()) get().setStatus(id, "strict: masters were not used; result accepted in extend mode", "err");
       } else if (needsRevision.length) {
         // Результат готов и показан: починка прошла все раунды, судья всё ещё
         // видит замечания. Это предупреждение к готовому варианту, не ошибка.
         const reasons = needsRevision.flatMap(({ review }) => review.reasons).slice(0, 3);
-        const reasonNote = reasons.length ? ` · осталось: ${reasons.join("; ")}` : "";
-        if (scope.owns()) get().setStatus(id, `Готово с замечаниями${qpNote}${reasonNote}`, "warn");
+        const reasonNote = reasons.length ? ` · remaining: ${reasons.join("; ")}` : "";
+        if (scope.owns()) get().setStatus(id, `Done with issues${qpNote}${reasonNote}`, "warn");
       } else if (!variants.length || qualityReviews.some((review) => review.passed == null)) {
-        if (scope.owns()) get().setStatus(id, "Предпросмотр создан · проверка не завершена", "err");
+        if (scope.owns()) get().setStatus(id, "Preview created · verification incomplete", "err");
       } else {
-        if (scope.owns()) get().setStatus(id, `Предпросмотр проверен: вариантов ${variants.length}${errNote}${qaNote}${designNote}${qpNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "ok");
+        if (scope.owns()) get().setStatus(id, `Preview verified: variants ${variants.length}${errNote}${qaNote}${designNote}${qpNote} · ${((Date.now() - startedAt) / 1000).toFixed(0)}s`, "ok");
       }
       if (scope.owns()) get().propagate(id);
     } catch (e) {
       if (!scope.owns()) return;
       if (isAbortError(e) || signal.aborted) {
-        if (scope.owns()) get().setStatus(id, e instanceof Error && e.message.startsWith("Входные") ? e.message : `Отменено · ${((Date.now() - startedAt) / 1000).toFixed(0)}с`, "err");
+        if (scope.owns()) get().setStatus(id, e instanceof Error && e.message.startsWith("Inputs") ? e.message : `Cancelled · ${((Date.now() - startedAt) / 1000).toFixed(0)}s`, "err");
       } else {
         const msg = friendlyProviderError(e);
         const strictFailure = String(designSystemRef?.usageMode || "") === "strict"
           && /Design System Strict|Strict.*мастер|strict.*master/i.test(msg);
         if (scope.owns()) get().setStatus(id, strictFailure
-          ? `Strict не смог использовать мастер: ${msg}. Проверьте референс или переключите режим ДС на extend.`
-          : "Ошибка: " + msg, "err");
-        toast("Генератор: " + msg, "error");
+          ? `Strict mode could not use the master: ${msg}. Check the reference or switch DS mode to extend.`
+          : "Error: " + msg, "err");
+        toast("Generator: " + msg, "error");
       }
     } finally {
       stopPoll();
@@ -2335,10 +2359,10 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const previous = data.assetRuns?.at(-1);
     if (!previous || !context) return;
     if (previous.generationStartedAt != null && previous.generationStartedAt !== context.startedAt) {
-      get().setStatus(id, "Этот план относится к предыдущей генерации", "warn"); return;
+      get().setStatus(id, "This plan belongs to the previous generation", "warn"); return;
     }
     if (context.pageId !== state.activePageId || context.baseInputKey !== generatorInputKey(state.nodes, state.edges, node, state.designSystemPicker, false, true)) {
-      get().setStatus(id, "Входные данные изменились: запустите Генератор для нового задания", "warn"); return;
+      get().setStatus(id, "Inputs changed: run Generator for a new task", "warn"); return;
     }
     const scope = captureNodeScope(get, id), signal = beginRunAbort(id, get().activePageId);
     const inputKey = generatorInputKey(state.nodes, state.edges, node, state.designSystemPicker);
@@ -2362,7 +2386,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         return slot.status !== "complete" && fresh ? { ...fresh, attempts: slot.attempts } : slot;
       });
       const result = await executeAssetPlan(data.variants, run, { signal, scope, onlySlot: slotId,
-        onStage: stage => get().setProgress(id, { expectedMs: 120_000, label: "Изображения", stage }),
+        onStage: stage => get().setProgress(id, { expectedMs: 120_000, label: "Images", stage }),
         onChange: (variants, current) => {
           const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
           get().setNodeData(id, { variants, assetRuns: assetRunPatch(now.assetRuns, current), qualityReviews: [], qualityScores: [] });
@@ -2376,23 +2400,23 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           const qp = await scope.wait(qualityPassCycle(variants[index], context.brief, nodeProvider(data.provider), data.effort,
             stage => get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage }),
             { signal, repair: false, visualReview: true, surface: data.surface || "auto", designSystem: context.designSystem }));
-          const missing = run.plan.slots.some(slot => slot.variant === index && slot.status !== "complete");
+          const missing = !!run.verificationError || run.plan.slots.some(slot => slot.variant === index && slot.status !== "complete");
           (run.quality ||= [])[index] = qp.resourceEvidence || null;
           reviews.push({ score: qp.scorecard?.score ?? null, passed: missing ? false : qp.acceptance?.status === "unverified" ? null : qp.passed ?? null,
-            reasons: missing ? ["Не все изображения готовы"] : [...(qp.resourceEvidence?.errors || []), ...(qp.scorecard?.issues || [])].map(issue => String(issue.problem || "")).filter(Boolean) });
+            reasons: missing ? [run.verificationError ? "Images saved; verification needs to be retried" : "Not all images are ready"] : [...(qp.resourceEvidence?.errors || []), ...(qp.scorecard?.issues || [])].map(issue => String(issue.problem || "")).filter(Boolean) });
         } catch (error) {
           scope.check(); if (signal.aborted) throw error;
-          reviews.push({ score: null, passed: null, reasons: ["Проверка не завершена"] });
+          reviews.push({ score: null, passed: null, reasons: ["Verification incomplete"] });
         }
       }
       scope.check();
       const now = get().nodes.find(node => Number(node.id) === id)!.data as GeneratorNodeData;
       get().setNodeData(id, { qualityReviews: reviews, qualityScores: reviews.map(review => review.score), generationContext: { ...context, inputKey }, assetRuns: assetRunPatch(now.assetRuns, run) });
-      get().setStatus(id, run.status === "complete" ? "Изображения готовы" : "Часть изображений требует повторной попытки",
+      get().setStatus(id, run.verificationError ? "Images saved; verification needs to be retried" : run.status === "complete" ? "Images ready" : "Some images need another attempt",
         run.status === "complete" && reviews.every(review => review.passed === true) ? "ok" : "warn");
       get().propagate(id);
     } catch (error) {
-      if (scope.owns()) get().setStatus(id, isAbortError(error) || signal.aborted ? "Создание изображений остановлено" : friendlyProviderError(error), "warn");
+      if (scope.owns()) get().setStatus(id, isAbortError(error) || signal.aborted ? "Image generation stopped" : friendlyProviderError(error), "warn");
     } finally {
       endRunAbort(id, signal, get().activePageId);
       if (scope.owns()) {
@@ -2425,10 +2449,10 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       }
     }
     if (irs.length < 2) {
-      if (scope.owns()) get().setStatus(id, "Нужно минимум 2 подключённых IR-входа", "err");
+      if (scope.owns()) get().setStatus(id, "Connect at least two IR inputs", "err");
       return;
     }
-    if (scope.owns()) get().setStatus(id, "Смешиваю…");
+    if (scope.owns()) get().setStatus(id, "Mixing…");
     if (scope.owns()) get().setBusy(id, true);
     try {
       // Счётчик вариантов (хендофф): вариант 0 — точные веса, дальше акцент
@@ -2449,13 +2473,13 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       ));
       const mixVariants = results.map((res) => res.ir).filter((ir): ir is IRObject => !!ir);
       if (scope.owns()) get().setNodeData(id, { mixVariants, mixActive: 0, ir: mixVariants[0] || null });
-      if (scope.owns()) get().setStatus(id, `${irs.length} вх → ${mixVariants.length} вар · ` + labels.join(" + "), "ok");
+      if (scope.owns()) get().setStatus(id, `${irs.length} inputs → ${mixVariants.length} variants · ` + labels.join(" + "), "ok");
       if (scope.owns()) get().propagate(id);
     } catch (e) {
       if (!scope.owns()) return;
       const msg = e instanceof Error ? e.message : String(e);
-      if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
-      toast("Микс: " + msg, "error");
+      if (scope.owns()) get().setStatus(id, "Error: " + msg, "err");
+      toast("Mix: " + msg, "error");
     } finally {
       if (scope.owns()) get().setBusy(id, false);
     }
@@ -2476,7 +2500,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if ((data as Record<string, unknown>)._inputFingerprint === fingerprint) return;
     if (!blocks.length) {
       get().setNodeData(id, { _inputFingerprint: fingerprint, ir: null, sourceRegistry: {}, nodeSources: {}, layoutEvidence: [] });
-      get().setStatus(id, "Подключите хотя бы один компонент", "err");
+      get().setStatus(id, "Connect at least one component", "err");
       return;
     }
     const meta = blocks[0].ir.meta as Record<string, unknown> | undefined;
@@ -2484,7 +2508,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const result = composeSourceInputs(blocks, null, viewport, blocks.length > 1);
     if (JSON.stringify(data.ir) !== JSON.stringify(result.ir)) get().setNodeData(id, { ...result, _inputFingerprint: fingerprint });
     else get().setNodeData(id, { _inputFingerprint: fingerprint });
-    get().setStatus(id, `${blocks.length} компонент(а) · ${Object.keys(result.sourceRegistry).length} источн.`, "ok");
+    get().setStatus(id, `${blocks.length} component(s) · ${Object.keys(result.sourceRegistry).length} sources`, "ok");
   },
 
   runPage: (id) => {
@@ -2496,14 +2520,14 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       .map((name) => sourceInputForPort(st.nodes, st.edges, n, name))
       .filter((block): block is SourceInputBlock => block !== null);
     if (!blocks.length) {
-      get().setStatus(id, "Подключите хотя бы один IR-вход", "err");
+      get().setStatus(id, "Connect at least one IR input", "err");
       return;
     }
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
     const tokens = tokensRaw && typeof tokensRaw === "object" ? (tokensRaw as IRObject) : null;
     const result = composeSourceInputs(blocks, tokens, data.activeViewport || "desktop", true);
     get().setNodeData(id, result);
-    get().setStatus(id, `Собрана: блоков ${blocks.length}`, "ok");
+    get().setStatus(id, `Assembled: blocks ${blocks.length}`, "ok");
     get().propagate(id);
   },
   runSourceImport: async (id) => {
@@ -2524,7 +2548,8 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     signal.addEventListener("abort", cancelJob, { once: true });
     const sourceInput = (value: SourceImportNodeData) => inputFingerprint({
       mode: value.mode, url: value.url, image: value.image, mine: value.mine,
-      authenticatedSession: value.authenticatedSession, kit: sourceKitFingerprint(value),
+      authenticatedSession: value.authenticatedSession, viewports: sourceCaptureViewports(value), aiRepair: sourceAiRepair(value),
+      kit: sourceKitFingerprint(value),
     });
     let inputAtStart = sourceInput(data);
     if (scope.owns()) get().setNodeData(id, { _sourceRun: sourceRun });
@@ -2534,7 +2559,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const guard = () => {
       const current = get().nodes.find((node) => Number(node.id) === id);
       if (signal.aborted || !ownsRun() || !current || sourceInput(current.data as SourceImportNodeData) !== inputAtStart)
-        throw new DOMException("Source изменился или импорт отменён", "AbortError");
+        throw new DOMException("Source changed or import cancelled", "AbortError");
     };
     const stages: Record<string, AiPipelineStage> = {};
     const recordStage = (name: string, status: AiPipelineStage["status"], message: string) => {
@@ -2549,11 +2574,17 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     };
     if (scope.owns()) get().setBusy(id, true);
     const startedAt = Date.now();
-    if (scope.owns()) get().setProgress(id, { expectedMs: 90_000, label: data.mode === "screenshot" ? "Скриншот → IR" : "Импорт Source" });
+    const captureViewports = sourceCaptureViewports(data);
+    const aiRepair = sourceAiRepair(data);
+    const expectedImportMs = 45_000 + 20_000 * (captureViewports.length - 1) + (aiRepair ? 240_000 : 0);
+    if (scope.owns()) get().setProgress(id, {
+      expectedMs: data.mode === "screenshot" ? 90_000 : expectedImportMs,
+      label: data.mode === "screenshot" ? "Screenshot → IR" : `Source Import · ${captureViewports.join(" + ")}`,
+    });
     try {
       if (data.mode === "screenshot") {
         if (!data.image) {
-          if (scope.owns()) get().setStatus(id, "Загрузите скриншот элемента", "err");
+          if (scope.owns()) get().setStatus(id, "Upload an element screenshot", "err");
           return;
         }
         // Сначала — сегментация компонентов агентом (Claude/GPT по выбору на
@@ -2561,18 +2592,18 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         // сегментация недоступна (web-режим, отказ провайдера, ноль рамок) —
         // прежний путь: единый pixel-capture слепок.
         let segmented: SegmentResp | null = null;
-        recordStage("import", "running", "Импорт скриншота…");
+        recordStage("import", "running", "Importing screenshot…");
         if (window.designDNA) {
           try {
-            recordStage("segmentation", "running", "AI-сегментация…");
+            recordStage("segmentation", "running", "AI segmentation…");
             segmented = await scope.wait(segmentScreenshotWithAi(
               data.image, provider, get().setStatus, id, effort, guard, signal));
             guard();
-            recordStage("segmentation", segmented ? "success" : "warning", segmented ? "Компоненты размечены" : "AI-сегментация не вернула компоненты");
+            recordStage("segmentation", segmented ? "success" : "warning", segmented ? "Components annotated" : "AI segmentation returned no components");
           } catch (error) {
       if (!scope.owns()) return;
             guard();
-            recordStage("segmentation", "failed", `Сегментация: ${friendlyProviderError(error)}`);
+            recordStage("segmentation", "failed", `Segmentation: ${friendlyProviderError(error)}`);
           }
         }
         if (segmented?.block) {
@@ -2584,14 +2615,14 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
             sourceArtifact: segmented.sourceArtifact || null,
           });
           const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
-          recordStage("import", "success", "Скриншот импортирован");
-          finishStatus(`${segmented.regions.length} компонент(ов) из скриншота · ${secs}с`);
+          recordStage("import", "success", "Screenshot imported");
+          finishStatus(`${segmented.regions.length} component(s) from screenshot · ${secs}s`);
           if (scope.owns()) get().propagate(id);
           return;
         }
-        if (scope.owns()) get().setStatus(id, "Скриншот → pixel capture через подключённый аккаунт…");
+        if (scope.owns()) get().setStatus(id, "Screenshot → pixel capture through connected account…");
         guard();
-        if (provider === "codex" || provider === "claude") throw new Error("AI-сегментация не завершена; API fallback для выбранного desktop-аккаунта отключён");
+        if (provider === "codex" || provider === "claude") throw new Error("AI segmentation incomplete; API fallback is disabled for the selected desktop account");
         const res = await scope.wait(scope.api<ReproduceResp>("/api/reproduce", {
           image: data.image,
           url: "",
@@ -2612,43 +2643,41 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           : [];
         if (scope.owns()) get().setNodeData(id, { blocks, tokens: dna.tokens, sourceArtifact: null });
         const secs = ((Date.now() - startedAt) / 1000).toFixed(0);
-        recordStage("import", ir ? "success" : "failed", ir ? "Скриншот импортирован" : "Не удалось получить IR из скриншота");
-        finishStatus(`capture + Style DNA · ${secs}с`, !ir);
+        recordStage("import", ir ? "success" : "failed", ir ? "Screenshot imported" : "Could not obtain IR from the screenshot");
+        finishStatus(`capture + tokens · ${secs}s`, !ir);
       } else {
         const rawUrl = (data.url || "").trim();
         const url = rawUrl && !/^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl)
           ? rawUrl.startsWith("//") ? `https:${rawUrl}` : `https://${rawUrl}`
           : rawUrl;
         if (!url) {
-          if (scope.owns()) get().setStatus(id, "Введите URL сайта", "err");
+          if (scope.owns()) get().setStatus(id, "Enter the site URL", "err");
           return;
         }
         if (!data.mine) {
-          if (scope.owns()) get().setStatus(id, "Отметьте «это мой сайт/есть право»", "err");
+          if (scope.owns()) get().setStatus(id, "Confirm that you own the site or have permission", "err");
           return;
         }
         if (data.importedUrl === url && data.blocks.length > 0) {
           Object.assign(stages, data.pipelineStatus || {});
-          finishStatus(`Уже загружено локально · ${data.blocks.length} блоков`);
+          finishStatus(`Already loaded locally · ${data.blocks.length} blocks`);
           return;
         }
         if (url !== data.url) if (scope.owns()) get().setNodeData(id, { url });
         inputAtStart = sourceInput(get().nodes.find((node) => Number(node.id) === id)!.data as SourceImportNodeData);
         recordStage("import", "running", "Source Import…");
-        if (scope.owns()) get().setStatus(id, `Импортирую ${url.slice(0, 30)}…`);
+        if (scope.owns()) get().setStatus(id, `Importing ${url.slice(0, 30)}…`);
         const desktop = window.designDNA;
         sourceJobId = sourceRun;
         const initial = await scope.wait(scope.api<BlockParseResp | BlockParseJobResp>("/api/block-parse", {
           url,
           asyncJob: true,
           jobId: sourceJobId,
+          // lossless screenshots are content-addressed blobs (node data keeps a short ref);
+          // UI Kit reviews compare them 1:1 with master renders
           fullResolutionEvidence: !!desktop,
           useAuthenticatedSession: !!data.authenticatedSession && !!window.designDNA?.sourceAuth,
-          viewports: [
-            { name: "desktop", width: 1440, height: 900 },
-            { name: "tablet", width: 768, height: 1024 },
-            { name: "mobile", width: 390, height: 844 },
-          ],
+          viewports: captureViewports.map((name) => ({ name, ...SOURCE_VIEWPORT_SIZES[name] })),
         }, { signal }));
         guard();
         let res: BlockParseResp;
@@ -2660,12 +2689,12 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           while (job.status === "queued" || job.status === "running") {
             guard();
             if (scope.owns()) get().setProgress(id, {
-              expectedMs: 90_000,
+              expectedMs: expectedImportMs,
               label: job.stageLabel || "Source Import",
               percent: job.progress,
             });
             if (scope.owns()) get().setStatus(id, `${job.stageLabel || "Source Import"} · ${Math.round(job.progress)}%`);
-            if (Date.now() >= deadline) throw new Error("Source Import превысил лимит 12 минут");
+            if (Date.now() >= deadline) throw new Error("Source Import exceeded the 12-minute limit");
             // Бэкофф: первые 10 с опрашиваем часто (стадии сменяются быстро),
             // дальше реже — импорт идёт минутами, а каждый опрос это полный
             // IPC → stdio → ASGI round-trip.
@@ -2676,9 +2705,9 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
             job = await scope.wait(scope.apiGet<BlockParseJobResp>(`/api/block-parse/job/${encodeURIComponent(job.jobId)}`));
             guard();
           }
-          if (job.status === "cancelled") throw new DOMException("Импорт отменён", "AbortError");
-          if (job.status === "error") throw new Error(job.error || "Source Import завершился с ошибкой");
-          if (!job.result) throw new Error("Source Import завершился без результата");
+          if (job.status === "cancelled") throw new DOMException("Import cancelled", "AbortError");
+          if (job.status === "error") throw new Error(job.error || "Source Import failed");
+          if (!job.result) throw new Error("Source Import finished without a result");
           res = job.result;
         } else {
           // Compatibility with web/dev servers and intercepted UI fixtures.
@@ -2690,59 +2719,62 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         // late, leaving Compare empty after a restart.
         await scope.wait(offloadSourceEvidenceInPlace(res.blocks || []));
         guard();
-        recordStage("import", "success", "Source захвачен");
-        recordStage("refine", "skipped", "AI-уточнение не требуется или отключено");
+        recordStage("import", "success", "Source captured");
+        recordStage("refine", "skipped", "AI refinement is unnecessary or disabled");
         // AI-уточнение: детерминированный разбор перечислил, чего не смог
         // решить сам; модель переименовывает компоненты и уточняет роли блоков.
         // IR не меняется — fidelity-гейт этим путём обойти нельзя.
-        if (data.aiRefine && res.ambiguities?.length && window.designDNA) {
+        if (aiRepair && data.aiRefine && res.ambiguities?.length && window.designDNA) {
           try {
-            recordStage("refine", "running", "AI-уточнение…");
+            recordStage("refine", "running", "AI refinement…");
             const refined = await scope.wait(refineSourceWithAi(
               res, provider, get().setStatus, id, effort, guard, signal,
             ));
             guard();
             if (refined) res = refined;
-            recordStage("refine", "success", refined ? "AI-уточнение применено" : "AI-уточнение: без изменений");
+            recordStage("refine", "success", refined ? "AI refinement applied" : "AI refinement: no changes");
           } catch (error) {
       if (!scope.owns()) return;
             guard();
             // Уточнение опционально: детерминированный результат остаётся в силе.
-            recordStage("refine", "failed", `AI-уточнение: ${friendlyProviderError(error)}`);
+            recordStage("refine", "failed", `AI refinement: ${friendlyProviderError(error)}`);
           }
         }
+        if (!aiRepair && !stages.refine) recordStage("refine", "skipped", "AI refinement is off");
         // AI-починка расхождений идёт всегда, без тумблера: пользователь должен
         // получить готовый кит, а не список «нужна проверка». Судья — тот же
         // fidelity-harness, правка принимается только при росте измеренного
         // сходства, поэтому автоматический прогон не может сделать хуже.
         const needsRepair = (res.blocks || []).some((block) => !blockGatePassed(block));
-        if (window.designDNA && needsRepair) {
+        if (aiRepair && window.designDNA && needsRepair) {
           try {
-            recordStage("repair", "running", "AI-починка…");
+            recordStage("repair", "running", "AI repair…");
             const repaired = await scope.wait(repairSourceWithAi(
               res, provider, data.activeViewport || "desktop",
               get().setStatus, id, effort, guard, (message) => recordStage("repair", "failed", message), signal,
             ));
             guard();
             if (repaired) res = repaired;
-            if (stages.repair.status !== "failed") recordStage("repair", repaired ? "success" : "warning", repaired ? "AI-починка применена" : "AI-починка: улучшений не найдено");
+            if (stages.repair.status !== "failed") recordStage("repair", repaired ? "success" : "warning", repaired ? "AI repair applied" : "AI repair: no improvement found");
           } catch (error) {
       if (!scope.owns()) return;
             guard();
-            recordStage("repair", "failed", `AI-починка: ${friendlyProviderError(error)}`);
+            recordStage("repair", "failed", `AI repair: ${friendlyProviderError(error)}`);
           }
-        } else recordStage("repair", "skipped", needsRepair
-          ? "AI-починка не запущена: desktop недоступен"
-          : "AI-починка не требуется: нет блоков с непройденной проверкой");
+        } else recordStage("repair", "skipped", !aiRepair
+          ? "AI repair is off"
+          : needsRepair
+            ? "AI repair not started: desktop unavailable"
+            : "AI repair unnecessary: no blocks failed verification");
         guard();
         const fidelityFailures = (res.blocks || []).filter((block) => block.fidelityReport?.gate?.passed === false).length;
         recordStage("fidelity", fidelityFailures ? "warning" : (res.blocks || []).every(blockGatePassed) ? "success" : "skipped",
-          fidelityFailures ? `Fidelity: ${fidelityFailures} блок(ов) требуют проверки` : (res.blocks || []).every(blockGatePassed) ? "Fidelity пройден" : "Fidelity не проверен");
+          fidelityFailures ? `Fidelity: ${fidelityFailures} block(s) need review` : (res.blocks || []).every(blockGatePassed) ? "Fidelity passed" : "Fidelity unverified");
         const quality = (res.sourceArtifact?.components || []).map((component) => component.quality);
         const qualityFailures = quality.filter((item) => item?.gate?.passed === false);
         recordStage("quality", qualityFailures.length ? "warning" : quality.length && quality.every((item) => item?.gate?.passed === true) ? "success" : "skipped",
-          qualityFailures.length ? `Quality: ${qualityFailures.flatMap((item) => item.gate?.reasons || []).join("; ") || `${qualityFailures.length} компонент(ов) не прошли проверку`}`
-            : quality.length && quality.every((item) => item?.gate?.passed === true) ? "Quality пройден" : "Quality не проверен");
+          qualityFailures.length ? `Quality: ${qualityFailures.flatMap((item) => item.gate?.reasons || []).join("; ") || `${qualityFailures.length} component(s) failed verification`}`
+            : quality.length && quality.every((item) => item?.gate?.passed === true) ? "Quality passed" : "Quality unverified");
         // Refine/repair responses may expand blob handles back to inline images.
         // Persist the final response too, before it becomes graph state.
         await scope.wait(offloadSourceEvidenceInPlace(res.blocks || []));
@@ -2780,10 +2812,10 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         for (const target of removedTargets) get().refreshInputs(target);
         const errCount = blocks.filter((b) => b.error).length;
         const authNote = res.authWarning ? ` · ${res.authWarning}` : "";
-        const cacheNote = res.cached ? " · локальный кэш" : "";
+        const cacheNote = res.cached ? " · local cache" : "";
         const secs = ((Number.isFinite(measuredTotalMs) ? measuredTotalMs : Date.now() - startedAt) / 1000).toFixed(1);
-        recordStage("import", errCount ? "warning" : "success", errCount ? `Source Import: ошибок ${errCount}` : "Source импортирован");
-        finishStatus(`${blocks.length} блоков (${errCount} ошибок) · Source Import${cacheNote}${authNote} · ${secs}с`, !!errCount);
+        recordStage("import", errCount ? "warning" : "success", errCount ? `Source Import: errors ${errCount}` : "Source imported");
+        finishStatus(`${blocks.length} blocks (${errCount} errors) · Source Import${cacheNote}${authNote} · ${secs}s`, !!errCount);
       }
       if (scope.owns()) get().propagate(id);
     } catch (e) {
@@ -2791,7 +2823,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       if (!ownsRun()) return;
       const msg = e instanceof Error ? e.message : String(e);
       for (const [name, stage] of Object.entries(stages)) if (stage.status === "running") recordStage(name, signal.aborted || (e instanceof DOMException && e.name === "AbortError") ? "cancelled" : "failed", msg);
-      if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
+      if (scope.owns()) get().setStatus(id, "Error: " + msg, "err");
       toast("Source Import: " + msg, "error");
     } finally {
       signal.removeEventListener("abort", cancelJob);
@@ -2814,14 +2846,14 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const reference = pullInput(st.nodes, st.edges, n, "reference");
     const tokens = pullInput(st.nodes, st.edges, n, "tokens");
     if (!prompt) {
-      if (scope.owns()) get().setStatus(id, "Опишите, какой компонент получить", "err");
+      if (scope.owns()) get().setStatus(id, "Describe the component you want", "err");
       return;
     }
     const styleHint = [
-      tokens ? "Style DNA:\n" + JSON.stringify(tokens) : "",
+      tokens ? "Design tokens:\n" + JSON.stringify(tokens) : "",
       reference ? "Reference IR:\n" + JSON.stringify(reference).slice(0, 9000) : "",
     ].filter(Boolean).join("\n\n");
-    if (scope.owns()) get().setStatus(id, `Derive: ${data.count} вариант(а) через подключённый аккаунт…`);
+    if (scope.owns()) get().setStatus(id, `Derive: ${data.count} variant(s) through connected account…`);
     if (scope.owns()) get().setBusy(id, true);
     try {
       const request = {
@@ -2845,7 +2877,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         // тот же transport-контракт, что у Generator: сервер готовит промпты,
         // LLM отвечает через подключённый аккаунт, сервер валидирует и чинит
         const prepared = await scope.wait(scope.api<GenerateResp>("/api/generate", { ...request, prepareOnly: true }));
-        if (!prepared.prompts?.length) throw new Error("Не удалось подготовить запросы Derive");
+        if (!prepared.prompts?.length) throw new Error("Could not prepare Derive requests");
         const rawOutputs: string[] = [];
         for (const p of prepared.prompts) {
           const answer = await scope.wait(scope.chat({
@@ -2858,12 +2890,12 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       }
       const variants = Array.isArray(res.variants) ? res.variants : [];
       if (scope.owns()) get().setNodeData(id, { variants, active: 0 });
-      if (scope.owns()) get().setStatus(id, `Готово: вариантов ${variants.length}`, "ok");
+      if (scope.owns()) get().setStatus(id, `Done: variants ${variants.length}`, "ok");
       if (scope.owns()) get().propagate(id);
     } catch (e) {
       if (!scope.owns()) return;
       const msg = e instanceof Error ? e.message : String(e);
-      if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
+      if (scope.owns()) get().setStatus(id, "Error: " + msg, "err");
       toast("Derive: " + msg, "error");
     } finally {
       if (scope.owns()) get().setBusy(id, false);
@@ -2883,16 +2915,16 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if (!n || n.type !== "reskin" || st.busy[id]) return;
     const data = n.data as ReskinNodeData;
     if (!Object.values(data.mask).some(Boolean)) {
-      if (scope.owns()) get().setStatus(id, "Пустая маска: отметьте, что разрешено менять", "err");
+      if (scope.owns()) get().setStatus(id, "Empty mask: select what can change", "err");
       return;
     }
     const ir = pullInput(st.nodes, st.edges, n, "ir") as IRObject | null;
     if (!ir) {
-      if (scope.owns()) get().setStatus(id, "Подключите IR ко входу (например, из Source Import)", "err");
+      if (scope.owns()) get().setStatus(id, "Connect IR to the input (for example, from Source Import)", "err");
       return;
     }
     const tokensRaw = pullInput(st.nodes, st.edges, n, "tokens");
-    if (scope.owns()) get().setStatus(id, "Рестайл: LLM + merge-back… 20–120 сек");
+    if (scope.owns()) get().setStatus(id, "Reskin: LLM + merge-back… 20–120 sec");
     if (scope.owns()) get().setBusy(id, true);
     try {
       const payload: Record<string, unknown> = {
@@ -2918,7 +2950,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         const prepared = await scope.wait(scope.api<{ prompts: Array<{ messages: import("./api").ApiChatMessage[] }> }>(
           "/api/reskin", { ...payload, prepareOnly: true },
         ));
-        if (!prepared.prompts?.length) throw new Error("Не удалось подготовить промпт рестайла");
+        if (!prepared.prompts?.length) throw new Error("Could not prepare the Reskin prompt");
         const effort = ["medium", "high", "max"].includes(data.effort) ? data.effort : "medium";
         const answer = await scope.wait(scope.chat({
           ...chatRoute(nodeProvider(data.provider), effort),
@@ -2928,12 +2960,12 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       }
       const log = Array.isArray(res.log) ? res.log : [];
       if (scope.owns()) get().setNodeData(id, { ir: res.ir || null, log });
-      if (scope.owns()) get().setStatus(id, `Готово · журнал merge-back: ${log.length}`, "ok");
+      if (scope.owns()) get().setStatus(id, `Done · merge-back log: ${log.length}`, "ok");
       if (scope.owns()) get().propagate(id);
     } catch (e) {
       if (!scope.owns()) return;
       const msg = e instanceof Error ? e.message : String(e);
-      if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
+      if (scope.owns()) get().setStatus(id, "Error: " + msg, "err");
       toast("Reskin: " + msg, "error");
     } finally {
       if (scope.owns()) get().setBusy(id, false);
@@ -2955,16 +2987,16 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const imageOptions = n.data as ImageNodeData;
     const cutoutOptions = n.data as RemoveBackgroundNodeData;
     const wired = pullInput(st.nodes, st.edges, n, "prompt");
-    const prompt = removeBackground ? (data.prompt.trim() || "Выделите главный объект полностью")
+    const prompt = removeBackground ? (data.prompt.trim() || "Select the entire main subject")
       : String((typeof wired === "string" && wired.trim()) || data.prompt || "").trim();
     if (!prompt) {
-      if (scope.owns()) get().setStatus(id, "Опишите изображение в инспекторе или подключите ноду Промпт", "err");
+      if (scope.owns()) get().setStatus(id, "Describe the image in the inspector or connect a Prompt node", "err");
       return;
     }
     const refRaw = pullInput(st.nodes, st.edges, n, removeBackground ? "image" : "reference")
       || (removeBackground ? cutoutOptions.image : null);
     if (removeBackground && !isImageSource(refRaw)) {
-      if (scope.owns()) get().setStatus(id, "Подключите изображение или загрузите файл", "err");
+      if (scope.owns()) get().setStatus(id, "Connect an image or upload a file", "err");
       return;
     }
     const chroma = removeBackground && cutoutOptions.method === 'chroma';
@@ -2984,7 +3016,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         && (pullInput(current.nodes, current.edges, target, removeBackground ? "image" : "reference")
           || (removeBackground ? cutoutOptions.image : null)) === refRaw;
     };
-    if (scope.owns()) get().setStatus(id, chroma ? "Локально · удаляем однородный фон…" : removeBackground ? "GPT Image · удаляем фон…" : raster ? "GPT Image · создаём изображение…" : "SVG · создаём изображение…");
+    if (scope.owns()) get().setStatus(id, chroma ? "Local · removing solid background…" : removeBackground ? "GPT Image · removing background…" : raster ? "GPT Image · generating image…" : "SVG · generating image…");
     if (scope.owns()) get().setBusy(id, true);
     try {
       const referenceImage = isImageSource(refRaw) ? await scope.wait(imageDataUrl(refRaw)) : null;
@@ -2996,7 +3028,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           color: cutoutOptions.keyColor || '#00ff00', tolerance: cutoutOptions.tolerance ?? 32,
           softness: cutoutOptions.softness ?? 24, despill: cutoutOptions.despill !== false }, { signal, runId: requestId }));
       } else if (raster) {
-        if (!desktop?.providers?.imageRequest) throw new Error("Для GPT Image нужен обновлённый десктоп и подключённый аккаунт Codex");
+        if (!desktop?.providers?.imageRequest) throw new Error("GPT Image requires an updated desktop app and a connected Codex account");
         const generated = await scope.wait(desktop.providers.imageRequest({ id: requestId, referenceImage, removeBackground,
           ...(!removeBackground && imageOptions.rasterModel ? { model: imageOptions.rasterModel } : {}),
           prompt: removeBackground ? prompt : `${prompt}\nRequested canvas: ${imageOptions.width}×${imageOptions.height}. ${imageOptions.tileable ? "Make a seamless tileable texture, opposite edges must match." : ""}` }));
@@ -3015,7 +3047,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           const prepared = await scope.wait(scope.api<{ prompts: Array<{ messages: import("./api").ApiChatMessage[] }> }>(
             "/api/image/generate", { ...payload, prepareOnly: true }, { signal, runId: requestId }));
           if (!stillCurrent()) return;
-          if (!prepared.prompts?.length) throw new Error("Не удалось подготовить промпт изображения");
+          if (!prepared.prompts?.length) throw new Error("Could not prepare the image prompt");
           const answer = await scope.wait(scope.chat({ ...chatRoute(provider, payload.effort), id: requestId,
             ...(imageOptions.model ? { model: imageOptions.model } : {}),
             profile: "graphics", messages: prepared.prompts[0].messages }));
@@ -3032,15 +3064,15 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       const variant = { ...res, createdAt: Date.now() };
       const variants = [...(data.variants || []), variant].slice(-4);
       if (scope.owns()) get().setNodeData(id, { variants, active: variants.length - 1 });
-      if (scope.owns()) get().setStatus(id, `Готово · ${res.width}×${res.height}${removeBackground ? " · прозрачный PNG" : ""}`, "ok");
+      if (scope.owns()) get().setStatus(id, `Done · ${res.width}×${res.height}${removeBackground ? " · transparent PNG" : ""}`, "ok");
       if (scope.owns()) get().propagate(id);
     } catch (e) {
       if (!scope.owns()) return;
       if (!ownsRun()) return;
-      if (signal.aborted) { if (scope.owns()) get().setStatus(id, "Отменено", "err"); return; }
+      if (signal.aborted) { if (scope.owns()) get().setStatus(id, "Cancelled", "err"); return; }
       const msg = friendlyProviderError(e);
-      if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
-      toast("Изображение: " + msg, "error");
+      if (scope.owns()) get().setStatus(id, "Error: " + msg, "err");
+      toast("Image: " + msg, "error");
     } finally {
       if (ownsRun()) if (scope.owns()) get().setBusy(id, false);
       signal.removeEventListener("abort", cancel);
@@ -3061,13 +3093,13 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const data = n.data as QualityPassNodeData;
     const ir = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
     if (!ir) {
-      if (scope.owns()) get().setStatus(id, "Подключите IR ко входу", "err");
+      if (scope.owns()) get().setStatus(id, "Connect IR to the input", "err");
       return;
     }
-    if (scope.owns()) get().setStatus(id, "Quality Pass: judge + проверка правил… 30–120 сек");
+    if (scope.owns()) get().setStatus(id, "Quality Pass: judge + rule validation… 30–120 sec");
     const signal = beginRunAbort(id, get().activePageId);
     if (scope.owns()) get().setBusy(id, true);
-    if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage: "Судья оценивает" });
+    if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage: "Judge is evaluating" });
     const runId = newRunId();
     const stopPoll = window.designDNA ? () => {} : watchRunStages(get, id, runId, 60_000, "Quality Pass");
     try {
@@ -3076,23 +3108,23 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       const provider = nodeProvider(data.provider);
       const res = await scope.wait(qualityPassCycle(ir, data.brief, provider, "high",
         (stage) => {
-          if (scope.owns()) get().setStatus(id, `Quality Pass: ${stage} через подключённый аккаунт…`);
+          if (scope.owns()) get().setStatus(id, `Quality Pass: ${stage} through connected account…`);
           if (scope.owns()) get().setProgress(id, { expectedMs: 60_000, label: "Quality Pass", stage });
         },
         { minScore: data.minScore, repair: data.repair, signal, runId }));
       const score = Number(res.scorecard?.score ?? 0);
       const passed = Boolean(res.passed);
-      const repairNote = res.repair?.applied ? " · repair применён" : "";
+      const repairNote = res.repair?.applied ? " · repair applied" : "";
       if (scope.owns()) get().setNodeData(id, { ir: res.ir || ir, result: res });
-      if (scope.owns()) get().setStatus(id, `${passed ? "Готово" : "Нужна проверка"}: ${score}/100${repairNote}`, passed ? "ok" : "err");
+      if (scope.owns()) get().setStatus(id, `${passed ? "Done" : "Needs review"}: ${score}/100${repairNote}`, passed ? "ok" : "err");
       if (scope.owns()) get().propagate(id);
     } catch (e) {
       if (!scope.owns()) return;
       if (isAbortError(e) || signal.aborted) {
-        if (scope.owns()) get().setStatus(id, "Отменено", "err");
+        if (scope.owns()) get().setStatus(id, "Cancelled", "err");
       } else {
         const msg = e instanceof Error ? e.message : String(e);
-        if (scope.owns()) get().setStatus(id, "Ошибка: " + msg, "err");
+        if (scope.owns()) get().setStatus(id, "Error: " + msg, "err");
         toast("Quality Pass: " + msg, "error");
       }
     } finally {
@@ -3192,7 +3224,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const designIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
     let interaction = (pullInput(st.nodes, st.edges, n, "interaction") || data.interaction) as IRObject | null;
     if (!designIr) {
-      if (scope.owns()) get().setStatus(id, "Подключите Design IR", "err");
+      if (scope.owns()) get().setStatus(id, "Connect Design IR", "err");
       return;
     }
     const sourceRevision = get().getNodeIrRevision(id);
@@ -3214,7 +3246,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           variables: {},
         }));
         interaction = built.interaction || null;
-        if (!interaction) throw new Error("Не удалось построить Interaction IR из Design IR");
+        if (!interaction) throw new Error("Could not build Interaction IR from Design IR");
       }
       const response = await scope.wait(scope.api<{ motion?: IRObject; sceneIrs?: MotionNodeData["sceneIrs"] }>("/api/motion/build", {
         base_ir: designIr,
@@ -3225,7 +3257,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       }));
       if (!stillCurrent()) return;
       const motion = response.motion || null;
-      if (!motion || !Array.isArray(motion.scenes) || !motion.scenes.length) throw new Error("Сервер вернул пустое движение");
+      if (!motion || !Array.isArray(motion.scenes) || !motion.scenes.length) throw new Error("Server returned empty motion");
       const sceneIrs = response.sceneIrs || [];
       const scenes = Array.isArray(motion?.scenes) ? motion.scenes : [];
       if (scope.owns()) get().setNodeData(id, {
@@ -3265,16 +3297,16 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const useReference = data.inputMode !== "prompt";
 
     if (data.inputMode === "reference" && !sourceVideo) {
-      if (scope.owns()) get().setStatus(id, "Режим reference требует готовое видео из Motion/Video Editor", "err");
+      if (scope.owns()) get().setStatus(id, "Reference mode requires a rendered video from Motion/Video Editor", "err");
       return null;
     }
     if (!brief && !sourceVideo && !sourceMotion && !sourceTimeline) {
-      if (scope.owns()) get().setStatus(id, "Введите prompt или подключите Motion/Timeline/video", "err");
+      if (scope.owns()) get().setStatus(id, "Enter a prompt or connect Motion/Timeline/video", "err");
       return null;
     }
 
     if (scope.owns()) get().setBusy(id, true);
-    if (scope.owns()) get().setStatus(id, data.planner === "direct" ? "Собираем Seedance prompt…" : `Планировщик ${PROVIDER_LABELS[data.planner]} готовит prompt…`);
+    if (scope.owns()) get().setStatus(id, data.planner === "direct" ? "Building Seedance prompt…" : `Planner ${PROVIDER_LABELS[data.planner]} is preparing the prompt…`);
     try {
       let planned = directMotionDesignPrompt(brief, useReference ? sourceVideo : null);
       if (!planned && (sourceMotion || sourceTimeline)) {
@@ -3282,7 +3314,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       }
       if (data.planner !== "direct") {
         const desktop = window.designDNA;
-        if (!desktop) throw new Error("GPT/Claude planner доступен в desktop-приложении");
+        if (!desktop) throw new Error("GPT/Claude planner is available in the desktop app");
         const digest = motionDesignDigest(
           useReference ? sourceMotion : null,
           useReference ? sourceTimeline : null,
@@ -3320,7 +3352,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           .replace(/^['\"]|['\"]$/g, "")
           .trim();
       }
-      if (!planned) throw new Error("Планировщик вернул пустой prompt");
+      if (!planned) throw new Error("Planner returned an empty prompt");
       if (planned.length > 5_000) planned = planned.slice(0, 5_000);
       if (scope.owns()) get().setNodeData(id, {
         plannedPrompt: planned,
@@ -3328,7 +3360,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         sourceTimeline: sourceTimeline ? deepClone(sourceTimeline) : null,
         sourceVideo: sourceVideo ? deepClone(sourceVideo) : null,
       });
-      if (scope.owns()) get().setStatus(id, `${data.planner === "direct" ? "Direct" : PROVIDER_LABELS[data.planner]} prompt готов · ${planned.length} chars`, "ok");
+      if (scope.owns()) get().setStatus(id, `${data.planner === "direct" ? "Direct" : PROVIDER_LABELS[data.planner]} prompt ready · ${planned.length} chars`, "ok");
       return planned;
     } catch (error) {
       if (!scope.owns()) return null;
@@ -3345,7 +3377,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     flushAllNodeText();
     const scope = captureNodeScope(get, id);
     if (!confirmedPaid) {
-      if (scope.owns()) get().setStatus(id, "Подтвердите платный запрос Seedance 2.5", "err");
+      if (scope.owns()) get().setStatus(id, "Confirm the paid Seedance 2.5 request", "err");
       return;
     }
     let st = get();
@@ -3366,23 +3398,23 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const connectedVideo = pullInput(st.nodes, st.edges, n, "video") as VideoArtifact | null;
     const sourceVideo = connectedVideo || data.sourceVideo;
     if (data.inputMode === "reference" && !sourceVideo) {
-      if (scope.owns()) get().setStatus(id, "Режим reference требует готовое видео", "err");
+      if (scope.owns()) get().setStatus(id, "Reference mode requires a rendered video", "err");
       return;
     }
 
     if (scope.owns()) get().setBusy(id, true);
     try {
       const config = await scope.wait(scope.apiGet<{ configured?: boolean; model?: string }>("/api/video/seedance/config"));
-      if (!config.configured) throw new Error("OpenRouter key не подключён. Откройте Agents → Connections.");
+      if (!config.configured) throw new Error("OpenRouter key not connected. Open Agents → Connections.");
       const references: Array<Record<string, unknown>> = [];
       if (sourceVideo && data.inputMode !== "prompt") {
-        if (scope.owns()) get().setStatus(id, "Подготавливаем готовое видео как Seedance reference…");
+        if (scope.owns()) get().setStatus(id, "Preparing rendered video as a Seedance reference…");
         references.push({
           type: "video_url",
           video_url: { url: await scope.wait(videoReferenceUrl(sourceVideo)) },
         });
       }
-      if (scope.owns()) get().setStatus(id, `Отправляем подтверждённый запрос в ${config.model || "Seedance 2.5"}…`);
+      if (scope.owns()) get().setStatus(id, `Sending confirmed request to ${config.model || "Seedance 2.5"}…`);
       const response = await scope.wait(scope.api<SeedanceVideoJob>("/api/video/seedance/submit", {
         prompt: planned,
         duration: data.settings.duration,
@@ -3440,11 +3472,11 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           },
         };
         if (scope.owns()) get().setNodeData(id, { job, video });
-        if (scope.owns()) get().setStatus(id, `Seedance video готов${Number.isFinite(cost) ? ` · cost ${cost}` : ""}`, "ok");
+        if (scope.owns()) get().setStatus(id, `Seedance video ready${Number.isFinite(cost) ? ` · cost ${cost}` : ""}`, "ok");
         if (scope.owns()) get().propagate(id);
       } else if (MOTION_DESIGN_TERMINAL.has(job.status)) {
         if (scope.owns()) get().setNodeData(id, { job });
-        if (scope.owns()) get().setStatus(id, `Seedance ${job.status}: ${String(job.error || "job завершён без видео")}`, "err");
+        if (scope.owns()) get().setStatus(id, `Seedance ${job.status}: ${String(job.error || "job finished without a video")}`, "err");
       } else {
         if (scope.owns()) get().setNodeData(id, { job });
         if (scope.owns()) get().setStatus(id, `Seedance job ${job.id} · ${job.status}`);
@@ -3458,7 +3490,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       // A failed poll must never resubmit the paid generation. Keep the job id
       // and retry status later, as recommended by OpenRouter's async contract.
       const message = error instanceof Error ? error.message : String(error);
-      if (scope.owns()) get().setStatus(id, `Seedance status: ${message} · job сохранён`, "err");
+      if (scope.owns()) get().setStatus(id, `Seedance status: ${message} · job saved`, "err");
       const key = nodeRunKey(get().activePageId, id);
       const oldTimer = motionDesignPollTimers.get(key);
       if (oldTimer) clearTimeout(oldTimer);
@@ -3479,17 +3511,17 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const sourcePages = videoPages(st.nodes, st.edges, n, true);
     const designIr = (pullInput(st.nodes, st.edges, n, "ir") || data.ir) as IRObject | null;
     if (!designIr) {
-      if (scope.owns()) get().setStatus(id, "Подключите Design IR (страница или компонент)", "err");
+      if (scope.owns()) get().setStatus(id, "Connect Design IR (page or component)", "err");
       return;
     }
     if (sourcePages.length !== (data.inputs || ["ir"]).length) {
-      if (scope.owns()) get().setStatus(id, "Подключите все страницы или удалите пустой вход", "err");
+      if (scope.owns()) get().setStatus(id, "Connect all pages or remove the empty input", "err");
       return;
     }
     const sourceRevision = get().getNodeIrRevision(id);
     const stillCurrent = () => get().activePageId === st.activePageId && get().getNodeIrRevision(id) === sourceRevision;
     if (scope.owns()) get().setBusy(id, true);
-    if (scope.owns()) get().setStatus(id, "Сборка таймлайна: слои и группы из компонентов...");
+    if (scope.owns()) get().setStatus(id, "Building timeline: layers and groups from components…");
     try {
       const response = await scope.wait(scope.api<{ timeline?: IRObject }>("/api/timeline/build", {
         ir: designIr,
@@ -3498,12 +3530,12 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       }));
       if (!stillCurrent()) return;
       const timeline = response.timeline || null;
-      if (!timeline || !Array.isArray(timeline.layers) || !timeline.layers.length) throw new Error("Сервер вернул пустой таймлайн");
+      if (!timeline || !Array.isArray(timeline.layers) || !timeline.layers.length) throw new Error("Server returned an empty timeline");
       if (scope.owns()) get().setNodeData(id, { ir: deepClone(designIr), sourcePages: deepClone(sourcePages), timeline, renderJob: null });
       const layers = Array.isArray((timeline as { layers?: unknown[] } | null)?.layers)
         ? ((timeline as { layers: unknown[] }).layers).length : 0;
       const composition = (timeline as { composition?: { duration?: number } } | null)?.composition;
-      if (scope.owns()) get().setStatus(id, `Таймлайн готов · ${layers} слоёв · ${((Number(composition?.duration || 0)) / 1000).toFixed(1)}s`, "ok");
+      if (scope.owns()) get().setStatus(id, `Timeline ready · ${layers} layers · ${((Number(composition?.duration || 0)) / 1000).toFixed(1)}s`, "ok");
       if (scope.owns()) get().propagate(id);
     } catch (error) {
       if (!scope.owns()) return;
@@ -3525,7 +3557,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if (data.mode === "send") {
       const ir = pullInput(st.nodes, st.edges, n, "ir") as IRObject | null;
       if (!ir) {
-        get().setStatus(id, "Подключите компонент к входу", "err");
+        get().setStatus(id, "Connect a component to the input", "err");
         return;
       }
       const cloned = deepClone(ir);
@@ -3537,17 +3569,17 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
             : node,
         ),
       }));
-      get().setStatus(id, `Передано в канал: ${channel}`, "ok");
+      get().setStatus(id, `Sent to channel: ${channel}`, "ok");
       return;
     }
     const ir = st.channels[channel] || null;
     if (!ir) {
       get().setNodeData(id, { channel, ir: null });
-      get().setStatus(id, `Канал пустой: ${channel}`, "err");
+      get().setStatus(id, `Empty channel: ${channel}`, "err");
       return;
     }
     get().setNodeData(id, { channel, ir: deepClone(ir) });
-    get().setStatus(id, `Получено из канала: ${channel}`, "ok");
+    get().setStatus(id, `Received from channel: ${channel}`, "ok");
     get().propagate(id);
   },
 
@@ -3559,13 +3591,13 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if (!n) return;
     const ir = outValue(n) as IRObject | null;
     if (!ir) {
-      toast("Сначала запустите ноду и получите IR на выходе", "error");
+      toast("Run the node first to produce output IR", "error");
       return;
     }
     const def = NODE_DEFS[n.type as NodeType];
     const target = get().addNode(targetType, n.position.x + (def ? def.w : 270) + 60, n.position.y);
     get().setNodeData(target.id, { ir: deepClone(ir) });
-    if (targetType === "reference") get().setStatus(target.id, "IR получен от генератора", "ok");
+    if (targetType === "reference") get().setStatus(target.id, "IR received from Generator", "ok");
     get().connect({ node: id, port: "ir" }, { node: target.id, port: targetType === "edit" ? "a" : "ir" });
     toast(`→ ${NODE_DEFS[targetType].title}`, "ok");
   },
@@ -3577,13 +3609,13 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const inputs = node.data.inputs || ["ir"];
     if (inputs.length >= 8) return;
     const name = Array.from({ length: 7 }, (_, i) => `page${i + 2}`).find((n) => !inputs.includes(n))!;
-    recordGraphHistory(get, set);
+    recordGraphHistory(get, set, { [node.id]: ['inputs'] });
     get().setNodeData(id, { inputs: [...inputs, name] });
   },
   removeVideoInput: (id, name) => {
     const node = get().nodes.find((n) => Number(n.id) === id);
     if (node?.type !== "timeline" || name === "ir") return;
-    recordGraphHistory(get, set);
+    recordGraphHistory(get, set, { [node.id]: ['inputs'] });
     get().setNodeData(id, { inputs: (node.data.inputs || ["ir"]).filter((n) => n !== name) });
     set((state) => ({ edges: state.edges.filter((e) => !(e.target === node.id && e.targetHandle === name)) }));
     get().refreshInputs(id);
@@ -3594,7 +3626,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if (!n || n.type !== "mix") return;
     const inputs = (n.data as MixNodeData).inputs;
     if (inputs.length >= 4) {
-      toast("Максимум 4 входа", "error");
+      toast("Maximum 4 inputs", "error");
       return;
     }
     const name = ["a", "b", "c", "d"].find((c) => !inputs.includes(c));
@@ -3641,7 +3673,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const inputs = (n.data as EditNodeData).inputs || ["ir"];
     const candidates = "abcdefghijkl".split("");
     if (inputs.length >= candidates.length) {
-      toast("Максимум 12 компонентов", "error");
+      toast("Maximum 12 components", "error");
       return;
     }
     const name = candidates.find((candidate) => !inputs.includes(candidate));
@@ -3657,7 +3689,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const sid = String(id);
     const node = get().nodes.find((item) => item.id === sid);
     if (node?.type !== "edit" || !(node.data.inputs || ["ir"]).includes(name)) return;
-    recordGraphHistory(get, set);
+    recordGraphHistory(get, set, { [node.id]: ['inputs'] });
     set((state) => ({
       nodes: state.nodes.map((item) => {
         if (item.id !== sid || item.type !== "edit") return item;
@@ -3693,7 +3725,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if (!n || n.type !== "page") return;
     const inputs = (n.data as PageNodeData).inputs;
     if (inputs.length >= PAGE_INPUT_LIMIT) {
-      toast(`Максимум ${PAGE_INPUT_LIMIT} блоков`, "error");
+      toast(`Maximum ${PAGE_INPUT_LIMIT} blocks`, "error");
       return;
     }
     const name = PAGE_INPUT_NAMES.find((c) => !inputs.includes(c));
@@ -3755,9 +3787,9 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       });
       if (removedNodes.length) {
         toast(
-          removedNodes.length === 1 ? "Нода удалена · Ctrl+Z вернёт" : `Удалено нод: ${removedNodes.length} · Ctrl+Z вернёт`,
+          removedNodes.length === 1 ? "Node deleted · Ctrl+Z to restore" : `Nodes deleted: ${removedNodes.length} · Ctrl+Z to restore`,
           "info",
-          { key: "graph-delete", action: { label: "Вернуть", run: () => void get().undoGraph() } },
+          { key: "graph-delete", action: { label: "Redo", run: () => void get().undoGraph() } },
         );
       }
     }
@@ -3798,13 +3830,13 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if (!source || source.type !== "sourceimport") return null;
     const data = source.data as SourceImportNodeData;
     if (!data.blocks?.length) {
-      if (scope.owns()) get().setStatus(sourceId, "Source не содержит блоков — сначала импорт", "err");
+      if (scope.owns()) get().setStatus(sourceId, "Source contains no blocks — import first", "err");
       return null;
     }
     const node = get().addNode("designsystem", source.position.x + 380, source.position.y);
     const dsId = Number(node.id);
     get().connect({ node: sourceId, port: "artifact" }, { node: dsId, port: "artifact" });
-    if (scope.owns()) get().setStatus(dsId, "Собираю UI Kit из Source…");
+    if (scope.owns()) get().setStatus(dsId, "Building UI Kit from Source…");
     if (scope.owns()) get().setBusy(dsId, true);
     try {
       const resp = await scope.wait(fetch("/api/design-system/build", {
@@ -3824,7 +3856,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         const message = typeof detail === 'string' ? detail : String(detail.message || JSON.stringify(detail));
         if (scope.owns()) {
           get().setNodeData(dsId, { lastError: message });
-          get().setStatus(dsId, "Не удалось собрать UI Kit: " + message, "err");
+          get().setStatus(dsId, "Could not build UI Kit: " + message, "err");
         }
         return null;
       }
@@ -3833,17 +3865,17 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         revision: 0, summary: result.summary, sourceNodeId: sourceId,
         defaultSet: false, sourceUpdate: false,
         document: result.document, autoPublish: true, _sourceFingerprint: sourceKitFingerprint(data),
-        pipelineStatus: { build: { status: "success", message: "UI Kit собран из Source · компоненты доступны", updatedAt: new Date().toISOString() } },
+        pipelineStatus: { build: { status: "success", message: "UI Kit built from Source · components available", updatedAt: new Date().toISOString() } },
       } as unknown as Partial<DesignSystemNodeData>);
       if (scope.owns()) {
         get().setBusy(dsId, false);
-        get().setStatus(dsId, "UI Kit собран · откройте компоненты и стиль сайта", "ok");
+        get().setStatus(dsId, "UI Kit built · explore site components and style", "ok");
         get().propagate(dsId);
       }
       return dsId;
     } catch (e) {
       if (!scope.owns()) return null;
-      if (scope.owns()) get().setStatus(dsId, "Ошибка: " + (e instanceof Error ? e.message : String(e)), "err");
+      if (scope.owns()) get().setStatus(dsId, "Error: " + (e instanceof Error ? e.message : String(e)), "err");
       return null;
     } finally {
       if (scope.owns()) get().setBusy(dsId, false);
@@ -3855,10 +3887,10 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const node = get().nodes.find((n) => Number(n.id) === Number(nodeId));
     if (!node || node.type !== "designsystem") return false;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      if (scope.owns()) get().setStatus(nodeId, "Файл не JSON-объект: нужен документ DesignDNA, W3C/Tokens Studio JSON или карта токенов", "err");
+      if (scope.owns()) get().setStatus(nodeId, "File is not a JSON object: use a DesignDNA document, W3C/Tokens Studio JSON, or a token map", "err");
       return false;
     }
-    if (scope.owns()) get().setStatus(nodeId, `Загружаю дизайн-систему из ${fileName || "файла"}…`);
+    if (scope.owns()) get().setStatus(nodeId, `Loading design system from ${fileName || "file"}…`);
     if (scope.owns()) get().setBusy(nodeId, true);
     try {
       const resp = await scope.wait(fetch("/api/design-system/import", {
@@ -3875,17 +3907,17 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       const count = Number(result.summary?.components || 0);
       const reviewMasters = Number(result.summary?.reviewMasters || 0);
       if (reviewMasters) {
-        if (scope.owns()) get().setStatus(nodeId, `Черновик: ${reviewMasters} мастеров ждут ревью`, "ok");
+        if (scope.owns()) get().setStatus(nodeId, `Draft: ${reviewMasters} masters awaiting review`, "ok");
       } else if ((get().nodes.find((x) => Number(x.id) === Number(nodeId))?.data as DesignSystemNodeData | undefined)?.autoPublish !== false) {
         await scope.wait(get().publishDesignSystem(nodeId));
-      } else if (scope.owns()) get().setStatus(nodeId, `ДС загружена (${result.format}): ${count} компонентов`, "ok");
+      } else if (scope.owns()) get().setStatus(nodeId, `DS loaded (${result.format}): ${count} components`, "ok");
       await scope.wait(get().refreshDesignSystems());
       return true;
     } catch (e) {
       if (!scope.owns()) return false;
       const message = e instanceof Error ? e.message : String(e);
       if (scope.owns()) get().setNodeData(nodeId, { lastError: message });
-      if (scope.owns()) get().setStatus(nodeId, "Ошибка импорта: " + message, "err");
+      if (scope.owns()) get().setStatus(nodeId, "Import error: " + message, "err");
       return false;
     } finally {
       if (scope.owns()) get().setBusy(nodeId, false);
@@ -3899,11 +3931,11 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const data = source.data as GeneratorNodeData;
     const active = data.variants?.[data.active];
     if (!active) {
-      if (scope.owns()) get().setStatus(generatorId, "Нет активного варианта для закрепления", "err");
+      if (scope.owns()) get().setStatus(generatorId, "No active variant to pin", "err");
       return null;
     }
     if (scope.owns()) get().setBusy(generatorId, true);
-    if (scope.owns()) get().setStatus(generatorId, "Закрепляю identity как Design System…");
+    if (scope.owns()) get().setStatus(generatorId, "Pinning identity as a Design System…");
     let createdId: number | null = null;
     try {
       const resp = await scope.wait(fetch("/api/design-system/identity/promote", {
@@ -3922,7 +3954,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         revision: 0, summary: result.summary, sourceNodeId: generatorId,
         defaultSet: false, sourceUpdate: false, document: result.document,
       } as unknown as Partial<DesignSystemNodeData>);
-      if (scope.owns()) get().setStatus(createdId, `Identity закреплена · ${result.summary.identitySignatures || 0} signatures · ${result.summary.identityTests || 0} tests`, "ok");
+      if (scope.owns()) get().setStatus(createdId, `Identity pinned · ${result.summary.identitySignatures || 0} signatures · ${result.summary.identityTests || 0} tests`, "ok");
       const meta = (active as Record<string, any>).meta || {};
       await scope.wait(fetch("/api/project/taste/outcome", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -3933,13 +3965,13 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
           ruleIds: (result.document.identity?.signatures || []).map((item: any) => item.id),
         }}),
       }));
-      if (scope.owns()) get().setStatus(generatorId, "Стиль закреплён в черновик Design System", "ok");
+      if (scope.owns()) get().setStatus(generatorId, "Style pinned to the Design System draft", "ok");
       return createdId;
     } catch (error) {
       if (!scope.owns()) return null;
       if (createdId != null) get().deleteNode(createdId);
       const message = error instanceof Error ? error.message : String(error);
-      if (scope.owns()) get().setStatus(generatorId, "Не удалось закрепить стиль: " + message, "err");
+      if (scope.owns()) get().setStatus(generatorId, "Could not pin style: " + message, "err");
       toast("Design Identity: " + message, "error");
       return null;
     } finally {
@@ -3965,7 +3997,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         }}),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      get().setStatus(generatorId, kind === "accepted" ? "Вариант принят в Taste Memory" : "Вариант отклонён в Taste Memory", "ok");
+      get().setStatus(generatorId, kind === "accepted" ? "Variant accepted in Taste Memory" : "Variant rejected in Taste Memory", "ok");
       return true;
     } catch (error) {
       get().setStatus(generatorId, "Taste Memory: " + (error instanceof Error ? error.message : String(error)), "err");
@@ -3984,7 +4016,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const data = n.data as DesignSystemNodeData;
     if (scope.owns()) get().setBusy(nodeId, true);
     if (scope.owns()) get().setNodeData(nodeId, { busyAction: "publish", lastError: "" });
-    if (scope.owns()) get().setStatus(nodeId, "Публикация ревизии…");
+    if (scope.owns()) get().setStatus(nodeId, "Publishing revision…");
     try {
       let document = (data.document || null) as Record<string, unknown> | null;
       if (!document && data.systemId) {
@@ -3996,8 +4028,8 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         document = got.document || null;
       }
       if (!document) {
-        if (scope.owns()) get().setStatus(nodeId, "Нет документа для публикации", "err");
-        if (scope.owns()) get().setNodeData(nodeId, { lastError: "Нет документа для публикации" });
+        if (scope.owns()) get().setStatus(nodeId, "No document to publish", "err");
+        if (scope.owns()) get().setNodeData(nodeId, { lastError: "No document to publish" });
         return false;
       }
       const pub = await scope.wait(fetch("/api/design-system/publish", {
@@ -4006,8 +4038,8 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       }));
       const result = await scope.wait(pub.json());
       if (result.errors?.length || result.error) {
-        const message = result.errors?.[0]?.message || result.error || "публикация блокирована";
-        if (scope.owns()) get().setStatus(nodeId, `Публикация блокирована: ${message}`, "err");
+        const message = result.errors?.[0]?.message || result.error || "publication blocked";
+        if (scope.owns()) get().setStatus(nodeId, `Publication blocked: ${message}`, "err");
         if (scope.owns()) get().setNodeData(nodeId, { lastError: message });
         return false;
       }
@@ -4024,14 +4056,14 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         document: null,
         lastError: "",
       });
-      if (scope.owns()) get().setStatus(nodeId, `Опубликовано v${result.document.revision}${result.duplicate ? " (без изменений)" : ""}`, "ok");
+      if (scope.owns()) get().setStatus(nodeId, `Published v${result.document.revision}${result.duplicate ? " (unchanged)" : ""}`, "ok");
       if (scope.owns()) get().propagate(nodeId);
       await scope.wait(get().refreshDesignSystems());
       return true;
     } catch (e) {
       if (!scope.owns()) return false;
       const message = e instanceof Error ? e.message : String(e);
-      if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + message, "err");
+      if (scope.owns()) get().setStatus(nodeId, "Error: " + message, "err");
       if (scope.owns()) get().setNodeData(nodeId, { lastError: message });
       return false;
     } finally {
@@ -4048,7 +4080,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if (!data.systemId) return false;
     if (scope.owns()) get().setBusy(nodeId, true);
     if (scope.owns()) get().setNodeData(nodeId, { busyAction: "default", lastError: "" });
-    if (scope.owns()) get().setStatus(nodeId, "Назначаю системой проекта…");
+    if (scope.owns()) get().setStatus(nodeId, "Setting as project design system…");
     try {
       const resp = await scope.wait(fetch("/api/design-system/default", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -4056,7 +4088,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       }));
       const result = await scope.wait(resp.json());
       if (result.error) {
-        if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + result.error, "err");
+        if (scope.owns()) get().setStatus(nodeId, "Error: " + result.error, "err");
         if (scope.owns()) get().setNodeData(nodeId, { lastError: result.error });
         return false;
       }
@@ -4076,12 +4108,12 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         }),
       }));
       await scope.wait(get().refreshDesignSystems());
-      if (scope.owns()) get().setStatus(nodeId, "Назначена системой проекта по умолчанию", "ok");
+      if (scope.owns()) get().setStatus(nodeId, "Set as the default project design system", "ok");
       return true;
     } catch (e) {
       if (!scope.owns()) return false;
       const message = e instanceof Error ? e.message : String(e);
-      if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + message, "err");
+      if (scope.owns()) get().setStatus(nodeId, "Error: " + message, "err");
       if (scope.owns()) get().setNodeData(nodeId, { lastError: message });
       return false;
     } finally {
@@ -4104,7 +4136,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       const stages = { ...current.pipelineStatus };
       const updatedAt = new Date().toISOString();
       if (fresh) for (const operation of ["organize", "style-review", "master-review"]) {
-        stages[operation] = { status: "skipped", message: "Не запускалось для пересобранного документа; прежний результат устарел", updatedAt };
+        stages[operation] = { status: "skipped", message: "Not run for the rebuilt document; previous result is outdated", updatedAt };
       }
       stages.build = { status, message, updatedAt };
       get().setNodeData(nodeId, { pipelineStatus: stages });
@@ -4112,14 +4144,14 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     };
     const sourceNode = connectedDesignSystemSource(get().nodes, get().edges, n);
     if (!sourceNode) {
-      buildStage("failed", "Source-нода не найдена");
-      get().setNodeData(nodeId, { lastError: "Source-нода не найдена" });
+      buildStage("failed", "Source node not found");
+      get().setNodeData(nodeId, { lastError: "Source node not found" });
       return false;
     }
     const fingerprint = sourceKitFingerprint(sourceNode.data);
     get().setBusy(nodeId, true);
     get().setNodeData(nodeId, { busyAction: "sync", lastError: "" });
-    buildStage("running", "Синхронизация с Source…");
+    buildStage("running", "Synchronizing with Source…");
     try {
       const resp = await fetch("/api/design-system/build", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal,
@@ -4135,15 +4167,15 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       });
       const result = await resp.json();
       if (!ownsBuild()) return false;
-      if (signal.aborted) throw new DOMException("Сборка отменена", "AbortError");
+      if (signal.aborted) throw new DOMException("Build cancelled", "AbortError");
       if (!resp.ok || result.error || !result.document) {
         const detail = result.detail || result.error;
         const first = typeof detail === "object" && Array.isArray(detail?.errors) ? detail.errors[0] : null;
         const message = detail && typeof detail === "object"
           ? [detail.message || detail.code || `HTTP ${resp.status}`, first?.message, first?.path,
-            detail.errors?.length > 1 ? `Ошибок: ${detail.errors.length}` : ""].filter(Boolean).join(" · ")
+            detail.errors?.length > 1 ? `Errors: ${detail.errors.length}` : ""].filter(Boolean).join(" · ")
           : String(detail || `HTTP ${resp.status}`);
-        buildStage("failed", "Ошибка: " + message);
+        buildStage("failed", "Error: " + message);
         get().setNodeData(nodeId, { lastError: message });
         return false;
       }
@@ -4153,8 +4185,8 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       if (currentSource?.id !== sourceNode.id || sourceKitFingerprint(currentSource.data) !== fingerprint
         || current.data.systemId !== data.systemId || current.data.revision !== data.revision
         || inputFingerprint(current.data.document ?? null) !== inputFingerprint(data.document ?? null)) {
-        buildStage("cancelled", "Source или документ изменился во время сборки — повторите Sync");
-        get().setNodeData(nodeId, { sourceUpdate: true, lastError: "Source изменился во время сборки — повторите Sync" });
+        buildStage("cancelled", "Source or document changed during build — run Sync again");
+        get().setNodeData(nodeId, { sourceUpdate: true, lastError: "Source changed during build — run Sync again" });
         return false;
       }
       get().setNodeData(nodeId, {
@@ -4171,7 +4203,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         document: result.document,
         lastError: "",
       });
-      buildStage("success", "UI Kit обновлён из Source · компоненты доступны", true);
+      buildStage("success", "UI Kit refreshed from Source · components available", true);
       get().propagate(nodeId);
       return true;
     } catch (e) {
@@ -4238,7 +4270,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       const data = current()!.data;
       if (Number(data.summary?.reviewMasters || 0) || Object.keys(data.document?.reviewComponents || {}).length) return false;
       if (data.autoPublish !== false) return await get().publishDesignSystem(nodeId);
-      get().setStatus(nodeId, "UI Kit готов · проверки пройдены", "ok");
+      get().setStatus(nodeId, "UI Kit ready · checks passed", "ok");
       return true;
     } finally {
       if (owns()) get().setNodeData(nodeId, { _dsFinishing: null });
@@ -4275,7 +4307,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       if (!resp.ok || result.error) {
         result.error ||= result.detail || `HTTP ${resp.status}`;
         get().setNodeData(nodeId, { lastError: result.error });
-        get().setStatus(nodeId, "Ошибка: " + result.error, "err");
+        get().setStatus(nodeId, "Error: " + result.error, "err");
         return false;
       }
       get().setNodeData(nodeId, {
@@ -4289,7 +4321,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       if (!currentSave()) return false;
       const message = e instanceof Error ? e.message : String(e);
       get().setNodeData(nodeId, { lastError: message });
-      get().setStatus(nodeId, "Ошибка: " + message, "err");
+      get().setStatus(nodeId, "Error: " + message, "err");
       return false;
     }
   },
@@ -4302,7 +4334,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const systemId = String(ref?.systemId || data.systemId || "");
     const revision = Number(ref?.revision || data.revision || 0);
     if (!systemId) {
-      if (scope.owns()) get().setNodeData(nodeId, { lastError: "Нет опубликованной ревизии для восстановления" });
+      if (scope.owns()) get().setNodeData(nodeId, { lastError: "No published revision to restore" });
       return false;
     }
     try {
@@ -4312,8 +4344,8 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       }));
       const result = await scope.wait(resp.json());
       if (result.error || !result.document) {
-        if (scope.owns()) get().setNodeData(nodeId, { lastError: result.error || "Не удалось восстановить опубликованную ревизию" });
-        if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + (result.error || "restore failed"), "err");
+        if (scope.owns()) get().setNodeData(nodeId, { lastError: result.error || "Could not restore the published revision" });
+        if (scope.owns()) get().setStatus(nodeId, "Error: " + (result.error || "restore failed"), "err");
         return false;
       }
       if (scope.owns()) get().setNodeData(nodeId, {
@@ -4332,7 +4364,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       if (!scope.owns()) return false;
       const message = e instanceof Error ? e.message : String(e);
       if (scope.owns()) get().setNodeData(nodeId, { lastError: message });
-      if (scope.owns()) get().setStatus(nodeId, "Ошибка: " + message, "err");
+      if (scope.owns()) get().setStatus(nodeId, "Error: " + message, "err");
       return false;
     }
   },
@@ -4352,7 +4384,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
         get().deleteNode(targetId);
         return null;
       }
-      get().setStatus(targetId, 'UI Kit подключён · задайте промпт и запустите генерацию');
+      get().setStatus(targetId, 'UI Kit connected · enter a prompt and generate');
     }
     set({ nodes: get().nodes.map(n => ({ ...n, selected: n.id === String(target.id) })) });
     const scope = captureNodeScope(get, targetId);
@@ -4372,7 +4404,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     if (!ir) return null;
     const edit = get().addNode('edit', node.position.x + 360, node.position.y);
     // A working copy has no registry pin and cannot promote a review master.
-    get().setNodeData(Number(edit.id), { ir, label: `Копия · ${component.name || componentKey}` });
+    get().setNodeData(Number(edit.id), { ir, label: `Copy · ${component.name || componentKey}` });
     window.dispatchEvent(new Event('designdna:ensure-editor'));
     return Number(edit.id);
   },
@@ -4386,7 +4418,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const comp = document.components?.[componentKey];
     const templateIr = comp ? renderableDesignSystemMaster(comp) : null;
     if (!templateIr) {
-      get().setStatus(nodeId, "Нет template IR у выбранного компонента", "err");
+      get().setStatus(nodeId, "Selected component has no template IR", "err");
       return null;
     }
     const existing = st.nodes.find((x) => {
@@ -4404,7 +4436,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
       _dsPreviousIr: previousIr,
     });
     window.dispatchEvent(new Event("designdna:ensure-editor"));
-    get().setStatus(nodeId, `Мастер «${componentKey}» открыт в DNA Editor`, "ok");
+    get().setStatus(nodeId, `Master “${componentKey}” opened in DNA Editor`, "ok");
     return { editNodeId, previousIr };
   },
 
@@ -4474,7 +4506,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     const id = pageId();
     const page: FlowPage = {
       id,
-      name: "Видео",
+      name: "Video",
       nodes,
       edges,
       view: { ...DEFAULT_VIEW },
@@ -4533,6 +4565,7 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
   deletePage: (id) => {
     const st = get();
     if (st.pages.length <= 1 || !st.pages.some(page => page.id === id)) return;
+    noteDeletedPage(id);
     leaveGraph(id);
     const pages = withCurrentPageSaved(get()).filter((page) => page.id !== id);
     const next = pages.find((page) => page.id === st.activePageId) || pages[0];
@@ -4550,7 +4583,19 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
 
   loadPersistedProject: async () => {
     void get().refreshDesignSystems(); // registry не блокирует загрузку проекта
-    const project = await loadPagesProjectFromDb();
+    let project = await loadPagesProjectFromDb();
+    let migrated = false;
+    if (project) {
+      clearLocalProjectCache();
+    } else {
+      // One-time move of a project that only lived in the old localStorage cache.
+      const cachedPages = loadPagesProjectFromStorage();
+      const cachedSingle = cachedPages ? null : loadFromStorage();
+      project = cachedPages || (cachedSingle
+        ? { activePageId: "page-1", pages: [{ id: "page-1", name: "Page 1", ...payloadToRf(cachedSingle) }], channels: {} }
+        : null);
+      migrated = !!project;
+    }
     if (!project) {
       set({ projectHydrated: true });
       return;
@@ -4558,12 +4603,15 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     // Гонка гидратации: пока шёл fetch, локальный граф мог измениться (пользователь
     // или GraphDev.add в тестах уже добавил ноды) — применять загруженный проект
     // поверх нельзя, он затёр бы локальные правки пустым/устаревшим состоянием.
+    const dbNodeCount = project.pages.reduce((sum, page) => sum + page.nodes.length, 0);
     if (localDirtySinceInit) {
+      // The local graph is the compact startup cache plus early edits; a later
+      // CAS-valid save would replace the full saved project with it.
+      if (dbNodeCount > 0) blockDbSaveForHydrationConflict();
       set({ projectHydrated: true });
       return;
     }
     const current = get();
-    const dbNodeCount = project.pages.reduce((sum, page) => sum + page.nodes.length, 0);
     if (dbNodeCount === 0 && (current.nodes.length > 0 || current.edges.length > 0)) {
       set({ projectHydrated: true });
       return;
@@ -4595,6 +4643,9 @@ function createFlowState(set: FlowSet, get: () => FlowStoreState): FlowStoreStat
     // temporary empty canvas back over the freshly loaded project.
     setTimeout(() => {
       set({ projectHydrated: true });
+      void compactTimelineStoryCopies();
+      // The moved cache is dropped only after SQLite accepted it.
+      if (migrated) void flushProjectToDb().then((ok) => { if (ok) clearLocalProjectCache(); });
       const fit = () => { if (get().activePageId === activePage.id) fitFlowView(); };
       fit();
       setTimeout(fit, 350);
@@ -4727,6 +4778,34 @@ useFlowStore.subscribe((state, prev) => {
   localDirtySinceInit = true;
   scheduleProjectSave(() => buildPagesProjectPayload(useFlowStore.getState()));
 });
+
+/** Video nodes saved before 2026-09-24 carry every connected page's pixels
+ *  inline in timeline.story and in each revision (tens of MB per node): every
+ *  autosave serialized and re-offloaded them. Once per load, move those images
+ *  to blob refs in memory; a node edited meanwhile keeps its newer data. */
+async function compactTimelineStoryCopies(): Promise<void> {
+  const start = useFlowStore.getState();
+  for (const page of start.pages) {
+    const pageNodes = page.id === start.activePageId ? start.nodes : page.nodes;
+    for (const node of pageNodes) {
+      if (node.type !== "timeline") continue;
+      const data = node.data as TimelineNodeData & { revisions?: unknown };
+      if (!data.timeline && !data.revisions) continue;
+      const copy = { timeline: deepClone(data.timeline), revisions: deepClone(data.revisions) };
+      if (!(await offloadTimelineStories(copy))) continue;
+      const now = useFlowStore.getState();
+      const onActive = page.id === now.activePageId;
+      const liveNodes = onActive ? now.nodes : now.pages.find((p) => p.id === page.id)?.nodes || [];
+      const live = liveNodes.find((n) => n.id === node.id);
+      const liveData = live?.data as (TimelineNodeData & { revisions?: unknown }) | undefined;
+      if (!liveData || liveData.timeline !== data.timeline || liveData.revisions !== data.revisions) continue;
+      const patchNodes = (nodes: FlowNode[]) => nodes.map((n) => n.id === node.id
+        ? { ...n, data: { ...n.data, timeline: copy.timeline, revisions: copy.revisions } } as FlowNode : n);
+      if (onActive) useFlowStore.setState({ nodes: patchNodes(now.nodes) });
+      else useFlowStore.setState({ pages: now.pages.map((p) => p.id === page.id ? { ...p, nodes: patchNodes(p.nodes) } : p) });
+    }
+  }
+}
 
 // AI-ассист редактора читает registry дизайн-систем отсюда (§16.2)
 if (typeof window !== "undefined") (window as unknown as { __flowStore?: unknown }).__flowStore = useFlowStore;

@@ -334,8 +334,14 @@ def commit_project(
     dry_run: bool = False,
     user_id: str = DEFAULT_USER_ID,
     project_id: str = DEFAULT_PROJECT_ID,
+    deleted_pages: list[str] | None = None,
 ) -> dict[str, Any]:
     """Cross-process compare-and-swap on one BEGIN IMMEDIATE connection.
+
+    A save may drop a stored page only when the client names it in
+    ``deleted_pages`` (an explicit delete). Anything else is refused with
+    ``pageLoss``: a client that lost pages from its state (a failed parse, a
+    partial load) must never overwrite them silently.
 
     expected_revision is SHA-256 of the exact raw stored JSON (get.revision).
     dryRun returns the revision that would be stored for this payload text
@@ -370,6 +376,13 @@ def commit_project(
                             "errors": ["stored project is corrupt"]}
                 current_rev = revision_of_raw(raw)
                 updated_at = row[1]
+            missing = _missing_pages(parsed if row else None, payload, deleted_pages)
+            if missing and expected == current_rev:
+                return {"ok": False, "stale": False, "pageLoss": True,
+                        "missingPages": [name for _, name in missing], "missingPageIds": [pid for pid, _ in missing],
+                        "revision": current_rev, "updated_at": updated_at,
+                        "errors": ["save would remove pages that were not deleted: "
+                                   + ", ".join(name for _, name in missing[:5])]}
             if expected != current_rev:
                 return {
                     "ok": False,
@@ -395,6 +408,23 @@ def commit_project(
                 "updated_at": result["updated_at"],
                 "unchanged": bool(result.get("unchanged")),
             }
+
+
+def _page_names(project: Any) -> dict[str, str]:
+    pages = project.get("pages") if isinstance(project, dict) else None
+    out: dict[str, str] = {}
+    for page in pages if isinstance(pages, list) else []:
+        if isinstance(page, dict) and isinstance(page.get("id"), str):
+            out[page["id"]] = str(page.get("name") or page["id"])
+    return out
+
+
+def _missing_pages(stored: Any, payload: dict[str, Any], deleted: list[str] | None) -> list[tuple[str, str]]:
+    """(id, name) of stored pages absent from ``payload`` and not explicitly deleted."""
+    before = _page_names(stored)
+    after = _page_names(payload)
+    allowed = {str(item) for item in deleted or []}
+    return [(page_id, name) for page_id, name in before.items() if page_id not in after and page_id not in allowed]
 
 
 def _record_prompt_events(con: sqlite3.Connection, payload: dict[str, Any], user_id: str, project_id: str) -> None:

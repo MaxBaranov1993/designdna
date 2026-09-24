@@ -28,7 +28,7 @@
 
   async function render(master: IRObject | null, version: number) {
     if (!host) return;
-    if (!master) { host.textContent = 'Исходный мастер варианта недоступен'; return; }
+    if (!master) { host.textContent = 'The source master for this variant is unavailable'; return; }
     const ready = await ensureRenderer();
     if (!host || version !== renderVersion) return;
     host.innerHTML = "";

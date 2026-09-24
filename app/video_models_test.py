@@ -17,7 +17,7 @@ def test_catalog_uses_visible_account_models_and_supported_efforts(tmp_path, mon
     result = catalogue()
     assert result["source"] == "codex-cache"
     assert result["models"][0]["efforts"] == ["high", "ultra"]
-    assert [m["id"] for m in result["models"]] == ["test-model", "opus"]
+    assert [m["id"] for m in result["models"]] == ["test-model", "fable", "opus"]
 
 
 def test_selected_model_and_effort_reach_account_transport():
@@ -43,5 +43,5 @@ def test_video_api_preserves_explicit_selection_and_rejects_cross_provider(tmp_p
 
 def test_missing_catalog_has_harness_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
-    assert [m["id"] for m in catalogue()["models"]] == ["gpt-5.6-sol", "gpt-6-astra", "opus"]
+    assert [m["id"] for m in catalogue()["models"]] == ["gpt-5.6-sol", "gpt-6-astra", "fable", "opus"]
 

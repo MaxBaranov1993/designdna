@@ -198,7 +198,7 @@ def _codex(messages: list, *, model: str | None, effort: str | None, timeout: in
            output_schema: dict | None = None) -> str:
     command = _command("codex")
     if not command:
-        raise RuntimeError("Codex CLI не найден: установите @openai/codex и войдите в аккаунт (codex login)")
+        raise RuntimeError("Codex CLI not found: install @openai/codex and sign in (codex login)")
     with tempfile.TemporaryDirectory(prefix="ddna-codex-") as tmpdir:
         tmp = Path(tmpdir)
         prompt, images = _materialize(messages, tmp)
@@ -226,7 +226,7 @@ def _codex(messages: list, *, model: str | None, effort: str | None, timeout: in
         text = last.read_text(encoding="utf-8").strip() if last.exists() else ""
         if not text:
             tail = (done.stderr or done.stdout or "").strip()[-600:]
-            raise RuntimeError(f"Codex CLI не вернул ответ (exit {done.returncode}): {tail}")
+            raise RuntimeError(f"Codex CLI returned no response (exit {done.returncode}): {tail}")
         return text
 
 
@@ -244,7 +244,7 @@ def _claude(messages: list, *, model: str | None, effort: str | None, timeout: i
     """
     command = _command("claude")
     if not command:
-        raise RuntimeError("Claude Code не найден: установите claude и выполните /login")
+        raise RuntimeError("Claude Code not found: install claude and run /login")
     caps = _claude_capabilities(command)
     with tempfile.TemporaryDirectory(prefix="ddna-claude-") as tmpdir:
         tmp = Path(tmpdir)
@@ -284,14 +284,14 @@ def _claude(messages: list, *, model: str | None, effort: str | None, timeout: i
         done = _run(args, stdin_text=stdin_text, cwd=tmp, timeout=timeout, env=env)
         raw = (done.stdout or "").strip()
         if not raw:
-            raise RuntimeError(f"Claude Code не вернул ответ (exit {done.returncode}): {(done.stderr or '')[-600:]}")
+            raise RuntimeError(f"Claude Code returned no response (exit {done.returncode}): {(done.stderr or '')[-600:]}")
         try:
             envelope = json.loads(raw)
         except ValueError:
             return raw
         if isinstance(envelope, dict):
             if envelope.get("is_error"):
-                raise RuntimeError(f"Claude Code: {envelope.get('result') or envelope.get('error') or 'ошибка'}")
+                raise RuntimeError(f"Claude Code: {envelope.get('result') or envelope.get('error') or 'error'}")
             if structured and envelope.get("structured_output") is not None:
                 return json.dumps(envelope["structured_output"], ensure_ascii=False)
             result = envelope.get("result")

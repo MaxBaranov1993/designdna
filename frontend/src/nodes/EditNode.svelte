@@ -24,7 +24,7 @@
 
   const openEditor = async () => {
     if (!data.ir) {
-      toast("Сначала подключите IR к входу ноды", "error");
+      toast("Connect IR to the node input first", "error");
       return;
     }
     window.dispatchEvent(new Event("designdna:ensure-editor"));
@@ -34,7 +34,7 @@
       const { useEditorStore } = await import("../editor/store");
       if (scope.visible()) useEditorStore.getState().openEditor(nodeId);
     } catch (error) {
-      toast(`Не удалось открыть DNA-редактор: ${error instanceof Error ? error.message : String(error)}`, "error");
+      toast(`Could not open DNA editor: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
   };
 </script>
@@ -42,10 +42,10 @@
 <NodeShell {id} type="edit" {selected}>
   {#snippet footer()}
     <div class="foot-left">
-      <button class="btn-node small add-input edit-add-input nodrag" onclick={() => $flow.addEditInput(nodeId)}>+ Вход</button>
+      <button class="btn-node small add-input edit-add-input nodrag" onclick={() => $flow.addEditInput(nodeId)}>+ Input</button>
     </div>
     <div class="foot-right">
-      <button class="btn-node primary small f-open-editor nodrag" disabled={!hasIr} onclick={openEditor}>Открыть редактор</button>
+      <button class="btn-node primary small f-open-editor nodrag" disabled={!hasIr} onclick={openEditor}>Open editor</button>
     </div>
   {/snippet}
   <InPorts type="edit" data={data} />
@@ -55,14 +55,14 @@
       height={240}
       fitHeight
       class="f-preview"
-      empty="Подключите IR — здесь будет превью"
+      empty="Connect IR — a preview will appear here"
     />
   </div>
   <div class="n-meta">
-    <span>{hasIr ? `${sources.length || 1} источн.` : "нет IR на входе"}</span>
-    <span>{hasIr ? "Source Lens внутри" : `${inputs.length} вх.`}</span>
+    <span>{hasIr ? `${sources.length || 1} sources` : "no input IR"}</span>
+    <span>{hasIr ? "Source Lens inside" : `${inputs.length} inputs`}</span>
   </div>
-  <div class="nrow-merge nodrag" role="list" aria-label="Компоненты · порядок сверху вниз">
+  <div class="nrow-merge nodrag" role="list" aria-label="Components · top to bottom">
     {#each inputs as name, index (name)}
       <div
         class="merge-row"
@@ -81,15 +81,15 @@
         <span class="merge-n">{index + 1}</span>
         <span class="merge-name">{name}</span>
         <span class="merge-ctl">
-          <button title="Выше" disabled={index === 0} onclick={() => $flow.reorderEditInputs(nodeId, index, index - 1)}>↑</button>
-          <button title="Ниже" disabled={index === inputs.length - 1} onclick={() => $flow.reorderEditInputs(nodeId, index, index + 1)}>↓</button>
-          <button title="Убрать вход" onclick={() => $flow.removeEditInput(nodeId, name)}>✕</button>
+          <button title="Bring forward" disabled={index === 0} onclick={() => $flow.reorderEditInputs(nodeId, index, index - 1)}>↑</button>
+          <button title="Send backward" disabled={index === inputs.length - 1} onclick={() => $flow.reorderEditInputs(nodeId, index, index + 1)}>↓</button>
+          <button title="Remove input" onclick={() => $flow.removeEditInput(nodeId, name)}>✕</button>
         </span>
       </div>
     {/each}
   </div>
   {#if sources.length}
-    <div class="edit-source-list" aria-label="Источники компонентов">
+    <div class="edit-source-list" aria-label="Component sources">
       {#each sources as source (source.id)}
         <span class="edit-source-chip" title={`${source.label} · confidence ${Math.round((source.confidence ?? 1) * 100)}%`}>
           <b>{source.symbol || "S"}</b>{source.label}
@@ -98,5 +98,5 @@
     </div>
   {/if}
   <NodeStatus {id} />
-  <OutPorts type="edit" />
+  <OutPorts {id} type="edit" />
 </NodeShell>

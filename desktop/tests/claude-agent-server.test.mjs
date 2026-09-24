@@ -125,7 +125,7 @@ test("status reports logged out with an app-connect hint", () => {
   assert.equal(status.installed, true);
   assert.equal(status.loggedIn, false);
   assert.equal(status.ready, false);
-  assert.match(status.hint, /Подключить Claude/);
+  assert.match(status.hint, /Connect Claude/);
 });
 
 test("credentials without a resolvable binary are not reported as connected", () => {
@@ -141,7 +141,7 @@ test("credentials without a resolvable binary are not reported as connected", ()
   assert.equal(status.loggedIn, true);
   assert.equal(status.installed, false);
   assert.equal(status.ready, false);
-  assert.match(status.hint, /CLI не найден/);
+  assert.match(status.hint, /CLI not found/);
 });
 
 test("status reports connected once Claude Code holds credentials", () => {
@@ -191,7 +191,7 @@ test("chat fails fast with an install hint when no binary resolves", async () =>
     environment: { PATH: "", USERPROFILE: "C:\\Users\\dev" },
     fileExists: (file) => file.endsWith(".credentials.json"),
   });
-  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /CLI не найден/);
+  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /CLI not found/);
   assert.equal(spawned, false);
 });
 
@@ -388,7 +388,7 @@ test("a login failure reported on stdout is surfaced, not swallowed as exit 1", 
     cwd: "/repo", spawnProcess,
     environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => true,
   });
-  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude не подключён.*Подключить Claude/s);
+  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude is not connected.*Connect Claude/s);
 });
 
 test("an authentication failure becomes a readable login instruction", async () => {
@@ -397,7 +397,7 @@ test("an authentication failure becomes a readable login instruction", async () 
     cwd: "/repo", spawnProcess,
     environment: { DESIGNDNA_CLAUDE: "/opt/claude", CLAUDE_CODE_OAUTH_TOKEN: "fixture-oauth" }, fileExists: () => false,
   });
-  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude не подключён.*Подключить Claude/s);
+  await assert.rejects(server.chat([{ role: "user", content: "hi" }]), /Claude is not connected.*Connect Claude/s);
 });
 
 test("cmd.exe OEM-encoded failures are decoded, not shown as mojibake", async () => {
@@ -413,7 +413,7 @@ test("cmd.exe OEM-encoded failures are decoded, not shown as mojibake", async ()
     server.chat([{ role: "user", content: "hi" }]),
     (error) => {
       assert.doesNotMatch(error.message, /�/, "сообщение не должно содержать кракозябр");
-      assert.match(error.message, /CLI не найден/);
+      assert.match(error.message, /CLI not found/);
       return true;
     },
   );

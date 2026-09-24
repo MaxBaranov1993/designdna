@@ -62,14 +62,14 @@ test("cancellation interrupts only the image turn and cleans input files", async
   await new Promise(resolve => setImmediate(resolve));
   const directory = calls[0][1].cwd;
   controller.abort();
-  await assert.rejects(pending, /отменена/);
+  await assert.rejects(pending, /cancelled/);
   assert.equal(existsSync(directory), false);
   assert.deepEqual(calls.find(([name]) => name === "turn/interrupt")[1], { threadId: "raster", turnId: "turn" });
 });
 
 test("timeout releases listeners and interrupts the active image turn", async () => {
   const { server, calls } = fixture({ hold: true });
-  await assert.rejects(server.generateImage({ prompt: "draw" }, { timeoutMs: 20 }), /не завершил/);
+  await assert.rejects(server.generateImage({ prompt: "draw" }, { timeoutMs: 20 }), /did not finish/);
   assert.ok(calls.some(([name]) => name === "turn/interrupt"));
   assert.equal(server.listenerCount("notification"), 0);
 });

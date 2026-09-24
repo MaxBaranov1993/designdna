@@ -56,15 +56,15 @@ class FidelityRepairReq(BaseModel):
 
 
 _SOURCE_STAGE_PROGRESS = {
-    "prepare": (3, "Подготовка"),
-    "cacheLookup": (7, "Проверка кэша"),
-    "renderDom": (22, "Загрузка DOM"),
-    "detectBlocks": (30, "Детекция блоков"),
-    "semanticRefine": (34, "Разметка секций"),
-    "captureCompile": (72, "Слои и responsive"),
-    "assemble": (80, "Сборка Design IR"),
-    "fidelity": (95, "Проверка fidelity"),
-    "cacheWrite": (99, "Сохранение кэша"),
+    "prepare": (3, "Preparing"),
+    "cacheLookup": (7, "Checking cache"),
+    "renderDom": (22, "Loading DOM"),
+    "detectBlocks": (30, "Detecting blocks"),
+    "semanticRefine": (34, "Annotating sections"),
+    "captureCompile": (72, "Layers and responsive layout"),
+    "assemble": (80, "Building Design IR"),
+    "fidelity": (95, "Checking fidelity"),
+    "cacheWrite": (99, "Saving cache"),
 }
 
 
@@ -78,7 +78,7 @@ def _execute_block_parse(values: dict, on_stage=None) -> dict:
         on_stage=on_stage,
     )
     if values.get("authSessionFallback"):
-        result["authWarning"] = "В сессии нет cookie для этого URL — выполнен публичный импорт"
+        result["authWarning"] = "Session has no cookies for this URL — imported the public page"
     return result
 
 
@@ -92,8 +92,16 @@ def _run_source_import_job(job_id: str, values: dict) -> None:
         if stage.startswith("capture") and stage != "captureCompile":
             viewport_index = max(1, int(timings.get("captureViewportIndex", 1)))
             viewport_count = max(1, int(timings.get("captureViewportCount", 3)))
-            progress = min(68, 30 + round(38 * viewport_index / viewport_count))
-            label = stage.removeprefix("capture") + " layers"
+            block_index = max(0, int(timings.get("captureBlockIndex", 0) or 0))
+            block_count = max(1, int(timings.get("captureBlockCount", 1) or 1))
+            vp_start = 30 + round(38 * (viewport_index - 1) / viewport_count)
+            vp_end = 30 + round(38 * viewport_index / viewport_count)
+            if block_index > 0:
+                progress = min(68, vp_start + round((vp_end - vp_start) * block_index / block_count))
+                label = f"{stage.removeprefix('capture')} layers {block_index}/{block_count}"
+            else:
+                progress = min(68, vp_end)
+                label = stage.removeprefix("capture") + " layers"
         with SOURCE_IMPORT_JOBS_LOCK:
             job = SOURCE_IMPORT_JOBS.get(job_id)
             if job and job.get("status") != "cancelled":
@@ -115,13 +123,13 @@ def _run_source_import_job(job_id: str, values: dict) -> None:
         with SOURCE_IMPORT_JOBS_LOCK:
             job = SOURCE_IMPORT_JOBS.get(job_id)
             if job:
-                job.update(status="cancelled", stage="cancelled", stageLabel="Отменено")
+                job.update(status="cancelled", stage="cancelled", stageLabel="Cancelled")
     except Exception as exc:
         traceback.print_exc()
         with SOURCE_IMPORT_JOBS_LOCK:
             job = SOURCE_IMPORT_JOBS.get(job_id)
             if job and job.get("status") != "cancelled":
-                job.update(status="error", stage="error", stageLabel="Ошибка",
+                job.update(status="error", stage="error", stageLabel="Error",
                            error=str(exc)[:500])
     finally:
         cancel_token.clear(token_id)
@@ -132,7 +140,7 @@ def block_parse(req: BlockParseReq):
     """BlockParse: детекция блоков страницы + clone каждого в editable Design IR."""
     url = req.url.strip()
     if not url:
-        return err(422, "Укажите URL сайта.")
+        return err(422, "Enter the site URL.")
     try:
         validate_public_url(url)  # SSRF-гард (422, а не 502)
     except ValueError as e:
@@ -153,12 +161,12 @@ def block_parse(req: BlockParseReq):
             "status": "queued",
             "progress": 1,
             "stage": "queued",
-            "stageLabel": "В очереди",
+            "stageLabel": "Queued",
             "timingsMs": {},
         }
         with SOURCE_IMPORT_JOBS_LOCK:
             if job_id in SOURCE_IMPORT_JOBS:
-                return err(409, "Source Import job уже существует.")
+                return err(409, "Source Import job already exists.")
             # Keep bounded diagnostics; completed payloads can be large.
             completed = [key for key, value in SOURCE_IMPORT_JOBS.items()
                          if value.get("status") in {"complete", "error", "cancelled"}]
@@ -174,7 +182,7 @@ def block_parse(req: BlockParseReq):
         return err(422, str(e))
     except Exception as e:
         traceback.print_exc()
-        return err(502, f"Ошибка block-parse: {e}")
+        return err(502, f"block-parse error: {e}")
 
 
 @router.get("/api/block-parse/job/{job_id}")
@@ -182,7 +190,7 @@ def block_parse_job(job_id: str):
     with SOURCE_IMPORT_JOBS_LOCK:
         job = SOURCE_IMPORT_JOBS.get(job_id)
         if not job:
-            return err(404, "Source Import job не найден.")
+            return err(404, "Source Import job not found.")
         # Завершённый job больше не мутирует, а его результат — мегабайты
         # артефакта: deepcopy под глобальным локом на каждом финальном полле
         # был заметной паузой. Копируем только живые (маленькие) записи.
@@ -194,14 +202,14 @@ def block_parse_job(job_id: str):
 @router.post("/api/block-parse/job/{job_id}/cancel")
 def cancel_block_parse_job(job_id: str):
     if not 1 <= len(job_id) <= 80 or not all(c.isascii() and (c.isalnum() or c in "_-") for c in job_id):
-        return err(422, "Некорректный Source Import job ID.")
+        return err(422, "Invalid Source Import job ID.")
     with SOURCE_IMPORT_JOBS_LOCK:
         job = SOURCE_IMPORT_JOBS.get(job_id)
         if job and job.get("status") in {"complete", "error", "cancelled"}:
             return {"jobId": job_id, "status": job["status"]}
         cancel_token.cancel(f"source-import:{job_id}")
         if job:
-            job.update(status="cancelled", stage="cancelled", stageLabel="Отменено")
+            job.update(status="cancelled", stage="cancelled", stageLabel="Cancelled")
     return {"jobId": job_id, "status": "cancelled"}
 
 
@@ -215,7 +223,7 @@ def block_parse_refine(req: BlockParseRefineReq):
     из обновлённых блоков, чтобы UI Kit увидел новые имена и роли.
     """
     if not isinstance(req.blocks, list) or not req.blocks:
-        return err(422, "Нет блоков для уточнения.")
+        return err(422, "No blocks to refine.")
     import scraper
     try:
         blocks, applied = blockparse.apply_refinements(
@@ -227,7 +235,7 @@ def block_parse_refine(req: BlockParseRefineReq):
         return JSONResponse({"error": str(exc), "status": status, **exc.detail}, status_code=status)
     except Exception as e:
         traceback.print_exc()
-        return err(502, f"Ошибка уточнения: {e}")
+        return err(502, f"Refinement error: {e}")
     tokens = None
     for block in blocks:
         if isinstance(block, dict) and isinstance(block.get("ir"), dict):
@@ -313,7 +321,7 @@ def block_parse_repair(req: FidelityRepairReq):
     blocks = [b for b in (req.blocks or [])
               if isinstance(b, dict) and isinstance(b.get("ir"), dict) and not b.get("error")]
     if not blocks:
-        return err(422, "Нет разобранных блоков для починки.")
+        return err(422, "No parsed blocks to repair.")
     try:
         # Repair requests may contain desktop-expanded assets. Canonical state
         # must be restored before measurement and before returning to Source.
@@ -365,7 +373,7 @@ def block_parse_repair(req: FidelityRepairReq):
         import scraper
         from playwright.sync_api import sync_playwright
     except Exception as exc:  # pragma: no cover - окружение без Playwright
-        return err(502, f"Harness недоступен: {exc}")
+        return err(502, f"Harness unavailable: {exc}")
 
     outputs: dict[int, list[str]] = {}
     for item in req.rawOutputs or []:
@@ -445,7 +453,7 @@ def block_parse_repair(req: FidelityRepairReq):
         return JSONResponse({"error": str(exc), "status": status, **exc.detail}, status_code=status)
     except Exception as exc:
         traceback.print_exc()
-        return err(502, f"Ошибка починки: {exc}")
+        return err(502, f"Repair error: {exc}")
 
     return {"ok": True, "viewport": viewport, "blocks": blocks, "results": results,
             "gatePassed": all(_block_gate_passed(block) for block in blocks),

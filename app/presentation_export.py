@@ -65,10 +65,10 @@ def build_pptx(scene: dict, source_ir: dict) -> tuple[bytes, dict]:
     """One IR artboard is one fixed-size slide; preserve its source and assets."""
     items = scene["items"]
     if len(items) > 4000:
-        raise ValueError("Слишком много объектов для одного слайда")
+        raise ValueError("Too many objects for one slide")
     width, height = scene["width"], scene["height"]
     if not (1 <= width <= 16000 and 1 <= height <= 16000):
-        raise ValueError("Неверный размер слайда")
+        raise ValueError("Invalid slide size")
     scale = min(1, 5376 / max(width, height))  # PowerPoint's 56-inch canvas limit.
 
     def emu(value):
@@ -88,7 +88,7 @@ def build_pptx(scene: dict, source_ir: dict) -> tuple[bytes, dict]:
     for index, item in enumerate(items, 2):
         kind = item["kind"]
         if kind not in {"text", "shape", "image"}:
-            raise ValueError("Неизвестный объект экспортируемой сцены")
+            raise ValueError("Unknown export scene object")
         is_picture = kind == "image"
         node = sub(tree, "p:pic" if is_picture else "p:sp")
         nv = sub(node, "p:nvPicPr" if is_picture else "p:nvSpPr")
@@ -165,9 +165,9 @@ def build_pptx(scene: dict, source_ir: dict) -> tuple[bytes, dict]:
               "rasterFallbacks": scene.get("warnings", []), "sourceHash": hashlib.sha256(source_json.encode()).hexdigest()}
     assets, errors = materialize_render_assets(_neutralize_links(source_ir))
     if errors:
-        raise ValueError("Исходные ресурсы не сохранены: " + "; ".join(errors[:3]))
+        raise ValueError("Source assets not saved: " + "; ".join(errors[:3]))
     if sum(len(a.data) for a in assets.values()) > 48_000_000:
-        raise ValueError("Исходные ресурсы превышают 48 MB")
+        raise ValueError("Source assets exceed 48 MB")
     envelope = {"version": "design-pptx-source/1.0", "ir": source_ir, "report": report,
                 "assets": {url: "data:" + asset.mime + ";base64," + base64.b64encode(asset.data).decode()
                            for url, asset in assets.items()}}

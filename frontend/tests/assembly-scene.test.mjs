@@ -29,6 +29,6 @@ test('assembly animates independent leaves, retaining Source hashes, existing tr
   assert.equal(solver.seek(2000).image.opacity, 1);
   assert.equal(solver.seek(2000).image.y, 0);
   const after = structuredClone(doc);
-  assert.throws(() => assembleLayers(doc), /Нет свободных/);
+  assert.throws(() => assembleLayers(doc), /No unlocked layers/);
   assert.deepEqual(doc, after);
 });

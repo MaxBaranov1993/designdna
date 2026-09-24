@@ -27,7 +27,13 @@
 """
 from __future__ import annotations
 
+import contextlib
+
+import base64
+import copy
 import hashlib
+import os
+import tempfile
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,33 +129,33 @@ def validate_asset_url(url: str) -> str:
     """Политика одного ассет-URL. Бросает ValueError с человекочитаемой причиной."""
     url = (url or "").strip()
     if not url:
-        raise ValueError("URL ассета пустой — замените его локальным контент-адресным ассетом")
+        raise ValueError("Empty asset URL — replace it with a local content-addressed asset")
     if url.startswith("data:"):
         match = DATA_URL_MIME_RE.match(url)
         mime = (match.group(1) or "").lower() if match else ""
         if mime and not mime.startswith(ALLOWED_DATA_MIME_PREFIXES):
             raise ValueError(
-                f"data: URL с типом {mime!r} не разрешён — только image/, font/ или application/")
+                f"data: URL of type {mime!r} is not allowed — only image/, font/, or application/")
         if len(url) > MAX_DATA_URL_CHARS:
             raise ValueError(
-                f"data: URL занимает {len(url)} символов (лимит {MAX_DATA_URL_CHARS}) — "
-                "сохраните ассет как контент-адресный блоб ddna://blobs/<sha256>.<ext>")
+                f"data: URL contains {len(url)} characters (limit {MAX_DATA_URL_CHARS}) — "
+                "save the asset as a content-addressed blob ddna://blobs/<sha256>.<ext>")
         return url
     if len(url) > MAX_URL_CHARS:
         raise ValueError(
-            f"URL ассета длиннее {MAX_URL_CHARS} символов — используйте короткую локальную ссылку")
+            f"Asset URL exceeds {MAX_URL_CHARS} characters — use a short local reference")
     if BLOB_URL_RE.match(url) or FONT_URL_RE.match(url):
         return url
     scheme = urlparse(url).scheme.lower()
     if scheme in ("http", "https"):
         raise ValueError(
-            f"удалённый ассет {url!r} не разрешён: офлайн-рендер не ходит в сеть и не может "
-            "верифицировать байты удалённого ответа — скачайте ассет и сохраните его как "
-            "контент-адресный блоб ddna://blobs/<sha256>.<ext> в DESIGNDNA_DATA_DIR/blobs "
-            "или локальный шрифт /fonts/<имя>")
+            f"remote asset {url!r} is not allowed: offline rendering cannot access the network or "
+            "verify remote response bytes — download the asset and save it as a "
+            "content-addressed blob ddna://blobs/<sha256>.<ext> in DESIGNDNA_DATA_DIR/blobs "
+            "or a local font /fonts/<name>")
     raise ValueError(
-        f"схема {scheme or '<пусто>'!r} не разрешена для ассетов рендера — используйте "
-        "ddna://blobs/<sha256>.<ext>, /fonts/<имя> или data: URL")
+        f"scheme {scheme or '<empty>'!r} is not allowed for render assets — use "
+        "ddna://blobs/<sha256>.<ext>, /fonts/<name>, or data: URL")
 
 
 def validate_render_assets(design_ir: dict) -> list[str]:
@@ -172,8 +178,161 @@ def _safe_child(base: Path, name: str) -> Path:
     """Ребёнок каталога без traversal: строгий формат имени + проверка резолва."""
     resolved = (base / name).resolve()
     if resolved.parent != base.resolve():
-        raise ValueError(f"путь {name!r} выходит за пределы хранилища")
+        raise ValueError(f"path {name!r} is outside the storage directory")
     return resolved
+
+
+
+
+MIME_TO_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+}
+
+
+def _decode_data_url(url: str) -> tuple[bytes, str]:
+    """Decode a data: URL into (bytes, mime)."""
+    header, _, payload = url.partition(",")
+    if not payload:
+        raise ValueError("data: URL has no payload")
+    mime_match = DATA_URL_MIME_RE.match(header)
+    mime = (mime_match.group(1) or "application/octet-stream").lower() if mime_match else "application/octet-stream"
+    if ";base64" in header.lower():
+        data = base64.b64decode(payload, validate=False)
+    else:
+        from urllib.parse import unquote_to_bytes
+        data = unquote_to_bytes(payload)
+    return data, mime
+
+
+def put_content_blob(data: bytes, ext: str, data_dir: Path | None = None) -> str:
+    """Write bytes under ddna://blobs/<sha256>.<ext> (create-if-absent)."""
+    ext = str(ext or "").lower().lstrip(".")
+    if ext == "jpeg":
+        ext = "jpg"
+    if ext not in BLOB_EXT_MIME:
+        raise ValueError(f"unsupported blob extension {ext!r}")
+    if not data:
+        raise ValueError("empty blob")
+    if len(data) > MAX_BLOB_BYTES:
+        raise ValueError(f"blob above {MAX_BLOB_BYTES} bytes")
+    digest = hashlib.sha256(data).hexdigest()
+    root = Path(data_dir) if data_dir is not None else _data_root()
+    blobs = root / "blobs"
+    blobs.mkdir(parents=True, exist_ok=True)
+    name = f"{digest}.{ext}"
+    target = _safe_child(blobs, name)
+    ref = f"ddna://blobs/{name}"
+    if target.is_file():
+        existing = target.read_bytes()
+        if hashlib.sha256(existing).hexdigest() != digest:
+            raise ValueError(f"blob {digest} exists with different bytes")
+        return ref
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{digest}.", suffix=".tmp", dir=os.fspath(blobs))
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.replace(tmp_name, os.fspath(target))
+        except OSError:
+            if target.is_file():
+                existing = target.read_bytes()
+                if hashlib.sha256(existing).hexdigest() != digest:
+                    raise ValueError(f"blob {digest} exists with different bytes")
+                return ref
+            raise
+        stored = target.read_bytes()
+        if hashlib.sha256(stored).hexdigest() != digest:
+            raise ValueError("blob write failed integrity check")
+        return ref
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+
+
+def promote_oversized_data_urls(
+    design_ir: dict,
+    *,
+    limit: int = MAX_DATA_URL_CHARS,
+    data_dir: Path | None = None,
+) -> dict:
+    """Rewrite oversized ``data:`` assets to ``ddna://blobs/<sha>.<ext>``.
+
+    Small data URLs stay inline. Oversized images are decoded, stored
+    content-addressed, and replaced in a deep copy of the IR so render /
+    visual review can proceed offline without hitting the data: size limit.
+    """
+    if not isinstance(design_ir, dict):
+        return design_ir
+    ir = copy.deepcopy(design_ir)
+    cache: dict[str, str] = {}
+
+    def promote(url: str) -> str:
+        raw = (url or "").strip()
+        if not raw.startswith("data:") or len(raw) <= limit:
+            return url
+        hit = cache.get(raw)
+        if hit is not None:
+            return hit
+        try:
+            data, mime = _decode_data_url(raw)
+            ext = MIME_TO_EXT.get(mime)
+            if ext is None and mime.startswith("image/"):
+                from io import BytesIO
+                from PIL import Image
+                image = Image.open(BytesIO(data))
+                buf = BytesIO()
+                image.save(buf, format="PNG")
+                data, ext = buf.getvalue(), "png"
+            if ext is None:
+                return url
+            ref = put_content_blob(data, ext, data_dir)
+            cache[raw] = ref
+            return ref
+        except Exception:
+            return url
+
+    def rewrite_style(value: str) -> str:
+        def repl(match: re.Match[str]) -> str:
+            original = match.group(1)
+            promoted = promote(original)
+            return match.group(0).replace(original, promoted, 1)
+        return URL_IN_STYLE_RE.sub(repl, value)
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key in ("src", "href", "preview", "sourcePreview"):
+                value = node.get(key)
+                if isinstance(value, str) and value.strip().startswith("data:"):
+                    node[key] = promote(value)
+            style = node.get("style")
+            if isinstance(style, dict):
+                for prop, value in list(style.items()):
+                    if isinstance(value, str) and "url(" in value.lower():
+                        style[prop] = rewrite_style(value)
+            elif isinstance(style, str) and "url(" in style.lower():
+                node["style"] = rewrite_style(style)
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(ir)
+    faces = (ir.get("meta") or {}).get("fontFaces") if isinstance(ir.get("meta"), dict) else None
+    if isinstance(faces, list):
+        for face in faces:
+            if isinstance(face, dict) and isinstance(face.get("url"), str):
+                face["url"] = promote(face["url"])
+    return ir
+
+
 
 
 def materialize_render_assets(design_ir: dict, data_dir: Path | None = None
@@ -211,19 +370,19 @@ def materialize_render_assets(design_ir: dict, data_dir: Path | None = None
                 continue
             if not path.is_file():
                 errors.append(
-                    f"{where}: блоб {url!r} не найден — сохраните файл как {path} "
-                    "(имя = полный sha256 содержимого)")
+                    f"{where}: blob {url!r} not found — save the file as {path} "
+                    "(name = full content sha256)")
                 continue
             data = path.read_bytes()
             if len(data) > MAX_BLOB_BYTES:
                 errors.append(
-                    f"{where}: блоб {url!r} больше {MAX_BLOB_BYTES} байт — рендер не принимает крупные ассеты")
+                    f"{where}: blob {url!r} above {MAX_BLOB_BYTES} bytes — render rejects large assets")
                 continue
             digest = hashlib.sha256(data).hexdigest()
             if digest != sha:
                 errors.append(
-                    f"{where}: блоб {url!r} повреждён — sha256 содержимого {digest} не совпадает "
-                    "с именем; пересохраните файл под его настоящим хэшем")
+                    f"{where}: blob {url!r} is corrupted — content sha256 {digest} does not match "
+                    "the filename; save the file under its actual hash")
                 continue
             assets[url] = MaterializedAsset(url=url, data=data, mime=BLOB_EXT_MIME[ext], source=str(path))
             continue
@@ -237,12 +396,12 @@ def materialize_render_assets(design_ir: dict, data_dir: Path | None = None
                 continue
             if not path.is_file():
                 errors.append(
-                    f"{where}: шрифт {url!r} не найден — ожидается файл {path} "
-                    "(локальная база шрифтов DESIGNDNA_DATA_DIR/fonts)")
+                    f"{where}: font {url!r} not found — expected file {path} "
+                    "(local font database DESIGNDNA_DATA_DIR/fonts)")
                 continue
             data = path.read_bytes()
             if len(data) > MAX_FONT_BYTES:
-                errors.append(f"{where}: шрифт {url!r} больше {MAX_FONT_BYTES} байт")
+                errors.append(f"{where}: font {url!r} above {MAX_FONT_BYTES} bytes")
                 continue
             # Скреперный формат имени: <первые 16 hex sha1(байтов)>.<ext>.
             # Валидный, но подменённый файл не совпадёт по хэшу и откажет
@@ -251,13 +410,13 @@ def materialize_render_assets(design_ir: dict, data_dir: Path | None = None
             digest = hashlib.sha1(data).hexdigest()[:16]
             if digest != stem:
                 errors.append(
-                    f"{where}: шрифт {url!r} повреждён или подменён — sha1-префикс содержимого "
-                    f"{digest} не совпадает с именем файла {stem}")
+                    f"{where}: font {url!r} corrupted or replaced — content sha1 prefix "
+                    f"{digest} does not match filename {stem}")
                 continue
             ext = name.rsplit(".", 1)[-1]
             assets[url] = MaterializedAsset(url=url, data=data, mime=FONT_EXT_MIME[ext], source=str(path))
             continue
-        errors.append(f"{where}: ассет {url!r} не удалось материализовать для офлайн-рендера")
+        errors.append(f"{where}: asset {url!r} could not be materialized for offline rendering")
     return assets, errors
 
 

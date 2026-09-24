@@ -185,5 +185,5 @@ def build_screenshot_block(image_data_url: str, regions: list[dict],
         "preview": image_data_url,
         "previews": {"desktop": image_data_url},
         "layers": len(children),
-        "warnings": [] if children else ["Сегментатор не дал ни одной рамки"],
+        "warnings": [] if children else ["Segmenter returned no bounds"],
     }

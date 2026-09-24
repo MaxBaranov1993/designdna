@@ -69,12 +69,12 @@ def _sanitize_svg(svg: str) -> str:
     """Parse XML, allow static SVG only, and never execute returned markup."""
     import xml.etree.ElementTree as ET
     if len(svg.encode("utf-8")) > 100_000 or re.search(r"<!DOCTYPE|<!ENTITY", svg, re.I):
-        raise ValueError("SVG слишком большой или содержит запрещённые объявления")
+        raise ValueError("SVG too large or contains forbidden declarations")
     root = ET.fromstring(svg)
     local = lambda name: name.rsplit("}", 1)[-1]
     allowed = set("svg g defs title desc path rect circle ellipse line polyline polygon text tspan linearGradient radialGradient stop pattern filter clipPath mask use feTurbulence feDisplacementMap feGaussianBlur feColorMatrix feComposite feDiffuseLighting feSpecularLighting feDistantLight fePointLight feSpotLight feBlend feFlood feMerge feMergeNode feOffset feMorphology feComponentTransfer feFuncR feFuncG feFuncB feFuncA".split())
     if local(root.tag) != "svg":
-        raise ValueError("Ожидался SVG")
+        raise ValueError("Expected SVG")
     for parent in root.iter():
         for child in list(parent):
             if local(child.tag) not in allowed or ("}" in child.tag and not child.tag.startswith("{http://www.w3.org/2000/svg}")):
@@ -123,7 +123,7 @@ def image_generate(req: ImageGenReq):
     prepareOnly → промпт для аккаунта десктопа; rawOutput → ответ модели."""
     prompt = (req.prompt or "").strip()
     if not prompt:
-        return err(422, "Опишите изображение")
+        return err(422, "Describe the image")
     width = max(64, min(2048, int(req.width or 1024)))
     height = max(64, min(2048, int(req.height or 1024)))
     style = req.style if req.style in _IMAGE_STYLE_HINTS else "vector"
@@ -140,7 +140,7 @@ def image_generate(req: ImageGenReq):
     )
     reference = (req.referenceImage or "").strip()
     if reference and (not reference.startswith("data:image/") or len(reference) > 8_000_000):
-        return err(422, "Референс должен быть изображением (data:image/…) до 6 МБ")
+        return err(422, "Reference must be an image (data:image/…) up to 6 MB")
     if reference:
         user_content = [
             {"type": "text", "text": prompt + "\n\nA reference image is attached. Reproduce its palette, materials, "
@@ -161,11 +161,11 @@ def image_generate(req: ImageGenReq):
         return err(502, str(e))
     svg = _extract_svg(raw)
     if not svg:
-        return err(502, "Модель не вернула SVG — попробуйте переформулировать промпт")
+        return err(502, "Model returned no SVG — try rephrasing the prompt")
     try:
         svg = _sanitize_svg(svg)
         png = render_svg_png(svg, width, height)
     except Exception as e:
-        return err(502, f"Не удалось отрисовать SVG: {e}")
+        return err(502, f"Could not render SVG: {e}")
     return {"svg": svg, "png": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
             "width": width, "height": height}

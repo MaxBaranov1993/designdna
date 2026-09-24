@@ -17,15 +17,15 @@
 
 <div class="n-status-row">
   {#if (status?.kind === "err" || status?.kind === "warn") && status.text.length > 220}
-    <details class={cn("n-status nodrag", status.kind)}><summary>{status.kind === "warn" ? "Готово с замечаниями · подробности" : "Есть замечания · диагностика"}</summary><div class="status-details">{status.text}</div></details>
+    <details class={cn("n-status nodrag", status.kind)}><summary>{status.kind === "warn" ? "Done with issues · details" : "Issues found · diagnostics"}</summary><div class="status-details">{status.text}</div></details>
   {:else}
     <div class={cn("n-status", status?.kind)}>{status?.text || ""}</div>
   {/if}
   {#if canCancel}
     <button
       class="n-cancel nodrag"
-      title="Отменить текущую задачу этой ноды"
-      aria-label="Отменить"
+      title="Cancel this node task"
+      aria-label="Cancel"
       onclick={cancelRun}
     >✕</button>
   {/if}

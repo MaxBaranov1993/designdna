@@ -63,7 +63,7 @@ def _error(status: int, message: str):
 
 def _parts(path: str) -> list[str]:
     if not isinstance(path, str) or not path.startswith("/"):
-        raise ValueError("patch path должен быть JSON Pointer")
+        raise ValueError("patch path must be a JSON Pointer")
     return [part.replace("~1", "/").replace("~0", "~") for part in path[1:].split("/") if part]
 
 
@@ -85,7 +85,7 @@ def _exists(doc, path: str) -> bool:
 def _apply(doc, operation: dict) -> None:
     parts = _parts(operation["path"])
     if not parts:
-        raise ValueError("изменение корневого IR запрещено")
+        raise ValueError("changing the root IR is forbidden")
     parent = doc
     for part in parts[:-1]:
         parent = parent[int(part)] if isinstance(parent, list) else parent[part]
@@ -99,7 +99,7 @@ def _apply(doc, operation: dict) -> None:
         if isinstance(parent, list): parent.pop(int(last))
         else: parent.pop(last, None)
     else:
-        raise ValueError("поддерживаются только add, replace и remove")
+        raise ValueError("only add, replace, and remove are supported")
 
 
 def _source_paths(doc: dict) -> dict[str, str]:
@@ -131,12 +131,12 @@ def _source_paths(doc: dict) -> dict[str, str]:
 
 def _normalized_scope(doc: dict, keys: list[str]) -> tuple[list[str], list[str], list[str]]:
     if not keys:
-        raise ValueError("выберите хотя бы один элемент для AI")
+        raise ValueError("select at least one element for AI")
     paths = _source_paths(doc)
     unique_keys = list(dict.fromkeys(keys))
     missing = [key for key in unique_keys if not paths.get(key)]
     if missing:
-        raise ValueError("выделенные элементы больше не найдены или имеют неоднозначный sourceKey")
+        raise ValueError("selected elements no longer exist or have an ambiguous sourceKey")
     selected = [(key, paths[key]) for key in unique_keys]
     dropped = [key for key, path in selected if any(path != other and other.startswith(path + "/") for _, other in selected)]
     kept = [(key, path) for key, path in selected if key not in dropped]
@@ -240,41 +240,41 @@ def _ensure_object(shadow: dict, path: str, ops: list[dict], reason: str) -> Non
 
 def _commands_to_ops(base: dict, commands: list, scope: AssistScope) -> list[dict]:
     if not isinstance(commands, list) or len(commands) > 60:
-        raise ValueError("AI должен вернуть список до 60 команд")
+        raise ValueError("AI must return a list of up to 60 commands")
     paths = _source_paths(base)
     allowed = _scope_paths(base, scope.sourceKeys)
     shadow = copy.deepcopy(base)
     ops: list[dict] = []
     for command in commands:
         if not isinstance(command, dict) or command.get("command") != "update":
-            raise ValueError("поддерживается только команда update")
+            raise ValueError("only the update command is supported")
         target = paths.get(str(command.get("targetSourceKey") or ""))
-        if not target: raise ValueError("AI указал неизвестный элемент")
-        if not _inside(target, allowed): raise ValueError("AI попытался изменить элемент вне текущего выделения")
+        if not target: raise ValueError("AI specified an unknown element")
+        if not _inside(target, allowed): raise ValueError("AI attempted to change an element outside the selection")
         viewport = str(command.get("viewport") or scope.viewport).lower()
         if viewport in {"current", "desktop", "all"}: viewport = "shared"
-        if viewport not in {"shared", "tablet", "mobile"}: raise ValueError("неизвестный viewport команды")
+        if viewport not in {"shared", "tablet", "mobile"}: raise ValueError("unknown command viewport")
         changes = command.get("changes")
-        if not isinstance(changes, dict) or not changes: raise ValueError("команда update не содержит changes")
+        if not isinstance(changes, dict) or not changes: raise ValueError("update command contains no changes")
         reason = str(command.get("reason") or "").strip()
         target_value = _get(shadow, target)
         if not isinstance(target_value, dict):
             if viewport != "shared":
-                raise ValueError("текстовое свойство нельзя менять только в одном viewport")
+                raise ValueError("a text property cannot change in only one viewport")
             content = [(group, value) for group, value in changes.items() if group in CONTENT_FIELDS]
             if len(changes) != 1 or len(content) != 1:
-                raise ValueError("скалярный элемент поддерживает только одно текстовое изменение")
+                raise ValueError("a scalar element supports only one text change")
             _, value = content[0]
             if isinstance(value, (dict, list)):
-                raise ValueError("текстовое свойство принимает только скалярное значение")
+                raise ValueError("a text property accepts only a scalar value")
             op = {"op": "replace", "path": target, "after": copy.deepcopy(value), "reason": reason}
             _apply(shadow, op); ops.append(op)
             continue
         for group, values in changes.items():
             if group in ALLOWED_GROUPS:
-                if not isinstance(values, dict): raise ValueError(f"{group} должен быть объектом")
+                if not isinstance(values, dict): raise ValueError(f"{group} must be an object")
                 if group == "props" and any(isinstance(value, (dict, list)) for value in values.values()):
-                    raise ValueError("структурные props нужно редактировать через выбранные вложенные элементы")
+                    raise ValueError("edit structural props through selected nested elements")
                 group_path = f"{target}/{group}" if viewport == "shared" else f"{target}/responsive/{viewport}/{group}"
                 _ensure_object(shadow, group_path, ops, reason)
                 for key, value in values.items():
@@ -285,7 +285,7 @@ def _commands_to_ops(base: dict, commands: list, scope: AssistScope) -> list[dic
             elif group == "typeRole" and viewport == "shared":
                 # текстовый стиль: роль типографики вместо инлайнового кегля
                 if values is not None and values not in TYPE_ROLES:
-                    raise ValueError(f"typeRole принимает одну из ролей: {', '.join(TYPE_ROLES)}")
+                    raise ValueError(f"typeRole accepts one of: {', '.join(TYPE_ROLES)}")
                 path = f"{target}/typeRole"
                 if values is None:
                     if _exists(shadow, path):
@@ -296,7 +296,7 @@ def _commands_to_ops(base: dict, commands: list, scope: AssistScope) -> list[dic
                 _apply(shadow, op); ops.append(op)
             elif group in CONTENT_FIELDS and viewport == "shared":
                 if isinstance(values, (dict, list)):
-                    raise ValueError("структурное изменение содержимого запрещено")
+                    raise ValueError("structural content changes are forbidden")
                 if target.endswith("/parts/label") and group in {"text", "label", "value"}:
                     path = f"{target}/text"
                 elif target.endswith("/parts/control") and group in {"text", "placeholder", "value"}:
@@ -305,7 +305,7 @@ def _commands_to_ops(base: dict, commands: list, scope: AssistScope) -> list[dic
                     path = f"{target}/{group}"
                 op = {"op": "replace" if _exists(shadow, path) else "add", "path": path, "after": copy.deepcopy(values), "reason": reason}
                 _apply(shadow, op); ops.append(op)
-            else: raise ValueError(f"недопустимая группа изменения: {group}")
+            else: raise ValueError(f"invalid change group: {group}")
     return ops
 
 
@@ -361,20 +361,20 @@ def _locked_node_reason(doc: dict, path: str) -> str | None:
 
 
 def _validate_apply(base: dict, ops: list[dict], req: AssistRequest) -> tuple[dict, list[dict]]:
-    if len(ops) > 100: raise ValueError("слишком много изменений")
+    if len(ops) > 100: raise ValueError("too many changes")
     allowed = _scope_paths(base, req.scope.sourceKeys)
     candidate = copy.deepcopy(base)
     normalized = []
     for raw in ops:
         op, path = str(raw.get("op")), str(raw.get("path"))
         parts = _parts(path)
-        if op not in {"add", "remove", "replace"} or not parts or parts[0] != "tree": raise ValueError(f"недопустимая операция: {path}")
-        if not _inside(path, allowed): raise ValueError("AI попытался изменить элемент вне текущего выделения")
+        if op not in {"add", "remove", "replace"} or not parts or parts[0] != "tree": raise ValueError(f"invalid operation: {path}")
+        if not _inside(path, allowed): raise ValueError("AI attempted to change an element outside the selection")
         if parts[-1] in FORBIDDEN_FIELDS or (len(parts) > 1 and parts[-2] in {"children", "tree"}):
-            raise ValueError(f"структурное изменение запрещено: {path}")
+            raise ValueError(f"structural change forbidden: {path}")
         locked_reason = _locked_node_reason(base, path)
         if locked_reason:
-            raise ValueError(f"слой заблокирован (editable:false): {locked_reason}")
+            raise ValueError(f"layer locked (editable:false): {locked_reason}")
         is_frame = "frame" in parts
         is_style = any(part in {"style", "styleBindings"} for part in parts) or parts[-1] == "typeRole"
         is_color = _is_color_field(parts[-1])
@@ -384,34 +384,34 @@ def _validate_apply(base: dict, ops: list[dict], req: AssistRequest) -> tuple[di
             and _is_color_field(_parts(str(next_op.get("path") or ""))[-1])
             for next_op in ops if next_op is not raw
         )
-        if is_frame and not req.constraints.allowFrame: raise ValueError("изменение layout запрещено")
-        if is_style and not is_color and not is_color_scaffold and not req.constraints.allowStyle: raise ValueError("изменение стиля запрещено")
-        if is_content and not req.constraints.allowContent: raise ValueError("изменение текста запрещено")
-        if is_color and not req.constraints.allowColor: raise ValueError("изменение цвета запрещено")
+        if is_frame and not req.constraints.allowFrame: raise ValueError("layout changes are forbidden")
+        if is_style and not is_color and not is_color_scaffold and not req.constraints.allowStyle: raise ValueError("style changes are forbidden")
+        if is_content and not req.constraints.allowContent: raise ValueError("text changes are forbidden")
+        if is_color and not req.constraints.allowColor: raise ValueError("color changes are forbidden")
         node_constraints = _effective_node_constraints(base, path)
         locks = set(node_constraints.get("intentLocks") or [])
-        if is_content and "content" in locks: raise ValueError("текст защищён Intent Lock")
-        if is_frame and "geometry" in locks: raise ValueError("геометрия защищена Intent Lock")
-        if "responsive" in parts and "responsive" in locks: raise ValueError("адаптив защищён Intent Lock")
-        if (is_style or is_color) and not is_color_scaffold and locks.intersection({"appearance", "brand"}): raise ValueError("внешний вид защищён Intent Lock")
+        if is_content and "content" in locks: raise ValueError("text is protected by Intent Lock")
+        if is_frame and "geometry" in locks: raise ValueError("geometry is protected by Intent Lock")
+        if "responsive" in parts and "responsive" in locks: raise ValueError("responsive layout is protected by Intent Lock")
+        if (is_style or is_color) and not is_color_scaffold and locks.intersection({"appearance", "brand"}): raise ValueError("appearance is protected by Intent Lock")
         after = raw.get("after")
         if is_content and isinstance(after, str) and isinstance(node_constraints.get("maxTextLength"), int) and len(after) > node_constraints["maxTextLength"]:
-            raise ValueError("текст длиннее ограничения maxTextLength")
+            raise ValueError("text exceeds maxTextLength")
         if is_color and node_constraints.get("allowedColors"):
             colors = re.findall(r"#[0-9a-fA-F]{3,8}", str(after))
             allowed_colors = {str(value).lower() for value in node_constraints["allowedColors"]}
-            if any(color.lower() not in allowed_colors for color in colors): raise ValueError("цвет не входит в allowedColors")
+            if any(color.lower() not in allowed_colors for color in colors): raise ValueError("color is not in allowedColors")
         if is_frame and isinstance(after, (int, float)):
             limits = {"width": ("minWidth", "maxWidth"), "height": ("minHeight", "maxHeight")}.get(parts[-1])
             if limits:
                 minimum, maximum = (node_constraints.get(limits[0]), node_constraints.get(limits[1]))
-                if isinstance(minimum, (int, float)) and after < minimum: raise ValueError(f"{parts[-1]} меньше ограничения")
-                if isinstance(maximum, (int, float)) and after > maximum: raise ValueError(f"{parts[-1]} больше ограничения")
+                if isinstance(minimum, (int, float)) and after < minimum: raise ValueError(f"{parts[-1]} below the minimum")
+                if isinstance(maximum, (int, float)) and after > maximum: raise ValueError(f"{parts[-1]} above the maximum")
         operation = {"op": op, "path": path, "before": copy.deepcopy(_get(base, path)) if op != "add" and _exists(base, path) else None, "after": copy.deepcopy(raw.get("after")), "reason": str(raw.get("reason") or "")}
         _apply(candidate, operation); normalized.append(operation)
-    if _structure(base) != _structure(candidate): raise ValueError("AI изменил структуру дерева")
+    if _structure(base) != _structure(candidate): raise ValueError("AI changed the tree structure")
     errors = ir.format_errors(ir.validate_ir(candidate))
-    if errors: raise ValueError("AI создал невалидный IR: " + "; ".join(errors[:4]))
+    if errors: raise ValueError("AI created invalid IR: " + "; ".join(errors[:4]))
     return candidate, normalized
 
 
@@ -445,7 +445,7 @@ def _adapt(base: dict, scope: AssistScope) -> tuple[dict, list[dict], str]:
     for path in paths:
         node = _get(candidate, path)
         if not isinstance(node, dict):
-            raise ValueError("адаптив недоступен для отдельного текстового свойства")
+            raise ValueError("responsive settings are unavailable for an individual text property")
         frame = node.get("frame") if isinstance(node.get("frame"), dict) else {}
         responsive = node.setdefault("responsive", {})
         mobile = responsive.setdefault("mobile", {}).setdefault("frame", {})
@@ -456,7 +456,7 @@ def _adapt(base: dict, scope: AssistScope) -> tuple[dict, list[dict], str]:
         if isinstance(frame.get("width"), (int, float)) and frame["width"] > 720:
             tablet.setdefault("width", "fill"); tablet.setdefault("minWidth", 0)
     ops = [op for op in _diff(base, candidate) if _inside(op["path"], paths)][:100]
-    return candidate, ops, "Адаптивные настройки выделения подготовлены"
+    return candidate, ops, "Responsive selection settings prepared"
 
 
 # ---------- детерминированный дизайн-линтер (анти-«нейрослоп») ----------
@@ -516,13 +516,13 @@ def _design_lint(ir: dict) -> list[dict]:
             visit(section)
 
         if emoji_hits:
-            warnings.append({"code": "design_lint", "message": "Эмодзи в тексте выглядят дёшево: замените на иконки или уберите (" + "; ".join(emoji_hits[:2]) + ")"})
+            warnings.append({"code": "design_lint", "message": "Emoji may weaken the visual style: replace with icons or remove (" + "; ".join(emoji_hits[:2]) + ")"})
         if lorem_hits:
-            warnings.append({"code": "design_lint", "message": "Шаблонный текст-заглушка: замените на конкретику (" + "; ".join(lorem_hits[:2]) + ")"})
+            warnings.append({"code": "design_lint", "message": "Generic placeholder text: replace with specific content (" + "; ".join(lorem_hits[:2]) + ")"})
         if len(font_sizes) > 8:
-            warnings.append({"code": "design_lint", "message": "На артборде " + str(len(font_sizes)) + " размеров шрифта — обычно хватает 4-6 (display/h2/h3/body/caption)"})
+            warnings.append({"code": "design_lint", "message": "The artboard has " + str(len(font_sizes)) + " font sizes — 4–6 are usually enough (display/h2/h3/body/caption)"})
         if len(off_palette) > 4:
-            warnings.append({"code": "design_lint", "message": "Много новых цветов вне палитры токенов — дизайн рассыпается; закрепите 1-2 акцента через Style DNA"})
+            warnings.append({"code": "design_lint", "message": "Too many new colors outside the token palette — use Style DNA to establish 1–2 accents"})
     except Exception:
         pass
     return warnings
@@ -559,7 +559,7 @@ def _messages(base: dict, req: AssistRequest) -> list[dict]:
                              or ds_compiler.default_budget(ds_mode)),
         )
         if str(req.designSystem.get("usageMode") or "strict") == "strict" and not compiled.get("strictReady"):
-            raise ValueError("Design System Strict: exact master не помещается в выбранный context budget")
+            raise ValueError("Design System Strict: exact master exceeds the selected context budget")
         ds_block = chr(10) + chr(10) + compiled["promptBlock"]
     scope = req.scope.model_dump() if hasattr(req.scope, "model_dump") else req.scope.dict()
     scope["sourceKeys"] = safe_keys
@@ -570,19 +570,19 @@ def _messages(base: dict, req: AssistRequest) -> list[dict]:
 
 def _parse_result(raw: str, base: dict, req: AssistRequest):
     parsed = json.loads(llm.extract_json(raw))
-    if not isinstance(parsed, dict): raise ValueError("AI вернул не объект")
+    if not isinstance(parsed, dict): raise ValueError("AI returned a non-object")
     ops = _commands_to_ops(base, parsed.get("commands", []), req.scope)
     candidate, ops = _validate_apply(base, ops, req)
-    return candidate, ops, str(parsed.get("summary") or "Изменения готовы")
+    return candidate, ops, str(parsed.get("summary") or "Changes ready")
 
 
 @router.post("/api/editor/assist")
 def editor_assist(req: AssistRequest):
-    if req.action not in ALLOWED_ACTIONS: return _error(422, "Неизвестное AI-действие")
-    if req.scope.viewport not in ALLOWED_VIEWPORTS: return _error(422, "Неизвестный viewport")
-    if not req.prompt.strip(): return _error(422, "Опишите, что нужно изменить")
+    if req.action not in ALLOWED_ACTIONS: return _error(422, "Unknown AI action")
+    if req.scope.viewport not in ALLOWED_VIEWPORTS: return _error(422, "Unknown viewport")
+    if not req.prompt.strip(): return _error(422, "Describe what to change")
     errors = ir.format_errors(ir.validate_ir(req.ir))
-    if errors: return _error(422, "IR не проходит schema: " + "; ".join(errors[:4]))
+    if errors: return _error(422, "IR fails schema validation: " + "; ".join(errors[:4]))
     try:
         _, _, dropped_scope = _normalized_scope(req.ir, req.scope.sourceKeys)
         if req.action == "adapt":
@@ -616,19 +616,19 @@ def editor_assist(req: AssistRequest):
             if usage_mode == "strict" and introduced:
                 return _error(
                     422,
-                    "Design System Strict отклонил AI edit: "
+                    "Design System Strict rejected AI edit: "
                     + "; ".join(item["message"] for item in introduced[:4]),
                 )
             warnings.extend(introduced
                             + [item for item in check["warnings"]
                                if str(item.get("message")) not in inherited])
         if dropped_scope:
-            warnings.append({"code": "nested_scope_normalized", "message": "Родительский контейнер исключён: AI изменяет выбранные вложенные элементы."})
+            warnings.append({"code": "nested_scope_normalized", "message": "Parent container excluded: AI changes the selected nested elements."})
         if len(ops) > 8 or any(_is_high_impact_op(op) for op in ops):
-            warnings.append({"code": "high_impact", "message": "AI предлагает много изменений. Проверьте diff перед применением."})
+            warnings.append({"code": "high_impact", "message": "AI proposes many changes. Review the diff before applying."})
         return {"summary": summary, "ops": ops, "previewIr": candidate, "changedViewports": [], "warnings": warnings, "validation": {"schema": True, "overflow": [], "constraints": []}}
     except ValueError as exc: return _error(422, str(exc))
     except RuntimeError as exc:
         message = str(exc)
         return _error(429 if any(token in message.lower() for token in ("429", "лимит", "очеред")) else 504, message)
-    except Exception as exc: return _error(502, f"AI assist недоступен: {exc}")
+    except Exception as exc: return _error(502, f"AI assist unavailable: {exc}")

@@ -66,6 +66,7 @@ npm run desktop:start
 | [docs/generator-design-playbook/README.md](docs/generator-design-playbook/README.md) | дизайн-политика генератора |
 | [docs/design-system-prompt-2026-09-09.md](docs/design-system-prompt-2026-09-09.md) | что из дизайн-системы попадает в промпт генератора: бюджеты, порядок строк, сводки мастеров, декор-сигнатуры, референс-картинки |
 | [docs/image-nodes.md](docs/image-nodes.md) | ноды изображений |
+| [docs/video-motion-director.md](docs/video-motion-director.md) | видео: моушн-режиссёр, шаблоны хореографии, пресеты и камера, быстрый путь без vision |
 | [skills/designdna/SKILL.md](skills/designdna/SKILL.md) | MCP-инструменты и порядок работы внешнего агента |
 
 Старые документы (ARCHITECTURE, AI, MCP, ROADMAP и другие) лежат в `artifacts/docs-refresh-2026-09-06/previous-documentation.zip` и в `docs/archive/`; в рабочем дереве их нет.

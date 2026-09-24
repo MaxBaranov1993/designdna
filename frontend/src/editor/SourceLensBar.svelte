@@ -13,7 +13,7 @@
     <button
       class={"fe-source-lens-toggle" + (view.enabled ? " active" : "")}
       onclick={() => ctl.toggleSourceLens()}
-      title="Цветом показать происхождение компонентов"
+      title="Color-code component provenance"
     >
       ◉ Source Lens
     </button>
@@ -31,6 +31,6 @@
         </button>
       {/each}
     </div>
-    <span class="fe-source-lens-help">Выберите слой — его источник появится в инспекторе</span>
+    <span class="fe-source-lens-help">Select a layer to see its source in the inspector</span>
   </div>
 {/if}

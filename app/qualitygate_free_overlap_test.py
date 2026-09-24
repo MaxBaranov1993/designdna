@@ -29,7 +29,7 @@ def test_overlapping_children_are_reported_once_per_pair():
     ])
     out = _violations(ir)
     assert len(out) == 1
-    assert out[0]["path"] == "tree.0.children[1].frame" and "перекрывает tree.0.children[0]" in out[0]["message"]
+    assert out[0]["path"] == "tree.0.children[1].frame" and "overlaps tree.0.children[0]" in out[0]["message"]
 
 
 def test_small_intentional_overlap_is_tolerated():
@@ -44,8 +44,8 @@ def test_child_outside_parent_bounds_is_reported():
     ir = _section([{"type": "image", "frame": {"x": 1000, "y": 300, "width": 400, "height": 200}}])
     out = _violations(ir)
     assert len(out) == 2
-    assert any("ширину родителя" in v["message"] for v in out)
-    assert any("высоту родителя" in v["message"] for v in out)
+    assert any("parent width" in v["message"] for v in out)
+    assert any("parent height" in v["message"] for v in out)
 
 
 def test_auto_layout_parent_is_ignored():

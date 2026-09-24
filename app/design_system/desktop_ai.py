@@ -312,6 +312,16 @@ def _hidden_evidence(document: dict, comp: dict, viewport: str) -> dict | None:
             "boundsAbsent": True, "referenceHash": "sha256:" + hashlib.sha256(raw).hexdigest()}
 
 
+def _captured(document: dict, comp: dict, viewport: str) -> bool:
+    """Source Import captures tablet/mobile on demand; review only captured viewports."""
+    ref = (comp or {}).get("sourceRef") or {}
+    evidence = (document.get("referenceAssets") or {}).get(ref.get("evidenceKey")) or {}
+    # A measured block size without a screenshot is lost evidence (unsupported),
+    # not an uncaptured viewport.
+    return bool((evidence.get("referencePreviews") or {}).get(viewport)
+                or (evidence.get("blockSizes") or {}).get(viewport))
+
+
 def _proof(document: dict, comp: dict, viewport: str) -> str:
     if not isinstance(comp, dict) or not isinstance(comp.get("masterIr"), dict) or not comp["masterIr"].get("tree"):
         raise ValueError("Missing master IR")
@@ -342,13 +352,45 @@ def _proof(document: dict, comp: dict, viewport: str) -> str:
     if any(type(n) not in (int, float) or not math.isfinite(n) for n in numbers):
         raise ValueError("Invalid Source bounds")
     x, y, w, h, bw, bh = numbers
-    if min(x, y) < 0 or min(w, h, bw, bh) <= 0 or x + w > bw + .5 or y + h > bh + .5:
+    if min(w, h, bw, bh) <= 0:
+        raise ValueError("Source crop escapes measured block bounds")
+    # Absolute captures keep elements that overhang their section (shadows, pulled-out
+    # cards). Review the visible part when most of the component lies inside the block.
+    inside_w = max(0.0, min(x + w, bw) - max(x, 0.0))
+    inside_h = max(0.0, min(y + h, bh) - max(y, 0.0))
+    if inside_w * inside_h < 0.6 * w * h:
         raise ValueError("Source crop escapes measured block bounds")
     original, _, note = styleguide.proof_crop(copy.deepcopy(document), copy.deepcopy(comp), viewport,
                                              budget_left=4_000_000)
     if not original or note:
         raise ValueError(note or "Source crop unavailable")
-    return original
+    return _at_render_scale(original, x, y, w, h, bw, bh)
+
+
+def _at_render_scale(original: str, x: float, y: float, w: float, h: float, bw: float, bh: float) -> str:
+    """Bring the Source crop to the CSS-pixel size of the master render crop.
+
+    Compact Source previews are ≤720 px wide JPEGs; a 1180-wide section crop
+    comes out at 0.61× while the master renders 1:1, and the judge then
+    reports every master as "visibly oversized". The size must equal
+    ``master_review.render_master_png``'s crop exactly (same clamp).
+    """
+    import base64
+
+    from PIL import Image
+
+    sx, sy = max(0.0, x), max(0.0, y)
+    sw, sh = min(bw - sx, w), min(bh - sy, h)
+    size = (int(sx + sw) - int(sx), int(sy + sh) - int(sy))
+    raw = styleguide._decode_preview(original)
+    if not raw or min(size) <= 0:
+        return original
+    with Image.open(io.BytesIO(raw)) as image:
+        if image.size == size:
+            return original
+        output = io.BytesIO()
+        image.convert("RGB").resize(size, Image.LANCZOS).save(output, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
 
 
 def _visual_tasks(document: dict, stage: str, components: dict, *, render=None, verdicts=None, renderer_context=None) -> list[dict]:
@@ -360,6 +402,9 @@ def _visual_tasks(document: dict, stage: str, components: dict, *, render=None, 
             hidden = _hidden_evidence(document, comp, viewport)
             if hidden:
                 task.update(status="skipped", reason="source-hidden", evidence=hidden)
+            elif not _captured(document, comp, viewport):
+                task.update(status="skipped", reason="viewport-not-captured",
+                            evidence={"basis": "viewport-not-captured", "viewport": viewport})
             component_tasks.append(task)
         if stage == "master-repair":
             # A mobile-only component must be repairable without a desktop crop.
@@ -405,7 +450,7 @@ def _visual_tasks(document: dict, stage: str, components: dict, *, render=None, 
                         # Supply all three pairs so a desktop fix cannot ignore a mobile defect.
                         messages = _vision_messages(master_repair.REPAIR_SYSTEM, prompt, original, png)
                         for other in VIEWPORTS:
-                            if other == viewport or _hidden_evidence(document, comp, other):
+                            if other == viewport or _hidden_evidence(document, comp, other) or not _captured(document, comp, other):
                                 continue
                             other_original = _proof(document, comp, other)
                             other_png = render_fn(page, master_review.with_source_context(document, comp), other)
@@ -516,6 +561,8 @@ def _safe_candidate(document: dict, comp: dict, operations: list[dict], render=N
         raise ValueError("no-safe-fix: operations do not change the master")
     with (nullcontext(renderer_context) if renderer_context is not None else _renderer(render)) as (page, render_fn):
         for viewport in VIEWPORTS:
+            if not _captured(document, comp, viewport):
+                continue
             if _hidden_evidence(document, comp, viewport):
                 if not _hidden_evidence(document, candidate, viewport):
                     raise ValueError(f"{viewport}: repair changed Source-hidden visibility evidence")
@@ -551,6 +598,12 @@ def _task_output(state: dict, task: dict, raw: str):
             raise ValueError("Malformed or excessive repair operations")
         comp = state["document"]["reviewComponents"][task["componentKey"]]
         clean = master_repair.validate_operations(value, comp["masterIr"])
+        signatures = [(op["sourceKey"], op["property"]) for op in raw_ops]
+        if clean and len(set(signatures)) == len(signatures):
+            # Invalid extras (e.g. `gap` on a free-layout node) are dropped: the
+            # remaining operations still pass the render gates and verification,
+            # while failing the whole task left the master unrepaired.
+            return clean
         if len(clean) != len(raw_ops):
             seen = set()
             for index, op in enumerate(raw_ops):
@@ -647,7 +700,8 @@ def apply(req: ApplyRequest) -> dict:
                 key, vp = skipped["componentKey"], skipped["viewport"]
                 by_key.setdefault(key, {})[vp] = {
                     "status": "skipped", "approved": None, "score": None, "defects": [],
-                    "summary": "Intentionally hidden in the captured Source viewport",
+                    "summary": ("Viewport was not captured by Source Import" if skipped.get("reason") == "viewport-not-captured"
+                                else "Intentionally hidden in the captured Source viewport"),
                     "evidence": copy.deepcopy(skipped["evidence"]),
                 }
                 supported[key] = True

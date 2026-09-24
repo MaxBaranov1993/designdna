@@ -6,6 +6,6 @@ export function videoPages(nodes: FlowNode[], edges: FlowEdge[], node: TimelineF
     const connected = edges.some((edge) => edge.target === node.id && edge.targetHandle === id);
     const ir = (connected ? pullInput(nodes, edges, node, id) : detached && id === "ir" ? node.data.ir : null) as IRObject | null;
     if (!ir) return [];
-    return [{ id, name: node.data.pageNames?.[id] || `Страница ${index + 1}`, ir }];
+    return [{ id, name: node.data.pageNames?.[id] || `Page ${index + 1}`, ir }];
   });
 }

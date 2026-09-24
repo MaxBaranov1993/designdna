@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 import concurrent.futures
 import json
+import re
 
 import ir
 import llm_client as llm
@@ -56,17 +57,32 @@ def shutdown_executors() -> None:
     fresh_executors()
 
 
+_FACE_WEIGHT_RE = re.compile(r"^(?:[1-9]00(?: [1-9]00)?|normal|bold)$")
+
+
 def sanitize_font_face_weights(doc: dict) -> dict:
-    """Variable-шрифты отдают диапазон весов («400 800»), а схема принимает один
-    вес. IR, захваченные до нормализации на захвате (scraper._resolve_font_faces),
-    чиним на входе: диапазон → базовый вес. Мутирует и возвращает документ."""
+    """Bring meta.fontFaces weights to the schema form without losing a variable range.
+
+    The schema accepts one weight or a range ("100 900"). Collapsing a range to its
+    first value declared a variable font as weight 100 only, and the browser then
+    clamped every heading of the page to the thinnest instance. Off-grid values
+    ("350 850", "380") are rounded to hundreds. Mutates and returns the document.
+    """
     meta = doc.get("meta") if isinstance(doc, dict) else None
     faces = meta.get("fontFaces") if isinstance(meta, dict) else None
     if isinstance(faces, list):
         for face in faces:
             weight = face.get("weight") if isinstance(face, dict) else None
-            if isinstance(weight, str) and len(weight.split()) > 1:
-                face["weight"] = weight.split()[0]
+            if not isinstance(weight, str) or _FACE_WEIGHT_RE.match(weight):
+                continue
+            numbers = []
+            for part in weight.split()[:2]:
+                try:
+                    numbers.append(min(900, max(100, int(round(float(part) / 100.0)) * 100)))
+                except ValueError:
+                    break
+            if numbers:
+                face["weight"] = " ".join(str(n) for n in sorted(set(numbers)))
     return doc
 
 
@@ -75,7 +91,7 @@ def parse_ir_response(raw: str):
     try:
         return json.loads(llm.extract_json(raw)), None
     except (json.JSONDecodeError, ValueError) as e:
-        return None, f"невалидный JSON от модели: {e}"
+        return None, f"invalid JSON from model: {e}"
 
 
 # 499 — клиент отменил запуск (кооперативная отмена через run_registry)

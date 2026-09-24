@@ -65,9 +65,9 @@
    * кнопка и целая секция лежат рядом, не отвечает на вопрос «с чего начать». */
   type LevelGroup = { key: string; label: string; description: string; families: FamilyCard[] };
   const LEVEL_FALLBACK = [
-    { key: "atoms", label: "Атомы", description: "Неделимые элементы: кнопки, поля, метки, иконки" },
-    { key: "molecules", label: "Молекулы", description: "Сочетания атомов: поле поиска, пункт меню, заголовок секции" },
-    { key: "organisms", label: "Организмы", description: "Собранные блоки: карточки, навигация, футер, секции" },
+    { key: "atoms", label: "Atoms", description: "Individual elements: buttons, inputs, labels, icons" },
+    { key: "molecules", label: "Molecules", description: "Groups of atoms: search fields, menu items, section headings" },
+    { key: "organisms", label: "Organisms", description: "Composite blocks: cards, navigation, footers, sections" },
   ];
 
   let levelGroups = $derived.by((): LevelGroup[] => {
@@ -101,8 +101,8 @@
     }
     const rest = visibleEntries.filter((entry) => !seen.has(entry.key));
     if (rest.length) {
-      groups.push({ key: "other", label: "Прочее",
-        description: "Компоненты, которым не определён уровень", families: mergeFamilies(rest) });
+      groups.push({ key: "other", label: "Other",
+        description: "Components without an assigned level", families: mergeFamilies(rest) });
     }
     return groups;
   });
@@ -137,82 +137,82 @@
   <div class="source-workbench">
     <header class="source-intro">
       <div>
-        <span class="source-eyebrow">КОМПОНЕНТЫ ВАШЕГО САЙТА</span>
-        <h2>От отдельных элементов до целых секций</h2>
-        <p>Исходные компоненты доступны сразу. Откройте любой, чтобы посмотреть варианты, сравнить с оригиналом и использовать в редакторе.</p>
+        <span class="source-eyebrow">YOUR SITE COMPONENTS</span>
+        <h2>From individual elements to complete sections</h2>
+        <p>Source components are available immediately. Open any component to inspect its variants, compare it with the source, and use it in the editor.</p>
       </div>
       <code>{artifact.source.pipelineVersion}</code>
     </header>
 
     <section class="source-funnel" aria-label="Detected Source content and accepted Design System content">
       <div class="source-observed">
-        <span>В библиотеке</span>
+        <span>In the library</span>
         <strong>{detectedComponents}</strong>
-        <small>компонентов · {detectedVariants} вариантов</small>
+        <small>components · {detectedVariants} variants</small>
       </div>
-      <div class="source-transfer" aria-hidden="true"><i></i><b>проверка</b><em>→</em></div>
+      <div class="source-transfer" aria-hidden="true"><i></i><b>verification</b><em>→</em></div>
       <div class="source-accepted">
-        <span>Проверены для генерации</span>
+        <span>Verified for generation</span>
         <strong>{acceptedMasters}</strong>
-        <small>компонентов · {acceptedVariants} вариантов</small>
+        <small>components · {acceptedVariants} variants</small>
       </div>
     </section>
 
     <section class="source-section">
       <div class="source-section-head">
-        <div><span>01</span><h3>Основы</h3></div>
-        <small>{artifact.summary.tokenCount ?? 0} значений оформления</small>
+        <div><span>01</span><h3>Foundations</h3></div>
+        <small>{artifact.summary.tokenCount ?? 0} style values</small>
       </div>
       <div class="foundation-strip">
         {#each foundationGroups as group (group.key)}
           <span title={group.key}>{group.name}<strong>{group.tokenCount}</strong></span>
         {:else}
-          <span>Группы значений<strong>{Object.keys(artifact.foundations.tokens || {}).length}</strong></span>
+          <span>Value groups<strong>{Object.keys(artifact.foundations.tokens || {}).length}</strong></span>
         {/each}
       </div>
     </section>
 
     <section class="source-section">
       <div class="source-section-head">
-        <div><span>02</span><h3>Экраны</h3></div>
-        <small>{screens.length} размеров страницы</small>
+        <div><span>02</span><h3>Viewports</h3></div>
+        <small>{screens.length} page sizes</small>
       </div>
       <div class="screen-grid">
         {#each screens as screen (screen.screenKey)}
           <article>
             <header><div><strong>{screen.name}</strong><span>{screen.viewport}{screen.theme ? ` · ${screen.theme}` : ""}</span></div><code>{dimension(screen.size.width)} × {dimension(screen.size.height)}</code></header>
             <div class="screen-metrics">
-              <span>{screen.componentKeys.length} экземпляров</span>
-              <span>{screen.metrics.editableLayers ?? screen.metrics.layers ?? 0} слоёв</span>
-              <span>сходство: среднее {percent(screen.metrics.fidelityMean)}</span>
-              <span>минимальное {percent(screen.metrics.fidelityMin)}</span>
+              <span>{screen.componentKeys.length} instances</span>
+              <span>{screen.metrics.editableLayers ?? screen.metrics.layers ?? 0} layers</span>
+              <span>similarity: average {percent(screen.metrics.fidelityMean)}</span>
+              <span>minimum {percent(screen.metrics.fidelityMin)}</span>
             </div>
             <p title={screen.hierarchy.map((item) => item.name).join(" → ")}>
               {screen.hierarchy.slice(0, 5).map((item) => item.name).join(" → ")}{screen.hierarchy.length > 5 ? " …" : ""}
             </p>
           </article>
         {:else}
-          <div class="source-empty">В этом источнике ещё нет сведений о размерах страницы.</div>
+          <div class="source-empty">This source has no page size information yet.</div>
         {/each}
       </div>
     </section>
 
     <section class="source-section">
       <div class="source-section-head">
-        <div><span>03</span><h3>Компоненты</h3></div>
-        <small>{detectedComponents} мастеров из источника · от простых к составным</small>
+        <div><span>03</span><h3>Components</h3></div>
+        <small>{detectedComponents} Source masters · from simple to composite</small>
       </div>
-      <label class="catalog-search">Найти компонент<input type="search" bind:value={search} placeholder="Название компонента…" /></label>
+      <label class="catalog-search">Find component<input type="search" bind:value={search} placeholder="Component name…" /></label>
       <div class="component-sheet" data-source-component-catalog>
-        {#if !levelGroups.length}<p class="source-empty" role="status">{search.trim() ? 'По этому запросу ничего не найдено. Попробуйте другое название.' : 'В этом источнике пока нет компонентов.'}</p>{/if}
+        {#if !levelGroups.length}<p class="source-empty" role="status">{search.trim() ? 'No matching components. Try another name.' : 'This source has no components yet.'}</p>{/if}
         {#each levelGroups as level (level.key)}
           <section class="catalog-group">
             <header>
               <div class="level-head">
-                <h4>{({ atoms: 'Элементы', molecules: 'Группы элементов', organisms: 'Блоки и секции' } as Record<string, string>)[level.key] || level.label}</h4>
+                <h4>{({ atoms: 'Elements', molecules: 'Element groups', organisms: 'Blocks and sections' } as Record<string, string>)[level.key] || level.label}</h4>
                 <p>{level.description}</p>
               </div>
-              <span>{level.families.length} компонент(ов)</span>
+              <span>{level.families.length} component(s)</span>
             </header>
             <div class="catalog-grid">
               {#each level.families as family (family.baseKey)}
@@ -229,13 +229,13 @@
                       <small>{section || comp.category || family.baseKey}</small>
                     </div>
                     <span class:verified={allVerified}>
-                      {allVerified ? "проверен" : family.review.length ? `нужна проверка: ${family.review.length}` : "нужна проверка"}
+                      {allVerified ? "verified" : family.review.length ? `verification needed: ${family.review.length}` : "verification needed"}
                     </span>
                   </header>
                   <div class="catalog-facts">
-                    <span>{variants.length || 1} вариант(ов)</span>
-                    {#if states.length}<span>{states.length} состояний</span>{/if}
-                    <span>{comp.provenance?.occurrenceCount || 1}× на сайте</span>
+                    <span>{variants.length || 1} variant(s)</span>
+                    {#if states.length}<span>{states.length} states</span>{/if}
+                    <span>{comp.provenance?.occurrenceCount || 1}× on site</span>
                   </div>
                   <div class="catalog-variants">
                     {#each (variants.length ? variants : [["default", {}] as [string, any]]) as [variantKey, variant] (variantKey)}
@@ -247,10 +247,10 @@
                   </div>
                   {#if family.review.length}
                     <div class="catalog-review-strip">
-                      <span>Экземпляры на ревью</span>
+                      <span>Instances in review</span>
                       <div>
                         {#each family.review as instance (instance.pool + ":" + instance.key)}
-                          <button type="button" title="Открыть экземпляр {instance.key}"
+                          <button type="button" title="Open instance {instance.key}"
                                   data-catalog-open={instance.key} onclick={() => onOpen?.(instance.key, instance.pool)}>
                             <ComponentCatalogPreview component={instance.component} variantKey="default" />
                           </button>
@@ -259,8 +259,8 @@
                     </div>
                   {/if}
                   <footer>
-                    <span>{family.review.length ? `+${family.review.length} на ревью` : "все экземпляры совпали"}</span>
-                    <button type="button" data-catalog-open={entry.key} onclick={() => onOpen?.(entry.key, entry.pool)}>Открыть</button>
+                    <span>{family.review.length ? `+${family.review.length} in review` : "all instances match"}</span>
+                    <button type="button" data-catalog-open={entry.key} onclick={() => onOpen?.(entry.key, entry.pool)}>Open</button>
                   </footer>
                 </article>
               {/each}
@@ -274,8 +274,8 @@
   </div>
 {:else}
   <div class="source-empty large">
-    <strong>{catalogEntries.length ? 'Компоненты сохранённого UI Kit' : 'Источник не подключён'}</strong>
-    <span>{catalogEntries.length ? 'Компоненты доступны. Сведения об исходных экранах отсутствуют.' : 'Подключите Source с результатом импорта.'}</span>
+    <strong>{catalogEntries.length ? 'Saved UI Kit components' : 'Source not connected'}</strong>
+    <span>{catalogEntries.length ? 'Components are available. Original viewport information is missing.' : 'Connect a Source node with an import result.'}</span>
     {#if catalogEntries.length}
       <div class="component-sheet" data-source-component-catalog>
         {#each catalogEntries as entry (entry.pool + ":" + entry.key)}
@@ -283,7 +283,7 @@
             <ComponentCatalogPreview component={entry.component} />
             <strong>{entry.component.name || entry.key}</strong>
             <span>{entry.component.category || entry.pool}</span>
-            <button type="button" data-catalog-open={entry.key} onclick={() => onOpen?.(entry.key, entry.pool)}>Открыть</button>
+            <button type="button" data-catalog-open={entry.key} onclick={() => onOpen?.(entry.key, entry.pool)}>Open</button>
           </article>
         {/each}
       </div>

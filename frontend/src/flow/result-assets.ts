@@ -9,6 +9,12 @@ import { inputFingerprint } from './fingerprint';
 import type { IRObject } from './types';
 
 export type AssetVersion = { runId: string; before: IRObject[]; after: IRObject[] };
+// Ignore object insertion order while comparing the entire JSON document.
+// Comparing only image hashes would allow Undo to overwrite newer text/layout.
+function canonicalResult(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+}
 export function resultVariants(node: { type?: string; data: any }): IRObject[] {
   return node.type === 'derive' ? node.data.variants : node.type === 'mix'
     ? node.data.mixVariants?.length ? node.data.mixVariants : node.data.ir ? [node.data.ir] : []
@@ -17,7 +23,7 @@ export function resultVariants(node: { type?: string; data: any }): IRObject[] {
 export function resultAssetsAreCurrent(node: { type?: string; data: any }): boolean {
   const version = (node.data.assetVersions as AssetVersion[] | undefined)?.at(-1);
   return !!version && version.runId === node.data.assetRuns?.at(-1)?.id
-    && JSON.stringify(resultVariants(node)) === JSON.stringify(version.after);
+    && canonicalResult(resultVariants(node)) === canonicalResult(version.after);
 }
 function resultPatch(node: any, variants: IRObject[]) {
   return node.type === 'derive' ? { variants } : node.type === 'mix'
@@ -49,21 +55,25 @@ export async function fillResultAssets(id: number, replaceImages = false, onlySl
   const referenceEdge = reference && state.edges.find(edge => edge.target === node.id && edge.targetHandle === reference.port);
   get().setBusy(id, true);
   let run: AssetRun | undefined;
-  const before = structuredClone(variants);
+  let before = structuredClone(variants);
   try {
-    const plan = await scope.wait(api<AssetPlan>('/api/generate/assets/prepare', { variants, context: {
+    const prior = (data.assetRuns as AssetRun[] | undefined)?.at(-1);
+    const verificationRetry = onlySlot === '*' && !!prior?.verificationError;
+    if (verificationRetry && !resultAssetsAreCurrent(node)) throw new Error('Result changed after image processing');
+    if (verificationRetry) before = structuredClone((data.assetVersions as AssetVersion[]).at(-1)!.before);
+    const plan = verificationRetry ? structuredClone(prior!.plan) : await scope.wait(api<AssetPlan>('/api/generate/assets/prepare', { variants, context: {
       brief: data.prompt || '', coherentSeries: true, replaceImages,
       ...(reference ? { referenceImage: reference.part!.image, referenceSource: { port: reference.port, path: reference.part!.path,
         nodeId: referenceEdge?.source, sourcePort: referenceEdge?.sourceHandle } } : {}),
     } }, { signal }));
-    if (onlySlot) {
+    if (onlySlot && !verificationRetry) {
       const prior = (data.assetRuns as AssetRun[] | undefined)?.at(-1);
       plan.slots = plan.slots.filter(slot => {
         const previous = prior?.plan.slots.find(item => item.id === slot.id && item.status !== 'complete');
         return previous && previous.targetHash === slot.targetHash && (onlySlot === '*' || slot.id === onlySlot);
       });
     }
-    if (!plan.slots.length) { get().setStatus(id, 'Нет доступных мест для изображений', 'ok'); return; }
+    if (!plan.slots.length) { get().setStatus(id, 'No image slots available', 'ok'); return; }
     run = { id: crypto.randomUUID(), inputKey: expected, pageId: state.activePageId, startedAt: Date.now(),
       status: 'running', provider: 'codex', events: [], plan };
     await executeAssetPlan(variants, run, { signal, scope,
@@ -73,10 +83,10 @@ export async function fillResultAssets(id: number, replaceImages = false, onlySl
         const current = get().nodes.find(n => n.id === node.id)!;
         const history = ((current.data as any).assetVersions || []) as AssetVersion[];
         set({ ...resultPatch(current, output), assetRuns: assetRunPatch((current.data as any).assetRuns, snapshot),
-          assetVersions: [...history.filter(item => item.runId !== snapshot.id), { runId: snapshot.id, before, after: output }].slice(-4) });
+          assetVersions: [...history.filter(item => item.runId !== snapshot.id && !(verificationRetry && item.runId === prior!.id)), { runId: snapshot.id, before, after: output }].slice(-4) });
         get().propagate(id);
       } });
-    get().setStatus(id, run.status === 'complete' ? 'Изображения готовы' : 'Часть изображений требует повтора', run.status === 'complete' ? 'ok' : 'err');
+    get().setStatus(id, run.verificationError ? 'Images saved; verification needs to be retried' : run.status === 'complete' ? 'Images ready' : 'Some images need to be retried', run.status === 'complete' ? 'ok' : 'warn');
   } catch (error) {
     if (scope.owns()) get().setStatus(id, error instanceof Error ? error.message : String(error), 'err');
   } finally {
@@ -99,10 +109,10 @@ export function undoResultAssets(id: number) {
   const state = useFlowStore.getState(), node = state.nodes.find(n => Number(n.id) === id);
   if (!node || state.busy[id]) return;
   const history = ((node.data as any).assetVersions || []) as AssetVersion[], last = history.at(-1);
-  if (!last || JSON.stringify(resultVariants(node)) !== JSON.stringify(last.after)) {
-    state.setStatus(id, 'Результат изменён после обработки изображений; отмена его не перезапишет', 'err'); return;
+  if (!last || canonicalResult(resultVariants(node)) !== canonicalResult(last.after)) {
+    state.setStatus(id, 'Result changed after image processing; undo will not overwrite it', 'err'); return;
   }
   state.setNodeData(id, { ...resultPatch(node, structuredClone(last.before)), assetVersions: history.slice(0, -1) });
   state.propagate(id);
-  state.setStatus(id, 'Изображения восстановлены', 'ok');
+  state.setStatus(id, 'Images restored', 'ok');
 }

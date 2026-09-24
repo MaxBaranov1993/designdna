@@ -102,7 +102,7 @@ def test_unknown_payload_is_rejected():
     try:
         importer.import_design_system({"foo": {"bar": 1}})
     except ValueError as exc:
-        assert "формат" in str(exc)
+        assert "format" in str(exc)
     else:
         raise AssertionError("ожидалась ошибка формата")
 

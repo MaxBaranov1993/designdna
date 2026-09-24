@@ -281,6 +281,14 @@
             },
             "opacity": {
               "$ref": "#/$defs/track"
+            },
+            "blur": {
+              "$ref": "#/$defs/track",
+              "description": "CSS filter blur radius in px (>= 0); 0 means sharp."
+            },
+            "clip": {
+              "$ref": "#/$defs/track",
+              "description": "Percent of the layer hidden from the bottom edge (0..100) as clip-path inset; 0 shows everything."
             }
           }
         }
@@ -451,7 +459,9 @@
             "cut",
             "fade",
             "motion",
-            "state"
+            "state",
+            "slide",
+            "zoom"
           ]
         },
         "easing": {

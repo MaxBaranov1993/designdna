@@ -32,7 +32,7 @@ async function harness({ offload = async () => {} } = {}) {
     setTimeout: (fn, delay = 0) => { const id = ++sequence; timers.set(id, { fn, delay }); return id; },
     clearTimeout: (id) => timers.delete(id),
     localStorage: {
-      setItem: (key, value) => { storage.set(key, value); writes.push(JSON.parse(value)); },
+      setItem: (key, value) => { storage.set(key, value); },
       getItem: (key) => storage.get(key) ?? null,
       removeItem: (key) => storage.delete(key),
     },
@@ -52,6 +52,8 @@ async function harness({ offload = async () => {} } = {}) {
       try { return await deferred.promise; } finally { active -= 1; }
     },
   });
+  // `writes` are the snapshots handed to the SQLite queue (the only project store).
+  exports.observeProjectSnapshots((text) => writes.push(JSON.parse(text)));
   await exports.loadPagesProjectFromDb();
   const tick = async (delay) => {
     for (const [id, timer] of [...timers]) {
@@ -89,7 +91,7 @@ test("slow earlier offload cannot overwrite newest snapshot; pending preparation
   await settle();
 });
 
-test("failed blob storage and unload retain Source screenshots in SQLite while local cache stays compact", async () => {
+test("failed blob storage and unload retain Source screenshots in SQLite; nothing goes to localStorage", async () => {
   const h = await harness({ offload: async () => { throw new Error('blob disk unavailable'); } });
   const preview = 'data:image/png;base64,c291cmNl';
   const project = { pages: [{ graph: { nodes: [{ type: 'sourceimport', data: {
@@ -100,7 +102,7 @@ test("failed blob storage and unload retain Source screenshots in SQLite while l
   const saved = h.requests[0].body.project.pages[0].graph.nodes[0].data.blocks[0];
   assert.equal(saved.preview, preview);
   assert.equal(saved.previews.mobile, preview);
-  assert.equal(h.writes.at(-1).pages[0].graph.nodes[0].data.blocks[0].preview, undefined);
+  assert.equal(h.storage.size, 0, "the project is never cached in localStorage");
   h.requests[0].resolve(reply(200, {revision: B})); await settle();
   h.api.scheduleProjectSave(() => project);
   h.handlers.get('beforeunload')();
@@ -242,4 +244,44 @@ test("explicit keep-mine captures newer edits still awaiting blob preparation", 
   await settle();
   await h.tick(250);
   assert.equal(h.requests.length, 2, "superseded offload must not resave after the explicit decision");
+});
+
+test("quit flush writes an edit still in the debounce and waits for the database", async () => {
+  const h = await harness();
+  h.api.scheduleProjectSave(() => ({ pages: [], marker: "unsaved at quit" }));
+  const flushed = h.api.flushProjectToDb(5000);
+  await settle();
+  assert.equal(h.requests.length, 1, "the pending edit is sent without waiting for timers");
+  assert.equal(h.requests[0].body.project.marker, "unsaved at quit");
+  h.requests[0].resolve(reply(200, { revision: B }));
+  assert.equal(await flushed, true);
+  assert.equal(await h.api.flushProjectToDb(5000), true, "nothing pending: immediate success");
+});
+
+test("quit flush reports a conflict instead of overwriting", async () => {
+  const h = await harness();
+  h.api.scheduleProjectSave(() => ({ pages: [], marker: "mine" }));
+  const flushed = h.api.flushProjectToDb(5000);
+  await settle();
+  h.requests[0].resolve(reply(409, { revision: E }));
+  assert.equal(await flushed, false);
+  assert.equal(h.conflicts.length, 1);
+});
+
+test("a save that would drop pages pauses autosave; explicit deletes travel with the save", async () => {
+  const h = await harness();
+  h.api.noteDeletedPage("p-old");
+  h.api.scheduleProjectSave(() => ({ pages: [], marker: "after delete" }));
+  const flushed = h.api.flushProjectToDb(5000);
+  await settle();
+  assert.deepEqual(h.requests[0].body.deletedPages, ["p-old"], "the deleted page is named");
+  h.requests[0].resolve(reply(409, { error: "page_loss", revision: A, missingPages: ["Client work"], missingPageIds: ["p2"] }));
+  assert.equal(await flushed, false);
+  assert.equal(h.conflicts.at(-1).error, "page_loss");
+  assert.deepEqual(h.conflicts.at(-1).missingPages, ["Client work"]);
+  const removal = h.api.resolveConflictKeepMine(A, ["p2"]);
+  await settle();
+  assert.deepEqual(h.requests[1].body.deletedPages.sort(), ["p-old", "p2"], "an explicit removal is a delete");
+  h.requests[1].resolve(reply(200, { revision: B }));
+  assert.equal(await removal, true);
 });

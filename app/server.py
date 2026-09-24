@@ -170,7 +170,7 @@ app.mount("/static", StaticFiles(directory=APP_ROOT / "static"), name="static")
 @app.exception_handler(Exception)
 async def unhandled(request, exc):
     traceback.print_exc()
-    return JSONResponse({"detail": f"Внутренняя ошибка: {exc}"}, status_code=500)
+    return JSONResponse({"detail": f"Internal error: {exc}"}, status_code=500)
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ def prepare_context(timeline):
             try:
                 png = render_png(ir, width=1440, webfonts=False)
             except Exception as exc:
-                raise ValueError("Не удалось изучить визуал страницы «" + page["name"] + "»: " + str(exc)[:350]) from exc
+                raise ValueError("Could not review the visuals of page “" + page["name"] + "»: " + str(exc)[:350]) from exc
             picture = Image.open(BytesIO(png)).convert("RGB")
             images = []
             # Readable tiles with overlap, including the bottom of long pages.

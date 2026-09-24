@@ -60,8 +60,8 @@
 </script>
 
 {#if compact}
-  <span class="ds-badge" title="Дизайн-система" data-ds-picker="compact">
-    DS · {selection === "inherit" ? (defaultSystem ? `${defaultSystem.name} v${defaultSystem.revision}` : "нет") : selection === "none" ? "нет" : "reference"} · {usageMode}
+  <span class="ds-badge" title="Design system" data-ds-picker="compact">
+    DS · {selection === "inherit" ? (defaultSystem ? `${defaultSystem.name} v${defaultSystem.revision}` : "none") : selection === "none" ? "none" : "reference"} · {usageMode}
   </span>
 {:else}
   <div class="ds-picker" data-ds-picker>
@@ -69,11 +69,11 @@
       <span>Design System</span>
       <select
         data-ds-field="selection"
-        aria-label="Выбор дизайн-системы: inherit, конкретная reference-система или none"
+        aria-label="Design system selection: inherit, a specific reference system, or none"
         value={selection}
         onchange={(e) => set(e.currentTarget.value as any)}
       >
-        <option value="inherit">Project default — {defaultSystem ? `${defaultSystem.name} · v${defaultSystem.revision}` : "не задана"}</option>
+        <option value="inherit">Project default — {defaultSystem ? `${defaultSystem.name} · v${defaultSystem.revision}` : "not set"}</option>
         {#each published as system (system.systemId)}
           <option value={system.systemId}>
             {system.name} · v{system.revision} (reference)
@@ -89,23 +89,23 @@
     </label>
     {#if selection !== "none" && (selection !== "inherit" || defaultSystem)}
       <label class="ds-field">
-        <span>Режим</span>
+        <span>Mode</span>
         <select
           data-ds-field="usage"
-          aria-label="Режим использования: strict или свободнее"
+          aria-label="Usage mode: strict or flexible"
           value={usageMode}
           onchange={(e) => emit(selection, e.currentTarget.value as DesignSystemUsageMode, fixtureProfile)}
         >
-          <option value="strict">Strict — только компоненты системы</option>
-          <option value="extend">Extend — новые компоненты локально</option>
-          <option value="style-only">Style only — только foundations</option>
+          <option value="strict">Strict — system components only</option>
+          <option value="extend">Extend — add local components</option>
+          <option value="style-only">Style only — foundations only</option>
         </select>
       </label>
       <label class="ds-field">
         <span>Mock data</span>
         <select
           data-ds-field="fixture"
-          aria-label="Профиль mock-данных"
+          aria-label="Mock data profile"
           value={fixtureProfile}
           onchange={(e) => emit(selection, usageMode, e.currentTarget.value)}
         >
@@ -120,7 +120,7 @@
       </label>
     {/if}
     {#if !published.length}
-      <small class="ds-hint">Нет опубликованных систем — создайте из Source-ноды: «UI Kit & Design System»</small>
+      <small class="ds-hint">No published systems. Create one from a Source node using UI Kit & Design System</small>
     {/if}
   </div>
 {/if}

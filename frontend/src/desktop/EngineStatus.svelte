@@ -34,37 +34,37 @@
     if (providers.default === "openai") return "OpenAI API";
     if (providers.default === "codex") return "Codex CLI";
     if (providers.default === "claude") return "Claude Code";
-    return "Нет AI-аккаунта";
+    return "No AI account";
   });
   let providerConnected = $derived(!!providers?.default);
 
   let label = $derived.by(() => {
     if (overall === "browser") return providerLabel;
-    if (overall === "dead") return `Движок упал${lastError ? `: ${truncate(lastError)}` : ""}`;
-    if (overall === "starting") return "Запуск…";
-    if (overall === "busy") return "Занят";
-    return "Движок готов";
+    if (overall === "dead") return `Engine stopped${lastError ? `: ${truncate(lastError)}` : ""}`;
+    if (overall === "starting") return "Starting…";
+    if (overall === "busy") return "Busy";
+    return "Engine ready";
   });
 
   let details = $derived.by(() => {
     if (!desktop) {
       if (!providers) return "";
       const rows = [
-        `OpenAI API-ключ: ${providers.openaiKey ? "есть" : "нет"}`,
-        `Codex CLI: ${providers.codexCli ? "найден" : "нет"}`,
-        `Claude Code: ${providers.claudeCli ? "найден" : "нет"}`,
+        `OpenAI API key: ${providers.openaiKey ? "available" : "none"}`,
+        `Codex CLI: ${providers.codexCli ? "found" : "none"}`,
+        `Claude Code: ${providers.claudeCli ? "found" : "none"}`,
       ];
-      if (!providers.default) rows.push("Войдите: codex login или claude /login, либо задайте OPENAI_API_KEY");
+      if (!providers.default) rows.push("Sign in using codex login or claude /login to use your subscription");
       return rows.join("\n");
     }
     const current = engine;
     if (!current) return "";
     const rows = (["interactive", "long"] as const).map((scope) => {
       const info = current.workers[scope];
-      return `${scope}: ${info.status}${info.pending ? ` (${info.pending} в работе)` : ""}${info.pid ? ` pid ${info.pid}` : ""}`;
+      return `${scope}: ${info.status}${info.pending ? ` (${info.pending} running)` : ""}${info.pid ? ` pid ${info.pid}` : ""}`;
     });
-    if (current.restartCount) rows.push(`перезапусков: ${current.restartCount}`);
-    if (lastError) rows.push(`ошибка: ${lastError}`);
+    if (current.restartCount) rows.push(`restarts: ${current.restartCount}`);
+    if (lastError) rows.push(`error: ${lastError}`);
     return rows.join("\n");
   });
 
@@ -104,7 +104,7 @@
   <span class="label">{label}</span>
   {#if showRestart}
     <button type="button" class="restart" onclick={restart} disabled={restarting}>
-      {restarting ? "Перезапуск…" : "Перезапустить"}
+      {restarting ? "Restarting…" : "Restart"}
     </button>
   {/if}
   {#if error}

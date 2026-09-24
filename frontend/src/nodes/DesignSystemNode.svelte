@@ -37,7 +37,7 @@
     return source?.type === "sourceimport" && source.data.blocks.some((b) => !!b.ir && !b.error);
   });
   let busy = $derived(!!$flowBusy[Number(id)] || !!data._dsFinishing);
-  let statusLabel = $derived(data.status === "published" ? `опубликована · v${data.revision}` : data.status === "draft" ? "черновик" : String(data.status));
+  let statusLabel = $derived(data.status === "published" ? `published · v${data.revision}` : data.status === "draft" ? "draft" : String(data.status));
 
   const openEditor = () => {
     if (!canOpen) return;
@@ -47,14 +47,14 @@
 
 <NodeShell {id} type="designsystem" {selected} title={data.name || undefined} idleStatus={designSystemIdleStatus(data)}>
   {#snippet footer()}
-    <div class="foot-left"><span>{statusLabel}{data.defaultSet ? " · по умолчанию" : ""}</span></div>
+    <div class="foot-left"><span>{statusLabel}{data.defaultSet ? " · default" : ""}</span></div>
     <div class="foot-right">
       {#if !canOpen}
         <button type="button" class="btn-node primary small nodrag" data-ds-action="build"
-          disabled={!canBuild || busy} onclick={() => $flow.rebuildDesignSystemFromSource(Number(id))}>Собрать из Source</button>
+          disabled={!canBuild || busy} onclick={() => $flow.rebuildDesignSystemFromSource(Number(id))}>Build from Source</button>
       {/if}
       <button type="button" class="btn-node small nodrag" class:primary={canOpen} data-ds-action="open"
-        aria-label="Открыть редактор Design System и Source UI" disabled={!canOpen} onclick={openEditor}>Открыть UI Kit</button>
+        aria-label="Open Design System and Source UI editor" disabled={!canOpen} onclick={openEditor}>Open UI Kit</button>
     </div>
   {/snippet}
   <InPorts type="designsystem" />
@@ -62,44 +62,44 @@
   {#if data.systemId}
     <div class="ds-funnel" aria-label="Source detected to system accepted">
       <div class="source-side">
-        <span>В библиотеке</span>
+        <span>In the library</span>
         <strong>{detectedComponents ?? "—"}</strong>
-        <small>{detectedVariants ?? "—"} вариантов</small>
+        <small>{detectedVariants ?? "—"} variants</small>
       </div>
       <div class="funnel-arrow" aria-hidden="true"><i></i><b>→</b></div>
       <div class="system-side">
-        <span>Проверены</span>
+        <span>Verified</span>
         <strong>{acceptedMasters}</strong>
-        <small>{acceptedVariants} вариантов</small>
+        <small>{acceptedVariants} variants</small>
       </div>
     </div>
     <div class="ds-metrics">
-      <span>{sourceArtifact?.summary.screenCount ?? sourceArtifact?.screens?.length ?? 0} экранов</span>
-      <span>{sourceArtifact?.summary.viewportCount ?? 0} вьюпорта</span>
-      {#if Number(summary.reviewMasters || 0)}<span>{Number(summary.reviewMasters)} требуют проверки</span>{/if}
-      <span>{Math.round(Number(summary.stateCoverage || 0))}% состояний</span>
-      <span>Качество {Math.round(Number(summary.qualityScore || 0))}/100</span>
+      <span>{sourceArtifact?.summary?.screenCount ?? sourceArtifact?.screens?.length ?? 0} screens</span>
+      <span>{sourceArtifact?.summary?.viewportCount ?? 0} viewports</span>
+      {#if Number(summary.reviewMasters || 0)}<span>{Number(summary.reviewMasters)} need review</span>{/if}
+      <span>{Math.round(Number(summary.stateCoverage || 0))}% of states</span>
+      <span>Quality {Math.round(Number(summary.qualityScore || 0))}/100</span>
     </div>
   {:else}
-    <div class="n-hero-empty">Соберите кит из Source Import или загрузите JSON в инспекторе: документ DesignDNA, токены Figma / Tokens Studio, карту shadcn.</div>
+    <div class="n-hero-empty">Connect Source Import and press Build, or open the inspector to upload a kit JSON.</div>
   {/if}
 
   {#if data.sourceUpdate}
-    <div class="ds-update" role="status"><strong>Источник изменился.</strong> Проверьте и синхронизируйте перед публикацией.</div>
+    <div class="ds-update" role="status"><strong>Source changed.</strong> Review and synchronize before publishing.</div>
   {/if}
   {#if lastError}
-    <details class="ds-error nodrag"><summary>Последнее сообщение</summary><div>{lastError}</div></details>
+    <details class="ds-error nodrag"><summary>Last message</summary><div>{lastError}</div></details>
   {/if}
   {#each Object.entries(data.pipelineStatus || {}) as [stage, result]}
     {#if result.status === "failed" || result.status === "warning" || result.status === "cancelled"}
       <details class="ds-error nodrag" data-ds-pipeline-stage={stage} data-status={result.status}>
-        <summary>{stage}: {result.status === 'warning' ? 'нужно ревью' : result.status === 'cancelled' ? 'не завершено' : 'ошибка'}</summary>
+        <summary>{stage}: {result.status === 'warning' ? 'needs review' : result.status === 'cancelled' ? 'incomplete' : 'error'}</summary>
         <div>{result.message}</div>
       </details>
     {/if}
   {/each}
   <NodeStatus {id} />
-  <OutPorts type="designsystem" />
+  <OutPorts {id} type="designsystem" />
 </NodeShell>
 
 <style>

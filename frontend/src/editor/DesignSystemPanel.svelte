@@ -27,9 +27,9 @@
   let activeTab = $state<KitSection | "source" | "styleguide" | "foundations" | "components" | "suggestions" | "mock" | "identity" | "archetypes" | "tests" | "proof" | "validation">("overview");
   const isOverview = $derived(['overview', 'colors', 'fonts', 'concept'].includes(activeTab));
   const DIAGNOSTIC_LABELS: Record<string, string> = {
-    foundations: "Основы", suggestions: "Предложения", mock: "Mock-данные",
-    identity: "Identity", archetypes: "Архетипы", tests: "Тесты identity", styleguide: "Проверки и правила",
-    proof: "Proof · перенос", validation: "Валидация", components: "Библиотека",
+    foundations: "Foundations", suggestions: "Suggestions", mock: "Mock data",
+    identity: "Identity", archetypes: "Archetypes", tests: "Identity tests", styleguide: "Checks and rules",
+    proof: "Evidence · transfer", validation: "Validation", components: "Library",
   };
   const isDiagnosticView = $derived(!isOverview && activeTab !== "source" && activeTab !== "components");
   type CatalogPool = "components" | "review" | "suggestions";
@@ -89,6 +89,74 @@
     ...Object.fromEntries(Object.entries(connectedSource?.data.pipelineStatus || {}).map(([key, value]) => [`Source · ${key}`, value])),
     ...data.pipelineStatus,
   }).filter(([, stage]) => ["warning", "failed", "cancelled"].includes(stage.status)));
+
+  /** Human copy for pipeline banners — no jargon in the title row. */
+  type PipelineTone = "info" | "warn" | "danger";
+  type PipelineCard = {
+    key: string;
+    tone: PipelineTone;
+    title: string;
+    subtitle: string;
+    detail: string;
+    actionLabel?: string;
+    action?: () => void;
+  };
+
+  function pipelineCard(name: string, stage: { status: string; message?: string }): PipelineCard {
+    const rawKey = name.replace(/^Source · /, "");
+    const detail = String(stage.message || "").trim();
+    const tone: PipelineTone = stage.status === "failed" ? "danger"
+      : stage.status === "cancelled" ? "info" : "warn";
+
+    if (rawKey === "fidelity" || name.endsWith("fidelity")) {
+      return {
+        key: name,
+        tone,
+        title: stage.status === "failed"
+          ? "Import differs strongly from the site"
+          : "Import needs comparison with the original",
+        subtitle: "The fidelity check found blocks that look different from the source page. You can keep editing — this is a reminder, not a block.",
+        detail: detail || "Open Source Import and compare the blocks with the original.",
+        actionLabel: "Go to components",
+        action: () => { activeTab = "source"; showFidelity = true; },
+      };
+    }
+    if (rawKey === "quality" || name.endsWith("quality")) {
+      return {
+        key: name,
+        tone,
+        title: stage.status === "failed"
+          ? "Some components failed the quality check"
+          : "Some components need review",
+        subtitle: "Quality is an automatic check of component structure and readiness after import. You can edit the layout now; review the flagged items in the catalog.",
+        detail: detail || "Open the component catalog and mark what to accept into the library.",
+        actionLabel: "Open components",
+        action: () => { activeTab = "source"; },
+      };
+    }
+    if (rawKey === "repair" || name.endsWith("repair")) {
+      return {
+        key: name,
+        tone,
+        title: stage.status === "cancelled" ? "AI repair did not finish" : "AI repair of the import",
+        subtitle: "Automatic block repair after import. If it was skipped, rerun Source Import in Precise mode.",
+        detail: detail || "Rerun the import in Precise mode to enable AI repair.",
+      };
+    }
+
+    const statusLabel = stage.status === "warning" ? "needs review"
+      : stage.status === "cancelled" ? "incomplete"
+      : "error";
+    return {
+      key: name,
+      tone,
+      title: `${name}: ${statusLabel}`,
+      subtitle: "Status of a Source / Design System pipeline step.",
+      detail: detail || "No details.",
+    };
+  }
+
+  const pipelineCards = $derived(pipelineWarnings.map(([name, stage]) => pipelineCard(name, stage)));
   const sourceArtifact = $derived.by(() => {
     const source = connectedSource;
     if (source?.type === "sourceimport") return source.data.sourceArtifact || null;
@@ -121,17 +189,17 @@
   // Генератор пишет в IR роли tokens.v2, а не shadcn-имена ДС. Показываем карту
   // соответствия, чтобы было видно, каким цветом станет каждая роль страницы.
   const V2_ROLE_SOURCES: Array<[string, string, string]> = [
-    ["bg", "background", "фон страницы"],
-    ["bg2", "muted", "второй фон, чередование секций"],
-    ["surface", "card", "карточки и панели"],
-    ["surface2", "secondary", "вложенные поверхности"],
-    ["ink", "foreground", "основной текст"],
-    ["ink2", "foreground", "второй уровень текста"],
-    ["inkMuted", "muted-foreground", "подписи, тихий текст"],
-    ["line", "border", "линии и рамки"],
-    ["accent", "primary", "кнопки и акценты"],
-    ["accentInk", "primary-foreground", "текст на акценте"],
-    ["accent2", "accent", "второй акцент"],
+    ["bg", "background", "page background"],
+    ["bg2", "muted", "secondary background, alternating sections"],
+    ["surface", "card", "cards and panels"],
+    ["surface2", "secondary", "nested surfaces"],
+    ["ink", "foreground", "primary text"],
+    ["ink2", "foreground", "secondary text"],
+    ["inkMuted", "muted-foreground", "captions and muted text"],
+    ["line", "border", "lines and borders"],
+    ["accent", "primary", "buttons and accents"],
+    ["accentInk", "primary-foreground", "text on accent"],
+    ["accent2", "accent", "secondary accent"],
   ];
   const v2ColorRoles = $derived(
     V2_ROLE_SOURCES.map(([role, source, hint]) => ({
@@ -307,7 +375,7 @@
             body: JSON.stringify({ systemId: current.systemId, revision }),
           });
           const got = await resp.json();
-          if (!resp.ok || !got.document) throw new Error(got.error || got.detail || `Документ недоступен (HTTP ${resp.status})`);
+          if (!resp.ok || !got.document) throw new Error(got.error || got.detail || `Document unavailable (HTTP ${resp.status})`);
           const latest = $flow.nodes.find((n) => Number(n.id) === targetId);
           if (latest?.type === "designsystem" && latest.data.systemId === current.systemId
               && (Number(latest.data.revision) || 0) === revision && !latest.data.document) {
@@ -428,9 +496,9 @@
     try {
       const renderer = (window as any).IRRenderer;
       if (renderer) renderer.renderIR(container, JSON.parse(JSON.stringify(ir)), { viewport });
-      else container.textContent = "IRRenderer не загружен";
+      else container.textContent = "IRRenderer is not loaded";
     } catch (e) {
-      container.textContent = "Ошибка рендера: " + String(e).slice(0, 100);
+      container.textContent = "Render error: " + String(e).slice(0, 100);
     }
   }
 
@@ -498,7 +566,7 @@
     actionError = "";
     try {
       const ok = await $flow.saveDesignSystemDocument(Number(nodeId), next);
-      if (!ok) actionError = String(data.lastError || "Не удалось сохранить черновик");
+      if (!ok) actionError = String(data.lastError || "Could not save draft");
       return ok;
     } finally {
       saving = false;
@@ -515,7 +583,7 @@
           systemId: String(next.id),
           revision: Number(next.revision),
         });
-        if (!ok) actionError = String(data.lastError || "Не удалось восстановить опубликованную ревизию");
+        if (!ok) actionError = String(data.lastError || "Could not restore the published revision");
         if (ok) {
           snapshot = "";
         }
@@ -633,8 +701,8 @@
       if (!result) { masterReviewNote = ""; return; }
       const failed = (result.results || []).filter((r: any) => r.error).length;
       masterReviewNote = result.reviewed
-        ? `одобрено ${result.approved} из ${result.reviewed}${failed ? `, ошибок ${failed}` : ""}`
-        : "нечего проверять";
+        ? `approved ${result.approved} of ${result.reviewed}${failed ? `, errors ${failed}` : ""}`
+        : "nothing to review";
     } catch (e) {
       if (!silent) actionError = e instanceof Error ? e.message : String(e);
       masterReviewNote = "";
@@ -748,7 +816,7 @@
     try {
       const ok = await $flow.publishDesignSystem(Number(nodeId));
       if (!ok) {
-        actionError = String(($flow.nodes.find((n) => Number(n.id) === Number(nodeId))?.data as unknown as DesignSystemNodeData)?.lastError || "Публикация не удалась");
+        actionError = String(($flow.nodes.find((n) => Number(n.id) === Number(nodeId))?.data as unknown as DesignSystemNodeData)?.lastError || "Publishing failed");
         await validate();
         return;
       }
@@ -765,7 +833,7 @@
   async function setDefault() {
     actionError = "";
     const ok = await $flow.setDefaultDesignSystem(Number(nodeId));
-    if (!ok) actionError = String(data.lastError || "Не удалось назначить по умолчанию");
+    if (!ok) actionError = String(data.lastError || "Could not set the project default");
   }
 
   async function confirmState(name: string) {
@@ -873,7 +941,7 @@
     try {
       const result = $flow.applyDesignSystemToEditor(Number(nodeId), selectedKey);
       if (!result) {
-        actionError = "Не удалось применить мастер в DNA Editor";
+        actionError = "Could not use the master in DNA Editor";
         return;
       }
       pushUndo();
@@ -893,7 +961,7 @@
   async function openWorkingCopy() {
     if (busy) return;
     const result = $flow.copyDesignSystemComponentToEditor(Number(nodeId), selectedKey, selectedPool, selectedVariant);
-    if (result == null) { actionError = 'Не удалось открыть исходный компонент. Проверьте выбранный вариант.'; return; }
+    if (result == null) { actionError = 'Could not open the source component. Check the selected variant.'; return; }
     for (let i = 0; i < 40; i++) {
       if (useEditorStore.getState().openEditor(result)) break;
       await new Promise(resolve => setTimeout(resolve, 50));
@@ -948,79 +1016,95 @@
 
 <svelte:window onkeydown={onKeydown} onclick={closeToolsMenu} />
 
-<div class="ds-editor-overlay" role="dialog" aria-modal="true" aria-label="Редактор Design System" data-ds-editor>
+<div class="ds-editor-overlay" role="dialog" aria-modal="true" aria-label="Design System editor" data-ds-editor>
   <header class="ds-editor-top">
     <div>
       <strong>◈ {data.name}</strong>
-      <span class="ds-editor-meta" title="Мастер — точный компонент, извлечённый из Source (импортированного сайта) и хранимый как Design IR, промежуточное представление макета">
-        {data.status === "published" ? `Опубликовано · v${data.revision}` : "Черновик"}
-        {data.defaultSet ? " · проект по умолчанию" : ""}
+      <span class="ds-editor-meta" title="A master is an exact component captured from Source and stored as Design IR, the editable layout representation">
+        {data.status === "published" ? `Published · v${data.revision}` : "Draft"}
+        {data.defaultSet ? " · project default" : ""}
         {#if !data.document && data.systemId}
-          · загрузка сохранённого каталога…
+          · loading saved catalog…
         {:else}
-          · мастеров из Source: {catalogEntries.length} · принято: {components.length} · предложений: {semanticSuggestions.length}
+          · Source masters: {catalogEntries.length} · accepted: {components.length} · suggestions: {semanticSuggestions.length}
         {/if}
-        {dirty ? " · черновик изменён" : ""}
+        {dirty ? " · draft changed" : ""}
       </span>
     </div>
     <div class="ds-editor-actions">
-      <button type="button" data-ds-action="styleguide" aria-label="Собрать живой UI Kit и открыть в разделе «Компоненты»"
-              title="UI Kit — живой набор компонентов дизайн-системы (DS), собранный из мастеров Source"
+      <button type="button" data-ds-action="styleguide" aria-label="Build a live UI Kit and open it in Components"
+              title="UI Kit is a live design system component library built from Source masters"
               aria-busy={exportingKit} onclick={() => void openStyleguide()} disabled={busy || !catalogEntries.length}>
-        {exportingKit ? "Подготовка…" : "Живой лист"}
+        {exportingKit ? "Preparing…" : "Live sheet"}
       </button>
-      <details class="ds-tools-menu" bind:this={toolsMenu}><summary>Действия</summary><div class="ds-tools-popover">
-      <button type="button" data-ds-action="validate" aria-label="Проверить документ" aria-busy={validating} onclick={validate} disabled={busy || !components.length}>
-        {validating ? "Проверка…" : "Проверить"}
+      <details class="ds-tools-menu" bind:this={toolsMenu}><summary>Actions</summary><div class="ds-tools-popover">
+      <button type="button" data-ds-action="validate" aria-label="Validate document" aria-busy={validating} onclick={validate} disabled={busy || !components.length}>
+        {validating ? "Validating…" : "Validate"}
       </button>
-      <button type="button" data-ds-action="publish" aria-label="Опубликовать immutable-ревизию" aria-busy={publishing} onclick={publish} disabled={busy || !components.length}>
-        {publishing ? "Публикация…" : "Опубликовать ревизию"}
+      <button type="button" data-ds-action="publish" aria-label="Publish an immutable revision" aria-busy={publishing} onclick={publish} disabled={busy || !components.length}>
+        {publishing ? "Publishing…" : "Publish revision"}
       </button>
-      <button type="button" data-ds-action="default" aria-label="Назначить системой проекта" onclick={setDefault} disabled={busy || data.status !== "published" || data.defaultSet}>
-        По умолчанию
+      <button type="button" data-ds-action="default" aria-label="Set as project design system" onclick={setDefault} disabled={busy || data.status !== "published" || data.defaultSet}>
+        Set as default
       </button>
-      <button type="button" data-ds-action="undo" aria-label="Отменить последнее изменение" onclick={() => void undo()} disabled={busy || (!undoStack.length && !appliedEdit)}>
-        Отменить шаг
+      <button type="button" data-ds-action="undo" aria-label="Undo the last change" onclick={() => void undo()} disabled={busy || (!undoStack.length && !appliedEdit)}>
+        Undo change
       </button>
-      <button type="button" data-ds-action="cancel" aria-label="Отменить правки и закрыть" onclick={() => void cancel()} disabled={publishing}>
-        Отменить правки и закрыть
+      <button type="button" data-ds-action="cancel" aria-label="Discard changes and close" onclick={() => void cancel()} disabled={publishing}>
+        Discard changes and close
       </button>
-      <button type="button" onclick={() => activeTab = 'styleguide'}>Подробные проверки и правила</button>
+      <button type="button" onclick={() => activeTab = 'styleguide'}>Detailed checks and rules</button>
       </div></details>
-      <button type="button" class="dna-btn-sell" data-ds-action="to-generator" aria-label="Передать систему в Генератор как style DNA" title="Style DNA — стилевой профиль системы (токены, правила, компоненты), по которому Генератор собирает новые страницы" onclick={sendToGenerator} disabled={publishing}>
-        Передать в Генератор
+      <button type="button" class="dna-btn-sell" data-ds-action="to-generator" aria-label="Send this Design System to Generator" title="Generator will use this kit: tokens, rules, and components" onclick={sendToGenerator} disabled={publishing}>
+        Send to Generator
       </button>
-      <button type="button" class="close" data-ds-action="close" aria-label="Закрыть редактор" onclick={onClose}>✕</button>
+      <button type="button" class="close" data-ds-action="close" aria-label="Close editor" onclick={onClose}>✕</button>
     </div>
   </header>
   {#if actionError}
     <div class="ds-editor-error" role="alert">{actionError}</div>
   {/if}
-  {#each pipelineWarnings as [name, stage]}
-    <details class="ds-editor-error ds-pipeline-warning" data-ds-pipeline-stage={name} data-status={stage.status}>
-      <summary>{name}: {stage.status === "warning" ? "требуется проверка" : stage.status === "cancelled" ? "не завершено" : "ошибка"} — подробности</summary>
-      <div>{stage.message}</div>
-    </details>
-  {/each}
+  {#if pipelineCards.length}
+    <div class="ds-pipeline-stack" role="region" aria-label="Import and validation status">
+      {#each pipelineCards as card (card.key)}
+        <details class="ds-pipeline-card" data-ds-pipeline-stage={card.key} data-tone={card.tone} open={card.tone === "danger"}>
+          <summary>
+            <span class="ds-pipeline-badge" data-tone={card.tone}>
+              {card.tone === "danger" ? "Error" : card.tone === "info" ? "Info" : "Review"}
+            </span>
+            <span class="ds-pipeline-title">{card.title}</span>
+            <span class="ds-pipeline-more">details</span>
+          </summary>
+          <p class="ds-pipeline-sub">{card.subtitle}</p>
+          {#if card.detail}
+            <p class="ds-pipeline-detail">{card.detail}</p>
+          {/if}
+          {#if card.action && card.actionLabel}
+            <button type="button" class="ds-pipeline-action" onclick={card.action}>{card.actionLabel}</button>
+          {/if}
+        </details>
+      {/each}
+    </div>
+  {/if}
   {#if loadError}
     <div class="ds-editor-error" role="alert">
-      Не удалось загрузить Design System: {loadError}
-      <button type="button" data-ds-action="retry-load" onclick={() => loadAttempt += 1}>Повторить загрузку</button>
+      Could not load Design System: {loadError}
+      <button type="button" data-ds-action="retry-load" onclick={() => loadAttempt += 1}>Retry loading</button>
     </div>
   {/if}
 
-  <nav class="ds-section-tabs" aria-label="Разделы дизайн-системы">
-    <button type="button" data-ds-tab="overview" class:active={activeTab === 'overview'} onclick={() => activeTab = 'overview'}>Обзор</button>
-    <button type="button" data-ds-tab="source" class:active={activeTab === "source" || activeTab === "components"} onclick={() => (activeTab = "source")}>Компоненты <span>{catalogEntries.length}</span></button>
-    <button type="button" data-ds-tab="colors" class:active={activeTab === 'colors'} onclick={() => activeTab = 'colors'}>Цвета и токены</button>
-    <button type="button" data-ds-tab="fonts" class:active={activeTab === 'fonts'} onclick={() => activeTab = 'fonts'}>Шрифты</button>
-    <button type="button" data-ds-tab="concept" class:active={activeTab === 'concept'} onclick={() => activeTab = 'concept'}>Концепция сайта{#if styleReview}<span>AI</span>{/if}</button>
+  <nav class="ds-section-tabs" aria-label="Design system sections">
+    <button type="button" data-ds-tab="overview" class:active={activeTab === 'overview'} onclick={() => activeTab = 'overview'}>Overview</button>
+    <button type="button" data-ds-tab="source" class:active={activeTab === "source" || activeTab === "components"} onclick={() => (activeTab = "source")}>Components <span>{catalogEntries.length}</span></button>
+    <button type="button" data-ds-tab="colors" class:active={activeTab === 'colors'} onclick={() => activeTab = 'colors'}>Colors and tokens</button>
+    <button type="button" data-ds-tab="fonts" class:active={activeTab === 'fonts'} onclick={() => activeTab = 'fonts'}>Fonts</button>
+    <button type="button" data-ds-tab="concept" class:active={activeTab === 'concept'} onclick={() => activeTab = 'concept'}>Site concept{#if styleReview}<span>AI</span>{/if}</button>
     {#if isDiagnosticView}
       <!-- Диагностические экраны (Validation, Tests, Proof…) больше не занимают
            постоянный ряд вкладок: они открываются своим действием и здесь
            показывают, где пользователь находится и как вернуться. -->
       <span class="ds-diagnostic-crumb">{DIAGNOSTIC_LABELS[activeTab] || activeTab}</span>
-      <button type="button" class="ds-tab-more" onclick={() => (activeTab = "source")}>← К компонентам</button>
+      <button type="button" class="ds-tab-more" onclick={() => (activeTab = "source")}>← Back to components</button>
     {/if}
   </nav>
 
@@ -1030,46 +1114,46 @@
 
       {#if isOverview}
         {#if activeTab === 'concept'}
-          <div class="ds-concept-provider"><span>AI для описания стиля</span>
-            <select aria-label="AI для описания стиля" value={aiProvider} onchange={setAiProvider} disabled={busy} data-ds-ai-provider>
-              <option value="inherit">Как в Source · {({ openai: 'GPT-5.6 Sol', astra: 'GPT-6 Astra', codex: 'Codex', claude: 'Claude' } as Record<string, string>)[resolvedProvider] || resolvedProvider}</option>
+          <div class="ds-concept-provider"><span>AI style description</span>
+            <select aria-label="AI style description" value={aiProvider} onchange={setAiProvider} disabled={busy} data-ds-ai-provider>
+              <option value="inherit">Same as Source · {({ openai: 'GPT-5.6 Sol', astra: 'GPT-6 Astra', codex: 'Codex', claude: 'Claude' } as Record<string, string>)[resolvedProvider] || resolvedProvider}</option>
               <option value="openai">GPT-5.6 Sol</option><option value="astra">GPT-6 Astra</option>
               <option value="codex">Codex</option><option value="claude">Claude Opus</option>
             </select>
-            <select aria-label="Глубина анализа стиля" value={aiEffort} onchange={setAiEffort} disabled={busy}>
-              <option value="medium">Обычный анализ</option><option value="high">Подробный анализ</option><option value="max">Максимальная глубина</option>
+            <select aria-label="Style analysis depth" value={aiEffort} onchange={setAiEffort} disabled={busy}>
+              <option value="medium">Standard analysis</option><option value="high">Detailed analysis</option><option value="max">Maximum depth</option>
             </select>
-            <span class="ds-concept-hint">Запускается по вашей кнопке. Компоненты не изменяет.</span>
+            <span class="ds-concept-hint">Runs only when requested. Does not change components.</span>
           </div>
         {/if}
         <UiKitOverview document={doc} entries={catalogEntries} section={activeTab as KitSection}
           onSection={(section) => activeTab = section} onComponents={() => activeTab = 'source'}
           onOpen={selectCatalogComponent} onAnalyze={() => void runStyleReview()} {busy} />
       {:else if activeTab === "source"}
-        <div class="ds-source-views" role="tablist" aria-label="Вид раздела «Компоненты»">
+        <div class="ds-source-views" role="tablist" aria-label="Components view">
           <button type="button" role="tab" data-ds-source-view="catalog" aria-selected={sourceView === "catalog"}
-                  class:active={sourceView === "catalog"} onclick={() => (sourceView = "catalog")}>Каталог</button>
+                  class:active={sourceView === "catalog"} onclick={() => (sourceView = "catalog")}>Catalog</button>
           <button type="button" role="tab" data-ds-source-view="kit" aria-selected={sourceView === "kit"}
                   class:active={sourceView === "kit"} aria-busy={exportingKit}
                   onclick={() => void (kitUrl ? (sourceView = "kit") : openStyleguide())}>
-            Живой UI Kit{#if kitReport}<span>{kitReport.components}</span>{/if}
+            Live UI Kit{#if kitReport}<span>{kitReport.components}</span>{/if}
           </button>
           {#if semanticSuggestions.length}
             <button type="button" role="tab" data-ds-tab="suggestions" aria-selected="false"
                     onclick={() => (activeTab = "suggestions")}>
-              Предложения <span>{semanticSuggestions.length}</span>
+              Suggestions <span>{semanticSuggestions.length}</span>
             </button>
           {/if}
           {#if sourceView === "kit"}
             <div class="ds-kit-tools">
               {#if kitReport}
-                <small>{kitReport.filename} · {(kitReport.bytes / 1_048_576).toFixed(1)} МБ{kitReport.warnings ? ` · ${kitReport.warnings} предупреждений` : ""}</small>
+                <small>{kitReport.filename} · {(kitReport.bytes / 1_048_576).toFixed(1)} MB{kitReport.warnings ? ` · ${kitReport.warnings} warnings` : ""}</small>
               {/if}
               <button type="button" data-ds-action="styleguide-rebuild" onclick={() => void buildStyleguide()} disabled={busy || exportingKit}>
-                {exportingKit ? "Сборка…" : "Пересобрать"}
+                {exportingKit ? "Building…" : "Rebuild"}
               </button>
               <button type="button" data-ds-action="styleguide-save" onclick={() => void saveStyleguideFile()} disabled={exportingKit || savingKit}>
-                {savingKit ? "Сохранение…" : "Сохранить HTML"}
+                {savingKit ? "Saving…" : "Save HTML"}
               </button>
             </div>
           {/if}
@@ -1079,9 +1163,9 @@
             {#if kitUrl}
               <!-- Кит самодостаточен и рисует мастера своим встроенным движком:
                    отдаём ему песочницу со скриптами, но без доступа к приложению. -->
-              <iframe title="Живой UI Kit" src={kitUrl} sandbox="allow-scripts allow-popups" data-ds-kit-frame></iframe>
+              <iframe title="Live UI Kit" src={kitUrl} sandbox="allow-scripts allow-popups" data-ds-kit-frame></iframe>
             {:else}
-              <div class="ds-kit-empty">{exportingKit ? "Собираем живой кит…" : "Кит ещё не собран — нажмите «UI Kit» в шапке."}</div>
+              <div class="ds-kit-empty">{exportingKit ? "Building the live kit…" : "The kit has not been built yet. Select UI Kit in the header."}</div>
             {/if}
           </div>
         {:else}
@@ -1096,18 +1180,18 @@
         {/if}
       {:else if activeTab === "components"}
         <div class="ds-lib-heading">
-          <div><strong>Библиотека компонентов</strong><small>Точные семейства из Source, без дублей по контенту</small></div>
+          <div><strong>Component library</strong><small>Exact Source families without content duplicates</small></div>
           <span>{catalogEntries.length}</span>
         </div>
-        <section class="ds-ai-organizer" aria-label="AI-раскладка каталога компонентов">
+        <section class="ds-ai-organizer" aria-label="AI component catalog organization">
           <div>
-            <strong>AI-раскладка каталога</strong>
-            <small>Группирует шапку, контролы, варианты кнопок и карточки. Точные мастера не меняются.</small>
+            <strong>AI catalog organization</strong>
+            <small>Groups headers, controls, button variants, and cards. Exact masters are preserved.</small>
           </div>
           <label>
-            <span>Модель</span>
+            <span>Model</span>
             <select value={aiProvider} onchange={setAiProvider} disabled={busy} data-ds-ai-provider>
-              <option value="inherit">Из Source · {resolvedProvider}</option>
+              <option value="inherit">From Source · {resolvedProvider}</option>
               <option value="openai">GPT-5.6 Sol</option>
               <option value="astra">GPT-6 Astra</option>
               <option value="codex">Codex</option>
@@ -1115,7 +1199,7 @@
             </select>
           </label>
           <label>
-            <span>Усилие</span>
+            <span>Effort</span>
             <select value={aiEffort} onchange={setAiEffort} disabled={busy || resolvedProvider === "codex"}>
               <option value="medium">medium</option>
               <option value="high">high</option>
@@ -1123,20 +1207,20 @@
             </select>
           </label>
           <button type="button" data-ds-action="organize" onclick={() => void organizeCatalog()} disabled={busy || !catalogEntries.length}>
-            {organizing ? "Раскладываю…" : "Разложить с AI"}
+            {organizing ? "Organizing…" : "Organize with AI"}
           </button>
           <span class="ds-organizer-state" data-kind={catalog.organizer?.kind || "deterministic"}>
-            {catalog.organizer?.kind === "ai" ? `${catalog.organizer.model || "gpt-5.6-sol"} · ${catalog.organizer.reasoningEffort}` : "детерминированная база"}
+            {catalog.organizer?.kind === "ai" ? `${catalog.organizer.model || "gpt-5.6-sol"} · ${catalog.organizer.reasoningEffort}` : "deterministic baseline"}
           </span>
         </section>
         <label class="ds-library-search">
-          <span>Поиск компонентов</span>
-          <input type="search" placeholder="По названию или категории" bind:value={componentSearch} />
+          <span>Search components</span>
+          <input type="search" placeholder="By name or category" bind:value={componentSearch} />
         </label>
         <!-- Категории вместо вертикального списка: сами компоненты — карточками в центре. -->
-        <nav class="ds-cat-list" aria-label="Категории компонентов">
+        <nav class="ds-cat-list" aria-label="Component categories">
           <button type="button" class:active={dsCat === "all"} onclick={() => (dsCat = "all")}>
-            <span>Все</span><span class="ds-cat-count">{componentGroups.reduce((sum, [, items]) => sum + items.length, 0)}</span>
+            <span>All</span><span class="ds-cat-count">{componentGroups.reduce((sum, [, items]) => sum + items.length, 0)}</span>
           </button>
           {#each libCategories as [label, count] (label)}
             <button type="button" class:active={dsCat === label} onclick={() => (dsCat = label)}>
@@ -1144,17 +1228,17 @@
             </button>
           {/each}
         </nav>
-        <div class="ds-strict-note" title="Strict — Генератор не выходит за пределы дизайн-системы (DS): ни новых компонентов, ни чужих стилей">
-          <strong>Strict-набор</strong>
-          <small>Генератор собирает страницы только из этих компонентов.</small>
+        <div class="ds-strict-note" title="Strict keeps Generator within the design system: no new components or unrelated styles">
+          <strong>Strict set</strong>
+          <small>Generator builds pages using only these components.</small>
         </div>
       {:else if activeTab === "suggestions"}
-        <div class="ds-lib-heading"><div><strong>Предложения</strong><small>Семантические гипотезы, отдельно от точных мастеров Source</small></div><span>{semanticSuggestions.length}</span></div>
-        <div class="ds-suggestion-intro">Точные наблюдаемые мастера всегда видны в «Компонентах». В этой очереди — только выведенные дополнения, которые нужно явно включить в UI Kit.</div>
+        <div class="ds-lib-heading"><div><strong>Suggestions</strong><small>Semantic suggestions, separate from exact Source masters</small></div><span>{semanticSuggestions.length}</span></div>
+        <div class="ds-suggestion-intro">Exact observed masters are always available in Components. This queue contains inferred additions that must be explicitly added to the UI Kit.</div>
         <ul class="ds-comp-list">
           {#each semanticSuggestions as [key, comp] (key)}
             <li>
-              <button type="button" class:active={selectedPool === "suggestions" && selectedKey === key} data-ds-suggestion={key} aria-label={`Выбрать предложение ${comp.name}`} onclick={() => selectSuggestion(key)}>
+              <button type="button" class:active={selectedPool === "suggestions" && selectedKey === key} data-ds-suggestion={key} aria-label={`Select suggestion ${comp.name}`} onclick={() => selectSuggestion(key)}>
                 <span class="ds-origin" data-origin={comp.origin} title={comp.origin}>{originIcon(comp.origin)}</span>
                 <span class="ds-comp-name">{comp.name}</span>
                 <span class="ds-comp-cat">{comp.origin === "observed" ? "review" : `${Math.round((comp.confidence || 0) * 100)}%`}</span>
@@ -1166,13 +1250,13 @@
         <div class="ds-styleguide">
           <section class="ds-sg-review-bar" aria-label="AI style review">
             <div>
-              <strong>AI-ревью стиля</strong>
-              <small>По вашему запросу модель описывает тон, правила и характер сайта. Открытие и сборка UI Kit не запускают AI.</small>
+              <strong>AI style review</strong>
+              <small>On request, the model describes the tone, rules, and character of the site. Opening or building the UI Kit does not run AI.</small>
             </div>
             <label>
-              <span>Провайдер</span>
+              <span>Provider</span>
               <select value={aiProvider} onchange={setAiProvider} disabled={busy} data-ds-ai-provider>
-                <option value="inherit">Из Source · {resolvedProvider}</option>
+                <option value="inherit">From Source · {resolvedProvider}</option>
                 <option value="openai">GPT-5.6 Sol</option>
         <option value="astra">GPT-6 Astra</option>
                 <option value="codex">Codex</option>
@@ -1181,7 +1265,7 @@
             </label>
             {#if resolvedProvider !== "codex"}
               <label>
-                <span>Усилие</span>
+                <span>Effort</span>
                 <select value={aiEffort} onchange={setAiEffort} disabled={busy}>
                   <option value="medium">medium</option>
                   <option value="high">high</option>
@@ -1190,28 +1274,28 @@
               </label>
             {/if}
             <button type="button" data-ds-action="style-review" onclick={() => void runStyleReview()} disabled={busy || !doc.id}>
-              {reviewing ? "Ревью…" : styleReview ? "Переснять ревью" : "Запустить вручную"}
+              {reviewing ? "Reviewing…" : styleReview ? "Run review again" : "Run manually"}
             </button>
             <span class="ds-organizer-state" data-kind={styleGuide.origin === "ai" ? "ai" : "deterministic"}>
-              {styleGuide.origin === "ai" ? `AI · ${styleGuide.provider || "openai"}` : "измеренная база"}
+              {styleGuide.origin === "ai" ? `AI · ${styleGuide.provider || "openai"}` : "measured baseline"}
             </span>
           </section>
 
           <section class="ds-organizer" data-ds-master-review>
             <div>
-              <strong>AI-ревью мастеров</strong>
-              <small>Мастера, не прошедшие попиксельный порог, проверяет агент: сравнивает оригинал и рендер, одобряет без дефектов или называет конкретные. Подтверждение вручную не нужно.</small>
+              <strong>AI master review</strong>
+              <small>An agent reviews masters below the pixel fidelity threshold by comparing the source and render, approving matching results or identifying specific defects. Manual confirmation is not required.</small>
             </div>
             <button type="button" data-ds-action="master-review" onclick={() => void runMasterReview()} disabled={busy || !doc.id || !reviewComponents.length}>
-              {masterReviewing ? "Ревью мастеров…" : reviewComponents.length ? `Проверить ${reviewComponents.length} на ревью` : "Всё проверено"}
+              {masterReviewing ? "Reviewing masters…" : reviewComponents.length ? `Validate ${reviewComponents.length} in review` : "All verified"}
             </button>
             {#if masterReviewNote}
               <span class="ds-organizer-state" data-kind="ai">{masterReviewNote}</span>
             {/if}
           </section>
 
-          <h4>Семантические токены</h4>
-          <p class="ds-sg-hint">Стандартная карта ролей (как в shadcn/ui) — из измеренных значений сайта. Генератор обязан использовать роли, а не сырые hex.</p>
+          <h4>Semantic tokens</h4>
+          <p class="ds-sg-hint">A standard role map, as in shadcn/ui, derived from measured site values. Generator must use roles instead of raw hex colors.</p>
           <div class="ds-sg-tokens">
             {#each styleTokens as [name, value] (name)}
               <div class="ds-sg-token">
@@ -1223,13 +1307,13 @@
                 <div><strong>{name}</strong><small>{value}</small></div>
               </div>
             {:else}
-              <p class="ds-sg-hint">Токены появятся после сборки из Source.</p>
+              <p class="ds-sg-hint">Tokens will appear after building from Source.</p>
             {/each}
           </div>
 
           {#if v2ColorRoles.length}
-            <h4>Роли страницы (tokens v2)</h4>
-            <p class="ds-sg-hint">Во что превращаются эти токены в IR генератора: цвет по ролям bg/surface/ink/accent и типографика по ролям display…eyebrow.</p>
+            <h4>Page roles (tokens v2)</h4>
+            <p class="ds-sg-hint">How these tokens map to Generator IR: bg/surface/ink/accent color roles and display…eyebrow typography roles.</p>
             <div class="ds-sg-tokens">
               {#each v2ColorRoles as row (row.role)}
                 <div class="ds-sg-token">
@@ -1248,18 +1332,18 @@
           {/if}
 
           <!-- Что именно получает Генератор: сводка вместо абстрактного обещания. -->
-          <section class="ds-sg-dna" aria-label="Передача в Генератор">
-            <div class="ds-sg-dna-head"><i aria-hidden="true"></i><strong>Уходит в Генератор как style DNA</strong></div>
-            <p>Генератор строит варианты только на этих токенах и компонентах — стиль сайта сохраняется без отдельного промпта.</p>
+          <section class="ds-sg-dna" aria-label="Generator handoff">
+            <div class="ds-sg-dna-head"><i aria-hidden="true"></i><strong>What Generator receives</strong></div>
+            <p>Generator uses these tokens and components to preserve the site style without a separate prompt.</p>
             <div class="ds-sg-dna-grid">
-              <div><strong>{styleDnaSummary.colors}</strong><small>цвета</small></div>
-              <div><strong>{styleDnaSummary.weights}</strong><small>веса</small></div>
-              <div><strong>{styleDnaSummary.radii}</strong><small>радиусы</small></div>
-              <div><strong>{styleDnaSummary.components}</strong><small>компоненты</small></div>
+              <div><strong>{styleDnaSummary.colors}</strong><small>colors</small></div>
+              <div><strong>{styleDnaSummary.weights}</strong><small>weights</small></div>
+              <div><strong>{styleDnaSummary.radii}</strong><small>radii</small></div>
+              <div><strong>{styleDnaSummary.components}</strong><small>components</small></div>
             </div>
           </section>
 
-          <h4>Измеренный характер</h4>
+          <h4>Measured character</h4>
           <div class="ds-sg-chips">
             {#each Object.entries(styleGuide.measured || {}) as [name, value] (name)}
               <span><small>{name}</small>{value}</span>
@@ -1267,9 +1351,9 @@
           </div>
 
           {#if styleReview}
-            <h4>Дизайн-язык (AI)</h4>
+            <h4>Design language (AI)</h4>
             <dl class="ds-sg-traits">
-              {#each [["tone", "Тон"], ["density", "Плотность"], ["cornerCharacter", "Формы"], ["colorUsage", "Цвет"], ["typographyCharacter", "Типографика"], ["imageryStyle", "Изображения"]] as [field, label] (field)}
+              {#each [["tone", "Tone"], ["density", "Density"], ["cornerCharacter", "Shapes"], ["colorUsage", "Color"], ["typographyCharacter", "Typography"], ["imageryStyle", "Images"]] as [field, label] (field)}
                 {#if styleReview[field]}
                   <div><dt>{label}</dt><dd>{styleReview[field]}</dd></div>
                 {/if}
@@ -1279,67 +1363,67 @@
               <div class="ds-sg-rules">
                 {#if styleReview.doRules?.length}
                   <div>
-                    <h4>Можно</h4>
+                    <h4>Do</h4>
                     <ul>{#each styleReview.doRules as rule}<li class="do">{rule}</li>{/each}</ul>
                   </div>
                 {/if}
                 {#if styleReview.dontRules?.length}
                   <div>
-                    <h4>Нельзя</h4>
+                    <h4>Do not</h4>
                     <ul>{#each styleReview.dontRules as rule}<li class="dont">{rule}</li>{/each}</ul>
                   </div>
                 {/if}
               </div>
             {/if}
             {#if Object.keys(styleReview.componentNotes || {}).length}
-              <h4>Заметки по компонентам</h4>
+              <h4>Component notes</h4>
               {#each Object.entries(styleReview.componentNotes || {}) as [key, note] (key)}
                 <p class="ds-sg-note"><code>{key}</code> {note}</p>
               {/each}
             {/if}
           {:else}
-            <p class="ds-sg-hint">AI-ревью ещё не выполнялось. Запустите его, чтобы новые компоненты генерировались строго в стилистике сайта.</p>
+            <p class="ds-sg-hint">AI review has not run yet. Run it to guide new components using the site style.</p>
           {/if}
         </div>
       {:else if activeTab === "foundations"}
         <div class="ds-foundations">
-          <h4>Цвета (semantic)</h4>
+          <h4>Colors (semantic)</h4>
           <div class="ds-swatches">
             {#each Object.entries(foundations.colors?.semantic || {}) as [name, hex] (name)}
               <span class="ds-swatch"><i style="background:{hex}"></i>{name}</span>
             {/each}
           </div>
-          <h4>Типографика</h4>
-          <p>{(foundations.typography?.families || []).join(", ") || "—"} · веса {(foundations.typography?.weights || []).join("/")}</p>
-          <h4>Отступы</h4>
+          <h4>Typography</h4>
+          <p>{(foundations.typography?.families || []).join(", ") || "—"} · weights {(foundations.typography?.weights || []).join("/")}</p>
+          <h4>Spacing</h4>
           <p>{Object.entries(foundations.spacing || {}).map(([k, v]) => `${k}=${v}`).join(" · ")}</p>
-          <h4>Радиусы</h4>
+          <h4>Radii</h4>
           <p>{(foundations.radii || []).join(", ")}</p>
-          <h4>Брейкпоинты</h4>
+          <h4>Breakpoints</h4>
           <p>{Object.entries(foundations.breakpoints || {}).map(([k, v]) => `${k}≥${v}`).join(" · ")}</p>
         </div>
       {:else if activeTab === "identity"}
         <div class="ds-identity">
-          <label>Soul · одной строкой
+          <label>Soul · one sentence
             <textarea value={identity.soul?.oneLine?.value || ""} onblur={(event) => void updateSoul(event.currentTarget.value)}></textarea>
           </label>
-          <small>Статус: {identity.status || "not-extracted"} · подтверждение палитры {Math.round((identity.paletteCoverage?.confidence || 0) * 100)}%</small>
-          <h4>Сигнатуры</h4>
+          <small>Status: {identity.status || "not-extracted"} · palette confirmation {Math.round((identity.paletteCoverage?.confidence || 0) * 100)}%</small>
+          <h4>Signatures</h4>
           {#each identity.signatures || [] as signature (signature.id)}
             <article>
               <strong>{signature.name}</strong>
               <p>{signature.rule}</p>
               <small>{signature.provenance} · {Math.round((signature.confidence || 0) * 100)}%</small>
-              {#if !signature.confirmed}<button type="button" onclick={() => void confirmIdentityItem("signatures", signature.id)}>Подтвердить</button>{/if}
+              {#if !signature.confirmed}<button type="button" onclick={() => void confirmIdentityItem("signatures", signature.id)}>Confirm</button>{/if}
             </article>
           {/each}
-          <h4>Запреты</h4>
+          <h4>Restrictions</h4>
           {#each identity.bans || [] as ban (ban.id)}
             <article><strong>{ban.severity} · {ban.rule}</strong><small>{ban.provenance} · {Math.round((ban.confidence || 0) * 100)}%</small>
-              {#if !ban.confirmed}<button type="button" onclick={() => void confirmIdentityItem("bans", ban.id)}>Подтвердить</button>{/if}
+              {#if !ban.confirmed}<button type="button" onclick={() => void confirmIdentityItem("bans", ban.id)}>Confirm</button>{/if}
             </article>
           {/each}
-          {#if identity.uncertainty?.length}<h4>Неопределённость</h4>{/if}
+          {#if identity.uncertainty?.length}<h4>Uncertainty</h4>{/if}
           {#each identity.uncertainty || [] as item}
             <p class="ds-uncertain">◐ {item.field}: {item.reason}</p>
           {/each}
@@ -1348,14 +1432,14 @@
         <div class="ds-identity">
           {#each archetypes as archetype (archetype.id)}
             <article><strong>{archetype.name}</strong><p>{(archetype.structure || []).join(" → ")}</p><small>{archetype.provenance} · {Math.round((archetype.confidence || 0) * 100)}%</small>
-              {#if !archetype.confirmed}<button type="button" onclick={() => void confirmIdentityItem("archetypes", archetype.id)}>Подтвердить</button>{/if}
+              {#if !archetype.confirmed}<button type="button" onclick={() => void confirmIdentityItem("archetypes", archetype.id)}>Confirm</button>{/if}
             </article>
           {/each}
         </div>
       {:else if activeTab === "tests"}
         <div class="ds-identity">
-          <button type="button" onclick={() => void runIdentityTests()} disabled={validating || !components.length}>{validating ? "Проверяю…" : "Запустить на мастере"}</button>
-          {#if identityResult}<p class:ds-test-fail={!identityResult.passed}>Оценка {identityResult.score}% · {identityResult.passed ? "жёсткие правила пройдены" : "нарушено жёсткое правило"}</p>{/if}
+          <button type="button" onclick={() => void runIdentityTests()} disabled={validating || !components.length}>{validating ? "Checking…" : "Run on master"}</button>
+          {#if identityResult}<p class:ds-test-fail={!identityResult.passed}>Score {identityResult.score}% · {identityResult.passed ? "hard constraints passed" : "hard constraint failed"}</p>{/if}
           {#each identityTests as test (test.id)}
             {@const result = identityResult?.results?.find((item: any) => item.id === test.id)}
             <article class:ds-test-fail={result && !result.passed}><strong>{result ? (result.passed ? "✓" : "⛔") : "○"} {test.severity} · {test.description}</strong><small>{test.id} · {test.provenance} · {Math.round((test.confidence || 0) * 100)}%</small></article>
@@ -1363,11 +1447,11 @@
         </div>
       {:else if activeTab === "proof"}
         <div class="ds-identity">
-          <p>Reconstruction проверяет перенос identity тем же валидатором, который используется после генерации.</p>
-          <button type="button" onclick={() => void runProof("source")} disabled={proofRunning || !components.length}>{proofRunning ? "Проверяю…" : "Proof по Source"}</button>
-          <button type="button" onclick={() => void runProof("transfer")} disabled={proofRunning || !components.length}>Proof переноса</button>
+          <p>Reconstruction verifies identity transfer using the same validator as post-generation checks.</p>
+          <button type="button" onclick={() => void runProof("source")} disabled={proofRunning || !components.length}>{proofRunning ? "Checking…" : "Source evidence"}</button>
+          <button type="button" onclick={() => void runProof("transfer")} disabled={proofRunning || !components.length}>Transfer evidence</button>
           {#if reconstruction.sourceProof}<article><strong>Source · {reconstruction.sourceProof.status}</strong><p>Identity {reconstruction.sourceProof.identityScore}%</p></article>{/if}
-          {#if reconstruction.transferProof}<article><strong>Перенос · {reconstruction.transferProof.status}</strong><p>Identity {reconstruction.transferProof.identityScore}%</p></article>{/if}
+          {#if reconstruction.transferProof}<article><strong>Transfer · {reconstruction.transferProof.status}</strong><p>Identity {reconstruction.transferProof.identityScore}%</p></article>{/if}
         </div>
       {:else if activeTab === "mock"}
         <div class="ds-mock-list">
@@ -1385,9 +1469,9 @@
               <div class="ds-val-error">⛔ {err.message}</div>
             {/each}
           {:else if validationResult}
-            <div class="ds-val-ok">✓ Блокирующих ошибок нет — можно публиковать</div>
+            <div class="ds-val-ok">✓ No blocking errors — ready to publish</div>
           {:else}
-            <p>Нажмите «Проверить» перед публикацией.</p>
+            <p>Select Validate before publishing.</p>
           {/if}
         </div>
       {/if}
@@ -1396,13 +1480,13 @@
     <main class="ds-editor-canvas" class:ds-catalog-mode={activeTab === "components"}>
       {#if activeTab === "components"}
         <!-- Сетка каталога: живой мини-рендер на светлой поверхности + мета. -->
-        <div class="ds-card-grid" aria-label="Каталог компонентов">
+        <div class="ds-card-grid" aria-label="Component catalog">
           {#each gridEntries as entry (entry.pool + ":" + entry.key)}
             {@const comp = entry.component}
             {@const variantCount = Object.keys(comp.variants || {}).length}
             {@const fidelity = fidelityOf(comp)}
             <button type="button" class="ds-card" class:active={selectedPool === entry.pool && selectedKey === entry.key}
-                    data-ds-component={entry.key} data-ds-pool={entry.pool} aria-label={`Выбрать компонент ${comp.name}`}
+                    data-ds-component={entry.key} data-ds-pool={entry.pool} aria-label={`Select component ${comp.name}`}
                     onclick={() => selectCatalogComponent(entry.key, entry.pool)}>
               <span class="ds-card-preview" aria-hidden="true">
                 <span class="ds-card-render" use:cardPreview={comp.masterIr || comp.templateIr}></span>
@@ -1411,7 +1495,7 @@
                 <span class="ds-card-title">
                   <span class="ds-status-dot" class:verified={comp.status === "verified"} aria-hidden="true"></span>
                   <span class="ds-card-name">{comp.name}</span>
-                  {#if comp.fidelity?.polish?.accepted}<span class="ds-polish-badge">Доведён</span>{/if}
+                  {#if comp.fidelity?.polish?.accepted}<span class="ds-polish-badge">Refined</span>{/if}
                   {#if fidelity != null}<span class="ds-card-fidelity">{fidelity}%</span>{/if}
                 </span>
                 <small>{comp.provenance?.occurrenceCount || 1} observed · {variantCount} variant{variantCount === 1 ? "" : "s"}</small>
@@ -1424,71 +1508,71 @@
       {#if hasSelection && selectedComp}
         <header class="ds-workbench-head">
           <div class="ds-workbench-title">
-            <span class="ds-eyebrow">{selectedComp.category || "component"} · из исходного сайта</span>
+            <span class="ds-eyebrow">{selectedComp.category || "component"} · from the source site</span>
             <h2>{selectedComp.name}</h2>
             <div class="ds-component-meta">
-              <span class:verified={selectedComp.status === "verified"}>{selectedComp.status === "verified" ? "Готов" : masterReviewing ? "AI доводит…" : "Требует проверки"}</span>
-              {#if selectedPolish.accepted}<span class="ds-polish-badge">Доведён</span>{/if}
-              {#if selectedPolishDefects.length}<span class="ds-polish-needed">Нужна доводка · {selectedPolishDefects.length}</span>{/if}
-              <span>{selectedComp.provenance?.occurrenceCount || 1} наблюдений</span>
-              <span>{Object.keys(selectedComp.variants || {}).length} вариантов</span>
+              <span class:verified={selectedComp.status === "verified"}>{selectedComp.status === "verified" ? "Ready" : masterReviewing ? "AI is refining…" : "Needs review"}</span>
+              {#if selectedPolish.accepted}<span class="ds-polish-badge">Refined</span>{/if}
+              {#if selectedPolishDefects.length}<span class="ds-polish-needed">Needs refinement · {selectedPolishDefects.length}</span>{/if}
+              <span>{selectedComp.provenance?.occurrenceCount || 1} observations</span>
+              <span>{Object.keys(selectedComp.variants || {}).length} variants</span>
             </div>
           </div>
           {#if selectedComp.origin === 'observed'}
-            <button type="button" class="ds-edit-master" data-ds-action="working-copy" onclick={openWorkingCopy} disabled={busy}>Открыть копию в редакторе</button>
+            <button type="button" class="ds-edit-master" data-ds-action="working-copy" onclick={openWorkingCopy} disabled={busy}>Open a copy in the editor</button>
           {/if}
           {#if selectedIsReview}
-            <button type="button" class="ds-promote" data-ds-action="review" aria-label="Агент сверяет мастер с оригиналом и доводит его до готовности" onclick={() => void runMasterReview()} disabled={busy || masterReviewing}>{masterReviewing ? "AI доводит…" : "Проверить и исправить с AI"}</button>
+            <button type="button" class="ds-promote" data-ds-action="review" aria-label="The agent compares the master with its source and refines it until ready" onclick={() => void runMasterReview()} disabled={busy || masterReviewing}>{masterReviewing ? "AI is refining…" : "Review and fix with AI"}</button>
           {:else if selectedIsSuggestion}
-            <button type="button" class="ds-promote" data-ds-action="promote" aria-label={selectedCanPromote ? "Продвинуть предложение в registry" : "Требуется повторная fidelity-проверка Source master"} onclick={() => void promoteSuggestion()} disabled={busy || !selectedCanPromote}>{selectedCanPromote ? "Включить в UI Kit" : "Нужна fidelity-проверка"}</button>
+            <button type="button" class="ds-promote" data-ds-action="promote" aria-label={selectedCanPromote ? "Promote suggestion to registry" : "Source master fidelity must be verified again"} onclick={() => void promoteSuggestion()} disabled={busy || !selectedCanPromote}>{selectedCanPromote ? "Add to UI Kit" : "Fidelity verification required"}</button>
           {:else}
             <div class="ds-master-actions">
-              {#if selectedComp.polish?.before}<button type="button" class="ds-promote" data-ds-action="rollback-polish" onclick={() => void rollbackPolish()} disabled={busy}>Откатить доводку</button>{/if}
-              <button type="button" class="ds-edit-master" data-ds-action="apply" aria-label="Применить мастер-компонент в DNA Editor" aria-busy={applying} onclick={applyToEditor} disabled={busy || !hasSelection}>
-                {applying ? "Открываю…" : "Открыть в DNA Editor"}
+              {#if selectedComp.polish?.before}<button type="button" class="ds-promote" data-ds-action="rollback-polish" onclick={() => void rollbackPolish()} disabled={busy}>Revert refinement</button>{/if}
+              <button type="button" class="ds-edit-master" data-ds-action="apply" aria-label="Use this master component in DNA Editor" aria-busy={applying} onclick={applyToEditor} disabled={busy || !hasSelection}>
+                {applying ? "Opening…" : "Open in DNA Editor"}
               </button>
             </div>
           {/if}
         </header>
 
         <div class="ds-canvas-head">
-          <div class="ds-viewport-switch" role="group" aria-label="Превью viewport">
+          <div class="ds-viewport-switch" role="group" aria-label="Preview viewport">
             {#each ["desktop", "tablet", "mobile"] as vp (vp)}
-              <button type="button" class:active={viewport === vp} data-ds-viewport={vp} aria-pressed={viewport === vp} aria-label={`Превью ${vp}`} onclick={() => { viewport = vp as "desktop" | "tablet" | "mobile"; }}>
+              <button type="button" class:active={viewport === vp} data-ds-viewport={vp} aria-pressed={viewport === vp} aria-label={`Preview ${vp}`} onclick={() => { viewport = vp as "desktop" | "tablet" | "mobile"; }}>
                 {vp}
               </button>
             {/each}
           </div>
-          <label class="ds-fixture" title="Показать сравнение с Source и метрики точности">
-            <input type="checkbox" bind:checked={showFidelity} onchange={() => { if (!showFidelity) previewMode = "master"; }} /> Точность
+          <label class="ds-fixture" title="Show Source comparison and fidelity metrics">
+            <input type="checkbox" bind:checked={showFidelity} onchange={() => { if (!showFidelity) previewMode = "master"; }} /> Fidelity
           </label>
           {#if showFidelity}
-            <div class="ds-viewport-switch" role="group" aria-label="Режим сравнения с Source">
+            <div class="ds-viewport-switch" role="group" aria-label="Source comparison mode">
               {#each ["reference", "master", "compare"] as mode (mode)}
                 <button type="button" class:active={previewMode === mode} aria-pressed={previewMode === mode} onclick={() => { previewMode = mode as "reference" | "master" | "compare"; }}>
-                  {mode === "reference" ? "Source" : mode === "master" ? "Мастер" : "Сравнить"}
+                  {mode === "reference" ? "Source" : mode === "master" ? "Master" : "Compare"}
                 </button>
               {/each}
             </div>
           {/if}
           <label class="ds-fixture">
-            Данные
-            <select data-ds-field="preview-fixture" aria-label="Профиль mock в превью" bind:value={fixtureProfile}>
-              <option value="source">Точно как в Source</option>
-              <option value="typical">Типичные</option>
-              <option value="short">Короткие</option>
-              <option value="long">Длинные</option>
-              <option value="empty">Пустые</option>
-              <option value="loading">Загрузка</option>
-              <option value="error">Ошибка</option>
-              <option value="edge-case">Крайний случай</option>
+            Data
+            <select data-ds-field="preview-fixture" aria-label="Preview mock profile" bind:value={fixtureProfile}>
+              <option value="source">Exact Source content</option>
+              <option value="typical">Typical</option>
+              <option value="short">Short</option>
+              <option value="long">Long</option>
+              <option value="empty">Empty</option>
+              <option value="loading">Loading</option>
+              <option value="error">Error</option>
+              <option value="edge-case">Edge case</option>
             </select>
           </label>
         </div>
 
         {#if Object.keys(selectedComp.variants || {}).length}
-          <div class="ds-variant-strip" role="tablist" aria-label="Наблюдаемые варианты компонента">
-            <span class="ds-variant-label">Варианты из Source</span>
+          <div class="ds-variant-strip" role="tablist" aria-label="Observed component variants">
+            <span class="ds-variant-label">Source variants</span>
             {#each Object.entries((selectedComp.variants || {}) as Record<string, any>) as [key, variant] (key)}
               <button type="button" role="tab" data-ds-variant={key} class:active={selectedVariant === key} aria-selected={selectedVariant === key} onclick={() => (selectedVariant = key)}>
                 {#if variant.observedStyle?.background}
@@ -1501,7 +1585,7 @@
           </div>
         {/if}
       {/if}
-      <div class="ds-canvas-empty" style:display={hasSelection ? "none" : "grid"}>Выберите мастер или предложение слева</div>
+      <div class="ds-canvas-empty" style:display={hasSelection ? "none" : "grid"}>Select a master or suggestion on the left</div>
       <div class="ds-canvas-preview" data-ds-preview-host data-ds-preview-fixture={previewMeta?.fixture || fixtureProfile} bind:this={previewHost}></div>
       {#if hasSelection}<CompositionParts ir={selectedComponentMaster(selectedComp, selectedVariant)} protectedRoot />{/if}
     </main>
@@ -1509,19 +1593,19 @@
     <aside class="ds-editor-inspector">
       {#if hasSelection && selectedComp}
         <div class="ds-inspector-content">
-          <span class="ds-inspector-kicker">Инспектор</span>
+          <span class="ds-inspector-kicker">Inspector</span>
           <h3>{selectedComp.name}</h3>
-          <p class="ds-inspector-description">{selectedComp.description || "Точный мастер, извлечённый из Source."}</p>
+          <p class="ds-inspector-description">{selectedComp.description || "An exact master captured from Source."}</p>
           <section class="ds-inspector-section">
-            <h4>Выбранный вариант</h4>
+            <h4>Selected variant</h4>
             <div class="ds-selected-variant">
               {#if selectedObservedStyle.background}<i style:background={String(selectedObservedStyle.background)}></i>{/if}
-              <div><strong>{selectedVariantData?.label || selectedVariant}</strong><small>{selectedVariantData?.observedCount || 1} наблюдений в Source</small></div>
+              <div><strong>{selectedVariantData?.label || selectedVariant}</strong><small>{selectedVariantData?.observedCount || 1} Source observations</small></div>
             </div>
           </section>
           {#if Object.keys(selectedObservedStyle).length}
             <section class="ds-inspector-section">
-              <h4>Измеренный стиль</h4>
+              <h4>Measured style</h4>
               <div class="ds-style-grid">
                 {#each Object.entries(selectedObservedStyle) as [name, value] (name)}
                   <span>{name}</span><code>{displayStyleValue(value)}</code>
@@ -1530,16 +1614,16 @@
             </section>
           {/if}
           <section class="ds-inspector-section">
-            <h4>Источник и точность</h4>
+            <h4>Source and fidelity</h4>
           <dl>
-            <dt>Ключ</dt><dd><code>{selectedComp.componentKey}</code></dd>
-            <dt>Происхождение</dt><dd>{originIcon(selectedComp.origin)} {selectedComp.origin} {selectedComp.confidence != null ? `· ${Math.round(selectedComp.confidence * 100)}%` : ""}</dd>
-            <dt>Статус</dt><dd class:ds-fidelity-fail={selectedComp.status !== "verified"}>{selectedComp.status || "draft"}</dd>
-            {#if selectedPolish.accepted}<dt>Доводка</dt><dd><span class="ds-polish-badge">Доведён</span></dd>{/if}
-            {#if selectedPolishDefects.length}<dt>Нужна доводка</dt><dd>{selectedPolishDefects.map((d) => `${d.kind}: ${d.path} (${d.px}px)`).join("; ")}</dd>{/if}
-            <dt>Категория</dt><dd>{selectedComp.category}</dd>
-            <dt title="Props — параметры компонента в Design IR (промежуточном представлении макета), которыми его наполняет Генератор">Props</dt><dd>{Object.keys(selectedComp.propsSchema || {}).join(", ") || "—"}</dd>
-            <dt>Состояния</dt>
+            <dt>Key</dt><dd><code>{selectedComp.componentKey}</code></dd>
+            <dt>Provenance</dt><dd>{originIcon(selectedComp.origin)} {selectedComp.origin} {selectedComp.confidence != null ? `· ${Math.round(selectedComp.confidence * 100)}%` : ""}</dd>
+            <dt>Status</dt><dd class:ds-fidelity-fail={selectedComp.status !== "verified"}>{selectedComp.status || "draft"}</dd>
+            {#if selectedPolish.accepted}<dt>Refinement</dt><dd><span class="ds-polish-badge">Refined</span></dd>{/if}
+            {#if selectedPolishDefects.length}<dt>Needs refinement</dt><dd>{selectedPolishDefects.map((d) => `${d.kind}: ${d.path} (${d.px}px)`).join("; ")}</dd>{/if}
+            <dt>Category</dt><dd>{selectedComp.category}</dd>
+            <dt title="Props are component parameters in Design IR, the editable layout representation, populated by Generator">Props</dt><dd>{Object.keys(selectedComp.propsSchema || {}).join(", ") || "—"}</dd>
+            <dt>States</dt>
             <dd>
               {#each Object.entries((selectedComp.states || {}) as Record<string, any>) as [name, st]}
                 <button
@@ -1547,28 +1631,28 @@
                   class="ds-state"
                   class:unconfirmed={st.origin === "generated" && !st.confirmed}
                   data-ds-state={name}
-                  aria-label={st.origin === "generated" && !st.confirmed ? `Подтвердить состояние ${name}` : `Состояние ${name}`}
+                  aria-label={st.origin === "generated" && !st.confirmed ? `Confirm state ${name}` : `State ${name}`}
                   disabled={busy || !(st.origin === "generated" && !st.confirmed)}
                   onclick={() => void confirmState(name)}
                 >{name}{st.origin === "generated" && !st.confirmed ? "?" : ""}</button>
               {/each}
             </dd>
-            {#if selectedComp.dependencies?.length}<dt>Зависимости</dt><dd>{selectedComp.dependencies.join(", ")}</dd>{/if}
+            {#if selectedComp.dependencies?.length}<dt>Dependencies</dt><dd>{selectedComp.dependencies.join(", ")}</dd>{/if}
             {#if selectedSourceRef.sourceBlock || selectedComp.provenance?.sourceBlock}<dt>Source</dt><dd>{selectedSourceRef.sourceBlock || selectedComp.provenance.sourceBlock}</dd>{/if}
-            {#if selectedComp.provenance?.sourceBlocks?.length}<dt>Блоки</dt><dd>{selectedComp.provenance.sourceBlocks.join(", ")}</dd>{/if}
+            {#if selectedComp.provenance?.sourceBlocks?.length}<dt>Blocks</dt><dd>{selectedComp.provenance.sourceBlocks.join(", ")}</dd>{/if}
             {#if showFidelity && Object.keys(fidelityMetrics).length}
-              <dt title="Fidelity — точность воспроизведения мастера относительно Source: сходство пикселей, покрытие краски, ошибка рамок">Fidelity</dt>
+              <dt title="Fidelity measures how accurately a master reproduces Source: pixel similarity, paint coverage, and bounding-box error">Fidelity</dt>
               <dd class:ds-fidelity-fail={selectedComp.status !== "verified"}>
                 similarity {fidelityMetrics.pixelSimilarity ?? "—"}% · paint {fidelityMetrics.paintCoverage ?? "—"}%<br />
                 bbox p95 {fidelityMetrics.bboxP95 ?? "—"}px · origin {fidelityMetrics.originError ?? "—"}px · losses {fidelityMetrics.unexplainedLosses ?? "—"}
               </dd>
             {/if}
-            {#if selectedSourceRef.sourceRevisionHash}<dt>Ревизия</dt><dd><code>{String(selectedSourceRef.sourceRevisionHash).slice(0, 20)}…</code></dd>{/if}
+            {#if selectedSourceRef.sourceRevisionHash}<dt>Revision</dt><dd><code>{String(selectedSourceRef.sourceRevisionHash).slice(0, 20)}…</code></dd>{/if}
           </dl>
           </section>
         </div>
       {:else}
-        <p class="ds-insp-empty">Инспектор компонента</p>
+        <p class="ds-insp-empty">Component inspector</p>
       {/if}
     </aside>
   </div>
@@ -1645,9 +1729,55 @@
   .ds-editor-actions [data-ds-action="publish"] { border-color: var(--dna-violet); background: var(--dna-violet); color: #fff; }
   .ds-editor-actions .close { width: 34px; padding: 0; border-color: transparent; background: transparent; font-size: 15px; }
   .ds-editor-error { padding: 8px 18px; border-bottom: 1px solid rgba(229, 48, 92, .4); background: rgba(229, 48, 92, .12); color: var(--dna-danger-text); font-size: 12px; }
-  .ds-pipeline-warning { flex: none; }
-  .ds-pipeline-warning summary { cursor: pointer; }
-  .ds-pipeline-warning > div { max-height: 24vh; overflow: auto; padding-top: 8px; white-space: pre-wrap; }
+  .ds-pipeline-stack { flex: none; display: flex; flex-direction: column; gap: 0; }
+  .ds-pipeline-card {
+    padding: 10px 18px 12px;
+    border-bottom: 1px solid rgba(245, 158, 11, .35);
+    background: rgba(245, 158, 11, .10);
+    color: #fde68a;
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .ds-pipeline-card[data-tone="danger"] {
+    border-bottom-color: rgba(229, 48, 92, .4);
+    background: rgba(229, 48, 92, .12);
+    color: var(--dna-danger-text);
+  }
+  .ds-pipeline-card[data-tone="info"] {
+    border-bottom-color: rgba(148, 163, 184, .35);
+    background: rgba(148, 163, 184, .10);
+    color: #e2e8f0;
+  }
+  .ds-pipeline-card summary {
+    display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none;
+    font-weight: 600; color: inherit;
+  }
+  .ds-pipeline-card summary::-webkit-details-marker { display: none; }
+  .ds-pipeline-badge {
+    flex: none; font-size: 10px; font-weight: 700; letter-spacing: .02em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 999px;
+    background: rgba(245, 158, 11, .22); color: #fbbf24;
+  }
+  .ds-pipeline-card[data-tone="danger"] .ds-pipeline-badge {
+    background: rgba(229, 48, 92, .22); color: #fb7185;
+  }
+  .ds-pipeline-card[data-tone="info"] .ds-pipeline-badge {
+    background: rgba(148, 163, 184, .22); color: #cbd5e1;
+  }
+  .ds-pipeline-title { flex: 1; min-width: 0; }
+  .ds-pipeline-more { flex: none; font-size: 11px; font-weight: 500; opacity: .7; }
+  .ds-pipeline-sub { margin: 8px 0 0; opacity: .92; font-weight: 450; }
+  .ds-pipeline-detail {
+    margin: 8px 0 0; padding: 8px 10px; border-radius: 8px;
+    background: rgba(0,0,0,.22); color: inherit; opacity: .95;
+    white-space: pre-wrap; max-height: 20vh; overflow: auto; font-size: 12px;
+  }
+  .ds-pipeline-action {
+    margin-top: 10px; height: 30px; padding: 0 12px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08);
+    color: inherit; font: 600 12px/1 Inter, system-ui, sans-serif; cursor: pointer;
+  }
+  .ds-pipeline-action:hover { background: rgba(255,255,255,.14); }
 
   .ds-section-tabs {
     flex: none;

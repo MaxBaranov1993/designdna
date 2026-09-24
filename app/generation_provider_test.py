@@ -291,4 +291,4 @@ def test_empty_composition_refusal_is_not_a_generated_variant(monkeypatch):
     response = server.generate(server.GenerateReq(brief="Marketplace header", surface="component", count=1,
         provider="claude", rawOutputs=[json.dumps(fixture)]))
     assert response.status_code == 502
-    assert "пустой макет" in response.body.decode("utf-8")
+    assert "empty layout" in response.body.decode("utf-8")

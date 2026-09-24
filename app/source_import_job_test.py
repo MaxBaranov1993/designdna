@@ -97,3 +97,46 @@ def test_cancel_can_arrive_before_async_start_is_dispatched(monkeypatch):
     monkeypatch.setattr(source_import_api, "_execute_block_parse", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("capture started")))
     source_import_api._run_source_import_job("before-dispatch", {"url": "unused"})
     assert source_import_api.block_parse_job("before-dispatch")["status"] == "cancelled"
+
+
+def test_capture_stage_reports_block_progress(monkeypatch):
+    """Fast/precise capture progress must move inside a viewport by block."""
+    job_id = "job-block-progress"
+    seen = []
+
+    def fake_execute(_values, on_stage=None):
+        on_stage("captureDesktop", 100, {
+            "captureViewportIndex": 1,
+            "captureViewportCount": 1,
+            "captureBlockIndex": 3,
+            "captureBlockCount": 10,
+        })
+        with source_import_api.SOURCE_IMPORT_JOBS_LOCK:
+            seen.append(dict(source_import_api.SOURCE_IMPORT_JOBS[job_id]))
+        return {
+            "url": "https://example.com",
+            "blocks": [],
+            "tokens": {},
+            "cached": False,
+            "diagnostics": {"timingsMs": {"captureCompile": 100, "total": 120}},
+        }
+
+    monkeypatch.setattr(source_import_api, "_execute_block_parse", fake_execute)
+    with server.SOURCE_IMPORT_JOBS_LOCK:
+        server.SOURCE_IMPORT_JOBS[job_id] = {
+            "jobId": job_id,
+            "status": "queued",
+            "progress": 1,
+            "stage": "queued",
+            "stageLabel": "Queued",
+        }
+    server._run_source_import_job(job_id, {"url": "https://example.com"})
+    assert seen, "expected mid-capture progress publish"
+    mid = seen[0]
+    assert mid["stage"] == "captureDesktop"
+    assert mid["stageLabel"] == "Desktop layers 3/10"
+    # desktop-only: vp_start=30, vp_end=68 → 30 + round(38*3/10) = 41
+    assert mid["progress"] == 41
+    with server.SOURCE_IMPORT_JOBS_LOCK:
+        job = server.SOURCE_IMPORT_JOBS.pop(job_id)
+    assert job["status"] == "complete"

@@ -21,7 +21,7 @@ import NodeShell from "./NodeShell.svelte";
   <InPorts type="derive" />
   <textarea
     class="f-own nodrag nowheel"
-    placeholder="например: сделай footer в том же стиле, сохрани плотность и радиусы"
+    placeholder="For example: create a footer in the same style, preserving density and corner radii"
     value={data.prompt}
     oninput={(e) => $flow.setNodeData(Number(id), { prompt: e.currentTarget.value })}
   ></textarea>
@@ -66,7 +66,7 @@ import NodeShell from "./NodeShell.svelte";
       {/each}
     </div>
   {/if}
-  <IrPreview class="f-preview" ir={activeIr} height={160} empty="варианты появятся после запуска" />
+  <IrPreview class="f-preview" ir={activeIr} height={160} empty="variants appear after running" />
   <div class="gen-actions">
     <button class="btn-node small f-to-editor nodrag" onclick={() => $flow.sendToNode(Number(id), "edit")}>
       → Editor
@@ -75,5 +75,5 @@ import NodeShell from "./NodeShell.svelte";
   <DesignSystemPicker selection={(data as any).designSystemSelection || "inherit"} usageMode={(data as any).designSystemUsageMode || "strict"} fixtureProfile={(data as any).designSystemFixture || "typical"} onChange={(v, meta) => $flow.setNodeData(Number(id), { designSystemSelection: v, designSystemUsageMode: meta?.usageMode, designSystemFixture: meta?.fixtureProfile } as any)} />
   <NodeStatus {id} />
   <ResultAssets {id} type="derive" {data} />
-  <OutPorts type="derive" />
+  <OutPorts {id} type="derive" />
 </NodeShell>

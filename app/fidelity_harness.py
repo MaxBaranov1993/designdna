@@ -187,7 +187,7 @@ def viewport_gate(metrics: dict | None) -> dict:
         message = (f"pixel similarity {metrics['pixel_similarity']} < "
                    f"{GATE_THRESHOLDS['min_pixel_similarity']}")
         if metrics.get("translucent_root"):
-            advisory.append(message + " (полупрозрачный корень блока — фон страницы просвечивает в референсе)")
+            advisory.append(message + " (translucent block root — page background shows through in the reference)")
         else:
             reasons.append(message)
     if float(metrics["bbox_p95"]) > GATE_THRESHOLDS["max_bbox_p95_px"]:
@@ -204,7 +204,7 @@ def viewport_gate(metrics: dict | None) -> dict:
         only_dropped = bool(unexplained) and all(
             str(loss.get("kind") or "") == "dropped" for loss in unexplained)
         if similarity_ok and only_dropped:
-            advisory.append(message + " (kind=dropped, пиксельное сходство в норме — потеря не проявилась)")
+            advisory.append(message + " (kind=dropped, pixel similarity passes — no visible loss)")
         else:
             reasons.append(message)
     return {"passed": not reasons, "reasons": reasons, "advisory": advisory}
