@@ -84,8 +84,24 @@ function legacyEdges(edges: FlowEdge[]) {
   }));
 }
 
+/* GraphDev appears only after the project is hydrated from the DB: a script
+ * that edits the graph earlier would race the load (the hydration-conflict
+ * dialog then blocks autosave). `waitForFunction("window.GraphDev")` in
+ * tests and harnesses therefore also waits for the project. */
 export function installGraphDev() {
   if (window.GraphDev) return;
+  if (useFlowStore.getState().projectHydrated) {
+    defineGraphDev();
+    return;
+  }
+  const unsubscribe = useFlowStore.subscribe((state) => {
+    if (!state.projectHydrated) return;
+    unsubscribe();
+    if (!window.GraphDev) defineGraphDev();
+  });
+}
+
+function defineGraphDev() {
   window.GraphDev = {
     add: (type, x, y) => {
       if (!(type in NODE_DEFS)) throw new Error(`Unknown node type: ${String(type)}`);

@@ -115,8 +115,13 @@ function adaptStyleValue(
   if (!color) return null;
   // A colour the page palette already has (a section generated with this site's
   // design system) stays as is: remapping it by nearest role turned the site's
-  // blue eyebrow into near-black on the Page.
-  if (Object.values(target).some((t) => t && dist(color, t) <= 24)) {
+  // blue eyebrow into near-black on the Page. A colour of the section's own
+  // palette is still remapped, even when it happens to sit near some target
+  // colour (light #fff next to a dark theme's #f8fafc text).
+  const nearest = (palette: Partial<Record<ColorRole, string>>) =>
+    Math.min(Infinity, ...Object.values(palette).filter((t): t is string => !!t).map((t) => dist(color, t)));
+  const toTarget = nearest(target);
+  if (toTarget <= 24 && toTarget <= nearest(source)) {
     return prop === "color" && contrast(color, bg) < 3 ? readable(color, bg) : color;
   }
   const preferred =

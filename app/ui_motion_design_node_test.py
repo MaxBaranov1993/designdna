@@ -116,7 +116,7 @@ def main() -> None:
         ], str(input_tops))
         check("video output is on the right", node.locator('.dna-port.out[data-kind="video"]').count() == 1)
 
-        generate = node.get_by_role("button", name="Сгенерировать")
+        generate = node.get_by_role("button", name="Generate")
         check("paid Seedance button starts disabled", generate.is_disabled())
         check("no submit happened while confirmation was absent", len(submitted) == 0)
         node.locator('.md-paid input[type="checkbox"]').check()

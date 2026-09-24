@@ -111,7 +111,9 @@ def main() -> int:
     failures: list[tuple[str, int]] = []
     try:
         wait_for_server(server)
-        for test_name in TESTS:
+        # Optional names on the command line run a subset, e.g. after a fix.
+        selected = [name for name in TESTS if not sys.argv[1:] or name in sys.argv[1:]]
+        for test_name in selected:
             print(f"\n=== {test_name} ===", flush=True)
             returncode = run_test(test_name)
             if returncode:
@@ -130,7 +132,7 @@ def main() -> int:
         for name, code in failures:
             print(f" - {name}: exit {code}")
         return 1
-    print(f"\nALL {len(TESTS)} MAINTAINED UI SMOKES PASSED")
+    print(f"\nALL {len(selected)} MAINTAINED UI SMOKES PASSED")
     return 0
 
 

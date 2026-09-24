@@ -33,7 +33,7 @@ npm run desktop:start
 
 - Быстрый Python-набор выше идёт 3–6 минут (908 тестов на 2026-09-09); десктопный и фронтендовый наборы — по несколько секунд. Конфигурация pytest и ruff в [pyproject.toml](pyproject.toml); ruff проверяет только реальные дефекты (синтаксис, неопределённые имена, неиспользуемые импорты), базовая линия — ноль ошибок.
 - Хендлеры и модели запросов из `app/api/` реэкспортируются из `server.py`: вызывать можно и `server.project_load`, и `api.project.project_load`. Подменять функции в тестах нужно в модуле-владельце (`monkeypatch.setattr(api.quality, "render_png", …)`), подмена через `server.` до вынесенного кода не доходит. Модули-зависимости (`server.llm`, `server.cache_store`, `server.run_registry`) остаются доступны. Новые маршруты добавлять в `app/api/`, а не в `server.py`.
-- `app/ui_*_test.py` требуют собранный фронтенд, запущенный сервер и Playwright; список поддерживаемого набора в [app/ui_smoke.py](app/ui_smoke.py).
+- `app/ui_*_test.py` требуют собранный фронтенд, запущенный сервер и Playwright; список поддерживаемого набора в [app/ui_smoke.py](app/ui_smoke.py), подмножество запускается именами файлов в аргументах. Проект хранится только в БД: тесты с перезагрузкой страницы подменяют `/api/project/*` через [app/ui_project_mock.py](app/ui_project_mock.py), а `window.GraphDev` появляется только после загрузки проекта.
 - `*_live_test.py` делают платные вызовы AI. Не запускать без явной просьбы.
 - Полный CI: [.github/workflows/desktop.yml](.github/workflows/desktop.yml).
 

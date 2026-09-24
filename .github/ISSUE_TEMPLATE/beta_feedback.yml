@@ -1,0 +1,34 @@
+name: Beta feedback
+description: Ideas, rough edges and first impressions from the beta.
+labels: [feedback, beta]
+body:
+  - type: textarea
+    id: tried
+    attributes:
+      label: What did you try to make?
+      placeholder: A contact section for my studio site, then a 20-second product video.
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: How close was the result to what you needed?
+      options:
+        - Usable as is
+        - Usable after small edits
+        - Needed a lot of work
+        - Not usable
+    validations:
+      required: true
+  - type: textarea
+    id: friction
+    attributes:
+      label: What was confusing, slow or missing?
+  - type: textarea
+    id: compare
+    attributes:
+      label: What do you use today for this, and how does DesignDNA compare?
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots or results (optional)

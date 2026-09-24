@@ -144,7 +144,7 @@ def main():
         page.locator('.fe-layer[data-key="0:props.submit"]').dispatch_event("click")
         if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
             page.locator(".manual-controls summary").click()
-        page.locator('[data-style-color="background"]').evaluate(
+        page.locator('.manual-controls [data-style-color="background"]').evaluate(  # a button also has the Site palette picker
             "el => { el.value = '#2563eb'; el.dispatchEvent(new Event('input', { bubbles: true })); }"
         )
         page.wait_for_timeout(180)

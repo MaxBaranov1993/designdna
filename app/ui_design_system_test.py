@@ -155,14 +155,14 @@ def main() -> None:
                   node.get("pipelineStatus", {}).get("build", {}).get("status") == "success")
 
             open_btn = page.locator(f'.n-designsystem[data-id="{ds_id}"] [data-ds-action="open"]')
-            check("open has accessible label", (open_btn.get_attribute("aria-label") or "").startswith("Открыть"))
+            check("open has accessible label", (open_btn.get_attribute("aria-label") or "").startswith("Open"))
 
             open_btn.click()
             page.wait_for_selector("[data-ds-editor]")
             check("open editor panel", page.locator("[data-ds-editor]").count() == 1)
             pub_btn = ds_action(page, "publish")
             def_btn = ds_action(page, "default")
-            check("publish has accessible label", "Опубликовать" in (pub_btn.get_attribute("aria-label") or ""))
+            check("publish has accessible label", "Publish" in (pub_btn.get_attribute("aria-label") or ""))
             check("review-only draft cannot publish", pub_btn.is_disabled())
             check("default disabled until published", def_btn.is_disabled())
             page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
@@ -233,7 +233,7 @@ def main() -> None:
             first_comp = page.locator("[data-ds-editor] [data-ds-component][data-ds-pool='components']").first
             first_comp.click()
             check("polished master badge is visible",
-                  page.locator("[data-ds-editor] .ds-polish-badge", has_text="Доведён").count() >= 1)
+                  page.locator("[data-ds-editor] .ds-polish-badge", has_text="Refined").count() >= 1)
             page.wait_for_selector("[data-ds-preview-host]")
             page.locator("[data-ds-viewport='tablet']").click()
             page.wait_for_function("""() => {
@@ -557,7 +557,7 @@ def main() -> None:
             reopened_meta = page.locator("[data-ds-editor] .ds-editor-meta").inner_text()
             check(
                 "reopen after cancel still shows published revision",
-                "Опубликовано" in reopened_meta and f"v{before_edit.get('revision')}" in reopened_meta,
+                "Published" in reopened_meta and f"v{before_edit.get('revision')}" in reopened_meta,
                 reopened_meta,
             )
             reopen_drafts = len(save_draft_hits)
@@ -668,7 +668,7 @@ def main() -> None:
             page.wait_for_selector("[data-ds-editor]")
             page.wait_for_function("id => !window.GraphDev.node(id)?.data?.busyAction", arg=ds_id)
             busy_pub = ds_action(page, "publish")
-            check("publish button remains labeled after lifecycle", "Опубликовать" in (busy_pub.get_attribute("aria-label") or ""))
+            check("publish button remains labeled after lifecycle", "Publish" in (busy_pub.get_attribute("aria-label") or ""))
             handoff_before = page.evaluate("id => JSON.stringify(window.GraphDev.node(id).data.document)", ds_id)
             ds_action(page, "to-generator").click()
             page.wait_for_selector("[data-ds-editor]", state="detached")

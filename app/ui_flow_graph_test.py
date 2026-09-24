@@ -16,6 +16,7 @@ if hasattr(sys.stderr, "reconfigure"):
 import os
 import time
 
+from ui_project_mock import ProjectStoreMock
 from playwright.sync_api import sync_playwright
 
 BASE = os.environ.get("DESIGNAI_UI_BASE", "http://127.0.0.1:8420")
@@ -62,15 +63,7 @@ def main():
 
         browser = p.chromium.launch(headless=True)
         pg = browser.new_page(viewport={"width": 1600, "height": 950})
-        pg.route(
-            "**/api/project/load",
-            lambda route: route.fulfill(status=200, content_type="application/json",
-                                        body='{"project":null,"updated_at":null}'),
-        )
-        pg.route(
-            "**/api/project/save",
-            lambda route: route.fulfill(status=200, content_type="application/json", body='{"ok":true}'),
-        )
+        store = ProjectStoreMock().install(pg)
         for _ in range(30):
             try:
                 pg.goto(BASE + "/flow", timeout=2000)
@@ -179,10 +172,11 @@ def main():
             "после перезагрузки: текст Промпта на месте",
             pg.evaluate("document.querySelector('.n-prompt .f-text').value") == PROMPT_TEXT,
         )
+        check("автосейв записал проект в БД", store.saves > 0 and len(store.active_nodes()) == 3, str(store.saves))
         check(
-            "сейв в pages-ключе, legacy-ключи не пишутся",
+            "проект не пишется в localStorage",
             pg.evaluate(
-                "localStorage.getItem('designai-flow-pages-v1') !== null && "
+                "localStorage.getItem('designai-flow-pages-v1') === null && "
                 "localStorage.getItem('designai-flow-v1') === null && "
                 "localStorage.getItem('designai-graph-v1') === null"
             ),

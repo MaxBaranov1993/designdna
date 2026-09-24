@@ -1,4 +1,4 @@
-"""Persistence compacts presentation screenshots and preserves canonical IR and blob evidence."""
+"""The DB-only project keeps canonical IR and blob evidence across autosave and reload."""
 from __future__ import annotations
 
 import json
@@ -59,28 +59,16 @@ def main() -> None:
         }""")
         page.wait_for_timeout(2200)
 
-        stored = page.evaluate("""(evidenceRef) => {
-          const raw=localStorage.getItem('designai-flow-pages-v1')||'';
-          const payload=raw ? JSON.parse(raw) : null;
-          const text=JSON.stringify(payload);
-          return {
-            bytes:raw.length,
-            hasDataScreenshot:text.includes('data:image/jpeg;base64,'),
-            hasEvidenceRef:text.includes(evidenceRef),
-            hasEditableSrc:text.includes('data:image/svg+xml;base64,PHN2Zy8+'),
-            legacy:localStorage.getItem('designai-flow-v1')||'',
-            quotaToast:[...document.querySelectorAll('*')].some(el => /localStorage.*переполнен/i.test(el.textContent||'')),
-          };
-        }""", result["evidenceRef"])
-        check("project save stays compact", stored["bytes"] < 100_000, json.dumps(stored))
-        check("source screenshot references are not persisted", not stored["hasDataScreenshot"], json.dumps(stored))
-        check("content-addressed Source evidence survives autosave", stored["hasEvidenceRef"], json.dumps(stored))
-        check("editable image src is preserved", stored["hasEditableSrc"], json.dumps(stored))
-        check("legacy graph key is no longer written", len(stored["legacy"]) == 0, json.dumps(stored))
-        check("quota warning is not shown", not stored["quotaToast"], json.dumps(stored))
-        local_ir = page.evaluate("""id => JSON.parse(localStorage.getItem('designai-flow-pages-v1'))
-          .pages.flatMap(page => page.graph.nodes).find(node => node.id === id).data.ir""", result["edit"])
-        check("localStorage preserves the complete canonical IR", local_ir == result["ir"])
+        # The project lives only in SQLite (2026-09-24): autosave never writes
+        # the graph to localStorage, so there is nothing to compact or overflow.
+        stored = page.evaluate("""() => ({
+          pagesKey: localStorage.getItem('designai-flow-pages-v1') || '',
+          legacy: localStorage.getItem('designai-flow-v1') || '',
+          quotaToast: [...document.querySelectorAll('*')].some(el => /localStorage/i.test(el.textContent || '')),
+        })""")
+        check("project is not written to localStorage", len(stored["pagesKey"]) == 0, json.dumps(stored)[:200])
+        check("legacy graph key is no longer written", len(stored["legacy"]) == 0, json.dumps(stored)[:200])
+        check("quota warning is not shown", not stored["quotaToast"], json.dumps(stored)[:200])
 
         db_saved = page.evaluate("""async (evidenceRef) => {
           const resp = await fetch('/api/project/load', {

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Beta testing guide
+    url: https://github.com/MaxBaranov1993/designdna#beta-testing
+    about: Requirements, installation and a 15-minute test run.

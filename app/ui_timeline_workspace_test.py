@@ -111,7 +111,7 @@ def main() -> None:
         baseline = node_timeline(page, timeline_id)
         check("timeline собран из входного Design IR", bool(baseline and baseline.get("layers")))
 
-        page.click(f'.svelte-flow__node[data-id="{timeline_id}"] button:has-text("Редактор")')
+        page.click(f'.svelte-flow__node[data-id="{timeline_id}"] button:has-text("Editor")')
         page.wait_for_selector('.tlw-root [data-act="ruler"]')
 
         # --- 1. клавиатурный скраб линейки ---
@@ -192,7 +192,7 @@ def main() -> None:
               and json.dumps(node_timeline(page, timeline_id), sort_keys=True) == canonical_before)
 
         # Chat clears the composer after send. Reuse the cancelled message to retry.
-        page.get_by_role("button", name="Редактировать сообщение").last.click()
+        page.get_by_role("button", name="Edit message").last.click()
         page.click('.tlw-root [data-act="ai-run"]')
         page.wait_for_selector('.tlw-root [data-act="ai-preview"]')
         page.click('.tlw-root [data-act="ai-apply"]')
@@ -208,10 +208,10 @@ def main() -> None:
         # --- 5. границы трима: 0 <= in < out <= duration при любом вводе ---
         page.click('.tlw-root [data-act="layer"] >> nth=0')
         # Start inside both boundaries so each trim gesture makes one real edit.
-        page.locator("label:has-text('in, с') input").fill("1")
-        page.locator("label:has-text('in, с') input").press("Tab")
-        page.locator("label:has-text('out, с') input").fill("5")
-        page.locator("label:has-text('out, с') input").press("Tab")
+        page.locator("label:has-text('in, s') input").fill("1")
+        page.locator("label:has-text('in, s') input").press("Tab")
+        page.locator("label:has-text('out, s') input").fill("5")
+        page.locator("label:has-text('out, s') input").press("Tab")
         page.wait_for_timeout(800)
         pre_timing = layer_timing(page, timeline_id, "layer-hero-1")
         check("исходный тайминг слоя валиден", timing_valid(pre_timing), str(pre_timing))
@@ -222,7 +222,7 @@ def main() -> None:
                 page.wait_for_timeout(120)
 
         # числовой ввод за верхнюю границу: in не может стать >= out
-        in_input = page.locator("label:has-text('in, с') input")
+        in_input = page.locator("label:has-text('in, s') input")
         in_input.fill("999")
         in_input.press("Tab")
         page.wait_for_timeout(800)
@@ -233,7 +233,7 @@ def main() -> None:
               layer_timing(page, timeline_id, "layer-hero-1") == pre_timing)
 
         # числовой ввод ниже нуля: out не может стать <= in
-        out_input = page.locator("label:has-text('out, с') input")
+        out_input = page.locator("label:has-text('out, s') input")
         out_input.fill("0")
         out_input.press("Tab")
         page.wait_for_timeout(800)
@@ -311,7 +311,7 @@ def main() -> None:
             check("драг трима вправо: элемент найден", False, ".tlw-trim.right не виден")
 
         # --- 6. закрытие сбрасывает несособранный дебаунс ---
-        duration_input = page.locator("label:has-text('Длительность, с') input")
+        duration_input = page.locator("label:has-text('Duration, s') input")
         duration_input.fill("8")
         duration_input.press("Tab")  # change ушёл, дебаунс ещё не собрался
         page.click('.tlw-root [data-act="close"]')

@@ -13,9 +13,9 @@ if hasattr(sys.stderr, "reconfigure"):
 import time
 
 from playwright.sync_api import sync_playwright
+from ui_project_mock import ProjectStoreMock
 
 BASE = os.environ.get("DESIGNAI_UI_BASE", "http://127.0.0.1:8420")
-FLOW_PAGES_LS_KEY = "designai-flow-pages-v1"
 PROMPT_TEXT = "Generate a marketplace header"
 SOURCE_URL = "https://example.com/page"
 
@@ -63,27 +63,12 @@ def check(name, cond, extra=""):
         FAILS.append(name)
 
 
-def wait_for_saved_generator_value(pg, key, expected):
-    """Wait for the debounced + idle autosave instead of sleeping a fixed time."""
-    pg.wait_for_function(
-        """([storageKey, key, expected]) => {
-            const raw = localStorage.getItem(storageKey);
-            if (!raw) return false;
-            try {
-                const project = JSON.parse(raw);
-                const pages = Array.isArray(project.pages) ? project.pages : [];
-                const page = pages.find((item) => item.id === project.activePageId) || pages[0];
-                const nodes = page && page.graph && Array.isArray(page.graph.nodes)
-                    ? page.graph.nodes : [];
-                const generator = nodes.find((node) => node.type === 'generator');
-                return !!generator && !!generator.data && generator.data[key] === expected;
-            } catch {
-                return false;
-            }
-        }""",
-        arg=[FLOW_PAGES_LS_KEY, key, expected],
-        timeout=4000,
-    )
+def wait_for_saved_generator_value(store, pg, key, expected):
+    """Wait for the debounced + idle autosave to reach the DB instead of sleeping a fixed time."""
+    def saved(mock):
+        generator = next((node for node in mock.active_nodes() if node.get("type") == "generator"), None)
+        return bool(generator) and (generator.get("data") or {}).get(key) == expected
+    assert store.wait_until(pg, saved, 6000), f"generator.{key}={expected!r} was not saved"
 
 
 def center(box):
@@ -201,9 +186,8 @@ def main():
         pg.route("**/api/mix", route_mix)
         pg.route("**/api/block-parse", route_block_parse)
         pg.route("**/api/quality-pass", route_quality_pass)
-        # проект живёт в localStorage теста; общая SQLite сервера не должна подменять граф после reload
-        pg.route("**/api/project/load", lambda r: r.fulfill(status=200, content_type="application/json", body='{"project":null,"updated_at":null,"revision":"r1"}'))
-        pg.route("**/api/project/save", lambda r: r.fulfill(status=200, content_type="application/json", body='{"ok":true,"revision":"r2"}'))
+        # проект теста живёт в памяти мока; общая SQLite сервера не должна подменять граф после reload
+        store = ProjectStoreMock().install(pg)
 
         for _ in range(30):
             try:
@@ -261,9 +245,9 @@ def main():
         check("Generator exposes three convenient inputs",
               pg.locator(".n-generator .port-row.in").evaluate_all(
                   "els => els.map(e => [e.dataset.port, e.innerText.trim()])") == [
-                      ["prompt", "Промт"], ["designSystem", "Дизайн-система"], ["reference", "Референс"]])
+                      ["prompt", "Prompt"], ["designSystem", "Design system"], ["reference", "Reference"]])
         pg.select_option(".n-generator .f-effort-select", "high")
-        wait_for_saved_generator_value(pg, "effort", "high")
+        wait_for_saved_generator_value(store, pg, "effort", "high")
         pg.reload()
         # виртуализованный канвас: после reload генератор может быть вне вьюпорта — вписываем граф
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.fit === 'function'")
@@ -275,7 +259,7 @@ def main():
         # Провайдер по подписке должен переживать перезагрузку так же, как усилие:
         # односторонняя миграция раньше молча возвращала выбор к Sol.
         pg.select_option(".n-generator .f-provider-select", "claude")
-        wait_for_saved_generator_value(pg, "provider", "claude")
+        wait_for_saved_generator_value(store, pg, "provider", "claude")
         pg.reload()
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.fit === 'function'")
         pg.evaluate("window.GraphDev.fit()")
@@ -310,9 +294,10 @@ def main():
         pg.check(".n-sourceimport .bp-block[data-block='hero'] .f-lit")
         pg.wait_for_selector(".n-sourceimport .pp-out-hero")
         source_payload = CAPTURED.get("block_parse") or {}
-        check("Source Import requests the three responsive viewports",
+        # Snapshot import captures desktop by default; Tablet/Mobile are opt-in (captureViewports).
+        check("Source Import requests the desktop viewport by default",
               source_payload.get("url") == SOURCE_URL and
-              [v.get("name") for v in source_payload.get("viewports", [])] == ["desktop", "tablet", "mobile"])
+              [v.get("name") for v in source_payload.get("viewports", [])] == ["desktop"])
         check("Source Import exposes selected block + artifact + DNA ports",
               pg.locator(".n-sourceimport .port-row.out").evaluate_all(
                   "els => els.map(e => e.dataset.port)") == ["hero", "artifact", "tokens"])
@@ -376,7 +361,7 @@ def main():
         pg.wait_for_selector(".n-qualitypass .qp-score", timeout=8000)
         check("Quality Pass scorecard rendered", "92/100" in pg.locator(".n-qualitypass .qp-score").inner_text())
 
-        pg.wait_for_timeout(700)
+        store.wait_until(pg, lambda mock: len(mock.active_nodes()) == 8)
         pg.reload()
         pg.wait_for_selector(".svelte-flow__pane")
         pg.wait_for_function("window.GraphDev && typeof window.GraphDev.add === 'function'")

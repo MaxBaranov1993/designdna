@@ -102,3 +102,16 @@ test('a generated colour already in the page palette survives page style adaptat
   const page = composePage([sourceBlock('hero', 130, 80, 1180, 600), form], pageTokens);
   assert.equal(page.tree[1].children[0].style.color, '#1672ff');
 });
+
+test('a section palette colour is still remapped when it happens to sit near a target colour', () => {
+  // Light section on a dark page: #ffffff is near the dark theme's #f8fafc text,
+  // but it is the section's own background and must become the page background.
+  const dark = { color: { primary: '#ff6b20', background: '#101010', surface: '#1a1a1a', text: '#f8fafc', border: '#333333' } };
+  const light = { name: 'light', ir: { version: '1.1', tokens: { color: { primary: '#111111', background: '#ffffff', surface: '#f5f5f7', text: '#111111', border: '#e0e0e0' } },
+    meta: { name: 'light' }, tree: [{ id: 'hero', type: 'hero', variant: 'centered', props: {}, frame: {}, style: { background: '#ffffff' },
+      children: [{ type: 'text', text: 'Hi', style: { color: '#111111', background: '#f5f5f7' } }] }] } };
+  const page = composePage([light], dark);
+  assert.equal(page.tree[0].style.background, '#101010');
+  assert.equal(page.tree[0].children[0].style.background, '#1a1a1a');
+  assert.equal(page.tree[0].children[0].style.color, '#f8fafc');
+});

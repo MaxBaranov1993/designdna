@@ -110,12 +110,12 @@ def main():
         for path in ["children.0", "children.0.children.0", "children.0.children.1", "children.0.children.2", "children.0.children.3", "children.0.children.4.children.1"]:
             click_path(path)
             assert page.locator("[data-ai-inspector]").count() == 1, path
-            assert page.get_by_text("Что изменить?", exact=True).count() == 1, path
+            assert page.get_by_text("What should change?", exact=True).count() == 1, path
 
         # Semantic scalar props are honestly text-only and remain AI-editable.
         click_path("props.heading")
         assert page.locator(".ai-quick-row").count() == 0
-        for label in ["Стиль", "Размеры", "Цвета"]:
+        for label in ["Style", "Dimensions", "Colors"]:
             assert page.get_by_label(label, exact=True).is_disabled()
         page.locator(".ai-command-card textarea").fill("Замени заголовок")
         page.locator(".ai-run").click()
@@ -126,7 +126,10 @@ def main():
         scalar_draft = page.evaluate("(id) => { const d=window.GraphDev.node(id).data; return d._editorDraft?.ir || d.ir; }", edit_id)
         assert scalar_draft["tree"][0]["props"]["heading"] == "Заголовок от AI"
 
-        inspector_text = page.locator(".fe-inspector").inner_text()
+        # Legacy inspector sections are gone. The AI constraint checkboxes ("Dimensions")
+        # and the collapsible manual controls ("Position", "Flex Layout") are not those sections.
+        inspector_text = page.locator(".fe-inspector").evaluate(
+            "el => { const c = el.cloneNode(true); c.querySelectorAll('fieldset, .manual-controls').forEach(f => f.remove()); return c.textContent; }")
         for removed in ["Position", "Flex Layout", "Dimensions", "Appearance"]:
             assert removed not in inspector_text
 
@@ -176,10 +179,10 @@ def main():
         click_path("children.0.children.4.children.1")
         if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
             page.locator(".manual-controls summary").click()
-        page.locator('[data-style-text="background"]').fill("#334455")
-        page.locator('[data-style-text="background"]').press("Tab")
-        page.locator('[data-style-text="color"]').fill("#fefefe")
-        page.locator('[data-style-text="color"]').press("Tab")
+        page.locator('.manual-controls [data-style-text="background"]').fill("#334455")
+        page.locator('.manual-controls [data-style-text="background"]').press("Tab")
+        page.locator('.manual-controls [data-style-text="color"]').fill("#fefefe")
+        page.locator('.manual-controls [data-style-text="color"]').press("Tab")
         page.wait_for_timeout(150)
         draft = page.evaluate("(id) => { const d=window.GraphDev.node(id).data; return d._editorDraft?.ir || d.ir; }", edit_id)
         button = draft["tree"][0]["children"][0]["children"][4]["children"][1]
@@ -203,7 +206,7 @@ def main():
         page.wait_for_timeout(200)
         assert page.locator(".fe-layer.selected").count() == 2
         assert page.locator(".ai-scope-chip").count() == 2
-        assert "Shift/Ctrl/Cmd — группа" in page.locator(".fe-layers-hint").inner_text()
+        assert "Shift/Ctrl/Cmd for a group" in page.locator(".fe-layers-hint").inner_text()
         click_path("children.0.children.0")
         badge_box = page.locator('.fe-canvas [data-ir-path="children.0.children.1"]').first.bounding_box()
         page.keyboard.down("Control")
@@ -225,7 +228,7 @@ def main():
             "el => el.dispatchEvent(new MouseEvent('click', {bubbles:true, shiftKey:true}))")
         page.wait_for_timeout(200)
         assert page.locator(".ai-scope-chip").count() == 1
-        assert "исключён" in page.locator(".ai-scope-warning").inner_text()
+        assert "excluded" in page.locator(".ai-scope-warning").inner_text()
         click_path("children.0.children.0")
         badge_box = page.locator('.fe-canvas [data-ir-path="children.0.children.1"]').first.bounding_box()
         page.keyboard.down("Control"); page.keyboard.down("Shift")
@@ -236,13 +239,13 @@ def main():
         # Merge and unmerge preserve the two independently editable children.
         if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
             page.locator(".manual-controls summary").click()
-        page.get_by_role("button", name="Объединить").click()
+        page.get_by_role("button", name="Merge", exact=True).click()
         page.wait_for_timeout(200)
         grouped = page.evaluate("(id) => { const d=window.GraphDev.node(id).data; return (d._editorDraft?.ir || d.ir).tree[0].children[0].children[0]; }", edit_id)
         assert grouped["type"] == "card" and grouped["frame"]["layout"] == "free" and len(grouped["children"]) == 2
         if not page.evaluate("!!document.querySelector('.manual-controls')?.open"):  # блок помнит состояние между перемонтированиями
             page.locator(".manual-controls summary").click()
-        page.get_by_role("button", name="Разъединить").click()
+        page.get_by_role("button", name="Unmerge", exact=True).click()
         page.wait_for_timeout(200)
         restored = page.evaluate("(id) => { const d=window.GraphDev.node(id).data; return (d._editorDraft?.ir || d.ir).tree[0].children[0].children.slice(0,2).map(n=>n.type); }", edit_id)
         assert restored == ["image", "badge"]
@@ -263,10 +266,10 @@ def main():
         selected_count = 2
         before = page.evaluate("(id) => JSON.stringify((window.GraphDev.node(id).data._editorDraft?.ir || window.GraphDev.node(id).data.ir))", edit_id)
         page.locator(".ai-command-card textarea").fill("Сделай группу спокойнее")
-        page.get_by_label("Цвета").uncheck()
+        page.get_by_label("Colors").uncheck()
         page.locator(".ai-run").click()
         page.wait_for_selector('[data-ai-preview="ready"]')
-        assert page.get_by_label("Цвета").is_checked() is False
+        assert page.get_by_label("Colors").is_checked() is False
         assert len(requests[-1]["scope"]["sourceKeys"]) == selected_count
         assert requests[-1]["constraints"]["allowColor"] is False
         assert page.locator(".ai-diff li").count() == selected_count
@@ -307,7 +310,7 @@ def main():
         page.locator(".ai-run").click()
         page.wait_for_selector(".ai-impact")
         assert page.locator("[data-ai-apply]").is_disabled()
-        page.get_by_label("Я проверил изменения").check()
+        page.get_by_label("I reviewed the changes").check()
         assert page.locator("[data-ai-apply]").is_enabled()
         page.locator("[data-ai-cancel]").click()
         browser.close()
